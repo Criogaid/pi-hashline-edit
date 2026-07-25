@@ -1,6 +1,7 @@
 /**
- * pi 接入层 execute 集成测试：驱动真实的 makeReadOverride/makeEditOverride
- * execute，覆盖文本 read 带锚、hashline edit 闭环、错误返回 isError。
+ * Integration tests for the pi integration layer's execute: drives the real
+ * makeReadOverride/makeEditOverride execute, covering text read with anchors,
+ * the hashline edit closed loop, and error returns with isError.
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -24,7 +25,7 @@ async function withDir<T>(fn: (dir: string) => Promise<T>): Promise<T> {
 
 const call = (tool: any, params: any) => tool.execute("0", params, undefined, undefined);
 
-test("read execute：文本输出 LINE#HASH│content", async () => {
+test("read execute: text outputs LINE#HASH│content", async () => {
 	await withDir(async (dir) => {
 		await writeFile(join(dir, "f.txt"), "line1\nline2\n");
 		const read = makeReadOverride(dir);
@@ -37,18 +38,18 @@ test("read execute：文本输出 LINE#HASH│content", async () => {
 	});
 });
 
-test("read execute：记录 snapshot 供 edit 用", async () => {
+test("read execute: records a snapshot for edit", async () => {
 	await withDir(async (dir) => {
 		await writeFile(join(dir, "f.txt"), "a\nb\n");
 		const read = makeReadOverride(dir);
 		await call(read, { path: "f.txt" });
 		const snap = getSnapshot(join(dir, "f.txt"));
-		assert.ok(snap, "snapshot 未记录");
+		assert.ok(snap, "snapshot not recorded");
 		assert.equal(snap!.lineHashes.length, 2);
 	});
 });
 
-test("edit execute：hashline 闭环（read → edit → 文件改）", async () => {
+test("edit execute: hashline closed loop (read → edit → file changed)", async () => {
 	await withDir(async (dir) => {
 		const f = join(dir, "f.txt");
 		await writeFile(f, "a\nb\nc\n");
@@ -59,12 +60,12 @@ test("edit execute：hashline 闭环（read → edit → 文件改）", async ()
 			path: "f.txt",
 			input: `replace 2#${snap.lineHashes[1]}:\n+B`,
 		});
-		assert.equal(r.isError, undefined, "不应是错误");
+		assert.equal(r.isError, undefined, "should not be an error");
 		assert.equal(await readFile(f, "utf-8"), "a\nB\nc\n");
 	});
 });
 
-test("edit execute：连续 edit 复用更新后的 snapshot", async () => {
+test("edit execute: consecutive edits reuse the updated snapshot", async () => {
 	await withDir(async (dir) => {
 		const f = join(dir, "f.txt");
 		await writeFile(f, "a\nb\n");
@@ -73,7 +74,7 @@ test("edit execute：连续 edit 复用更新后的 snapshot", async () => {
 		await call(read, { path: "f.txt" });
 		let snap = getSnapshot(f)!;
 		await call(edit, { path: "f.txt", input: `replace 1#${snap.lineHashes[0]}:\n+A` });
-		// 第二次 edit：snapshot 已被 edit 更新，用新 hash
+		// second edit: the snapshot was updated by the edit, use the new hash
 		snap = getSnapshot(f)!;
 		const r: any = await call(edit, { path: "f.txt", input: `replace 2#${snap.lineHashes[1]}:\n+B` });
 		assert.equal(r.isError, undefined);
@@ -81,17 +82,17 @@ test("edit execute：连续 edit 复用更新后的 snapshot", async () => {
 	});
 });
 
-test("edit execute：无 read 直接 edit → anchor 校验失败", async () => {
+test("edit execute: edit without a prior read → anchor verification fails", async () => {
 	await withDir(async (dir) => {
 		await writeFile(join(dir, "f.txt"), "a\nb\n");
 		const edit = makeEditOverride(dir);
-		// 没 read 过，hash 是瞎写的
+		// never read, so the hash is made up
 		const r: any = await call(edit, { path: "f.txt", input: "replace 1#XXXX:\n+A" });
 		assert.equal(r.isError, true);
 	});
 });
 
-test("edit execute：缺 input → isError + missing 提示", async () => {
+test("edit execute: missing input → isError + missing hint", async () => {
 	await withDir(async (dir) => {
 		await writeFile(join(dir, "f.txt"), "a\n");
 		const r: any = await call(makeEditOverride(dir), { path: "f.txt" });
@@ -100,7 +101,7 @@ test("edit execute：缺 input → isError + missing 提示", async () => {
 	});
 });
 
-test("edit execute：旧 oldText/newText → isError + legacy 提示", async () => {
+test("edit execute: legacy oldText/newText → isError + legacy hint", async () => {
 	await withDir(async (dir) => {
 		await writeFile(join(dir, "f.txt"), "a\n");
 		const r: any = await call(makeEditOverride(dir), {
@@ -113,7 +114,7 @@ test("edit execute：旧 oldText/newText → isError + legacy 提示", async () 
 	});
 });
 
-test("edit execute：parse 错误 → isError", async () => {
+test("edit execute: parse error → isError", async () => {
 	await withDir(async (dir) => {
 		await writeFile(join(dir, "f.txt"), "a\n");
 		await call(makeReadOverride(dir), { path: "f.txt" });

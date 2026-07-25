@@ -1,8 +1,8 @@
 /**
- * pi-hashline-edit 核心库公共 API。
+ * Public API of the pi-hashline-edit core library.
  *
- * 纯 hashline 引擎，零 pi 依赖，可独立 `node --test`。
- * pi 接入层在 `../pi/` 下。
+ * The pure hashline engine, with zero pi dependencies, runnable standalone via
+ * `node --test`. The pi integration layer lives under `../pi/`.
  *
  * @module pi-hashline-edit/core
  */

@@ -1,9 +1,10 @@
 /**
- * pi-hashline-edit 扩展入口。
+ * pi-hashline-edit extension entry.
  *
- * override 内置 read/edit：read 输出「行号#hash│内容」并记录快照，
- * edit 只接受 hashline patch（LINE#HASH 锚），旧 oldText/newText 明确拒绝
- * （不静默降级）。renderer 自动继承内置渲染。
+ * Overrides the built-in read/edit: read outputs "lineNo#hash│content" and
+ * records a snapshot; edit accepts only a hashline patch (LINE#HASH anchors),
+ * and legacy oldText/newText is rejected explicitly (no silent degradation).
+ * The renderer is inherited from the built-in automatically.
  *
  * @module pi-hashline-edit
  */
@@ -17,7 +18,7 @@ import { makeReadOverride } from "./pi/read-tool.ts";
 export default function (pi: ExtensionAPI) {
 	const cwd = process.cwd();
 
-	// session 启动/重载时刷新配置与快照
+	// refresh config and snapshots on session start / reload
 	pi.on("session_start", async () => {
 		const config = loadConfig(cwd);
 		const state = getState();

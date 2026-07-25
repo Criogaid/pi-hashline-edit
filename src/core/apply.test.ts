@@ -7,9 +7,9 @@ import type { Edit, FileSnapshot } from "./types.ts";
 const snap = (text: string): FileSnapshot => createSnapshot("f.ts", text);
 const ln = (s: FileSnapshot, line: number) => ({ line, hash: s.lineHashes[line - 1] });
 
-// —— 正常路径 ——
+// --- happy paths ---
 
-test("replace 单行", () => {
+test("replace single line", () => {
 	const text = "a\nb\nc\n";
 	const s = snap(text);
 	const r = applyEdits(text, [{ op: "replace", start: ln(s, 2), body: ["B"] }], s);
@@ -29,7 +29,7 @@ test("replace range", () => {
 	if (r.ok) assert.equal(r.text, "a\nX\nY\ne\n");
 });
 
-test("delete 单行 / range", () => {
+test("delete single line / range", () => {
 	const text = "a\nb\nc\nd\n";
 	const s = snap(text);
 	const r = applyEdits(text, [{ op: "delete", start: ln(s, 2), end: ln(s, 3) }], s);
@@ -68,7 +68,7 @@ test("append / prepend", () => {
 	if (r.ok) assert.equal(r.text, "head\na\nb\ntail\n");
 });
 
-test("多操作乱序 → 按位置正确应用", () => {
+test("multiple out-of-order ops → applied at the right positions", () => {
 	const text = "a\nb\nc\n";
 	const s = snap(text);
 	const r = applyEdits(
@@ -83,7 +83,7 @@ test("多操作乱序 → 按位置正确应用", () => {
 	if (r.ok) assert.equal(r.text, "A\nb\nc\nz\n");
 });
 
-test("结果带 diff 与 newSnapshot", () => {
+test("result carries diff and newSnapshot", () => {
 	const text = "a\nb\n";
 	const s = snap(text);
 	const r = applyEdits(text, [{ op: "replace", start: ln(s, 1), body: ["A"] }], s);
@@ -95,7 +95,7 @@ test("结果带 diff 与 newSnapshot", () => {
 	}
 });
 
-test("闭环：newSnapshot 可用于下一次 edit", () => {
+test("closed loop: newSnapshot can be used for the next edit", () => {
 	let s = snap("a\nb\n");
 	let cur = s.text;
 	const r1 = applyEdits(cur, [{ op: "replace", start: ln(s, 1), body: ["A"] }], s);
@@ -109,16 +109,16 @@ test("闭环：newSnapshot 可用于下一次 edit", () => {
 	}
 });
 
-// —— 错误路径 ——
+// --- error paths ---
 
-test("stale（文件已变）拒绝", () => {
+test("stale (file changed) rejected", () => {
 	const s = snap("a\nb\n");
 	const r = applyEdits("a\nCHANGED\n", [{ op: "replace", start: ln(s, 1), body: ["x"] }], s);
 	assert.equal(r.ok, false);
 	if (!r.ok) assert.equal(r.error.kind, "stale");
 });
 
-test("anchor hash 不匹配拒绝（防记错）", () => {
+test("anchor hash mismatch rejected (guards against misremembering)", () => {
 	const text = "a\nb\n";
 	const s = snap(text);
 	const r = applyEdits(text, [{ op: "replace", start: { line: 1, hash: "WRONG" }, body: ["x"] }], s);
@@ -126,7 +126,7 @@ test("anchor hash 不匹配拒绝（防记错）", () => {
 	if (!r.ok) assert.equal(r.error.kind, "anchor");
 });
 
-test("行号越界拒绝", () => {
+test("line out of range rejected", () => {
 	const text = "a\n";
 	const s = snap(text);
 	const r = applyEdits(text, [{ op: "replace", start: { line: 5, hash: s.lineHashes[0] }, body: ["x"] }], s);
@@ -134,7 +134,7 @@ test("行号越界拒绝", () => {
 	if (!r.ok) assert.equal(r.error.kind, "anchor");
 });
 
-test("range 逆序拒绝", () => {
+test("reverse-order range rejected", () => {
 	const text = "a\nb\nc\n";
 	const s = snap(text);
 	const r = applyEdits(
@@ -146,7 +146,7 @@ test("range 逆序拒绝", () => {
 	if (!r.ok) assert.equal(r.error.kind, "range");
 });
 
-test("重叠编辑拒绝", () => {
+test("overlapping edits rejected", () => {
 	const text = "a\nb\nc\nd\n";
 	const s = snap(text);
 	const r = applyEdits(
@@ -161,7 +161,7 @@ test("重叠编辑拒绝", () => {
 	if (!r.ok) assert.equal(r.error.kind, "range");
 });
 
-test("同插入点冲突拒绝", () => {
+test("conflict at the same insertion point rejected", () => {
 	const text = "a\nb\n";
 	const s = snap(text);
 	const r = applyEdits(
@@ -176,7 +176,7 @@ test("同插入点冲突拒绝", () => {
 	if (!r.ok) assert.equal(r.error.kind, "range");
 });
 
-test("noop（body 字节相同）拒绝", () => {
+test("noop (byte-identical body) rejected", () => {
 	const text = "a\nb\n";
 	const s = snap(text);
 	const r = applyEdits(text, [{ op: "replace", start: ln(s, 1), body: ["a"] }], s);

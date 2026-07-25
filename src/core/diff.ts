@@ -1,8 +1,10 @@
 /**
- * 基于 ops 的 unified diff 预览。
+ * Ops-based unified diff preview.
  *
- * 每个 SpanOp 生成一个 hunk，`@@` 行号基于原始文件（多 op 时各自的原始位置），
- * 内容准确。这是 Phase 1 的近似实现；如需精确的多 op 行号可后续换 LCS。
+ * Each SpanOp produces one hunk; the `@@` line numbers are based on the
+ * original file (each op's own original position), so the content is accurate.
+ * This is a Phase 1 approximation; if precise multi-op line numbers are needed,
+ * LCS can replace it later.
  *
  * @module pi-hashline-edit/core
  */
@@ -14,21 +16,21 @@ interface SpanOpLike {
 }
 
 /**
- * 生成 unified diff。
+ * Build a unified diff.
  *
- * @param path     文件路径（用于 diff 头）
- * @param oldLines 应用前的原始行数组
- * @param ops      已应用的行级操作
+ * @param path     file path (for the diff header)
+ * @param oldLines original line array before applying
+ * @param ops      line-level operations applied
  */
 export function buildDiff(path: string, oldLines: readonly string[], ops: readonly SpanOpLike[]): string {
 	if (ops.length === 0) return "";
 	const out: string[] = [`--- a/${path}`, `+++ b/${path}`];
 	for (const op of ops) {
 		const oldCount = op.hi - op.lo;
-		const oldStart = oldCount === 0 ? op.lo : op.lo + 1; // 零宽（插入点）用 lo，符合 unified-diff "after line N" 惯例
+		const oldStart = oldCount === 0 ? op.lo : op.lo + 1; // zero-width (insertion point) uses lo, following the unified-diff "after line N" convention
 		const newCount = op.newLines.length;
 		const newStart = op.lo + 1;
-		// 单行 hunk 省略计数，符合 unified-diff 惯例
+		// single-line hunks omit the count, following the unified-diff convention
 		const oldRange = oldCount === 1 ? `${oldStart}` : `${oldStart},${oldCount}`;
 		const newRange = newCount === 1 ? `${newStart}` : `${newStart},${newCount}`;
 		out.push(`@@ -${oldRange} +${newRange} @@`);

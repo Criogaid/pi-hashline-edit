@@ -1,6 +1,7 @@
 /**
- * Override read：文本文件输出「行号#hash│内容」并记录快照；
- * 非文本（图片/二进制）与读取错误透传内置 read，renderer 自动继承。
+ * Override read: text files output "lineNo#hash│content" and record a snapshot;
+ * non-text (images/binary) and read errors delegate to the built-in read, whose
+ * renderer is inherited automatically.
  *
  * @module pi-hashline-edit/pi
  */
@@ -14,12 +15,12 @@ import { getState, getSnapshot, recordSnapshot } from "./state.ts";
 const MAX_LINES = 2000;
 const MAX_BYTES = 256 * 1024;
 
-/** canonical path：read/edit 共用，保证 snapshot key 一致。 */
+/** canonical path: shared by read/edit to keep the snapshot key consistent. */
 export function canonicalPath(cwd: string, p: string): string {
 	return resolve(cwd, p);
 }
 
-/** 构造 read override（registerTool 的 ToolDefinition 片段）。 */
+/** Build the read override (a ToolDefinition fragment for registerTool). */
 export function makeReadOverride(cwd: string) {
 	const builtin = createReadTool(cwd);
 
@@ -36,8 +37,7 @@ export function makeReadOverride(cwd: string) {
 		parameters: builtin.parameters,
 
 		async execute(toolCallId: string, params: any, signal: AbortSignal | undefined, onUpdate: any) {
-			// 未启用 → 完全透传内置
-			// 未启用 或 用户已取消 → 透传内置（builtin 自行处理 abort）
+			// Not enabled OR user cancelled → delegate to the built-in (builtin handles abort itself)
 			if (!getState().config.enabled || signal?.aborted) return builtin.execute(toolCallId, params, signal, onUpdate);
 
 			const absPath = canonicalPath(cwd, params.path as string);
@@ -45,18 +45,18 @@ export function makeReadOverride(cwd: string) {
 			try {
 				buf = await readFile(absPath);
 			} catch {
-				// 读取错误 → 透传内置（它有完善的错误信息）
+				// read error → delegate to the built-in (it has polished error messages)
 				return builtin.execute(toolCallId, params, signal, onUpdate);
 			}
 
-			// 二进制/图片检测（null 字节）→ 透传内置（内置用 file-type 处理图片）
+			// binary/image detection (null byte) → delegate to the built-in (it uses file-type for images)
 			if (buf.includes(0)) return builtin.execute(toolCallId, params, signal, onUpdate);
 
 			const text = buf.toString("utf-8");
 			const allLines = splitLines(text);
 			const totalLines = allLines.length;
 
-			// 记录全文快照（edit 锚基于全文行号）
+			// record a full-file snapshot (edit anchors are based on full-file line numbers)
 			const snap = recordSnapshot(absPath, text);
 
 			// offset/limit
@@ -92,7 +92,7 @@ export function makeReadOverride(cwd: string) {
 	};
 }
 
-/** 供 edit override 复用：取某 path 的已记录快照（按 canonical path）。 */
+/** Reused by the edit override: look up a recorded snapshot for a path (by canonical path). */
 export function lookupSnapshot(cwd: string, p: string) {
 	return getSnapshot(canonicalPath(cwd, p));
 }

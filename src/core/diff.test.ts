@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { buildDiff } from "./diff.ts";
 
-test("单 hunk", () => {
+test("single hunk", () => {
 	const d = buildDiff("f.ts", ["a", "b", "c"], [{ lo: 1, hi: 2, newLines: ["X"] }]);
 	assert.ok(d.startsWith("--- a/f.ts\n"));
 	assert.ok(d.includes("+++ b/f.ts"));
@@ -11,11 +11,11 @@ test("单 hunk", () => {
 	assert.ok(d.includes("+X"));
 });
 
-test("多行 range hunk 带计数", () => {
+test("multi-line range hunk carries counts", () => {
 	const d = buildDiff("f", ["a", "b", "c", "d"], [{ lo: 0, hi: 3, newLines: ["X"] }]);
-	assert.ok(d.includes("@@ -1,3 +1 @@")); // newCount=1 时省略计数（git 惯例）
+	assert.ok(d.includes("@@ -1,3 +1 @@")); // newCount=1 omits the count (git convention)
 });
 
-test("空 ops 返回空串", () => {
+test("empty ops returns empty string", () => {
 	assert.equal(buildDiff("f", ["a"], []), "");
 });

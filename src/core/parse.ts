@@ -1,11 +1,12 @@
 /**
- * 严格解析器：patch 字符串 → {@link ParsedPatch}。
+ * Strict parser: patch string → {@link ParsedPatch}.
  *
- * 核心零猜测：只接受规范格式（正确 verb + 正确锚 + `+` body 行），
- * 任何变体（裸行、旧 `oldText`/`newText`、`SWAP`/`DEL` 等）一律拒绝，
- * 交给 `transforms/normalize-legacy` 中间件归一化后再进入解析。
+ * Core principle — zero guessing: only the canonical format is accepted (correct
+ * verb + correct anchor + `+` body rows). Any variant (bare lines, legacy
+ * `oldText`/`newText`, `SWAP`/`DEL`, etc.) is rejected and left to the
+ * `transforms/normalize-legacy` middleware to normalize before parsing.
  *
- * 格式：
+ * Format:
  *
  * ```
  * file: <path>
@@ -62,7 +63,7 @@ type ParsedHeader =
 			readonly build: (body: string[]) => Edit;
 	  };
 
-/** 解析单个操作头（已 trim）。末尾冒号可选（有 body 的 verb）。 */
+/** Parse a single operation header (already trimmed). Trailing colon is optional (for body-bearing verbs). */
 function parseOpHeader(s: string): ParsedHeader {
 	let core = s;
 	if (core.endsWith(":")) core = core.slice(0, -1).trimEnd();
@@ -101,10 +102,10 @@ function parseOpHeader(s: string): ParsedHeader {
 }
 
 /**
- * 严格解析 patch。
+ * Strictly parse a patch.
  *
- * @param input patch 字符串（CRLF 自动归一为 LF）
- * @returns 解析结果；非法格式返回 `ok: false` + PatchError（含输入行号）
+ * @param input patch string (CRLF is normalized to LF automatically)
+ * @returns parse result; malformed input returns `ok: false` + PatchError (with the input line number)
  */
 export function parsePatch(input: string): ParseResult {
 	const normalized = input.replace(/\r\n/g, "\n");

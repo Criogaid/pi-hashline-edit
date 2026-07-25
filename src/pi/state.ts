@@ -1,10 +1,11 @@
 /**
- * Session 级状态：文件快照存储（LRU）+ 配置。
+ * Session-level state: file snapshot store (LRU) + config.
  *
- * globalThis 单例（规避 Bun module identity 问题，见仓库 AGENTS）。
- * 快照 LRU 驱逐（默认 64 个文件），防长会话内存无限增长——冷文件被新文件挤出。
- * read 记录、edit 校验；key 为 canonical 绝对路径。
- * config 放 state，session_start 重载。
+ * globalThis singleton (avoids Bun module-identity issues; see the repo AGENTS).
+ * Snapshot LRU eviction (default 64 files) prevents unbounded memory growth in
+ * long sessions — cold files are pushed out by new ones. read records; edit
+ * verifies; key is the canonical absolute path.
+ * config lives in state and is reloaded on session_start.
  *
  * @module pi-hashline-edit/pi
  */
@@ -15,11 +16,11 @@ import type { HashlineEditConfig } from "./config.ts";
 
 const GLOBAL_KEY = "__piHashlineEdit";
 const DEFAULT_CONFIG: HashlineEditConfig = { enabled: true, hashLen: 4 };
-/** 最多缓存的文件快照数；超出按 LRU 驱逐最久未访问的。 */
+/** Maximum number of cached file snapshots; beyond this the least-recently-accessed is evicted. */
 const MAX_SNAPSHOTS = 64;
 
 export interface HashlineEditState {
-	/** canonical path → 快照。LRU 顺序：Map 插入序，最近访问的在末尾。 */
+	/** canonical path → snapshot. LRU order: Map insertion order, most recently accessed at the end. */
 	readonly snapshots: Map<string, FileSnapshot>;
 	hashLen: number;
 	config: HashlineEditConfig;
@@ -38,7 +39,7 @@ export function getState(): HashlineEditState {
 	return state;
 }
 
-/** 写入快照并维持 LRU：移到末尾（最近使用），超限驱逐最旧（Map 首项）。 */
+/** Write a snapshot and maintain LRU: move to the end (most recently used); evict the oldest (Map's first entry) when over the limit. */
 function touchAndEvict(map: Map<string, FileSnapshot>, path: string, snap: FileSnapshot): void {
 	if (map.has(path)) map.delete(path);
 	map.set(path, snap);
@@ -49,7 +50,7 @@ function touchAndEvict(map: Map<string, FileSnapshot>, path: string, snap: FileS
 	}
 }
 
-/** 记录文件快照（read 时调用）：算行 hash + LRU。 */
+/** Record a file snapshot (called on read): compute line hashes + LRU bookkeeping. */
 export function recordSnapshot(canonicalPath: string, text: string): FileSnapshot {
 	const state = getState();
 	const snap = createSnapshot(canonicalPath, text, state.hashLen);
@@ -57,12 +58,12 @@ export function recordSnapshot(canonicalPath: string, text: string): FileSnapsho
 	return snap;
 }
 
-/** 存入已算好的快照（edit 成功后更新），走 LRU。 */
+/** Store an already-computed snapshot (updated after a successful edit), via LRU. */
 export function putSnapshot(canonicalPath: string, snap: FileSnapshot): void {
 	touchAndEvict(getState().snapshots, canonicalPath, snap);
 }
 
-/** 取文件快照（edit 校验用）；命中时移到末尾（LRU touch）。 */
+/** Get a file snapshot (for edit verification); on a hit move it to the end (LRU touch). */
 export function getSnapshot(canonicalPath: string): FileSnapshot | undefined {
 	const map = getState().snapshots;
 	const snap = map.get(canonicalPath);
@@ -73,7 +74,7 @@ export function getSnapshot(canonicalPath: string): FileSnapshot | undefined {
 	return snap;
 }
 
-/** 清空快照（session 重启时）。 */
+/** Clear all snapshots (on session restart). */
 export function clearSnapshots(): void {
 	getState().snapshots.clear();
 }

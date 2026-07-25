@@ -1,6 +1,7 @@
 /**
- * 配置加载：项目 `.pi/settings.json` 替换全局，per-field `??` DEFAULT 兜底。
- * 配置字段 `hashlineEdit`（去 `pi-` 前缀转 camelCase）。
+ * Config loading: project `.pi/settings.json` replaces global, per-field `??`
+ * falls back to DEFAULT. Config field `hashlineEdit` (drop the `pi-` prefix,
+ * camelCase).
  *
  * @module pi-hashline-edit/pi
  */
@@ -10,9 +11,9 @@ import * as os from "node:os";
 import * as path from "node:path";
 
 export interface HashlineEditConfig {
-	/** 是否启用 hashline（false 时透传内置 read/edit）。 */
+	/** Whether hashline is enabled (when false, delegate to the built-in read/edit). */
 	enabled: boolean;
-	/** 行 hash 长度（默认 4）。 */
+	/** Line hash length (default 4). */
 	hashLen: number;
 }
 
@@ -24,7 +25,7 @@ function getAgentDir(): string {
 	return path.join(os.homedir(), ".pi", "agent");
 }
 
-/** 直接 JSON.parse，不剥注释（标准 JSON 禁止注释，出错降级默认）。 */
+/** Parse JSON directly without stripping comments (standard JSON forbids comments; on error fall back to default). */
 function readSettings(filePath: string): Record<string, unknown> {
 	try {
 		if (!fs.existsSync(filePath)) return {};
@@ -35,8 +36,8 @@ function readSettings(filePath: string): Record<string, unknown> {
 }
 
 /**
- * 加载配置。项目 `cwd/.pi/settings.json` 的 `hashlineEdit` 整块替换全局，
- * 缺失字段由 DEFAULT_CONFIG 兜底。
+ * Load config. The `hashlineEdit` in project `cwd/.pi/settings.json` replaces
+ * the global one wholesale; missing fields fall back to DEFAULT_CONFIG.
  */
 export function loadConfig(cwd?: string): HashlineEditConfig {
 	const globalSettings = readSettings(path.join(getAgentDir(), "settings.json"));
