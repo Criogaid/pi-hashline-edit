@@ -22,18 +22,19 @@ src/foo.ts · 6 lines
    3#mP0│export function foo(x: number) {
 ```
 
-`edit` `input` — `path` is a tool parameter; `input` holds only ops (no `file:` header, the tool injects it):
+`edit` takes `path` + `edits` (an array of ops, each with `op`, `anchor`/`end` `{line, hash}` from read, and `body` string[]):
 
+```jsonc
+{
+  "path": "src/foo.ts",
+  "edits": [
+    { "op": "replace", "anchor": { "line": 4, "hash": "kLp" }, "body": ["  return x + 1"] },
+    { "op": "insert_after", "anchor": { "line": 6, "hash": "b2H" }, "body": ["", "export const bar = foo"] }
+  ]
+}
 ```
-replace 4#kLp:
-+  if (x < 0) throw new Error("neg")
 
-insert_after 6#b2H:
-+
-+export const bar = foo
-```
-
-Ops: `replace LINE#HASH[..LINE#HASH]:` · `delete LINE#HASH` · `insert_after LINE#HASH:` · `insert_before LINE#HASH:` · `append:` · `prepend:`. Body rows start with `+`; `+` alone is a blank line; literal `+`/`-` lines become `++`/`+-`.
+Ops: `replace` · `delete` · `insert_after` · `insert_before` · `append` · `prepend`. `anchor`/`end` = `{line, hash}` from read; `body` = new content lines (string[], omit for `delete`).
 
 ## Installation
 

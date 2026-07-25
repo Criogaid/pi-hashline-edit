@@ -1,44 +1,54 @@
 /**
- * Override edit: accepts only a hashline patch (`input`).
+ * Override edit: hashline ops via structured `edits` (LINE#HASH anchors).
  *
- * Not backward-compatible with legacy oldText/newText — when legacy input is
- * detected it errors explicitly so the developer knows the model didn't use the
- * new approach, rather than silently degrading. Tolerance is limited to
- * format-only normalizations that don't affect the result (optional colon, CRLF
- * at the parse layer); paradigm-level compatibility is refused outright.
+ * Each op in `edits` references line anchors from the latest read; the core
+ * apply verifies hashes. Legacy oldText/newText is not accepted — the schema
+ * requires an `op` discriminator, so legacy payloads are rejected at the schema
+ * layer (a visible failure, never a silent degradation).
  *
- * Concurrency safety: the read-modify-write is wrapped in
- * withFileMutationQueue, serializing multiple edits to the same file to prevent
- * data loss under pi's default parallel execution. AbortSignal is honored —
- * checked after read / before write, so a user cancel never touches the disk.
+ * Concurrency safety: read-modify-write is wrapped in withFileMutationQueue.
+ * AbortSignal is honored — checked after read / before write.
  *
  * @module pi-hashline-edit/pi
  */
 
 import { createEditTool, generateDiffString, generateUnifiedPatch, withFileMutationQueue } from "@earendil-works/pi-coding-agent";
 import { Type, type Static } from "typebox";
+import { Text } from "@earendil-works/pi-tui";
 import { readFile, writeFile } from "node:fs/promises";
-import { applyEdits, parsePatch } from "../core/index.ts";
+import { applyEdits } from "../core/index.ts";
 import type { Edit, FileSnapshot, PatchError } from "../core/types.ts";
 import { canonicalPath } from "./read-tool.ts";
 import { getState, getSnapshot, putSnapshot, recordSnapshot } from "./state.ts";
-import { Text } from "@earendil-works/pi-tui";
 
-// The schema deliberately omits additionalProperties:false: when the model
-// mistakenly sends legacy edits/oldText/newText, those extra fields reach
-// execute as-is and are caught and rejected explicitly by missingInputError.
-// This relies on typebox allowing extra properties by default + pi validation
-// not stripping them — do not change either of these.
+const anchorSchema = Type.Object({
+	line: Type.Number({ description: "1-based line number" }),
+	hash: Type.String({ description: "Line content hash copied from read output (the #HASH after the line number)" }),
+});
+
+const editOpSchema = Type.Object({
+	op: Type.Union(
+		[
+			Type.Literal("replace"),
+			Type.Literal("delete"),
+			Type.Literal("insert_after"),
+			Type.Literal("insert_before"),
+			Type.Literal("append"),
+			Type.Literal("prepend"),
+		],
+		{ description: "Operation kind" },
+	),
+	anchor: Type.Optional(anchorSchema),
+	end: Type.Optional(anchorSchema),
+	body: Type.Optional(Type.Array(Type.String(), { description: "New content lines (required for replace/insert/append/prepend; omit for delete)" })),
+});
 
 const editSchema = Type.Object({
 	path: Type.String({ description: "Path to the file to edit (relative or absolute)" }),
-	input: Type.Optional(
-		Type.String({
-			description:
-				"Hashline patch referencing LINE#HASH anchors from your latest read. Ops: replace / delete / insert_after / insert_before / append / prepend. Body rows start with `+`. This tool does NOT accept legacy oldText/newText.",
-		}),
-	),
+	edits: Type.Array(editOpSchema, { description: "Hashline ops, each referencing LINE#HASH anchors from your latest read" }),
 });
+
+type EditOpInput = Static<typeof editOpSchema>;
 
 /** Turn a PatchError into helpful hint text for the model. */
 function errorText(e: PatchError, path: string): string {
@@ -73,23 +83,37 @@ function minAnchorLine(edits: readonly Edit[]): number | undefined {
 	return min;
 }
 
-/**
- * The model didn't use hashline (sent legacy oldText/newText or is missing
- * input) → tell it explicitly, don't silently degrade. Exported for testing.
- * params is `any` so it can detect legacy fields outside the schema.
- */
-export function missingInputError(path: string, params: any): string {
-	const legacy =
-		Array.isArray(params?.edits) ||
-		typeof params?.oldText === "string" ||
-		typeof params?.newText === "string";
-	if (legacy) {
-		return `⚠ ${path}: you sent the legacy oldText/newText format, but this edit tool ONLY accepts hashline \`input\`. The legacy path was intentionally removed so this is surfaced, not silently degraded. Re-read ${path} to get LINE#HASH anchors, then send \`input\` (e.g. \`replace 4#aF3:\` followed by \`+\` body rows).`;
+/** Translate JSON edit ops into core Edit[]. Validates conditional required fields (anchor/body per op). */
+function toCoreEdits(ops: readonly EditOpInput[]): { ok: true; edits: Edit[] } | { ok: false; error: string } {
+	const edits: Edit[] = [];
+	for (const o of ops) {
+		switch (o.op) {
+			case "replace":
+				if (!o.anchor) return { ok: false, error: "replace needs `anchor` {line, hash}" };
+				if (!o.body) return { ok: false, error: "replace needs `body`" };
+				edits.push({ op: "replace", start: o.anchor, end: o.end, body: o.body });
+				break;
+			case "delete":
+				if (!o.anchor) return { ok: false, error: "delete needs `anchor` {line, hash}" };
+				edits.push({ op: "delete", start: o.anchor, end: o.end });
+				break;
+			case "insert_after":
+			case "insert_before":
+				if (!o.anchor) return { ok: false, error: `${o.op} needs \`anchor\` {line, hash}` };
+				if (!o.body) return { ok: false, error: `${o.op} needs \`body\`` };
+				edits.push({ op: o.op, anchor: o.anchor, body: o.body });
+				break;
+			case "append":
+			case "prepend":
+				if (!o.body) return { ok: false, error: `${o.op} needs \`body\`` };
+				edits.push({ op: o.op, body: o.body });
+				break;
+		}
 	}
-	return `Edit ${path}: missing \`input\` (hashline patch). Read ${path} first, then send \`input\` referencing LINE#HASH anchors.`;
+	return { ok: true, edits };
 }
 
-/** Build an error result (with isError: true so the TUI/agent loop treats it as a failure, not a success). */
+/** Build an error result (isError: true so the TUI/agent loop treats it as a failure). */
 function errResult(text: string) {
 	return {
 		isError: true as const,
@@ -105,14 +129,14 @@ export function makeEditOverride(cwd: string) {
 		name: "edit" as const,
 		label: "edit",
 		description:
-			"Edit a file via hashline patch (LINE#HASH anchors, content-verified). Does NOT accept legacy oldText/newText.",
-		promptSnippet: "Edit files via hashline LINE#HASH anchors (input patch); legacy oldText/newText not accepted",
+			"Edit a file via hashline ops (LINE#HASH anchors, content-verified). Each op in `edits` references line anchors from your latest read.",
+		promptSnippet: "Edit files via hashline ops (edits[] with LINE#HASH anchors from read)",
 		promptGuidelines: [
-			"Pass `input`: a hashline patch referencing `LINE#HASH` anchors copied from your latest read output (e.g. `replace 12#aF3:`).",
-			"Ops: `replace LINE#HASH[..LINE#HASH]:` · `delete LINE#HASH` · `insert_after LINE#HASH:` · `insert_before LINE#HASH:` · `append:` · `prepend:`.",
-			"Body rows start with `+` followed by the literal line. `+` alone = blank line. Literal `+`/`-` lines become `++`/`+-`.",
+			"Pass `edits`: an array of ops. Each op = {op, anchor?, end?, body?}.",
+			"op ∈ replace | delete | insert_after | insert_before | append | prepend.",
+			"anchor & end = {line, hash} copied from your latest read (the `#HASH` after each line number). replace/delete take anchor (+ optional end for a range); insert_after/insert_before take anchor; append/prepend take neither.",
+			"body = string[] of new content lines (required for replace/insert/append/prepend; omit for delete).",
 			"After each successful edit, re-ground: line numbers shift, so take the next edit's anchors from a fresh read.",
-			"This tool does NOT accept legacy oldText/newText — sending those returns an error (intentional, so it's visible).",
 		],
 		parameters: editSchema,
 		renderShell: "self" as const,
@@ -120,10 +144,8 @@ export function makeEditOverride(cwd: string) {
 		renderCall(args: Static<typeof editSchema>, theme: any) {
 			let text = theme.fg("toolTitle", theme.bold("edit "));
 			text += theme.fg("accent", args.path);
-			if (args.input) {
-				const firstOp = args.input.split("\n").find((l) => l.trim() && !l.startsWith("+"));
-				if (firstOp) text += theme.fg("dim", ` — ${firstOp.trim()}`);
-			}
+			const n = args.edits?.length ?? 0;
+			if (n) text += theme.fg("dim", ` — ${n} op${n > 1 ? "s" : ""}: ${args.edits[0].op}`);
 			return new Text(text, 0, 0);
 		},
 
@@ -160,19 +182,17 @@ export function makeEditOverride(cwd: string) {
 
 			const path = params.path;
 			const absPath = canonicalPath(cwd, path);
-			const input = params.input;
 
-			// No input → tell explicitly (distinguish legacy vs missing), don't silently degrade
-			if (typeof input !== "string" || input.trim() === "") {
-				return errResult(missingInputError(path, params as any));
+			if (!params.edits?.length) {
+				return errResult(`Edit ${path}: \`edits\` is empty or missing.`);
 			}
 			// withFileMutationQueue serializes read-modify-write for the same file, preventing parallel-edit data loss
-			return await withFileMutationQueue(absPath, () => runHashline(absPath, path, input, signal));
+			return await withFileMutationQueue(absPath, () => runHashline(absPath, path, params.edits, signal));
 		},
 	};
 }
 
-async function runHashline(absPath: string, displayPath: string, input: string, signal: AbortSignal | undefined) {
+async function runHashline(absPath: string, displayPath: string, editOps: readonly EditOpInput[], signal: AbortSignal | undefined) {
 	let currentText: string;
 	try {
 		currentText = (await readFile(absPath)).toString("utf-8");
@@ -188,13 +208,10 @@ async function runHashline(absPath: string, displayPath: string, input: string, 
 	// correctly without reading), naturally steering it to read first.
 	const snap: FileSnapshot = getSnapshot(absPath) ?? recordSnapshot(absPath, currentText);
 
-	// input has no file header; prepend one so parsePatch passes (path is just a label)
-	const parsed = parsePatch(`file: ${absPath}\n\n${input}`);
-	if (!parsed.ok) {
-		return errResult(errorText(parsed.error, displayPath));
-	}
+	const translated = toCoreEdits(editOps);
+	if (!translated.ok) return errResult(translated.error);
 
-	const result = applyEdits(currentText, parsed.patch.edits, snap);
+	const result = applyEdits(currentText, translated.edits, snap);
 	if (!result.ok) {
 		return errResult(errorText(result.error, displayPath));
 	}
@@ -214,15 +231,13 @@ async function runHashline(absPath: string, displayPath: string, input: string, 
 
 	return {
 		content: [
-			{ type: "text" as const, text: `Edited ${displayPath} (${parsed.patch.edits.length} op(s)).` },
+			{ type: "text" as const, text: `Edited ${displayPath} (${translated.edits.length} op(s)).` },
 		],
 		details: {
-			// details.diff must use pi's generateDiffString (+N content format); the built-in
-			// renderer's parseDiffLine only recognizes this format — core's standard unified diff
-			// would be grayed out as plain text
+			// details.diff must use pi's generateDiffString (+N content format) so the renderer colors it correctly
 			diff: generateDiffString(currentText, result.text),
 			patch: generateUnifiedPatch(displayPath, currentText, result.text),
-			firstChangedLine: minAnchorLine(parsed.patch.edits),
+			firstChangedLine: minAnchorLine(translated.edits),
 		},
 	};
 }
