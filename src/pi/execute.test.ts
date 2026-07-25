@@ -237,7 +237,7 @@ test("edit success: renderResult renders the diff without throwing", async () =>
 			edits: [{ op: "replace", anchor: h(text, 2), body: ["B"] }],
 		});
 		// @ts-ignore — drive the renderer with a stub theme
-		const comp: any = edit.renderResult(r, { isPartial: false, expanded: true }, stubTheme);
+		const comp: any = edit.renderResult({ content: r.content, details: r.details }, { isPartial: false, expanded: true }, stubTheme, { isError: r.isError ?? false });
 		assert.ok(typeof comp?.text === "string");
 		assert.ok(comp.text.includes("B"), "rendered diff should contain the new content");
 	});
@@ -253,7 +253,7 @@ test("edit error: renderResult renders the error line without throwing", async (
 		});
 		assert.equal(r.isError, true);
 		// @ts-ignore
-		const comp: any = edit.renderResult(r, { isPartial: false, expanded: false }, stubTheme);
+		const comp: any = edit.renderResult({ content: r.content, details: r.details }, { isPartial: false, expanded: false }, stubTheme, { isError: r.isError ?? false });
 		assert.ok(typeof comp?.text === "string");
 	});
 });

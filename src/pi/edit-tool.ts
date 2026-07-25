@@ -144,7 +144,7 @@ export function makeEditOverride(cwd: string) {
 			"A successful edit returns `Updated anchors` for the changed lines — use those (not stale line numbers) for the next edit to the same file; re-read only if you need lines outside that set.",
 		],
 		parameters: editSchema,
-		renderShell: "self" as const,
+		renderShell: "default" as const,
 
 		renderCall(args: Static<typeof editSchema>, theme: any) {
 			let text = theme.fg("toolTitle", theme.bold("edit "));
@@ -154,10 +154,10 @@ export function makeEditOverride(cwd: string) {
 			return new Text(text, 0, 0);
 		},
 
-		renderResult(result: any, { isPartial, expanded }: any, theme: any) {
+		renderResult(result: any, { isPartial, expanded }: any, theme: any, context: any) {
 			if (isPartial) return new Text(theme.fg("warning", "Editing…"), 0, 0);
 			const content = result.content?.[0];
-			if (result.isError) {
+			if (context.isError) {
 				const t = content?.type === "text" ? content.text.split("\n")[0] : "Error";
 				return new Text(theme.fg("error", t), 0, 0);
 			}
