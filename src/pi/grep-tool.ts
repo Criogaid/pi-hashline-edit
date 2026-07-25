@@ -160,11 +160,7 @@ export function makeGrepOverride(cwd: string) {
 			try {
 				isDir = (await stat(searchPath)).isDirectory();
 			} catch {
-				return {
-					isError: true as const,
-					content: [{ type: "text" as const, text: `Path not found: ${searchPath}` }],
-					details: undefined,
-				};
+				throw new Error(`Path not found: ${searchPath}`);
 			}
 
 			return new Promise((resolvePromise, reject) => {

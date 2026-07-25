@@ -112,7 +112,7 @@ function formatFailure(failure: ApplyFailure, path: string): string {
 	if (found) parts.push(`${found} rescued`);
 	if (ambiguous) parts.push(`${ambiguous} ambiguous`);
 	if (none) parts.push(`${none} need re-read`);
-	const brief = `Anchor mismatch (${failure.failures.length}): ${parts.join(", ")}.`;
+	const brief = `Anchor mismatch: ${parts.join(", ")}.`;
 	return `${brief}\n${lines.join("\n")}`;
 }
 
@@ -146,13 +146,16 @@ function toCoreEdits(ops: readonly EditOpInput[]): { ok: true; edits: Edit[] } |
 	return { ok: true, edits };
 }
 
-/** Build an error result (isError: true so the TUI/agent loop treats it as a failure). */
-function errResult(text: string) {
-	return {
-		isError: true as const,
-		content: [{ type: "text" as const, text }],
-		details: undefined,
-	};
+/**
+ * Fail the edit by throwing. pi's contract: a tool failure is signaled by throwing,
+ * not by returning `{ isError: true }` — the framework derives `context.isError` from
+ * whether execute threw, and overwrites `result.isError` with it
+ * (`updateResult({ ...result, isError: event.isError })`). Returning an isError object
+ * left the TUI rendering failures as success (green). The thrown message reaches the
+ * LLM verbatim; renderResult shows its first line in red.
+ */
+function errResult(text: string): never {
+	throw new Error(text);
 }
 
 /**

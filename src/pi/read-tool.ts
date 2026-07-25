@@ -11,7 +11,8 @@
 
 import { createReadTool } from "@earendil-works/pi-coding-agent";
 import { readFile } from "node:fs/promises";
-import { resolve } from "node:path";
+import { join, resolve } from "node:path";
+import { homedir } from "node:os";
 import { hashFileLines } from "../core/hash.ts";
 import { splitLines } from "../core/lines.ts";
 import { getState } from "./state.ts";
@@ -19,9 +20,21 @@ import { getState } from "./state.ts";
 const MAX_LINES = 2000;
 const MAX_BYTES = 256 * 1024;
 
-/** canonical path: shared by read/edit to resolve a file consistently. */
+/**
+ * Canonical absolute path: shared by read/edit/grep to resolve a file consistently.
+ * Expands a leading `~` / `~/` to the user's home directory. (`~user` is not supported.)
+ */
 export function canonicalPath(cwd: string, p: string): string {
-	return resolve(cwd, p);
+	return resolve(cwd, expandTilde(p));
+}
+
+/** Mirrors pi core's `normalizePath` tilde handling: expands `~` / `~/` (and `~\` on Windows), leaves `~user` untouched. */
+function expandTilde(p: string): string {
+	if (p === "~") return homedir();
+	if (p.startsWith("~/") || (process.platform === "win32" && p.startsWith("~\\"))) {
+		return join(homedir(), p.slice(2));
+	}
+	return p;
 }
 
 /** Build the read override (a ToolDefinition fragment for registerTool). */
