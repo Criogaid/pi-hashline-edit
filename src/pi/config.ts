@@ -15,9 +15,11 @@ export interface HashlineEditConfig {
 	enabled: boolean;
 	/** Line hash length (default 4). */
 	hashLen: number;
+	/** ±line radius for shifted-anchor recovery (default 15; 0 disables rescue). */
+	shiftRadius: number;
 }
 
-const DEFAULT_CONFIG: HashlineEditConfig = { enabled: true, hashLen: 4 };
+const DEFAULT_CONFIG: HashlineEditConfig = { enabled: true, hashLen: 4, shiftRadius: 15 };
 
 function getAgentDir(): string {
 	const envDir = process.env.PI_AGENT_DIR;
@@ -49,5 +51,9 @@ export function loadConfig(cwd?: string): HashlineEditConfig {
 			typeof raw.hashLen === "number" && raw.hashLen >= 2 && raw.hashLen <= 8
 				? raw.hashLen
 				: DEFAULT_CONFIG.hashLen,
+		shiftRadius:
+			typeof raw.shiftRadius === "number" && raw.shiftRadius >= 0 && raw.shiftRadius <= 100
+				? raw.shiftRadius
+				: DEFAULT_CONFIG.shiftRadius,
 	};
 }

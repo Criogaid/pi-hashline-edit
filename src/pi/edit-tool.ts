@@ -25,7 +25,7 @@ import { Text } from "@earendil-works/pi-tui";
 import { readFile, writeFile } from "node:fs/promises";
 import { applyEdits, hashFileLines } from "../core/index.ts";
 import { splitLines } from "../core/lines.ts";
-import type { Edit, PatchError } from "../core/types.ts";
+import type { ApplyFailure, Edit } from "../core/types.ts";
 import { canonicalPath } from "./read-tool.ts";
 import { getState } from "./state.ts";
 
@@ -61,16 +61,59 @@ const editSchema = Type.Object({
 
 type EditOpInput = Static<typeof editOpSchema>;
 
-/** Turn a PatchError into helpful hint text for the model. */
-function errorText(e: PatchError, path: string): string {
-	switch (e.kind) {
-		case "anchor":
-			return `Anchor mismatch: ${e.message}. Re-read ${path} to get current line hashes (LINE#HASH).`;
-		case "range":
-			return `Bad range: ${e.message}`;
-		case "noop":
-			return `Edit produced no change: ${e.message}`;
+/**
+ * Turn an ApplyFailure into LLM-facing text. The FIRST line is a terse summary
+ * (the TUI's renderResult shows only the first line of an error result); the
+ * remaining lines carry the structured detail the model needs to retry without a
+ * re-read — rescued anchors / ambiguous candidates / the cited line's live
+ * content. range/noop are already terse single-line messages.
+ */
+function formatFailure(failure: ApplyFailure, path: string): string {
+	if (failure.kind === "range") return failure.message;
+	if (failure.kind === "noop") return failure.message;
+
+	const lines: string[] = [];
+	let found = 0;
+	let ambiguous = 0;
+	let none = 0;
+	for (const f of failure.failures) {
+		const where = `op #${f.opIndex} ${f.op} ${f.which} (line ${f.cited.line})`;
+		switch (f.recovery.kind) {
+			case "found": {
+				found++;
+				lines.push(
+					`• ${where}: content shifted to line ${f.recovery.newLine}. Resend this op with ${f.which} { "line": ${f.recovery.newLine}, "hash": "${f.recovery.newHash}" }.`,
+				);
+				break;
+			}
+			case "ambiguous": {
+				ambiguous++;
+				const nums = f.recovery.candidates.map((c) => c.line).join(", ");
+				const list = f.recovery.candidates
+					.map((c) => `{ "line": ${c.line}, "hash": "${c.hash}" }`)
+					.join(" / ");
+				lines.push(
+					`• ${where}: ambiguous — same content at lines ${nums}. Pick the right one and resend ${f.which} ${list}.`,
+				);
+				break;
+			}
+			case "none": {
+				none++;
+				const cur =
+					f.current != null
+						? `current line ${f.cited.line}: ${f.cited.line}#${f.current.hash}│${f.current.content}`
+						: `line ${f.cited.line} is out of range`;
+				lines.push(`• ${where}: not found nearby — content changed. ${cur}. Re-read ${path} for fresh anchors.`);
+				break;
+			}
+		}
 	}
+	const parts: string[] = [];
+	if (found) parts.push(`${found} rescued`);
+	if (ambiguous) parts.push(`${ambiguous} ambiguous`);
+	if (none) parts.push(`${none} need re-read`);
+	const brief = `Anchor mismatch (${failure.failures.length}): ${parts.join(", ")}.`;
+	return `${brief}\n${lines.join("\n")}`;
 }
 
 /** Translate JSON edit ops into core Edit[]. Validates conditional required fields (anchor/body per op). */
@@ -198,7 +241,7 @@ export function makeEditOverride(cwd: string) {
 }
 
 async function runHashline(absPath: string, displayPath: string, editOps: readonly EditOpInput[], signal: AbortSignal | undefined) {
-	const hashLen = getState().config.hashLen;
+	const { hashLen, shiftRadius } = getState().config;
 
 	let currentText: string;
 	try {
@@ -214,11 +257,13 @@ async function runHashline(absPath: string, displayPath: string, editOps: readon
 	if (!translated.ok) return errResult(translated.error);
 
 	// Anchors are verified against the current content. A line that changed (or a
-	// hash the model didn't actually read) fails its own anchor — steering it to
-	// read first. Unrelated changes elsewhere never block the edit.
-	const result = applyEdits(currentText, translated.edits, hashLen);
+	// hash the model didn't actually read) fails its own anchor — but first we try
+	// shifted recovery: if the content merely moved within ±shiftRadius, a fresh
+	// anchor is returned so the model can retry without a re-read. All failures in
+	// the batch are collected (nothing written on any failure).
+	const result = applyEdits(currentText, translated.edits, hashLen, shiftRadius);
 	if (!result.ok) {
-		return errResult(errorText(result.error, displayPath));
+		return errResult(formatFailure(result.failure, displayPath));
 	}
 
 	// Check for cancel before write: if aborted, don't touch the disk; the file stays untouched

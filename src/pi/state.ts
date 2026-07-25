@@ -10,7 +10,7 @@
 import type { HashlineEditConfig } from "./config.ts";
 
 const GLOBAL_KEY = "__piHashlineEdit";
-const DEFAULT_CONFIG: HashlineEditConfig = { enabled: true, hashLen: 4 };
+const DEFAULT_CONFIG: HashlineEditConfig = { enabled: true, hashLen: 4, shiftRadius: 15 };
 
 export interface HashlineEditState {
 	config: HashlineEditConfig;

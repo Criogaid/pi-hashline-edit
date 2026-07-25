@@ -13,7 +13,7 @@ The built-in `edit` matches `oldText`/`newText` exactly. When the model can't re
 - **Unique-by-construction hashes** — the line number is folded into the hash, so identical lines (blank lines, `}`) never share a hash and never collide.
 - **Chain edits without re-reading** — a successful `edit` returns fresh anchors for the lines it produced, so the next edit cites them directly instead of forcing a full re-read.
 - **Surgical drift detection** — each cited anchor is rechecked against the current line only; an unrelated change elsewhere never blocks your edit.
-- **Fast-fail with clear guidance** — a bad anchor says "re-read to get the current #HASH", steering the model to act instead of guessing.
+- **Self-healing stale anchors** — a drifted anchor (content shifted by an edit above it) doesn't force a full re-read: the applicator rescans ±lines for the original content and hands back a fresh `LINE#HASH` to retry with, only asking for a re-read when the content genuinely changed.
 
 ## When to use it
 
@@ -36,6 +36,8 @@ Once hashline overrides the built-ins, a few things behave differently:
 - **Per-line hash + line number, dual anchor**: `read` shows each line as `3#aF3│code`; `edit` references `LINE#HASH`. The line number is the address; the hash is a checksum that the line at that address is still what was read.
 - **Line folded into the hash**: each line's hash mixes its 1-based line number into its content, so every line is unique by construction — no in-file collisions, no length extension. The hash changes only when the line's own content changes, never when a neighbor changes.
 - **Live, surgical verification**: at apply time each cited anchor's hash is recomputed from the current line content and compared — no stored snapshot, no whole-file stale check. A line that changed (or was misremembered) fails its own anchor; an unrelated change elsewhere never blocks the edit. No fuzzy matching, no boundary repair.
+- **Shifted-anchor recovery**: a mismatched anchor isn't a dead end. The applicator rescans ±`shiftRadius` lines for the original content — holding the original line number fixed and re-hashing each candidate (`hash(line, candidate) === cited` iff the candidate *is* the original) — and returns a ready-to-resend anchor on a unique hit, the candidate list when ambiguous, or the cited line's live content when nothing matches. The model retries without a re-read in the common drift case.
+- **Atomic batches, all failures collected**: every op in one `edit` is verified against the same snapshot; if any anchor fails, *all* failures (each with its recovery) are returned together and nothing is written — partial writes would shift lines and invalidate the very recovery info just returned.
 - **Chain edits without re-reading**: a successful `edit` returns `Updated anchors` for the lines it produced (and the line that shifted into a deletion gap), so the next edit can cite them directly.
 - **No legacy compatibility**: `edit` accepts only structured hashline ops; sending legacy `oldText`/`newText` is rejected at the schema layer (never silently degrades) — so you always know whether hashline is actually in use.
 
@@ -71,8 +73,9 @@ Add a `hashlineEdit` field to `~/.pi/agent/settings.json` (global) or `.pi/setti
 ```jsonc
 {
   "hashlineEdit": {
-    "enabled": true,   // set false to fall back to the built-in read/edit
-    "hashLen": 4       // hash length, 2–8 (default 4)
+    "enabled": true,     // set false to fall back to the built-in read/edit
+    "hashLen": 4,        // hash length, 2–8 (default 4)
+    "shiftRadius": 15    // ±lines scanned to rescue a stale anchor (default 15; 0 disables)
   }
 }
 ```
