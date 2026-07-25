@@ -1,6 +1,6 @@
 {
   "name": "@d3ara1n/pi-hashline-edit",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "type": "module",
   "description": "Hashline-style file editing for pi — line-anchored edits verified by content hash, replacing oldText/newText matching",
   "keywords": [
