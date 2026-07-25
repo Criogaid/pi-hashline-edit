@@ -18,10 +18,6 @@
  * - Content alone would leave identical lines (blank lines, `}`) sharing a
  *   hash; mixing the line number disambiguates them for free.
  *
- * Drift (file changed since read) is caught up-front by the global stale check
- * (`text !== snapshot.text`). This hash's job is to verify the model actually
- * read the line — it cannot forge a `(line, content)` hash without reading.
- *
  * @module pi-hashline-edit/core
  */
 
