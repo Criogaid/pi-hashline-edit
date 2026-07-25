@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { splitLines, joinLines, createSnapshot } from "./snapshot.ts";
+import { splitLines, joinLines, detectLineEnding } from "./lines.ts";
 
 test("splitLines edge cases", () => {
 	assert.deepEqual(splitLines(""), []);
@@ -23,19 +23,8 @@ test("joinLines restores line endings", () => {
 	assert.equal(joinLines(["a", "b"], "lf"), "a\nb\n");
 });
 
-test("createSnapshot records path/text/hashLen", () => {
-	const s = createSnapshot("f.ts", "a\nb\nc\n");
-	assert.equal(s.path, "f.ts");
-	assert.equal(s.text, "a\nb\nc\n");
-	assert.equal(s.lineHashes.length, 3);
-	assert.equal(s.hashLen, 4);
-});
-
-test("createSnapshot custom hashLen", () => {
-	assert.equal(createSnapshot("f", "a\n", 6).hashLen, 6);
-});
-
-test("createSnapshot records lineEnding", () => {
-	assert.equal(createSnapshot("f", "a\nb\n").lineEnding, "lf");
-	assert.equal(createSnapshot("f", "a\r\nb\r\n").lineEnding, "crlf");
+test("detectLineEnding", () => {
+	assert.equal(detectLineEnding("a\nb\n"), "lf");
+	assert.equal(detectLineEnding("a\r\nb\r\n"), "crlf");
+	assert.equal(detectLineEnding("a\nb\r\nc\n"), "crlf");
 });

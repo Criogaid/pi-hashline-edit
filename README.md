@@ -8,7 +8,8 @@ Edits reference lines by `LINE#HASH` anchors (copied from `read` output) instead
 
 - **Per-line hash + line number, dual anchor**: `read` shows each line with a short hash (`3#aF3│code`); `edit` references `LINE#HASH`. The line number is the address; the hash is a checksum that the line at that address is still what was read.
 - **Line + content hash**: each line's hash mixes its 1-based line number into its content, so every line gets a unique hash by construction — no in-file collisions, no length extension. The hash changes only when the line's own content changes, never when a neighbor changes.
-- **Strict core**: `apply` makes zero guesses and fails fast — a changed file is rejected (global stale check), a mismatched/missing anchor is rejected, an unchanged result is rejected. No fuzzy matching, no boundary repair, no drift relocation.
+- **Live, surgical verification**: at apply time each cited anchor's hash is recomputed from the CURRENT line content and compared — no stored snapshot, no whole-file stale check. A line that changed (or was misremembered) fails its own anchor; an unrelated change elsewhere never blocks the edit. No fuzzy matching, no boundary repair, no drift relocation.
+- **Chain edits without re-reading**: a successful `edit` returns `Updated anchors` (`LINE#HASH│`) for the lines it produced (and the line that shifted into a deletion gap), so the next edit to the same file can cite them directly.
 - **No legacy compatibility**: overrides the built-in `edit`/`read`. `edit` accepts only structured hashline ops; sending legacy `oldText`/`newText` is rejected at the schema layer (never silently degrades) — so you always know whether hashline is actually in use.
 
 ## Protocol

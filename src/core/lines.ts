@@ -1,22 +1,16 @@
 /**
- * File snapshot: original text + per-line hash recorded at read time.
+ * Line text helpers: split/join with CRLF normalization and line-ending
+ * detection.
  *
- * At apply time the snapshot backs two checks: a global stale check
- * (`current text === snapshot.text`) and a per-line hash match at the cited
- * line. Both live in `apply.ts`; this module only builds snapshots and the line
- * helpers they depend on.
- *
- * CRLF: splitLines normalizes by stripping the trailing `\r` from each line
- * (hashes are based on clean lines, matching the `\r`-free content the model
- * copies from the display); createSnapshot records the original line ending,
- * and joinLines restores it per the recorded ending — guaranteeing a CRLF file
- * keeps its line endings after edit.
+ * CRLF: splitLines strips the trailing `\r` from each line (hashes are based on
+ * clean lines, matching the `\r`-free content the model copies from the
+ * display); detectLineEnding records the original ending so joinLines can
+ * restore it — guaranteeing a CRLF file keeps its endings after edit.
  *
  * @module pi-hashline-edit/core
  */
 
-import { hashFileLines } from "./hash.ts";
-import type { FileSnapshot, LineEnding } from "./types.ts";
+import type { LineEnding } from "./types.ts";
 
 /**
  * Split text into lines, stripping the trailing `\r` of each line (CRLF
@@ -45,11 +39,4 @@ export function joinLines(lines: readonly string[], ending: LineEnding = "lf"): 
 	if (lines.length === 0) return "";
 	const sep = ending === "crlf" ? "\r\n" : "\n";
 	return lines.join(sep) + sep;
-}
-
-/** Create a snapshot for a file: record original text + line ending + per-line hash. */
-export function createSnapshot(path: string, text: string, len = 4): FileSnapshot {
-	const lines = splitLines(text);
-	const lineHashes = hashFileLines(lines, len);
-	return { path, lineHashes, text, hashLen: len, lineEnding: detectLineEnding(text) };
 }

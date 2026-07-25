@@ -1,10 +1,17 @@
 /**
  * Override edit: hashline ops via structured `edits` (LINE#HASH anchors).
  *
- * Each op in `edits` references line anchors from the latest read; the core
- * apply verifies hashes. Legacy oldText/newText is not accepted — the schema
- * requires an `op` discriminator, so legacy payloads are rejected at the schema
- * layer (a visible failure, never a silent degradation).
+ * Each op in `edits` references line anchors copied from read output (or from a
+ * prior edit's "Updated anchors"). The core verifies each anchor live against
+ * the current file content — no snapshot, no global stale check: a cited line
+ * that changed (or was misremembered) fails its own anchor; unchanged lines
+ * elsewhere never block the edit. Legacy oldText/newText is not accepted — the
+ * schema requires an `op` discriminator, so legacy payloads are rejected at the
+ * schema layer (a visible failure, never a silent degradation).
+ *
+ * On success the result carries fresh `LINE#HASH` anchors for the lines this
+ * edit produced (and the line that shifted into a deletion gap), so the model
+ * can chain edits without a re-read.
  *
  * Concurrency safety: read-modify-write is wrapped in withFileMutationQueue.
  * AbortSignal is honored — checked after read / before write.
@@ -16,10 +23,14 @@ import { createEditTool, generateDiffString, generateUnifiedPatch, withFileMutat
 import { Type, type Static } from "typebox";
 import { Text } from "@earendil-works/pi-tui";
 import { readFile, writeFile } from "node:fs/promises";
-import { applyEdits } from "../core/index.ts";
-import type { Edit, FileSnapshot, PatchError } from "../core/types.ts";
+import { applyEdits, hashFileLines } from "../core/index.ts";
+import { splitLines } from "../core/lines.ts";
+import type { Edit, PatchError } from "../core/types.ts";
 import { canonicalPath } from "./read-tool.ts";
-import { getState, getSnapshot, putSnapshot, recordSnapshot } from "./state.ts";
+import { getState } from "./state.ts";
+
+/** Cap on the number of updated anchors returned inline (bounds token cost for large inserts). */
+const MAX_ANCHOR_LINES = 40;
 
 const anchorSchema = Type.Object({
 	line: Type.Number({ description: "1-based line number" }),
@@ -45,7 +56,7 @@ const editOpSchema = Type.Object({
 
 const editSchema = Type.Object({
 	path: Type.String({ description: "Path to the file to edit (relative or absolute)" }),
-	edits: Type.Array(editOpSchema, { description: "Hashline ops, each referencing LINE#HASH anchors from your latest read" }),
+	edits: Type.Array(editOpSchema, { description: "Hashline ops, each referencing LINE#HASH anchors from your latest read or edit result" }),
 });
 
 type EditOpInput = Static<typeof editOpSchema>;
@@ -53,8 +64,6 @@ type EditOpInput = Static<typeof editOpSchema>;
 /** Turn a PatchError into helpful hint text for the model. */
 function errorText(e: PatchError, path: string): string {
 	switch (e.kind) {
-		case "stale":
-			return `File ${path} changed since your last read. Re-read it before editing.`;
 		case "anchor":
 			return `Anchor mismatch: ${e.message}. Re-read ${path} to get current line hashes (LINE#HASH).`;
 		case "range":
@@ -103,6 +112,21 @@ function errResult(text: string) {
 	};
 }
 
+/**
+ * Format the updated anchors (fresh LINE#HASH│content) for the touched new-file
+ * lines, so the model can chain edits without a re-read. Capped to bound tokens.
+ */
+function formatUpdatedAnchors(newText: string, touched: readonly number[], hashLen: number): string {
+	const newLines = splitLines(newText);
+	const newHashes = hashFileLines(newLines, hashLen);
+	const idxs = [...new Set(touched)].sort((a, b) => a - b);
+	if (idxs.length === 0) return "";
+	const rows = idxs.map((i) => `${i + 1}#${newHashes[i]}│${newLines[i]}`);
+	const shown = rows.length > MAX_ANCHOR_LINES ? rows.slice(0, MAX_ANCHOR_LINES) : rows;
+	const more = rows.length > MAX_ANCHOR_LINES ? `\n… (${rows.length - MAX_ANCHOR_LINES} more; re-read for full anchors)` : "";
+	return `\nUpdated anchors (use these for the next edit):\n${shown.join("\n")}${more}`;
+}
+
 export function makeEditOverride(cwd: string) {
 	const builtin = createEditTool(cwd);
 
@@ -110,14 +134,14 @@ export function makeEditOverride(cwd: string) {
 		name: "edit" as const,
 		label: "edit",
 		description:
-			"Edit a file via hashline ops (LINE#HASH anchors, content-verified). Each op in `edits` references line anchors from your latest read.",
+			"Edit a file via hashline ops (LINE#HASH anchors, content-verified). Each op in `edits` references line anchors from your latest read or edit result.",
 		promptSnippet: "Edit files via hashline ops (edits[] with LINE#HASH anchors from read)",
 		promptGuidelines: [
 			"Pass `edits`: an array of ops. Each op = {op, anchor?, end?, body?}.",
 			"op ∈ replace | delete | insert_after | insert_before | append | prepend.",
-			"anchor & end = {line, hash} copied from your latest read (the `#HASH` after each line number). replace/delete take anchor (+ optional end for a range); insert_after/insert_before take anchor; append/prepend take neither.",
+			"anchor & end = {line, hash} copied from your latest read or edit result (the `#HASH` after each line number). replace/delete take anchor (+ optional end for a range); insert_after/insert_before take anchor; append/prepend take neither.",
 			"body = string[] of new content lines (required for replace/insert/append/prepend; omit for delete).",
-			"After each successful edit, re-ground: line numbers shift, so take the next edit's anchors from a fresh read.",
+			"A successful edit returns `Updated anchors` for the changed lines — use those (not stale line numbers) for the next edit to the same file; re-read only if you need lines outside that set.",
 		],
 		parameters: editSchema,
 		renderShell: "self" as const,
@@ -174,6 +198,8 @@ export function makeEditOverride(cwd: string) {
 }
 
 async function runHashline(absPath: string, displayPath: string, editOps: readonly EditOpInput[], signal: AbortSignal | undefined) {
+	const hashLen = getState().config.hashLen;
+
 	let currentText: string;
 	try {
 		currentText = (await readFile(absPath)).toString("utf-8");
@@ -184,15 +210,13 @@ async function runHashline(absPath: string, displayPath: string, editOps: readon
 	// Check for cancel after read: if the user aborted, don't proceed to parse/apply; the file stays untouched
 	if (signal?.aborted) return errResult(`Edit ${displayPath} aborted before apply.`);
 
-	// Use the recorded snapshot, or if there is none (the model didn't read) build one from the
-	// current file — anchor verification still forces the model to use a real hash (it can't guess
-	// correctly without reading), naturally steering it to read first.
-	const snap: FileSnapshot = getSnapshot(absPath) ?? recordSnapshot(absPath, currentText);
-
 	const translated = toCoreEdits(editOps);
 	if (!translated.ok) return errResult(translated.error);
 
-	const result = applyEdits(currentText, translated.edits, snap);
+	// Anchors are verified against the current content. A line that changed (or a
+	// hash the model didn't actually read) fails its own anchor — steering it to
+	// read first. Unrelated changes elsewhere never block the edit.
+	const result = applyEdits(currentText, translated.edits, hashLen);
 	if (!result.ok) {
 		return errResult(errorText(result.error, displayPath));
 	}
@@ -207,9 +231,6 @@ async function runHashline(absPath: string, displayPath: string, editOps: readon
 		return errResult(`Error writing ${displayPath}: ${msg}`);
 	}
 
-	// Update the snapshot: consecutive edits need no re-read (result.newSnapshot is based on the new text), via LRU
-	putSnapshot(absPath, result.newSnapshot);
-
 	// pi's generateDiffString returns the display diff (colored by the renderer) and the first changed line
 	const { diff, firstChangedLine } = generateDiffString(currentText, result.text);
 	const details: EditToolDetails = {
@@ -217,8 +238,9 @@ async function runHashline(absPath: string, displayPath: string, editOps: readon
 		patch: generateUnifiedPatch(displayPath, currentText, result.text),
 		firstChangedLine,
 	};
+	const anchors = formatUpdatedAnchors(result.text, result.touchedLines, hashLen);
 	return {
-		content: [{ type: "text" as const, text: `Edited ${displayPath} (${translated.edits.length} op(s)).` }],
+		content: [{ type: "text" as const, text: `Edited ${displayPath} (${translated.edits.length} op(s)).${anchors}` }],
 		details,
 	};
 }

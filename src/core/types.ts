@@ -13,7 +13,7 @@ export interface Anchor {
 /**
  * Edit operation. Every line-numbered op references a line via {@link Anchor} —
  * the line number is the address, the hash a checksum that the line at that
- * address is still what was read; both must match the snapshot at once.
+ * address is still what was read; both must match at apply time.
  */
 export type Edit =
 	| { readonly op: "replace"; readonly start: Anchor; readonly end?: Anchor; readonly body: string[] }
@@ -25,22 +25,9 @@ export type Edit =
 
 export type LineEnding = "lf" | "crlf";
 
-/** File snapshot: original text recorded at read time + per-line hash. */
-export interface FileSnapshot {
-	readonly path: string;
-	/** `lineHashes[i]` = hash of line (i+1); length always equals the file's line count. */
-	readonly lineHashes: readonly string[];
-	readonly text: string;
-	/** Hash length used when generating lineHashes; apply reuses it for the new snapshot. */
-	readonly hashLen: number;
-	/** Original file line ending (lf/crlf); apply restores it so a CRLF file keeps its endings. */
-	readonly lineEnding: LineEnding;
-}
-
 /** Error kinds. */
 export type PatchErrorKind =
-	| "stale" // file changed (current text !== snapshot.text)
-	| "anchor" // anchor hash does not match the snapshot (model misremembered) or line out of range
+	| "anchor" // anchor hash does not match the current line content (line changed, or model misremembered) or line out of range
 	| "range" // illegal operation range (overlap, reverse order, etc.)
 	| "noop"; // edit produced no change (body byte-identical to the target)
 
@@ -49,12 +36,17 @@ export interface PatchError {
 	readonly message: string;
 }
 
-/** Apply result. */
+/**
+ * Apply result. On success, `touchedLines` lists the 0-based line indices in
+ * the NEW file that this edit produced (inserted or replaced) — callers use it
+ * to surface fresh `LINE#HASH` anchors so the model can chain edits without a
+ * re-read.
+ */
 export type ApplyResult =
 	| {
 			readonly ok: true;
 			readonly text: string;
-			readonly newSnapshot: FileSnapshot;
 			readonly changed: boolean;
+			readonly touchedLines: readonly number[];
 	  }
 	| { readonly ok: false; readonly error: PatchError };

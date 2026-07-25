@@ -9,5 +9,5 @@
 
 export * from "./types.ts";
 export { computeLineHash, hashFileLines } from "./hash.ts";
-export { splitLines, joinLines, createSnapshot } from "./snapshot.ts";
+export { splitLines, joinLines, detectLineEnding } from "./lines.ts";
 export { applyEdits } from "./apply.ts";

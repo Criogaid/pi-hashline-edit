@@ -1,7 +1,10 @@
 /**
- * Override read: text files output "lineNo#hash│content" and record a snapshot;
- * non-text (images/binary) and read errors delegate to the built-in read, whose
- * renderer is inherited automatically.
+ * Override read: text files output "lineNo#hash│content"; non-text (images /
+ * binary) and read errors delegate to the built-in read.
+ *
+ * Hashes are computed from the current content on the fly — nothing is stored.
+ * The hash is `(line number, content)`, recomputed and checked at edit time, so
+ * no snapshot is needed to verify an anchor later.
  *
  * @module pi-hashline-edit/pi
  */
@@ -9,13 +12,14 @@
 import { createReadTool } from "@earendil-works/pi-coding-agent";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
-import { splitLines } from "../core/snapshot.ts";
-import { getState, recordSnapshot } from "./state.ts";
+import { hashFileLines } from "../core/hash.ts";
+import { splitLines } from "../core/lines.ts";
+import { getState } from "./state.ts";
 
 const MAX_LINES = 2000;
 const MAX_BYTES = 256 * 1024;
 
-/** canonical path: shared by read/edit to keep the snapshot key consistent. */
+/** canonical path: shared by read/edit to resolve a file consistently. */
 export function canonicalPath(cwd: string, p: string): string {
 	return resolve(cwd, p);
 }
@@ -55,9 +59,7 @@ export function makeReadOverride(cwd: string) {
 			const text = buf.toString("utf-8");
 			const allLines = splitLines(text);
 			const totalLines = allLines.length;
-
-			// record a full-file snapshot (edit anchors are based on full-file line numbers)
-			const snap = recordSnapshot(absPath, text);
+			const hashes = hashFileLines(allLines, getState().config.hashLen);
 
 			// offset/limit
 			const offset = (params.offset as number | undefined) ?? 1;
@@ -70,7 +72,7 @@ export function makeReadOverride(cwd: string) {
 			let truncated = false;
 			for (let i = startIdx; i < endIdx; i++) {
 				const lineNo = i + 1;
-				const row = `${lineNo}#${snap.lineHashes[i]}│${allLines[i]}`;
+				const row = `${lineNo}#${hashes[i]}│${allLines[i]}`;
 				bytes += Buffer.byteLength(row, "utf-8");
 				if (bytes > MAX_BYTES) {
 					truncated = true;
