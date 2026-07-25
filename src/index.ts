@@ -14,6 +14,7 @@ import { loadConfig } from "./pi/config.ts";
 import { getState } from "./pi/state.ts";
 import { makeEditOverride } from "./pi/edit-tool.ts";
 import { makeReadOverride } from "./pi/read-tool.ts";
+import { makeGrepOverride } from "./pi/grep-tool.ts";
 
 export default function (pi: ExtensionAPI) {
 	const cwd = process.cwd();
@@ -26,4 +27,5 @@ export default function (pi: ExtensionAPI) {
 
 	pi.registerTool(makeReadOverride(cwd));
 	pi.registerTool(makeEditOverride(cwd));
+	pi.registerTool(makeGrepOverride(cwd));
 }
