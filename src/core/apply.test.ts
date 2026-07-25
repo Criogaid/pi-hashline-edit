@@ -83,13 +83,12 @@ test("multiple out-of-order ops → applied at the right positions", () => {
 	if (r.ok) assert.equal(r.text, "A\nb\nc\nz\n");
 });
 
-test("result carries diff and newSnapshot", () => {
+test("result carries newSnapshot", () => {
 	const text = "a\nb\n";
 	const s = snap(text);
 	const r = applyEdits(text, [{ op: "replace", start: ln(s, 1), body: ["A"] }], s);
 	assert.equal(r.ok, true);
 	if (r.ok) {
-		assert.ok(r.diff.includes("@@"));
 		assert.equal(r.newSnapshot.text, "A\nb\n");
 		assert.equal(r.newSnapshot.lineHashes.length, 2);
 	}

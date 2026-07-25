@@ -1,10 +1,10 @@
 /**
- * File snapshot and anchor verification.
+ * File snapshot: original text + per-line hash recorded at read time.
  *
- * A snapshot records the original text + per-line hash at read time; at apply
- * time it verifies "current file == snapshot" (stale check) and that each
- * anchor's hash matches its line number (guards against the model
- * misremembering).
+ * At apply time the snapshot backs two checks: a global stale check
+ * (`current text === snapshot.text`) and a per-line hash match at the cited
+ * line. Both live in `apply.ts`; this module only builds snapshots and the line
+ * helpers they depend on.
  *
  * CRLF: splitLines normalizes by stripping the trailing `\r` from each line
  * (hashes are based on clean lines, matching the `\r`-free content the model
@@ -16,7 +16,7 @@
  */
 
 import { hashFileLines } from "./hash.ts";
-import type { Anchor, FileSnapshot, LineEnding } from "./types.ts";
+import type { FileSnapshot, LineEnding } from "./types.ts";
 
 /**
  * Split text into lines, stripping the trailing `\r` of each line (CRLF
@@ -47,38 +47,9 @@ export function joinLines(lines: readonly string[], ending: LineEnding = "lf"): 
 	return lines.join(sep) + sep;
 }
 
-/** Create a snapshot for a file: record original text + line ending + per-line context-aware hash. */
+/** Create a snapshot for a file: record original text + line ending + per-line hash. */
 export function createSnapshot(path: string, text: string, len = 4): FileSnapshot {
 	const lines = splitLines(text);
 	const lineHashes = hashFileLines(lines, len);
 	return { path, lineHashes, text, hashLen: len, lineEnding: detectLineEnding(text) };
-}
-
-/** Anchor verification result. */
-export type AnchorVerifyResult =
-	| { readonly ok: true; readonly line: number }
-	| {
-			readonly ok: false;
-			readonly error: "hash_not_found" | "line_mismatch" | "collision";
-			/** Line number(s) where the hash actually appears (1-based). */
-			readonly found?: readonly number[];
-	  };
-
-/**
- * Verify an anchor against the snapshot.
- *
- * - hash is unique and the line number matches → `ok`
- * - hash is unique but the line number differs → `line_mismatch` (`found` gives the real line number; drift, handled by the relocate middleware)
- * - hash appears at multiple lines → `collision` (`found` gives all positions)
- * - hash does not exist → `hash_not_found` (file changed, needs re-read)
- */
-export function verifyAnchor(snapshot: FileSnapshot, anchor: Anchor): AnchorVerifyResult {
-	const found: number[] = [];
-	for (let i = 0; i < snapshot.lineHashes.length; i++) {
-		if (snapshot.lineHashes[i] === anchor.hash) found.push(i + 1);
-	}
-	if (found.length === 0) return { ok: false, error: "hash_not_found" };
-	if (found.length > 1) return { ok: false, error: "collision", found };
-	if (found[0] !== anchor.line) return { ok: false, error: "line_mismatch", found };
-	return { ok: true, line: anchor.line };
 }

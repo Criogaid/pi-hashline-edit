@@ -10,7 +10,7 @@ import { createReadTool } from "@earendil-works/pi-coding-agent";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { splitLines } from "../core/snapshot.ts";
-import { getState, getSnapshot, recordSnapshot } from "./state.ts";
+import { getState, recordSnapshot } from "./state.ts";
 
 const MAX_LINES = 2000;
 const MAX_BYTES = 256 * 1024;
@@ -90,9 +90,4 @@ export function makeReadOverride(cwd: string) {
 			};
 		},
 	};
-}
-
-/** Reused by the edit override: look up a recorded snapshot for a path (by canonical path). */
-export function lookupSnapshot(cwd: string, p: string) {
-	return getSnapshot(canonicalPath(cwd, p));
 }

@@ -2,9 +2,9 @@
  * pi-hashline-edit extension entry.
  *
  * Overrides the built-in read/edit: read outputs "lineNo#hash│content" and
- * records a snapshot; edit accepts only a hashline patch (LINE#HASH anchors),
- * and legacy oldText/newText is rejected explicitly (no silent degradation).
- * The renderer is inherited from the built-in automatically.
+ * records a snapshot; edit accepts structured hashline ops (edits[] with
+ * LINE#HASH anchors), and legacy oldText/newText is rejected explicitly (no
+ * silent degradation). Each tool carries its own renderer.
  *
  * @module pi-hashline-edit
  */

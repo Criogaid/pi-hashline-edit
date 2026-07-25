@@ -9,9 +9,5 @@
 
 export * from "./types.ts";
 export { computeLineHash, hashFileLines } from "./hash.ts";
-export { splitLines, joinLines, createSnapshot, verifyAnchor } from "./snapshot.ts";
-export type { AnchorVerifyResult } from "./snapshot.ts";
-export { parsePatch } from "./parse.ts";
-export type { ParseResult } from "./parse.ts";
+export { splitLines, joinLines, createSnapshot } from "./snapshot.ts";
 export { applyEdits } from "./apply.ts";
-export { buildDiff } from "./diff.ts";

@@ -12,7 +12,7 @@
  * @module pi-hashline-edit/pi
  */
 
-import { createEditTool, generateDiffString, generateUnifiedPatch, withFileMutationQueue } from "@earendil-works/pi-coding-agent";
+import { createEditTool, generateDiffString, generateUnifiedPatch, withFileMutationQueue, type EditToolDetails } from "@earendil-works/pi-coding-agent";
 import { Type, type Static } from "typebox";
 import { Text } from "@earendil-works/pi-tui";
 import { readFile, writeFile } from "node:fs/promises";
@@ -57,30 +57,11 @@ function errorText(e: PatchError, path: string): string {
 			return `File ${path} changed since your last read. Re-read it before editing.`;
 		case "anchor":
 			return `Anchor mismatch: ${e.message}. Re-read ${path} to get current line hashes (LINE#HASH).`;
-		case "collision":
-			return `Hash collision: ${e.message}. Re-read ${path}.`;
 		case "range":
 			return `Bad range: ${e.message}`;
 		case "noop":
 			return `Edit produced no change: ${e.message}`;
-		case "parse":
-			return `Parse error${e.line ? ` at line ${e.line}` : ""}: ${e.message}`;
 	}
-}
-
-/** Get the first changed line after applying (for firstChangedLine / TUI jump). insert_after uses anchor + 1. */
-function minAnchorLine(edits: readonly Edit[]): number | undefined {
-	let min: number | undefined;
-	for (const e of edits) {
-		let line: number | undefined;
-		if (e.op === "replace" || e.op === "delete") line = e.start.line;
-		else if (e.op === "insert_after") line = e.anchor.line + 1;
-		else if (e.op === "insert_before") line = e.anchor.line;
-		else if (e.op === "prepend") line = 1;
-		// append has no anchor, skip (trailing append)
-		if (line !== undefined && (min === undefined || line < min)) min = line;
-	}
-	return min;
 }
 
 /** Translate JSON edit ops into core Edit[]. Validates conditional required fields (anchor/body per op). */
@@ -229,15 +210,15 @@ async function runHashline(absPath: string, displayPath: string, editOps: readon
 	// Update the snapshot: consecutive edits need no re-read (result.newSnapshot is based on the new text), via LRU
 	putSnapshot(absPath, result.newSnapshot);
 
+	// pi's generateDiffString returns the display diff (colored by the renderer) and the first changed line
+	const { diff, firstChangedLine } = generateDiffString(currentText, result.text);
+	const details: EditToolDetails = {
+		diff,
+		patch: generateUnifiedPatch(displayPath, currentText, result.text),
+		firstChangedLine,
+	};
 	return {
-		content: [
-			{ type: "text" as const, text: `Edited ${displayPath} (${translated.edits.length} op(s)).` },
-		],
-		details: {
-			// details.diff must use pi's generateDiffString (+N content format) so the renderer colors it correctly
-			diff: generateDiffString(currentText, result.text),
-			patch: generateUnifiedPatch(displayPath, currentText, result.text),
-			firstChangedLine: minAnchorLine(translated.edits),
-		},
+		content: [{ type: "text" as const, text: `Edited ${displayPath} (${translated.edits.length} op(s)).` }],
+		details,
 	};
 }

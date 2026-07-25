@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { splitLines, joinLines, createSnapshot, verifyAnchor } from "./snapshot.ts";
+import { splitLines, joinLines, createSnapshot } from "./snapshot.ts";
 
 test("splitLines edge cases", () => {
 	assert.deepEqual(splitLines(""), []);
@@ -38,23 +38,4 @@ test("createSnapshot custom hashLen", () => {
 test("createSnapshot records lineEnding", () => {
 	assert.equal(createSnapshot("f", "a\nb\n").lineEnding, "lf");
 	assert.equal(createSnapshot("f", "a\r\nb\r\n").lineEnding, "crlf");
-});
-
-test("verifyAnchor match", () => {
-	const s = createSnapshot("f", "a\nb\n");
-	assert.deepEqual(verifyAnchor(s, { line: 2, hash: s.lineHashes[1] }), { ok: true, line: 2 });
-});
-
-test("verifyAnchor hash_not_found", () => {
-	const s = createSnapshot("f", "a\nb\n");
-	const r = verifyAnchor(s, { line: 1, hash: "ZZZZ" });
-	assert.equal(r.ok, false);
-	if (!r.ok) assert.equal(r.error, "hash_not_found");
-});
-
-test("verifyAnchor line_mismatch (drift)", () => {
-	const s = createSnapshot("f", "a\nb\n");
-	const r = verifyAnchor(s, { line: 1, hash: s.lineHashes[1] });
-	assert.equal(r.ok, false);
-	if (!r.ok) assert.equal(r.error, "line_mismatch");
 });

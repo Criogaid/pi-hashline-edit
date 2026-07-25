@@ -2,11 +2,10 @@
  * Pure-function applicator: applies edits to the file backing a snapshot.
  *
  * Strict semantics:
- * - Requires the current `text === snapshot.text` (stale check); drift is
- *   handled by the `transforms/relocate` middleware before calling apply — pure
- *   apply does not guess.
- * - Each anchor's hash must match its corresponding line in the snapshot
- *   (guards against the model misremembering line numbers / hashes).
+ * - Requires the current `text === snapshot.text` (stale check); pure apply
+ *   does not guess — a changed file is rejected.
+ * - Each anchor's hash must match the snapshot at the cited line (guards
+ *   against the model misremembering line numbers / hashes).
  * - Operation ranges must not overlap (including the same insertion point).
  * - body byte-identical to the target → `noop` error (guides the model to
  *   investigate the bug rather than blindly retry).
@@ -14,9 +13,9 @@
  * @module pi-hashline-edit/core
  */
 
-import { buildDiff } from "./diff.ts";
 import { createSnapshot, joinLines, splitLines } from "./snapshot.ts";
 import type { ApplyResult, Edit, FileSnapshot, PatchError } from "./types.ts";
+
 
 /** Line-level operation: replace the raw lines in the `[lo, hi)` range (0-based, hi exclusive) with newLines. */
 interface SpanOp {
@@ -148,6 +147,5 @@ export function applyEdits(text: string, edits: Edit[], snapshot: FileSnapshot):
 	}
 
 	const newSnapshot = createSnapshot(snapshot.path, newText, snapshot.hashLen);
-	const diff = buildDiff(snapshot.path, lines, sorted);
-	return { ok: true, text: newText, newSnapshot, changed: true, diff };
+	return { ok: true, text: newText, newSnapshot, changed: true };
 }

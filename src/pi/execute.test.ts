@@ -149,3 +149,69 @@ test("edit execute: delete op", async () => {
 		assert.equal(await readFile(f, "utf-8"), "a\nc\n");
 	});
 });
+
+// --- renderer regression guards (P0: details.diff must be a string, renderResult must not throw) ---
+
+const stubTheme = { fg: (_k: string, s: string) => s, bold: (s: string) => s };
+
+test("edit success: details.diff is a string (not the generateDiffString object)", async () => {
+	await withDir(async (dir) => {
+		const f = join(dir, "f.txt");
+		await writeFile(f, "a\nb\nc\n");
+		await call(makeReadOverride(dir), { path: "f.txt" });
+		const snap = getSnapshot(f)!;
+		const r: any = await call(makeEditOverride(dir), {
+			path: "f.txt",
+			edits: [{ op: "replace", anchor: { line: 2, hash: snap.lineHashes[1] }, body: ["B"] }],
+		});
+		assert.equal(typeof r.details.diff, "string", "details.diff must be a string");
+		assert.equal(typeof r.details.patch, "string");
+		assert.equal(typeof r.details.firstChangedLine, "number");
+	});
+});
+
+test("edit success: renderResult renders the diff without throwing", async () => {
+	await withDir(async (dir) => {
+		const f = join(dir, "f.txt");
+		await writeFile(f, "a\nb\nc\n");
+		await call(makeReadOverride(dir), { path: "f.txt" });
+		const snap = getSnapshot(f)!;
+		const edit = makeEditOverride(dir);
+		const r: any = await call(edit, {
+			path: "f.txt",
+			edits: [{ op: "replace", anchor: { line: 2, hash: snap.lineHashes[1] }, body: ["B"] }],
+		});
+		// @ts-ignore — drive the renderer with a stub theme
+		const comp: any = edit.renderResult(r, { isPartial: false, expanded: true }, stubTheme);
+		assert.ok(typeof comp?.text === "string");
+		assert.ok(comp.text.includes("B"), "rendered diff should contain the new content");
+	});
+});
+
+test("edit error: renderResult renders the error line without throwing", async () => {
+	await withDir(async (dir) => {
+		await writeFile(join(dir, "f.txt"), "a\n");
+		const edit = makeEditOverride(dir);
+		const r: any = await call(edit, {
+			path: "f.txt",
+			edits: [{ op: "replace", anchor: { line: 1, hash: "XXXX" }, body: ["A"] }],
+		});
+		assert.equal(r.isError, true);
+		// @ts-ignore
+		const comp: any = edit.renderResult(r, { isPartial: false, expanded: false }, stubTheme);
+		assert.ok(typeof comp?.text === "string");
+	});
+});
+
+test("hash length stays 4 even for runs of identical lines (no explosion)", async () => {
+	await withDir(async (dir) => {
+		const f = join(dir, "f.txt");
+		await writeFile(f, "\n\n\n\ncode\n");
+		const r: any = await call(makeReadOverride(dir), { path: "f.txt" });
+		const text: string = r.content[0].text;
+		// every "#HASH│" anchor in the output must use a 4-char hash
+		for (const m of text.matchAll(/\d+#([0-9A-Z]+)│/g)) {
+			assert.equal(m[1].length, 4, `anchor ${m[0]} hash is not 4 chars`);
+		}
+	});
+});

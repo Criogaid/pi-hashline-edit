@@ -6,10 +6,10 @@ Edits reference lines by `LINE#HASH` anchors (copied from `read` output) instead
 
 ## Design
 
-- **Per-line hash + line number, dual anchor**: `read` shows each line with a short hash (`3#aF3│code`); `edit` references `LINE#HASH`. The line number is for humans, the hash for the machine — naturally resilient to line drift.
-- **Context-aware hash**: each line's hash incorporates its neighbors, so identical lines (blank lines, `}`) get different hashes when their context differs — in-file collisions approach zero.
-- **Strict core + pluggable tolerance**: the core `parse → apply` makes zero guesses and fails fast; tolerance (boundary repair, drift relocation, block ops) is layered as independently toggleable middleware.
-- **No legacy compatibility**: overrides the built-in `edit`/`read`. `edit` accepts only the hashline `input`; sending legacy `oldText`/`newText` returns an explicit error (never silently degrades) — so you always know whether hashline is actually in use.
+- **Per-line hash + line number, dual anchor**: `read` shows each line with a short hash (`3#aF3│code`); `edit` references `LINE#HASH`. The line number is the address; the hash is a checksum that the line at that address is still what was read.
+- **Line + content hash**: each line's hash mixes its 1-based line number into its content, so every line gets a unique hash by construction — no in-file collisions, no length extension. The hash changes only when the line's own content changes, never when a neighbor changes.
+- **Strict core**: `apply` makes zero guesses and fails fast — a changed file is rejected (global stale check), a mismatched/missing anchor is rejected, an unchanged result is rejected. No fuzzy matching, no boundary repair, no drift relocation.
+- **No legacy compatibility**: overrides the built-in `edit`/`read`. `edit` accepts only structured hashline ops; sending legacy `oldText`/`newText` is rejected at the schema layer (never silently degrades) — so you always know whether hashline is actually in use.
 
 ## Protocol
 

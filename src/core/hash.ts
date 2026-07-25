@@ -1,11 +1,26 @@
 /**
- * Per-line context-aware hash.
+ * Per-line content hash.
  *
- * Each line's hash is computed by concatenating "previous line + this line +
- * next line", so identical content lines (blank lines, `}`, `return`) get
- * different hashes due to different neighbors, making in-file collisions
- * effectively zero. Residual collisions are resolved by {@link hashFileLines}
- * via automatic length extension (per-file zero-collision guarantee).
+ * The hash mixes the 1-based line number into the line content, so every line
+ * gets a unique hash by construction — line numbers are unique, therefore no
+ * in-file collision is possible, and no length extension / fallback is ever
+ * needed.
+ *
+ * Why line + content (not content alone, not content + neighbors):
+ *
+ * - The line number is the address; the hash is a checksum that the line at
+ *   that address is still what was read. Mixing the number in makes the hash a
+ *   pure fingerprint of (position, content): it changes only when the line's
+ *   own content changes, never when a neighbor changes. (A neighbor-aware hash
+ *   would change an unchanged line's hash when an adjacent line is edited — a
+ *   spurious dependency with no benefit under this design's position-fixed
+ *   apply.)
+ * - Content alone would leave identical lines (blank lines, `}`) sharing a
+ *   hash; mixing the line number disambiguates them for free.
+ *
+ * Drift (file changed since read) is caught up-front by the global stale check
+ * (`text !== snapshot.text`). This hash's job is to verify the model actually
+ * read the line — it cannot forge a `(line, content)` hash without reading.
  *
  * @module pi-hashline-edit/core
  */
@@ -38,62 +53,20 @@ function toBase32(n: number, len: number): string {
 }
 
 /**
- * Compute the context-aware hash of a single line.
+ * Compute the hash of a single line from its 1-based line number and content.
  *
- * @param prev previous line content (`""` for the first line)
- * @param cur  this line's content
- * @param next next line content (`""` for the last line)
- * @param len  hash length (default 4, 20 bits ≈ 1M values)
+ * @param line    1-based line number
+ * @param content the line's content (no line terminator)
+ * @param len     hash length (default 4, 20 bits ≈ 1M values)
  */
-export function computeLineHash(prev: string, cur: string, next: string, len = 4): string {
-	const h = fnv1a32(`${prev}\n${cur}\n${next}`);
-	return toBase32(h, len);
-}
-
-/** Compute raw per-line hashes (no collision handling). */
-function rawHashes(lines: readonly string[], len: number): string[] {
-	return lines.map((line, i) =>
-		computeLineHash(lines[i - 1] ?? "", line, lines[i + 1] ?? "", len),
-	);
-}
-
-/** Find hash values that appear more than once. */
-function duplicatedHashes(hashes: readonly string[]): Set<string> {
-	const counts = new Map<string, number>();
-	for (const h of hashes) counts.set(h, (counts.get(h) ?? 0) + 1);
-	return new Set([...counts.entries()].filter(([, c]) => c > 1).map(([h]) => h));
-}
-
-/** Fallback: force uniqueness with an index suffix (theoretically unreachable under context-aware hashing). */
-function forceUnique(hashes: string[]): string[] {
-	const seen = new Map<string, number>();
-	return hashes.map((h) => {
-		const c = seen.get(h) ?? 0;
-		seen.set(h, c + 1);
-		return c === 0 ? h : `${h}${c}`;
-	});
+export function computeLineHash(line: number, content: string, len = 4): string {
+	return toBase32(fnv1a32(`${line}\n${content}`), len);
 }
 
 /**
- * Compute per-line hashes for the whole file and resolve in-file collisions:
- * colliding lines are recomputed with a longer len until unique within the file
- * (per-file zero-collision guarantee).
- *
- * Design rationale: context-aware hashing already drives the collision
- * probability near zero; this extension is a defensive fallback guaranteeing
- * apply never mislocates due to hash ambiguity.
+ * Compute per-line hashes for a file. Unique by construction — the 1-based line
+ * number is part of each hash, so two identical content lines always differ.
  */
 export function hashFileLines(lines: readonly string[], len = 4): string[] {
-	if (lines.length === 0) return [];
-	let hashes = rawHashes(lines, len);
-	for (let curLen = len; curLen <= len + 4; curLen++) {
-		const dups = duplicatedHashes(hashes);
-		if (dups.size === 0) return hashes;
-		hashes = hashes.map((h, i) =>
-			dups.has(h)
-				? computeLineHash(lines[i - 1] ?? "", lines[i] ?? "", lines[i + 1] ?? "", curLen + 1)
-				: h,
-		);
-	}
-	return forceUnique(hashes);
+	return lines.map((content, i) => computeLineHash(i + 1, content, len));
 }
