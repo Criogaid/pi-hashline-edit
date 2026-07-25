@@ -1,0 +1,28 @@
+{
+  "name": "@d3ara1n/pi-hashline-edit",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Hashline-style file editing for pi — line-anchored edits verified by content hash, replacing oldText/newText matching",
+  "keywords": [
+    "pi-package",
+    "pi"
+  ],
+  "main": "src/index.ts",
+  "scripts": {
+    "test": "node --test src/core/*.test.ts src/pi/*.test.ts"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "pi": {
+    "extensions": [
+      "./src/index.ts"
+    ]
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/d3ara1n/pi-extensions",
+    "directory": "packages/pi-hashline-edit"
+  },
+  "license": "MIT"
+}
