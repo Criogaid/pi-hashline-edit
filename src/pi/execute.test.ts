@@ -150,44 +150,49 @@ test("edit on a line that changed externally → anchor mismatch", async () => {
 		const text = "a\nb\nc\n";
 		await writeFile(f, text);
 		await writeFile(f, "a\nBCHANGED\nc\n"); // line 2 changed
-		const r: any = await call(makeEditOverride(dir), {
-			path: "f.txt",
-			edits: [{ op: "replace", anchor: h(text, 2), body: ["x"] }],
-		});
-		assert.equal(r.isError, true);
-		assert.match(r.content[0].text, /anchor|re-read/i);
+		await assert.rejects(
+			call(makeEditOverride(dir), {
+				path: "f.txt",
+				edits: [{ op: "replace", anchor: h(text, 2), body: ["x"] }],
+			}),
+			/anchor|re-read/i,
+		);
 	});
 });
 
 test("edit execute: no read before edit → anchor verification fails", async () => {
 	await withDir(async (dir) => {
 		await writeFile(join(dir, "f.txt"), "a\nb\n");
-		const r: any = await call(makeEditOverride(dir), {
-			path: "f.txt",
-			edits: [{ op: "replace", anchor: { line: 1, hash: "XXXX" }, body: ["A"] }],
-		});
-		assert.equal(r.isError, true);
+		await assert.rejects(
+			call(makeEditOverride(dir), {
+				path: "f.txt",
+				edits: [{ op: "replace", anchor: { line: 1, hash: "XXXX" }, body: ["A"] }],
+			}),
+			/anchor|re-read/i,
+		);
 	});
 });
 
-test("edit execute: empty edits → isError", async () => {
+test("edit execute: empty edits → throws", async () => {
 	await withDir(async (dir) => {
 		await writeFile(join(dir, "f.txt"), "a\n");
-		const r: any = await call(makeEditOverride(dir), { path: "f.txt", edits: [] });
-		assert.equal(r.isError, true);
-		assert.match(r.content[0].text, /empty|missing/i);
+		await assert.rejects(
+			call(makeEditOverride(dir), { path: "f.txt", edits: [] }),
+			/empty|missing/i,
+		);
 	});
 });
 
-test("edit execute: malformed op (replace without body) → isError", async () => {
+test("edit execute: malformed op (replace without body) → throws", async () => {
 	await withDir(async (dir) => {
 		await writeFile(join(dir, "f.txt"), "a\n");
-		const r: any = await call(makeEditOverride(dir), {
-			path: "f.txt",
-			edits: [{ op: "replace", anchor: { line: 1, hash: "XX" } }],
-		});
-		assert.equal(r.isError, true);
-		assert.match(r.content[0].text, /body/i);
+		await assert.rejects(
+			call(makeEditOverride(dir), {
+				path: "f.txt",
+				edits: [{ op: "replace", anchor: { line: 1, hash: "XX" } }],
+			}),
+			/body/i,
+		);
 	});
 });
 
@@ -247,13 +252,21 @@ test("edit error: renderResult renders the error line without throwing", async (
 	await withDir(async (dir) => {
 		await writeFile(join(dir, "f.txt"), "a\n");
 		const edit = makeEditOverride(dir);
-		const r: any = await call(edit, {
+		let thrown: any;
+		await call(edit, {
 			path: "f.txt",
 			edits: [{ op: "replace", anchor: { line: 1, hash: "XXXX" }, body: ["A"] }],
+		}).catch((e: any) => {
+			thrown = e;
 		});
-		assert.equal(r.isError, true);
-		// @ts-ignore
-		const comp: any = edit.renderResult({ content: r.content, details: r.details }, { isPartial: false, expanded: false }, stubTheme, { isError: r.isError ?? false });
+		assert.ok(thrown, "expected the edit to throw");
+		// @ts-ignore — simulate the framework handing the thrown message to renderResult
+		const comp: any = edit.renderResult(
+			{ content: [{ type: "text", text: thrown.message }] },
+			{ isPartial: false, expanded: false },
+			stubTheme,
+			{ isError: true },
+		);
 		assert.ok(typeof comp?.text === "string");
 	});
 });
