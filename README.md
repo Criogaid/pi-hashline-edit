@@ -1,6 +1,6 @@
 # @d3ara1n/pi-hashline-edit
 
-> Hashline-style file editing for [pi](https://github.com/earendil-works/pi-coding-agent) — line-anchored edits verified by content hash, replacing `oldText`/`newText` matching.
+> Hashline-style file editing for [pi](https://github.com/earendil-works/pi-coding-agent) — line-anchored edits verified by content hash (replacing `oldText`/`newText` matching), plus a location-blind `replace` tool for bulk + regex transforms.
 
 Edits reference lines by `LINE#HASH` anchors (copied from `read`/`grep` output) instead of retyping the code to be changed — eliminating string-not-found loops and whitespace battles at the root.
 
@@ -22,7 +22,7 @@ Routine local code editing in pi — the common case. If you spend turns fightin
 
 ## When to turn it off
 
-Set `hashlineEdit.enabled = false` (or uninstall) to fall back to the built-in `read`/`edit`/`grep` when you need **remote or custom-storage files** — the overrides read/write/search the local filesystem directly, so pi's custom `ReadOperations`/`GrepOperations` (SSH, etc.) aren't supported. The same switch lets you opt out per-project.
+Set `hashlineEdit.enabled = false` (or uninstall) to fall back to the built-in `read`/`edit`/`grep` when you need **remote or custom-storage files** — the overrides read/write/search the local filesystem directly, so pi's custom `ReadOperations`/`GrepOperations` (SSH, etc.) aren't supported. The same switch lets you opt out per-project. All four tools — `read`, `grep`, `edit`, `replace` — are one set governed by this switch: when disabled, `read`/`grep`/`edit` delegate to the built-ins and `replace` refuses (it has no built-in counterpart).
 
 ## Gotchas (vs. the built-in `read`/`edit`)
 
@@ -30,6 +30,18 @@ Once hashline overrides the built-ins, a few things behave differently:
 
 - **`read` is globally overridden.** Every read shows the `LINE#HASH│` prefix on each line — even reads that won't lead to an edit. This is expected (it's the substrate the reliability is built on), just don't be surprised when the format changes for all files.
 - **Conservative overlap.** Two ops whose ranges touch (e.g. `insert_after` immediately followed by `replace` at the same line) are rejected to avoid backfill ambiguity — issue them as two separate `edit` calls.
+
+## `replace` — bulk + regex
+
+A separate, location-blind tool for transforms `edit` can't express: replace **all** occurrences of a string/regex across the whole file in one call. Use it for renames, normalizations, and pattern-based rewrites that would otherwise need many individual anchored ops.
+
+- **Two modes** — `regex: false` (default) treats `find` as a literal substring (replaceAll; the replacement is inserted verbatim, no `$` expansion); `regex: true` treats `find` as a JavaScript pattern source and `replace` supports `$1`, `$2`, `$&`, …
+- **Flags** — `flags` adds regex flags in both modes (`g` is always forced so every occurrence is replaced): `i` (case-insensitive), `m` (per-line `^`/`$`), `s` (dotall, `.` matches `\n`), `u` (unicode).
+- **Safety** — a `maxMatches` cap (default 2000) errors *before writing* if exceeded, so a runaway pattern can't produce a catastrophic write. `0` matches is an error (no silent no-op).
+- **Shares the edit queue** — `replace` and `edit` on the same file are serialized via the same mutation queue, so concurrent edits never interleave.
+- **Returns a diff + fresh anchors** for the changed region, so a follow-up `edit` can chain on the new content without a re-read (when the region is small).
+
+`edit` vs `replace`: `edit` is **surgical and verified** (you point at a `LINE#HASH` and the tool confirms the line is unchanged before rewriting it). `replace` is **global and unverified** (you give a pattern, it rewrites every match sight-unseen). Pick by intent: change a known spot → `edit`; transform every occurrence → `replace`.
 
 ## Design
 
@@ -39,7 +51,7 @@ Once hashline overrides the built-ins, a few things behave differently:
 - **Shifted-anchor recovery**: a mismatched anchor isn't a dead end. The applicator rescans ±`shiftRadius` lines for the original content — holding the original line number fixed and re-hashing each candidate (`hash(line, candidate) === cited` iff the candidate *is* the original) — and returns a ready-to-resend anchor on a unique hit, the candidate list when ambiguous, or the cited line's live content when nothing matches. The model retries without a re-read in the common drift case.
 - **Atomic batches, all failures collected**: every op in one `edit` is verified against the same snapshot; if any anchor fails, *all* failures (each with its recovery) are returned together and nothing is written — partial writes would shift lines and invalidate the very recovery info just returned.
 - **Chain edits without re-reading**: a successful `edit` returns `Updated anchors` for the lines it produced (and the line that shifted into a deletion gap), so the next edit can cite them directly.
-- **No legacy compatibility**: `edit` accepts only structured hashline ops; sending legacy `oldText`/`newText` is rejected at the schema layer (never silently degrades) — so you always know whether hashline is actually in use.
+- **No legacy compatibility on `edit`**: `edit` accepts only structured hashline ops; sending legacy `oldText`/`newText` is rejected at the schema layer (never silently degrades) — so you always know whether hashline is actually in use. Bulk/regex replacement is a *separate* tool, `replace`, not an `edit` mode (see below).
 
 ## Protocol
 
@@ -76,6 +88,28 @@ src/util.ts · 1 match
 ```
 
 Ops: `replace` · `delete` · `insert_after` · `insert_before` · `append` · `prepend`. `anchor`/`end` = `{line, hash}` from read; `body` = new content lines (string[], omit for `delete`).
+
+`replace` takes `path`, `find`, `replace` (+ optional `regex`, `flags`, `maxMatches`) and substitutes **every** match:
+
+```jsonc
+{
+  "path": "src/foo.ts",
+  "find": "oldName",
+  "replace": "newName"
+}
+```
+
+Regex with a capture group (rename `getName()` → `get_name()` everywhere):
+
+```jsonc
+{ "path": "src/foo.ts", "find": "get([A-Z]\w*)", "replace": "get_$1", "regex": true }
+```
+
+Case-insensitive literal rename across the whole file:
+
+```jsonc
+{ "path": "src/foo.ts", "find": "TODO", "replace": "FIXME", "flags": "i" }
+```
 
 ## Configuration
 

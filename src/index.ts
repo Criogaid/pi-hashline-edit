@@ -3,8 +3,11 @@
  *
  * Overrides the built-in read/edit: read outputs "lineNo#hash│content";
  * edit accepts structured hashline ops (edits[] with LINE#HASH anchors), and
- * legacy oldText/newText is rejected explicitly (no silent degradation). Each
- * tool carries its own renderer.
+ * legacy oldText/newText is rejected explicitly (no silent degradation). grep
+ * is overridden the same way so results carry usable anchors. A separate
+ * `replace` tool adds location-blind bulk + regex replacement (replaceAll and
+ * full JS regex with capture groups) for renames/pattern transforms that
+ * would need many individual edits. Each tool carries its own renderer.
  *
  * @module pi-hashline-edit
  */
@@ -15,6 +18,7 @@ import { getState } from "./pi/state.ts";
 import { makeEditOverride } from "./pi/edit-tool.ts";
 import { makeReadOverride } from "./pi/read-tool.ts";
 import { makeGrepOverride } from "./pi/grep-tool.ts";
+import { makeReplaceTool } from "./pi/replace-tool.ts";
 
 export default function (pi: ExtensionAPI) {
 	const cwd = process.cwd();
@@ -28,4 +32,5 @@ export default function (pi: ExtensionAPI) {
 	pi.registerTool(makeReadOverride(cwd));
 	pi.registerTool(makeEditOverride(cwd));
 	pi.registerTool(makeGrepOverride(cwd));
+	pi.registerTool(makeReplaceTool(cwd));
 }
