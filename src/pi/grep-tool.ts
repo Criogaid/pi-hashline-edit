@@ -33,6 +33,7 @@ import { hashFileLines } from "../core/hash.ts";
 import { splitLines } from "../core/lines.ts";
 import { getState } from "./state.ts";
 import { canonicalPath } from "./read-tool.ts";
+import { parseHashline } from "./render.ts";
 
 const DEFAULT_LIMIT = 100;
 /** Max chars per result line for display (mirrors pi's truncate.ts; not exported there). */
@@ -89,9 +90,9 @@ function toDisplayLines(raw: string, theme: any): string[] {
 			const group: { lineNo: string; content: string }[] = [];
 			let j = i + 1;
 			while (j < lines.length) {
-				const a = lines[j].match(/^(\d+)#[A-Za-z0-9]+│(.*)$/);
+				const a = parseHashline(lines[j]);
 				if (!a) break;
-				group.push({ lineNo: a[1], content: a[2] });
+				group.push({ lineNo: a.lineNo, content: a.content });
 				j++;
 			}
 			// common base = min leading whitespace across the group; fold it into a marker
