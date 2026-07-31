@@ -180,7 +180,9 @@ export function makeReplaceTool(cwd: string) {
 			}
 			const diff: string | undefined = result.details?.diff;
 			if (!diff) {
-				const t = content?.type === "text" ? content.text : "Replaced";
+				// No net diff: show only the summary line — content.text also carries
+				// `Updated anchors` (hashline) for the model.
+				const t = content?.type === "text" ? content.text.split("\n")[0] : "Replaced";
 				return new Text(theme.fg("success", t), 0, 0);
 			}
 			// details.diff is pi-format (+N/-N/<space>N content); color by leading char
