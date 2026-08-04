@@ -1,8 +1,8 @@
 /**
  * Override edit: hashline ops via structured `edits` (LINE#HASH anchors).
  *
- * Each op in `edits` references line anchors copied from read output (or from a
- * prior edit's "Updated anchors"). The core verifies each anchor live against
+ * Each op in `edits` references line anchors copied from read / grep / replace output
+ * (or from a prior edit's "Updated anchors"). The core verifies each anchor live against
  * the current file content — no snapshot, no global stale check: a cited line
  * that changed (or was misremembered) fails its own anchor; unchanged lines
  * elsewhere never block the edit. Legacy oldText/newText is not accepted — the
@@ -180,12 +180,13 @@ export function makeEditOverride(cwd: string) {
 		name: "edit" as const,
 		label: "edit",
 		description:
-			"Edit a file via hashline ops (LINE#HASH anchors, content-verified). Each op in `edits` references line anchors from your latest read or edit result.",
+		"Edit a file via hashline ops (LINE#HASH anchors, content-verified). Each op in `edits` references line anchors from your latest read, grep, replace, or edit result.",
 		promptSnippet: "Edit files via hashline ops (edits[] with LINE#HASH anchors from read)",
 		promptGuidelines: [
 			"Pass `edits`: an array of ops. Each op = {op, anchor?, end?, body?}.",
+		"Prefer one `edit` with multiple ops for several changes to the same file, rather than several separate `edit` calls.",
 			"op ∈ replace | delete | insert_after | insert_before | append | prepend.",
-			"anchor & end = {line, hash} copied from your latest read or edit result (the `#HASH` after each line number). replace/delete take anchor (+ optional end for a range); insert_after/insert_before take anchor; append/prepend take neither.",
+		"anchor & end = {line, hash} copied from your latest read, grep, replace, or edit result (the `#HASH` after each line number); grep's `-C` context lines are anchored and editable too. replace/delete take anchor (+ optional end for a range); insert_after/insert_before take anchor; append/prepend take neither.",
 			"body = string[] of new content lines (required for replace/insert/append/prepend; omit for delete).",
 			"A successful edit returns `Updated anchors` for the changed lines — use those (not stale line numbers) for the next edit to the same file; re-read only if you need lines outside that set.",
 		],
