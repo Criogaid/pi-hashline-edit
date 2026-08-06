@@ -283,10 +283,16 @@ async function runReplace(
 		}
 	}
 
-	const { diff, firstChangedLine } = generateDiffString(currentText, newText);
+	// generateDiffString / generateUnifiedPatch split on \n, so raw CRLF content would
+	// leave a trailing \r on every diff line — the TUI line-wrapper (wrapTextWithAnsi)
+	// then emits a spurious blank line per diff line. Normalize to LF for diff/patch
+	// only; the disk write above already preserved the original line endings.
+	const oldLf = currentText.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+	const newLf = newText.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+	const { diff, firstChangedLine } = generateDiffString(oldLf, newLf);
 	const details: EditToolDetails = {
 		diff,
-		patch: generateUnifiedPatch(displayPath, currentText, newText),
+		patch: generateUnifiedPatch(displayPath, oldLf, newLf),
 		firstChangedLine,
 	};
 
