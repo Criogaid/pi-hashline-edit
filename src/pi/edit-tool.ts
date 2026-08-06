@@ -32,25 +32,41 @@ import { getState } from "./state.ts";
 /** Cap on the number of updated anchors returned inline (bounds token cost for large inserts). */
 const MAX_ANCHOR_LINES = 40;
 
-const anchorSchema = Type.Object({
-	line: Type.Number({ description: "1-based line number" }),
-	hash: Type.String({ description: "Line content hash copied from read output (the #HASH after the line number)" }),
-});
+/** `{line, hash}` anchor pair as an op field, described per use. */
+function anchorRef(description: string) {
+	return Type.Optional(
+		Type.Object(
+			{
+				line: Type.Number({ description: "1-based line number" }),
+				hash: Type.String({ description: "Line content hash copied from read output (the #HASH after the line number)" }),
+			},
+			{ description },
+		),
+	);
+}
 
 const editOpSchema = Type.Object({
 	op: Type.Union(
 		[
-			Type.Literal("replace"),
-			Type.Literal("delete"),
-			Type.Literal("insert_after"),
-			Type.Literal("insert_before"),
-			Type.Literal("append"),
-			Type.Literal("prepend"),
+			Type.Literal("replace", { description: "Replace the cited line(s) with `body`." }),
+			Type.Literal("delete", { description: "Delete the cited line(s)." }),
+			Type.Literal("insert_after", {
+				description: "Insert `body` immediately after the anchor line — the anchor line is kept as-is; do NOT copy it into `body`.",
+			}),
+			Type.Literal("insert_before", {
+				description: "Insert `body` immediately before the anchor line — the anchor line is kept as-is; do NOT copy it into `body`.",
+			}),
+			Type.Literal("append", { description: "Append `body` at the end of the file." }),
+			Type.Literal("prepend", { description: "Prepend `body` at the start of the file." }),
 		],
 		{ description: "Operation kind" },
 	),
-	anchor: Type.Optional(anchorSchema),
-	end: Type.Optional(anchorSchema),
+	anchor: anchorRef(
+		"First line of the range (replace/delete) or the insertion point (insert_after/insert_before).",
+	),
+	end: anchorRef(
+		"Last line of the range to replace/delete, inclusive: the op touches exactly [anchor..end]. Omit only for a single-line change (end == anchor). A multi-line change that forgets `end` succeeds silently with the rest of the intended range left in the file — a corrupted file, not an error.",
+	),
 	body: Type.Optional(Type.Array(Type.String(), { description: "New content lines (required for replace/insert/append/prepend; omit for delete)" })),
 });
 
