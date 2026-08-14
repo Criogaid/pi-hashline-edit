@@ -17,6 +17,7 @@
  */
 
 import {
+	getAgentDir,
 	createGrepTool,
 	truncateHead,
 	truncateLine,
@@ -28,7 +29,6 @@ import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 import { access, constants, readFile, stat } from "node:fs/promises";
 import { basename, delimiter, join, relative } from "node:path";
-import { homedir } from "node:os";
 import { hashFileLines } from "../core/hash.ts";
 import { splitLines } from "../core/lines.ts";
 import { getState } from "./state.ts";
@@ -41,7 +41,7 @@ const GREP_MAX_LINE_LENGTH = 500;
 
 /** Locate ripgrep: pi's bundled bin first, then PATH. Returns null if not found. */
 async function findRg(): Promise<string | null> {
-	const agentDir = process.env.PI_AGENT_DIR ?? join(homedir(), ".pi", "agent");
+	const agentDir = getAgentDir();
 	const piRg = join(agentDir, "bin", "rg");
 	try {
 		await access(piRg, constants.X_OK);
