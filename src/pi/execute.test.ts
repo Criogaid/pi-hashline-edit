@@ -246,10 +246,40 @@ test("edit success: renderResult renders the diff without throwing", async () =>
 			path: "f.txt",
 			edits: [{ op: "replace", anchor: h(text, 2), body: ["B"] }],
 		});
-		// @ts-ignore — drive the renderer with a stub theme
-		const comp: any = edit.renderResult({ content: r.content, details: r.details }, { isPartial: false, expanded: true }, stubTheme, { isError: r.isError ?? false });
+	// @ts-ignore — drive the renderer with a stub theme
+		const comp: any = edit.renderResult({ content: r.content, details: r.details }, { isPartial: false, expanded: true }, stubTheme, { isError: r.isError ?? false, state: {}, invalidate: () => {} });
 		assert.ok(typeof comp?.text === "string");
 		assert.ok(comp.text.includes("B"), "rendered diff should contain the new content");
+	});
+});
+
+test("edit header: renderResult publishes diff counts, renderCall shows +N -N", async () => {
+	await withDir(async (dir) => {
+		const f = join(dir, "f.txt");
+		const text = "a\nb\nc\nd\ne\n";
+		await writeFile(f, text);
+		await call(makeReadOverride(dir), { path: "f.txt" });
+		const edit = makeEditOverride(dir);
+		const r: any = await call(edit, {
+			path: "f.txt",
+			edits: [
+				{ op: "replace", anchor: h(text, 2), end: h(text, 3), body: ["B"] },
+				{ op: "insert_after", anchor: h(text, 5), body: ["f", "g"] },
+			],
+		});
+		const context: any = { isError: false, state: {}, invalidate: () => {} };
+		edit.renderResult({ content: r.content, details: r.details }, { isPartial: false, expanded: true }, stubTheme, context);
+		assert.deepEqual(context.state.diffCounts, { added: 3, removed: 2 });
+		const header: any = edit.renderCall(
+			{ path: "f.txt", edits: [{ op: "replace" }] },
+			stubTheme,
+			{ state: context.state },
+		);
+		assert.ok(header.text.includes("+3"), "header should show added count");
+		assert.ok(header.text.includes("-2"), "header should show removed count");
+		// without counts in state (streaming, pre-execution), no +N -N in the header
+		const plain: any = edit.renderCall({ path: "f.txt", edits: [{ op: "replace" }] }, stubTheme, { state: {} });
+		assert.ok(!plain.text.includes("+3"), "pre-execution header must not show counts");
 	});
 });
 

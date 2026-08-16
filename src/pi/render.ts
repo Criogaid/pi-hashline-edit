@@ -51,3 +51,39 @@ export function renderDiffPreview(diff: string, expanded: boolean, theme: any): 
 			: "";
 	return allLines.slice(0, MAX_COLLAPSED_DIFF_LINES).join("\n") + more;
 }
+
+/** Added/removed line counts of a pi-format diff string (`+N`/`-N` leading char). */
+export interface DiffCounts {
+	added: number;
+	removed: number;
+}
+
+/** Count added/removed lines in a pi-format diff (`+N content` / `-N content` / ` N content`). */
+export function countDiffLines(diff: string): DiffCounts {
+	let added = 0;
+	let removed = 0;
+	for (const line of diff.split("\n")) {
+		if (line.startsWith("+")) added++;
+		else if (line.startsWith("-")) removed++;
+	}
+	return { added, removed };
+}
+
+/** Format `+N -N` with the theme's diff colors for the tool call header. */
+export function formatDiffCounts(counts: DiffCounts, theme: any): string {
+	return ` ${theme.fg("toolDiffAdded", `+${counts.added}`)} ${theme.fg("toolDiffRemoved", `-${counts.removed}`)}`;
+}
+
+/**
+ * Stash per-call diff counts into the row-local render state and invalidate
+ * once so the call header re-renders with `+N -N`. Idempotent: skips the
+ * invalidate when the counts are unchanged (prevents a render loop).
+ */
+export function publishDiffCounts(diff: string | undefined, context: any): void {
+	if (!diff || !context?.state) return;
+	const counts = countDiffLines(diff);
+	const prev: DiffCounts | undefined = context.state.diffCounts;
+	if (prev && prev.added === counts.added && prev.removed === counts.removed) return;
+	context.state.diffCounts = counts;
+	context.invalidate?.();
+}

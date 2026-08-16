@@ -239,7 +239,7 @@ test("replace renderResult: renders the diff without throwing", async () => {
 			{ content: r.content, details: r.details },
 			{ isPartial: false, expanded: true },
 			stubTheme,
-			{ isError: r.isError ?? false },
+			{ isError: r.isError ?? false, state: {}, invalidate: () => {} },
 		);
 		assert.ok(typeof comp?.text === "string");
 		assert.ok(comp.text.includes("B"), "rendered diff should contain the new content");

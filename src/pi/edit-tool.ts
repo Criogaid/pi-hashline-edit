@@ -28,7 +28,7 @@ import { splitLines } from "../core/lines.ts";
 import type { ApplyFailure, Edit } from "../core/types.ts";
 import { canonicalPath } from "./read-tool.ts";
 import { getState } from "./state.ts";
-import { renderDiffPreview } from "./render.ts";
+import { formatDiffCounts, publishDiffCounts, renderDiffPreview } from "./render.ts";
 
 /** Cap on the number of updated anchors returned inline (bounds token cost for large inserts). */
 const MAX_ANCHOR_LINES = 40;
@@ -210,12 +210,18 @@ export function makeEditOverride(cwd: string) {
 		parameters: editSchema,
 		renderShell: "default" as const,
 
-		renderCall(args: Static<typeof editSchema>, theme: any) {
-			let text = theme.fg("toolTitle", theme.bold("edit "));
-			text += theme.fg("accent", args.path);
+		renderCall(args: Static<typeof editSchema>, theme: any, context: any) {
+			const text = (context?.lastComponent as Text | undefined) ?? new Text("", 0, 0);
+			let t = theme.fg("toolTitle", theme.bold("edit "));
+			t += theme.fg("accent", args.path);
 			const n = args.edits?.length ?? 0;
-			if (n) text += theme.fg("dim", ` — ${n} op${n > 1 ? "s" : ""}: ${args.edits[0].op}`);
-			return new Text(text, 0, 0);
+			if (n) t += theme.fg("dim", ` — ${n} op${n > 1 ? "s" : ""}: ${args.edits[0].op}`);
+			// diff counts land after execution: renderResult publishes them into
+			// context.state and invalidates the row, re-running this renderer
+			const counts = context?.state?.diffCounts;
+			if (counts && (counts.added || counts.removed)) t += formatDiffCounts(counts, theme);
+			text.setText(t);
+			return text;
 		},
 
 		renderResult(result: any, { isPartial, expanded }: any, theme: any, context: any) {
@@ -226,6 +232,7 @@ export function makeEditOverride(cwd: string) {
 				return new Text(theme.fg("error", t), 0, 0);
 			}
 			const diff: string | undefined = result.details?.diff;
+			publishDiffCounts(diff, context);
 			if (!diff) {
 				// No net diff (e.g. a successful but non-mutating edit): show only the summary
 				// line — content.text also carries `Updated anchors` (hashline) for the model.
