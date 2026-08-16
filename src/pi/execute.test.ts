@@ -8,6 +8,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, rm, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { initTheme } from "@earendil-works/pi-coding-agent";
 import { makeEditOverride } from "./edit-tool.ts";
 import { makeReadOverride } from "./read-tool.ts";
 import { computeLineHash } from "../core/hash.ts";
@@ -214,6 +215,10 @@ test("edit execute: delete op", async () => {
 // --- renderer regression guards (details.diff must be a string, renderResult must not throw) ---
 
 const stubTheme = { fg: (_k: string, s: string) => s, bold: (s: string) => s };
+
+// renderResult delegates to pi's renderDiff, which reads the global TUI theme
+// singleton — initialize it once for this test process (watcher off by default).
+initTheme();
 
 test("edit success: details.diff is a string (not the generateDiffString object)", async () => {
 	await withDir(async (dir) => {

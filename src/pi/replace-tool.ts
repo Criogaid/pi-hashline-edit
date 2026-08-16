@@ -35,6 +35,7 @@ import { readFile, writeFile } from "node:fs/promises";
 import { hashFileLines, splitLines } from "../core/index.ts";
 import { getState } from "./state.ts";
 import { canonicalPath } from "./read-tool.ts";
+import { renderDiffPreview } from "./render.ts";
 
 /** Cap on updated-anchor lines returned inline (bounds token cost for large spans). */
 const MAX_ANCHOR_LINES = 40;
@@ -185,18 +186,9 @@ export function makeReplaceTool(cwd: string) {
 				const t = content?.type === "text" ? content.text.split("\n")[0] : "Replaced";
 				return new Text(theme.fg("success", t), 0, 0);
 			}
-			// details.diff is pi-format (+N/-N/<space>N content); color by leading char
-			const allLines = diff.split("\n");
-			const shown = expanded ? allLines : allLines.slice(0, 24);
-			const body = shown
-				.map((line: string) => {
-					if (line.startsWith("+")) return theme.fg("success", line);
-					if (line.startsWith("-")) return theme.fg("error", line);
-					return theme.fg("dim", line);
-				})
-				.join("\n");
-			const more = !expanded && allLines.length > 24 ? `\n${theme.fg("dim", `… (${allLines.length - 24} more)`)}` : "";
-			return new Text(body + more, 0, 0);
+			// details.diff is pi-format (+N/-N/<space>N content); renderDiff handles
+			// semantic colors plus intra-line change highlighting
+			return new Text(renderDiffPreview(diff, expanded, theme), 0, 0);
 		},
 
 		async execute(toolCallId: string, params: ReplaceParams, signal: AbortSignal | undefined, onUpdate: any) {

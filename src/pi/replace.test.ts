@@ -11,6 +11,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, rm, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { initTheme } from "@earendil-works/pi-coding-agent";
 import { makeReplaceTool } from "./replace-tool.ts";
 import { makeEditOverride } from "./edit-tool.ts";
 import { getState } from "./state.ts";
@@ -34,6 +35,10 @@ function anchorLine(block: string, line: number) {
 }
 
 const stubTheme = { fg: (_k: string, s: string) => s, bold: (s: string) => s };
+
+// renderResult delegates to pi's renderDiff, which reads the global TUI theme
+// singleton — initialize it once for this test process (watcher off by default).
+initTheme();
 
 test("replace literal: replaces all occurrences", async () => {
 	await withDir(async (dir) => {

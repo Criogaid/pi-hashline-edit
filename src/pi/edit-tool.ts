@@ -28,6 +28,7 @@ import { splitLines } from "../core/lines.ts";
 import type { ApplyFailure, Edit } from "../core/types.ts";
 import { canonicalPath } from "./read-tool.ts";
 import { getState } from "./state.ts";
+import { renderDiffPreview } from "./render.ts";
 
 /** Cap on the number of updated anchors returned inline (bounds token cost for large inserts). */
 const MAX_ANCHOR_LINES = 40;
@@ -231,18 +232,9 @@ export function makeEditOverride(cwd: string) {
 				const t = content?.type === "text" ? content.text.split("\n")[0] : "Edited";
 				return new Text(theme.fg("success", t), 0, 0);
 			}
-			// details.diff is pi-format (+N/-N/<space>N content); color by leading char
-			const allLines = diff.split("\n");
-			const shown = expanded ? allLines : allLines.slice(0, 24);
-			const body = shown
-				.map((line: string) => {
-					if (line.startsWith("+")) return theme.fg("success", line);
-					if (line.startsWith("-")) return theme.fg("error", line);
-					return theme.fg("dim", line);
-				})
-				.join("\n");
-			const more = !expanded && allLines.length > 24 ? `\n${theme.fg("dim", `… (${allLines.length - 24} more)`)}` : "";
-			return new Text(body + more, 0, 0);
+			// details.diff is pi-format (+N/-N/<space>N content); renderDiff handles
+			// semantic colors plus intra-line change highlighting
+			return new Text(renderDiffPreview(diff, expanded, theme), 0, 0);
 		},
 
 		async execute(toolCallId: string, params: Static<typeof editSchema>, signal: AbortSignal | undefined, onUpdate: any) {
