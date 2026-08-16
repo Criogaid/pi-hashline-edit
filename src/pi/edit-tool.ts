@@ -28,7 +28,7 @@ import { splitLines } from "../core/lines.ts";
 import type { ApplyFailure, Edit } from "../core/types.ts";
 import { canonicalPath } from "./read-tool.ts";
 import { getState } from "./state.ts";
-import { formatDiffCounts, publishDiffCounts, renderDiffPreview } from "./render.ts";
+import { formatDiffCounts, publishDiffCounts, renderDiffPreview, type DiffCounts } from "./render.ts";
 
 /** Cap on the number of updated anchors returned inline (bounds token cost for large inserts). */
 const MAX_ANCHOR_LINES = 40;
@@ -190,6 +190,16 @@ function formatUpdatedAnchors(newText: string, touched: readonly number[], hashL
 	return `\nUpdated anchors (use these for the next edit):\n${shown.join("\n")}${more}`;
 }
 
+/** Call-header line: `edit path — N ops: op`, plus `+N -N` once the result's diff counts are known. */
+function editHeader(args: Static<typeof editSchema>, theme: any, counts?: DiffCounts): string {
+	let t = theme.fg("toolTitle", theme.bold("edit "));
+	t += theme.fg("accent", args.path);
+	const n = args.edits?.length ?? 0;
+	if (n) t += theme.fg("dim", ` — ${n} op${n > 1 ? "s" : ""}: ${args.edits[0].op}`);
+	if (counts && (counts.added || counts.removed)) t += formatDiffCounts(counts, theme);
+	return t;
+}
+
 export function makeEditOverride(cwd: string) {
 	const builtin = createEditTool(cwd);
 
@@ -212,15 +222,11 @@ export function makeEditOverride(cwd: string) {
 
 		renderCall(args: Static<typeof editSchema>, theme: any, context: any) {
 			const text = (context?.lastComponent as Text | undefined) ?? new Text("", 0, 0);
-			let t = theme.fg("toolTitle", theme.bold("edit "));
-			t += theme.fg("accent", args.path);
-			const n = args.edits?.length ?? 0;
-			if (n) t += theme.fg("dim", ` — ${n} op${n > 1 ? "s" : ""}: ${args.edits[0].op}`);
-			// diff counts land after execution: renderResult publishes them into
-			// context.state and invalidates the row, re-running this renderer
-			const counts = context?.state?.diffCounts;
-			if (counts && (counts.added || counts.removed)) t += formatDiffCounts(counts, theme);
-			text.setText(t);
+			// Stash the header for renderResult: the diff counts land after
+			// execution and are refreshed in place (renderResult's lastComponent
+			// is the result component, not this header)
+			if (context?.state) context.state.callText = text;
+			text.setText(editHeader(args, theme, context?.state?.diffCounts));
 			return text;
 		},
 
@@ -232,7 +238,11 @@ export function makeEditOverride(cwd: string) {
 				return new Text(theme.fg("error", t), 0, 0);
 			}
 			const diff: string | undefined = result.details?.diff;
-			publishDiffCounts(diff, context);
+			// refresh the call header's +N -N in place — never invalidate from
+			// inside a renderer (re-enters updateDisplay, diff renders twice)
+			publishDiffCounts(diff, context, (counts) => {
+				context.state?.callText?.setText(editHeader(context.args, theme, counts));
+			});
 			if (!diff) {
 				// No net diff (e.g. a successful but non-mutating edit): show only the summary
 				// line — content.text also carries `Updated anchors` (hashline) for the model.

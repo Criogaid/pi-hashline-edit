@@ -75,15 +75,29 @@ export function formatDiffCounts(counts: DiffCounts, theme: any): string {
 }
 
 /**
- * Stash per-call diff counts into the row-local render state and invalidate
- * once so the call header re-renders with `+N -N`. Idempotent: skips the
- * invalidate when the counts are unchanged (prevents a render loop).
+ * Stash per-call diff counts into the row-local render state and refresh the
+ * call header component in place — pi's own edit-tool pattern (renderResult
+ * mutates the component stashed by renderCall; it never re-runs the renderer).
+ *
+ * `updateDisplay` runs renderCall before renderResult in every pass, so later
+ * passes (expand/collapse, result updates) rebuild the header from
+ * `state.diffCounts`; the in-place refresh covers the first result render,
+ * where renderCall ran before the counts existed. renderResult cannot find the
+ * header via `lastComponent` — there it is the *result* component — so
+ * renderCall stashes it (e.g. `state.callText`).
+ *
+ * MUST NOT call `context.invalidate()`: it re-enters `updateDisplay`
+ * synchronously (not re-entrant) and the outer pass then re-adds the result
+ * component after the nested one — the diff renders twice.
  */
-export function publishDiffCounts(diff: string | undefined, context: any): void {
+export function publishDiffCounts(
+	diff: string | undefined,
+	context: any,
+	refreshHeader: (counts: DiffCounts) => void,
+): void {
 	if (!diff || !context?.state) return;
 	const counts = countDiffLines(diff);
 	const prev: DiffCounts | undefined = context.state.diffCounts;
-	if (prev && prev.added === counts.added && prev.removed === counts.removed) return;
 	context.state.diffCounts = counts;
-	context.invalidate?.();
+	if (!prev || prev.added !== counts.added || prev.removed !== counts.removed) refreshHeader(counts);
 }

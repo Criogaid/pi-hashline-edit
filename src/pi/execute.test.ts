@@ -253,7 +253,7 @@ test("edit success: renderResult renders the diff without throwing", async () =>
 	});
 });
 
-test("edit header: renderResult publishes diff counts, renderCall shows +N -N", async () => {
+test("edit header: renderResult refreshes the call header in place — no invalidate", async () => {
 	await withDir(async (dir) => {
 		const f = join(dir, "f.txt");
 		const text = "a\nb\nc\nd\ne\n";
@@ -267,19 +267,24 @@ test("edit header: renderResult publishes diff counts, renderCall shows +N -N", 
 				{ op: "insert_after", anchor: h(text, 5), body: ["f", "g"] },
 			],
 		});
-		const context: any = { isError: false, state: {}, invalidate: () => {} };
+		const args = { path: "f.txt", edits: [{ op: "replace" as const }] };
+		let invalidated = false;
+		const context: any = { args, isError: false, state: {}, invalidate: () => { invalidated = true; } };
+		// first pass: renderCall builds the header; no counts exist yet
+		const header: any = edit.renderCall(args, stubTheme, context);
+		assert.ok(!header.text.includes("+3"), "pre-execution header must not show counts");
+		// result lands: renderResult refreshes the SAME component in place
 		edit.renderResult({ content: r.content, details: r.details }, { isPartial: false, expanded: true }, stubTheme, context);
 		assert.deepEqual(context.state.diffCounts, { added: 3, removed: 2 });
-		const header: any = edit.renderCall(
-			{ path: "f.txt", edits: [{ op: "replace" }] },
-			stubTheme,
-			{ state: context.state },
-		);
 		assert.ok(header.text.includes("+3"), "header should show added count");
 		assert.ok(header.text.includes("-2"), "header should show removed count");
-		// without counts in state (streaming, pre-execution), no +N -N in the header
-		const plain: any = edit.renderCall({ path: "f.txt", edits: [{ op: "replace" }] }, stubTheme, { state: {} });
-		assert.ok(!plain.text.includes("+3"), "pre-execution header must not show counts");
+		// refreshing via context.invalidate() re-enters updateDisplay and renders
+		// the diff twice — the renderer must never call it
+		assert.ok(!invalidated, "renderResult must not call invalidate");
+		// later full passes (expand/collapse) re-run renderCall; counts survive in state
+		const header2: any = edit.renderCall(args, stubTheme, { args, state: context.state, lastComponent: header });
+		assert.equal(header2, header, "renderCall reuses the stashed component");
+		assert.ok(header2.text.includes("+3"), "re-render keeps the counts");
 	});
 });
 

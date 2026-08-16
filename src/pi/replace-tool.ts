@@ -35,7 +35,7 @@ import { readFile, writeFile } from "node:fs/promises";
 import { hashFileLines, splitLines } from "../core/index.ts";
 import { getState } from "./state.ts";
 import { canonicalPath } from "./read-tool.ts";
-import { formatDiffCounts, publishDiffCounts, renderDiffPreview } from "./render.ts";
+import { formatDiffCounts, publishDiffCounts, renderDiffPreview, type DiffCounts } from "./render.ts";
 
 /** Cap on updated-anchor lines returned inline (bounds token cost for large spans). */
 const MAX_ANCHOR_LINES = 40;
@@ -145,6 +145,17 @@ function show(s: string, n = 30): string {
 	return folded.length > n ? folded.slice(0, n) + "…" : folded;
 }
 
+/** Call-header line: `replace path — mode "find" → "replace"`, plus `+N -N` once the result's diff counts are known. */
+function replaceHeader(args: ReplaceParams, theme: any, counts?: DiffCounts): string {
+	let t = theme.fg("toolTitle", theme.bold("replace "));
+	t += theme.fg("accent", args.path);
+	const mode = args.regex ? "regex" : "lit";
+	const f = args.flags ? `/${args.flags}` : "";
+	t += theme.fg("dim", ` — ${mode}${f} "${show(args.find)}" → "${show(args.replace)}"`);
+	if (counts && (counts.added || counts.removed)) t += formatDiffCounts(counts, theme);
+	return t;
+}
+
 export function makeReplaceTool(cwd: string) {
 	return {
 		name: "replace" as const,
@@ -165,16 +176,11 @@ export function makeReplaceTool(cwd: string) {
 
 		renderCall(args: ReplaceParams, theme: any, context: any) {
 			const text = (context?.lastComponent as Text | undefined) ?? new Text("", 0, 0);
-			let t = theme.fg("toolTitle", theme.bold("replace "));
-			t += theme.fg("accent", args.path);
-			const mode = args.regex ? "regex" : "lit";
-			const f = args.flags ? `/${args.flags}` : "";
-			t += theme.fg("dim", ` — ${mode}${f} "${show(args.find)}" → "${show(args.replace)}"`);
-			// diff counts land after execution: renderResult publishes them into
-			// context.state and invalidates the row, re-running this renderer
-			const counts = context?.state?.diffCounts;
-			if (counts && (counts.added || counts.removed)) t += formatDiffCounts(counts, theme);
-			text.setText(t);
+			// Stash the header for renderResult: the diff counts land after
+			// execution and are refreshed in place (renderResult's lastComponent
+			// is the result component, not this header)
+			if (context?.state) context.state.callText = text;
+			text.setText(replaceHeader(args, theme, context?.state?.diffCounts));
 			return text;
 		},
 
@@ -186,7 +192,11 @@ export function makeReplaceTool(cwd: string) {
 				return new Text(theme.fg("error", t), 0, 0);
 			}
 			const diff: string | undefined = result.details?.diff;
-			publishDiffCounts(diff, context);
+			// refresh the call header's +N -N in place — never invalidate from
+			// inside a renderer (re-enters updateDisplay, diff renders twice)
+			publishDiffCounts(diff, context, (counts) => {
+				context.state?.callText?.setText(replaceHeader(context.args, theme, counts));
+			});
 			if (!diff) {
 				// No net diff: show only the summary line — content.text also carries
 				// `Updated anchors` (hashline) for the model.

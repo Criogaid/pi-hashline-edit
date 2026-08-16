@@ -268,6 +268,25 @@ test("replace renderResult: renders the error line without throwing", async () =
 	});
 });
 
+test("replace header: renderResult refreshes the call header in place — no invalidate", async () => {
+	await withDir(async (dir) => {
+		const f = join(dir, "f.txt");
+		await writeFile(f, "a\nb\nc\n");
+		const tool = makeReplaceTool(dir);
+		const args = { path: "f.txt", find: "b", replace: "B1\nB2" };
+		const r: any = await call(tool, args);
+		let invalidated = false;
+		const context: any = { args, isError: false, state: {}, invalidate: () => { invalidated = true; } };
+		const header: any = tool.renderCall(args, stubTheme, context);
+		assert.ok(!header.text.includes("+2"), "pre-execution header must not show counts");
+		tool.renderResult({ content: r.content, details: r.details }, { isPartial: false, expanded: true }, stubTheme, context);
+		assert.deepEqual(context.state.diffCounts, { added: 2, removed: 1 });
+		assert.ok(header.text.includes("+2"), "header should show added count");
+		assert.ok(header.text.includes("-1"), "header should show removed count");
+		assert.ok(!invalidated, "renderResult must not call invalidate");
+	});
+});
+
 test("replace: refuses and leaves the file untouched when hashlineEdit is disabled", async () => {
 	await withDir(async (dir) => {
 		const f = join(dir, "f.txt");
