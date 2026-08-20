@@ -22,7 +22,7 @@ Routine local code editing in pi — the common case. If you spend turns fightin
 
 ## When to turn it off
 
-Set `hashlineEdit.enabled = false` (or uninstall) to fall back to the built-in `read`/`edit`/`grep` when you need **remote or custom-storage files** — the overrides read/write/search the local filesystem directly, so pi's custom `ReadOperations`/`GrepOperations` (SSH, etc.) aren't supported. The same switch lets you opt out per-project. All four tools — `read`, `grep`, `edit`, `replace` — are one set governed by this switch: when disabled, `read`/`grep`/`edit` delegate to the built-ins and `replace` refuses (it has no built-in counterpart).
+Set `hashlineEdit.enabled = false` (or uninstall) to fall back to the built-in `read`/`edit`/`grep` when you need **remote or custom-storage files** — the overrides read/write/search the local filesystem directly, so pi's custom `ReadOperations`/`GrepOperations` (SSH, etc.) aren't supported. The same switch lets you opt out per-project. All four tools — `read`, `grep`, `edit`, `replace` — are one set governed by this switch: when disabled, `read`/`edit` and plain `grep` calls delegate to the built-ins (`grep` calls using the extended params below still run locally, formatted without anchors) and `replace` refuses (it has no built-in counterpart).
 
 ## Model compatibility — field notes
 
@@ -89,6 +89,16 @@ src/foo.ts · 2 matches
 src/util.ts · 1 match
 10#aF3│  const z = compute(x)
 ```
+
+The `grep` override also covers the compound queries that otherwise push models into bash pipelines:
+
+- `matchMode: "all"` — a line must match **every** pattern (`grep A | grep B` without the pipe)
+- `excludePattern` — drop matching lines (`grep -v`), applied after pattern matching
+- `wordMatch` — whole words only (`rg -w`)
+- `outputMode: "files"` / `"count"` — just the file paths (`rg -l`) or per-file counts + total (`grep -c`); `"files"` output pastes straight back as a `path` array
+- `pattern` and `path` accept arrays — several patterns combined per `matchMode`, several search roots in one call
+
+Filters run before the match limit counts, and context windows are rebuilt from surviving matches, so `limit` and `context` compose cleanly with `matchMode`/`excludePattern`.
 
 
 `edit` takes `path` + `edits` (an array of ops, each with `op`, `anchor`/`end` `{line, hash}` from read, and `body` string[]):

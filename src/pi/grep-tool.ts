@@ -1,7 +1,13 @@
 /**
  * Override grep: search results carry `LINE#HASH│` anchors (same format as
  * read), grouped by file. The model can copy `LINE#HASH` straight into an edit
- * anchor — no re-read needed. Context lines (`-C`) are anchored too.
+ * anchor — no re-read needed. Context lines (`context`) are anchored too.
+ *
+ * Beyond the built-in grep it covers the compound queries models otherwise
+ * drop to bash pipelines for: multi-pattern AND (`matchMode: "all"` ≈
+ * `grep A | grep B`), line exclusion (`excludePattern` ≈ `grep -v`),
+ * whole-word matching (`wordMatch` ≈ `-w`), multiple search roots, and
+ * files-only / count output (`outputMode` ≈ `rg -l` / `grep -c`).
  *
  * We run ripgrep directly (`--json`) rather than wrap the built-in grep, so we
  * control formatting and can compute each line's hash from its FULL content
@@ -10,8 +16,15 @@
  * verifies against the full line — so the hash must be computed from the full
  * content, independently of what is displayed.)
  *
- * Falls back to the built-in grep when: hashline disabled, aborted, or ripgrep
- * cannot be located.
+ * Filters run in two places: rg gets every pattern as `-e` (native OR) plus
+ * the global flags; the AND / exclude checks then run client-side on each
+ * matched line's text (streamed by rg), so `limit` counts final results, not
+ * pre-filter candidates. Context windows are likewise rebuilt client-side from
+ * the surviving matches — context lines of a filtered-out match never leak.
+ *
+ * Falls back to the built-in grep when: hashline disabled with plain params,
+ * aborted, or ripgrep cannot be located (the built-in can auto-download rg).
+ * Extended params never delegate — the built-in would misread them.
  *
  * @module pi-hashline-edit/pi
  */
@@ -24,6 +37,7 @@ import {
 	formatSize,
 	DEFAULT_MAX_BYTES,
 } from "@earendil-works/pi-coding-agent";
+import { Type } from "typebox";
 import { Text } from "@earendil-works/pi-tui";
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
@@ -58,10 +72,79 @@ async function findRg(): Promise<string | null> {
 	return null;
 }
 
-interface RawMatch {
+/** Escape a literal string for use as a regex source. */
+function escapeRegex(s: string): string {
+	return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * Compile a pattern for the client-side line checks (`matchMode: "all"` and
+ * `excludePattern`), mirroring the flags rg was given — `literal`,
+ * `ignoreCase`, and (for the AND check) `wordMatch` — so a line rg accepted is
+ * judged by the same semantics here. Patterns valid in rg but invalid as a JS
+ * regex (e.g. `(?P<name>…)`) throw rather than silently degrade.
+ */
+function compileLineMatcher(
+	pattern: string,
+	opts: { literal: boolean; ignoreCase: boolean; word: boolean },
+): RegExp {
+	let source = opts.literal ? escapeRegex(pattern) : pattern;
+	if (opts.word) source = `\\b(?:${source})\\b`;
+	const flags = opts.ignoreCase ? "i" : "";
+	try {
+		return new RegExp(source, flags);
+	} catch (err) {
+		throw new Error(`Pattern not supported for line filtering: ${pattern} (${(err as Error).message})`);
+	}
+}
+
+/** Normalize a `string | string[]` param to an array (`undefined` → `[]`). */
+function toArray(v: string | string[] | undefined): string[] {
+	if (v === undefined) return [];
+	return Array.isArray(v) ? v : [v];
+}
+
+const grepOverrideSchema = Type.Object({
+	pattern: Type.Union([Type.String(), Type.Array(Type.String())], {
+		description:
+			"Search pattern (regex, or literal with literal:true). String or array; an array combines patterns per matchMode (any = OR, all = AND on the same line)",
+	}),
+	matchMode: Type.Optional(
+		Type.Union([Type.Literal("any"), Type.Literal("all")], {
+			description:
+				'How multiple patterns combine (default "any"). "any": line matches at least one pattern. "all": line must match every pattern — equivalent to `grep A | grep B`',
+		}),
+	),
+	excludePattern: Type.Optional(
+		Type.Union([Type.String(), Type.Array(Type.String())], {
+			description:
+				"Drop lines matching this pattern, like grep -v (string or array; same regex/literal/ignoreCase settings as pattern). Applied after pattern matching",
+		}),
+	),
+	outputMode: Type.Optional(
+		Type.Union([Type.Literal("content"), Type.Literal("files"), Type.Literal("count")], {
+			description:
+				'Output shape (default "content"). "content": anchored matching lines. "files": only file paths with matches (rg -l). "count": per-file match counts + total (grep -c)',
+		}),
+	),
+	wordMatch: Type.Optional(Type.Boolean({ description: "Match whole words only (rg -w)" })),
+	path: Type.Union([Type.String(), Type.Array(Type.String())], {
+		description: "Directory or file to search (string or array of paths; default: current directory)",
+	}),
+	glob: Type.Optional(Type.String({ description: "Filter files by glob pattern, e.g. '*.ts' or '**/*.spec.ts'" })),
+	ignoreCase: Type.Optional(Type.Boolean({ description: "Case-insensitive search (default: false)" })),
+	literal: Type.Optional(
+		Type.Boolean({ description: "Treat pattern as literal string instead of regex (default: false)" }),
+	),
+	context: Type.Optional(
+		Type.Number({ description: "Number of lines to show before and after each match (default: 0); context lines are anchored too" }),
+	),
+	limit: Type.Optional(Type.Number({ description: "Maximum number of matching lines to return (default: 100)" })),
+});
+
+interface RgMatch {
 	filePath: string;
 	lineNumber: number;
-	match: boolean;
 }
 
 /**
@@ -122,25 +205,37 @@ export function makeGrepOverride(cwd: string) {
 		name: "grep" as const,
 		label: "grep",
 		description:
-			"Search file contents for a pattern. Matches show per-line content hashes (LINE#HASH│content) grouped by file — copy LINE#HASH straight into an edit anchor, no re-read needed. Context lines (context) are anchored too. Respects .gitignore.",
-		promptSnippet: "Search file contents; results show LINE#HASH anchors usable directly in edit (no re-read needed)",
+			"Search file contents for a pattern. Results are grouped by file with LINE#HASH anchors usable directly in edit. Supports multi-pattern AND (matchMode:all), line exclusion (excludePattern, grep -v), whole-word matching (wordMatch), multiple search paths, and files-only / count output modes — the common `grep A | grep -v B` / `rg -l` / `grep -c` pipelines without bash. Respects .gitignore.",
+		promptSnippet:
+			"Search file contents; results show LINE#HASH anchors usable directly in edit; multi-pattern AND, exclude, files-only and count modes replace bash grep pipelines",
 		promptGuidelines: [
 			"Results are grouped by file under a `path · N matches` header; each line shows `LINE#HASH│content` (same format as read).",
 			"Copy `LINE#HASH` straight into an edit `anchor`/`end` — no re-read needed. Context lines (from `context`) are anchored and editable too.",
-			"Pass `pattern`; optionally `path`, `glob`, `ignoreCase`, `literal`, `context` (lines before+after each match), `limit` (max matches, default 100).",
+			"Prefer this over bash pipes: `matchMode:\"all\"` + `excludePattern` express `grep A | grep -v B`; `outputMode:\"files\"`/`\"count\"` replace `rg -l`/`grep -c` when you only need locations or counts. `files` output pastes back as a `path` array.",
+			"Pass `pattern` (string or array); optionally `path` (string or array), `glob`, `ignoreCase`, `literal`, `wordMatch`, `context` (lines before+after each match), `limit` (max matches, default 100).",
 		],
-		parameters: builtin.parameters,
+		parameters: grepOverrideSchema,
 
 		renderShell: "default" as const,
 
 		renderCall(args: any, theme: any) {
-			const pattern = args?.pattern ?? "";
-			const p = args?.path ?? ".";
+			const rawPattern = args?.pattern;
+			const patternText = Array.isArray(rawPattern) ? rawPattern.join(" | ") : String(rawPattern ?? "");
+			const rawPath = args?.path;
+			const pathText = Array.isArray(rawPath) ? rawPath.join(" ") : String(rawPath ?? ".");
 			let text =
 				theme.fg("toolTitle", theme.bold("grep ")) +
-				theme.fg("accent", `/${pattern}/`) +
-				theme.fg("toolOutput", ` in ${p}`);
+				theme.fg("accent", `/${patternText}/`) +
+				theme.fg("toolOutput", ` in ${pathText}`);
+			if (args?.matchMode === "all") text += theme.fg("accent", " all");
+			if (args?.excludePattern) {
+				const ex = Array.isArray(args.excludePattern) ? args.excludePattern.join(",") : args.excludePattern;
+				text += theme.fg("toolOutput", ` -v:${ex}`);
+			}
+			if (args?.wordMatch) text += theme.fg("toolOutput", " -w");
 			if (args?.glob) text += theme.fg("toolOutput", ` (${args.glob})`);
+			if (args?.outputMode && args.outputMode !== "content")
+				text += theme.fg("success", ` → ${args.outputMode}`);
 			if (args?.limit !== undefined) text += theme.fg("toolOutput", ` limit ${args.limit}`);
 			return new Text(text, 0, 0);
 		},
@@ -164,23 +259,69 @@ export function makeGrepOverride(cwd: string) {
 
 		async execute(toolCallId: string, params: any, signal: AbortSignal | undefined, onUpdate: any): Promise<any> {
 			const state = getState();
-			// disabled or already aborted → built-in grep (it handles abort itself)
-			if (!state.config.enabled || signal?.aborted) return delegate(toolCallId, params, signal, onUpdate);
+			// aborted → built-in grep (it handles abort itself)
+			if (signal?.aborted) return delegate(toolCallId, params, signal, onUpdate);
+
+			// Plain built-in-shaped params (single string pattern/path, no new fields)
+			// can delegate safely; anything else must run the local pipeline below.
+			const legacyShaped =
+				typeof params.pattern === "string" &&
+				params.matchMode === undefined &&
+				params.excludePattern === undefined &&
+				params.outputMode === undefined &&
+				params.wordMatch === undefined &&
+				!Array.isArray(params.path);
+
+			// disabled + plain params → built-in grep, exactly as before
+			if (!state.config.enabled && legacyShaped) return delegate(toolCallId, params, signal, onUpdate);
 
 			const rgPath = await findRg();
-			// ripgrep unavailable → degrade to the built-in (which can auto-download rg)
-			if (!rgPath) return delegate(toolCallId, params, signal, onUpdate);
+			// ripgrep unavailable → built-in (it can auto-download rg), but only for plain params
+			if (!rgPath) {
+				if (legacyShaped) return delegate(toolCallId, params, signal, onUpdate);
+				throw new Error(
+					"ripgrep (rg) not found; extended grep params cannot fall back to the built-in grep. Retry with a simple pattern first, or use bash",
+				);
+			}
 
-			const { pattern, path: searchDir, glob, ignoreCase, literal, context, limit } = params;
-			const searchPath = canonicalPath(cwd, searchDir || ".");
+			// disabled + extended params still run locally, formatted without anchors
+			const anchored = state.config.enabled;
+
+			const patterns = toArray(params.pattern);
+			const excludes = toArray(params.excludePattern);
+			if (patterns.length === 0) throw new Error("pattern is required (got an empty array)");
+			const matchMode: "any" | "all" = params.matchMode ?? "any";
+			const outputMode: "content" | "files" | "count" = params.outputMode ?? "content";
+			const { glob, ignoreCase, literal, wordMatch, context, limit } = params;
+			const ctx = context && context > 0 ? context : 0;
+			const searchPaths = (() => {
+				const raw = toArray(params.path);
+				return (raw.length ? raw : ["."]).map((p) => canonicalPath(cwd, p));
+			})();
 			const hashLen = state.config.hashLen;
 
-			let isDir = true;
-			try {
-				isDir = (await stat(searchPath)).isDirectory();
-			} catch {
-				throw new Error(`Path not found: ${searchPath}`);
+			// Verify search paths upfront; remember dir-ness for relative display.
+			const roots: { path: string; isDir: boolean }[] = [];
+			for (const sp of searchPaths) {
+				try {
+					roots.push({ path: sp, isDir: (await stat(sp)).isDirectory() });
+				} catch {
+					throw new Error(`Path not found: ${sp}`);
+				}
 			}
+
+			// Client-side line filters — only AND / exclude need them; "any" is native rg (-e OR).
+			const excludeMatchers = excludes.map((p) =>
+				compileLineMatcher(p, { literal: !!literal, ignoreCase: !!ignoreCase, word: false }),
+			);
+			const andMatchers =
+				matchMode === "all" && patterns.length > 1
+					? patterns.map((p) =>
+							compileLineMatcher(p, { literal: !!literal, ignoreCase: !!ignoreCase, word: !!wordMatch }),
+						)
+					: [];
+			const linePasses = (line: string): boolean =>
+				andMatchers.every((re) => re.test(line)) && !excludeMatchers.some((re) => re.test(line));
 
 			return new Promise((resolvePromise, reject) => {
 				if (signal?.aborted) {
@@ -191,10 +332,10 @@ export function makeGrepOverride(cwd: string) {
 				const args = ["--json", "--line-number", "--color=never", "--hidden"];
 				if (ignoreCase) args.push("--ignore-case");
 				if (literal) args.push("--fixed-strings");
+				if (wordMatch) args.push("--word-regexp");
 				if (glob) args.push("--glob", glob);
-				const ctx = context && context > 0 ? context : 0;
-				if (ctx > 0) args.push("--context", String(ctx));
-				args.push("--", String(pattern), searchPath);
+				for (const p of patterns) args.push("-e", p);
+				args.push("--", ...searchPaths);
 
 				const effectiveLimit = Math.max(1, limit ?? DEFAULT_LIMIT);
 				const child = spawn(rgPath, args, { stdio: ["ignore", "pipe", "pipe"] });
@@ -205,7 +346,7 @@ export function makeGrepOverride(cwd: string) {
 				let linesTruncated = false;
 				let aborted = false;
 				let killedDueToLimit = false;
-				const raw: RawMatch[] = [];
+				const raw: RgMatch[] = [];
 
 				const cleanup = () => {
 					rl.close();
@@ -234,19 +375,19 @@ export function makeGrepOverride(cwd: string) {
 					} catch {
 						return;
 					}
-					if (event.type === "match") {
-						matchCount++;
-						const filePath = event.data?.path?.text;
-						const lineNumber = event.data?.line_number;
-						if (filePath && typeof lineNumber === "number") raw.push({ filePath, lineNumber, match: true });
-						if (matchCount >= effectiveLimit) {
-							matchLimitReached = true;
-							stopChild(true);
-						}
-					} else if (event.type === "context") {
-						const filePath = event.data?.path?.text;
-						const lineNumber = event.data?.line_number;
-						if (filePath && typeof lineNumber === "number") raw.push({ filePath, lineNumber, match: false });
+					if (event.type !== "match") return;
+					const filePath = event.data?.path?.text;
+					const lineNumber = event.data?.line_number;
+					if (!filePath || typeof lineNumber !== "number") return;
+					// AND / exclude filters run on the matched line's text as streamed
+					// by rg, so the limit counts final results, not pre-filter candidates.
+					const text = typeof event.data?.lines?.text === "string" ? event.data.lines.text : "";
+					if (!linePasses(text.replace(/\r?\n$/, ""))) return;
+					matchCount++;
+					raw.push({ filePath, lineNumber });
+					if (matchCount >= effectiveLimit) {
+						matchLimitReached = true;
+						stopChild(true);
 					}
 				});
 
@@ -270,22 +411,14 @@ export function makeGrepOverride(cwd: string) {
 						return;
 					}
 
-					// Dedupe by (file, line); a line that is both a match and a context line counts as a match.
-					const map = new Map<string, RawMatch>();
+					// Group by file, matches sorted by line number (Map keeps rg's discovery order).
+					const byFile = new Map<string, number[]>();
 					for (const m of raw) {
-						const key = `${m.filePath}:${m.lineNumber}`;
-						const prev = map.get(key);
-						if (!prev || (!prev.match && m.match)) map.set(key, m);
-					}
-
-					// Group by file, each group sorted by line number.
-					const byFile = new Map<string, RawMatch[]>();
-					for (const m of map.values()) {
 						const arr = byFile.get(m.filePath) ?? [];
-						arr.push(m);
+						arr.push(m.lineNumber);
 						byFile.set(m.filePath, arr);
 					}
-					for (const arr of byFile.values()) arr.sort((a, b) => a.lineNumber - b.lineNumber);
+					for (const arr of byFile.values()) arr.sort((a, b) => a - b);
 
 					// Read each file once and hash all its lines; hash is computed from the FULL line.
 					const fileCache = new Map<string, { lines: string[]; hashes: string[] }>();
@@ -306,30 +439,53 @@ export function makeGrepOverride(cwd: string) {
 					};
 
 					const formatPath = (fp: string): string => {
-						if (isDir) {
-							const rel = relative(searchPath, fp).replace(/\\/g, "/");
+						for (const root of roots) {
+							if (!root.isDir) continue;
+							const rel = relative(root.path, fp).replace(/\\/g, "/");
 							if (rel && !rel.startsWith("..")) return rel;
 						}
 						return basename(fp);
 					};
 
 					const blocks: string[] = [];
-					for (const [fp, matches] of byFile) {
-						const { lines, hashes } = await getFile(fp);
-						const n = matches.filter((m) => m.match).length;
-						const header = `${formatPath(fp)} · ${n} match${n !== 1 ? "es" : ""}`;
-						const rows: string[] = [];
-						for (const m of matches) {
-							const content = lines[m.lineNumber - 1] ?? "";
-							const hash = hashes[m.lineNumber - 1] ?? "";
-							const { text: disp, wasTruncated } = truncateLine(content.replace(/\r/g, ""));
-							if (wasTruncated) linesTruncated = true;
-							rows.push(`${m.lineNumber}#${hash}│${disp}`);
+					if (outputMode === "content") {
+						for (const [fp, matchLines] of byFile) {
+							const { lines, hashes } = await getFile(fp);
+							const matchSet = new Set(matchLines);
+							// Context windows are rebuilt from surviving matches so context
+							// lines of a filtered-out match never leak.
+							const windowSet = new Set<number>();
+							for (const ln of matchLines) {
+								for (let n = Math.max(1, ln - ctx); n <= Math.min(lines.length, ln + ctx); n++) windowSet.add(n);
+							}
+							const header = anchored
+								? `${formatPath(fp)} · ${matchLines.length} match${matchLines.length !== 1 ? "es" : ""}\n`
+								: "";
+							const rows: string[] = [];
+							for (const n of [...windowSet].sort((a, b) => a - b)) {
+								const content = lines[n - 1] ?? "";
+								const hash = hashes[n - 1] ?? "";
+								const { text: disp, wasTruncated } = truncateLine(content.replace(/\r/g, ""));
+								if (wasTruncated) linesTruncated = true;
+								if (anchored) rows.push(`${n}#${hash}│${disp}`);
+								else if (matchSet.has(n)) rows.push(`${formatPath(fp)}:${n}: ${disp}`);
+								else rows.push(`${formatPath(fp)}-${n}- ${disp}`);
+							}
+							blocks.push(`${header}${rows.join("\n")}`);
 						}
-						blocks.push(`${header}\n${rows.join("\n")}`);
+					} else if (outputMode === "files") {
+						for (const fp of byFile.keys()) blocks.push(formatPath(fp));
+					} else {
+						// count
+						let total = 0;
+						for (const [fp, matchLines] of byFile) {
+							blocks.push(`${formatPath(fp)}: ${matchLines.length}`);
+							total += matchLines.length;
+						}
+						blocks.push(`Total: ${total} match${total !== 1 ? "es" : ""} in ${byFile.size} file${byFile.size !== 1 ? "s" : ""}`);
 					}
 
-					let output = blocks.join("\n\n");
+					let output = blocks.join(outputMode === "content" ? "\n\n" : "\n");
 					const truncation = truncateHead(output, { maxBytes: DEFAULT_MAX_BYTES });
 					output = truncation.content;
 
