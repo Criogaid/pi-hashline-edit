@@ -24,21 +24,23 @@ Routine local code editing in pi — the common case. If you spend turns fightin
 
 Set `hashlineEdit.enabled = false` (or uninstall) to fall back to the built-in `read`/`edit`/`grep` when you need **remote or custom-storage files** — the overrides read/write/search the local filesystem directly, so pi's custom `ReadOperations`/`GrepOperations` (SSH, etc.) aren't supported. The same switch lets you opt out per-project. All four tools — `read`, `grep`, `edit`, `replace` — are one set governed by this switch: when disabled, `read`/`edit` and plain `grep` calls delegate to the built-ins (`grep` calls using the extended params below still run locally, formatted without anchors) and `replace` refuses (it has no built-in counterpart).
 
-## Model compatibility — field notes
+## Model Compatibility
 
-Real-world reliability depends on the model more than on anything else. Field observations from real sessions (June 2026, single environment — directional, not benchmarks; vendors iterate fast, re-test on new releases):
+Hashline replaces the edit protocol the main model was trained on, so real-world reliability depends on the model more than on anything else. Field observations from real sessions, one family per subsection (June 2026, single environment — directional, not benchmarks; vendors iterate fast, re-test on new releases).
 
-| Model profile | Tested example | Built-in string-replace | hashline-edit | Recommendation |
-|---|---|---|---|---|
-| Weak tool-call construction | DeepSeek V4 Flash | ~50% of edits fail; each fix takes several more `edit` rounds | ~80% of edits fail, but each failure converges in **one** retry | Keep hashline on — fewer total round-trips despite the higher failure rate |
-| Strong, but not trained on hashline | Kimi K3 | Excellent | Frequent anchor mistakes | Turn the plugin off — the built-in `edit` serves this profile better |
-| Strong, follows the schema as given | GLM 5.2 | Occasional not-found / whitespace friction | 100% — the friction disappears | The intended pairing |
+### DeepSeek family
 
-What these numbers actually say:
+**Avoid — silent corruption.** Weak tool-call construction (tested: DeepSeek V4 Flash): ~50% of edits fail on the built-in string-replace, and each fix takes several more rounds — string-replace failures are *divergent*, the model retries from the same wrong memory, but at least they are loud. Hashline's rejected anchors *converge* — a mismatched anchor returns the live content plus a ready-to-resend `LINE#HASH`, so one retry closes the loop — but the raw failure rate is high (~80%), and hashline adds a failure class the built-in edit doesn't have.
 
-- **A high failure rate on weak models is not a hashline problem.** DeepSeek V4 Flash fails at ~50% even on plain string-replace — the root cause is misremembered file content, and no edit protocol fixes that. What changes is the *shape* of a failure: string-replace failures are divergent (the model retries from the same wrong memory, so fixes take multiple rounds), while hashline failures are convergent (a mismatched anchor returns the live content plus a ready-to-resend `LINE#HASH`, so one retry closes the loop without trusting the model's memory).
-- **Strong ≠ automatic win.** Hashline assumes anchor discipline — copy hashes verbatim from read output, never invent one. A model that hasn't internalized that will fabricate anchors no matter how capable it is. If a strong model keeps hitting anchor errors, the fastest fix is disabling the plugin, not more retries.
-- **Some errors are invisible to any edit protocol.** On weak models `insert_after` is sometimes misread as string-replace-style: the model copies the anchor line into `body` (observed on DeepSeek V4 Flash), the toolcall verifies and succeeds, and the line ends up duplicated in the file. Nothing at the tool layer can catch this — the anchor is valid; the model's *intent* was wrong, and no amount of prompt wording cures it (the schema description already forbids the copy). Capable models never needed the wording in the first place: GLM used `insert_after` correctly back when the tool description didn't explain the op at all. The mismatch lives in the model, not the tool.
+`insert_after` semantics invite wrong parameters even when the tool call itself is well-formed: the model fills `body` string-replace-style, copying the anchor line into it (observed on DeepSeek V4 Flash). The toolcall verifies and succeeds, and the line ends up duplicated. Nothing at the tool layer can catch this — the anchor is valid, the model's *intent* was wrong, and no prompt wording cures it (the schema description already forbids the copy). For a weak model, hashline effectively trades loud failures for silent ones: files come out corrupted edit by edit. Keep the plugin off for this profile; if you must run it, review the diff after every edit.
+
+### Kimi family
+
+**Turn the plugin off.** Strong, but not trained on hashline (tested: Kimi K3): built-in string-replace is excellent while hashline draws frequent anchor mistakes. Hashline assumes anchor discipline — copy hashes verbatim from read output, never invent one; a model that hasn't internalized that fabricates anchors no matter how capable. When a strong model keeps hitting anchor errors, the fastest fix is disabling the plugin, not more retries.
+
+### GLM family
+
+**The intended pairing.** Strong and follows the schema as given (tested: GLM 5.2): the occasional not-found / whitespace friction of built-in string-replace disappears — 100% in testing. Capable models never needed the wording in the first place: GLM used `insert_after` correctly even when the tool description didn't explain the op at all. The mismatch lives in the model, not the tool.
 
 ## Gotchas (vs. the built-in `read`/`edit`)
 
