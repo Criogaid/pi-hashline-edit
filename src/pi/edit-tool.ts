@@ -19,7 +19,7 @@
  * @module pi-hashline-edit/pi
  */
 
-import { createEditTool, generateDiffString, generateUnifiedPatch, withFileMutationQueue, type EditToolDetails } from "@earendil-works/pi-coding-agent";
+import { generateDiffString, generateUnifiedPatch, withFileMutationQueue, type EditToolDetails } from "@earendil-works/pi-coding-agent";
 import { Type, type Static } from "typebox";
 import { Text } from "@earendil-works/pi-tui";
 import { readFile, writeFile } from "node:fs/promises";
@@ -201,7 +201,6 @@ function editHeader(args: Static<typeof editSchema>, theme: any, counts?: DiffCo
 }
 
 export function makeEditOverride(cwd: string) {
-	const builtin = createEditTool(cwd);
 
 	return {
 		name: "edit" as const,
@@ -256,8 +255,7 @@ export function makeEditOverride(cwd: string) {
 
 		async execute(toolCallId: string, params: Static<typeof editSchema>, signal: AbortSignal | undefined, onUpdate: any) {
 			const state = getState();
-			// hashline disabled by the user (config.enabled=false) → delegate to the built-in
-			if (!state.config.enabled) return builtin.execute(toolCallId, params as any, signal, onUpdate);
+			if (!state.config.enabled) return errResult("Hashline edit is disabled; reload to use the built-in edit tool.");
 
 			const path = params.path;
 			const absPath = canonicalPath(cwd, path);

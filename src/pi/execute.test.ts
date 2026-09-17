@@ -5,12 +5,15 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, rm, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { initTheme } from "@earendil-works/pi-coding-agent";
+import { createEditTool, initTheme } from "@earendil-works/pi-coding-agent";
+import { validateToolArguments } from "@earendil-works/pi-ai";
+import registerHashline from "../index.ts";
 import { makeEditOverride } from "./edit-tool.ts";
 import { makeReadOverride } from "./read-tool.ts";
+import { getState } from "./state.ts";
 import { computeLineHash } from "../core/hash.ts";
 import { splitLines } from "../core/lines.ts";
 
@@ -239,6 +242,32 @@ test("edit execute: delete op", async () => {
 		});
 		assert.equal(r.isError, undefined);
 		assert.equal(await readFile(f, "utf-8"), "a\nc\n");
+	});
+});
+
+test("disabled config leaves Pi's built-in read/edit tools available", async () => {
+	await withDir(async (dir) => {
+		const oldCwd = process.cwd();
+		const state = getState();
+		const previous = state.config;
+		try {
+			await mkdir(join(dir, ".pi"));
+			await writeFile(join(dir, ".pi", "settings.json"), JSON.stringify({ hashlineEdit: { enabled: false } }));
+			await writeFile(join(dir, "f.txt"), "old value\n");
+			process.chdir(dir);
+			const registered: string[] = [];
+			registerHashline({ on() {}, registerTool(tool: { name: string }) { registered.push(tool.name); } } as any);
+			assert.deepEqual(registered, ["grep", "replace"]);
+			const builtin = createEditTool(dir);
+			const params = validateToolArguments(builtin, {
+				name: "edit", arguments: { path: "f.txt", edits: [{ oldText: "old value", newText: "new value" }] },
+			} as any);
+			await call(builtin, params);
+			assert.equal(await readFile(join(dir, "f.txt"), "utf-8"), "new value\n");
+		} finally {
+			process.chdir(oldCwd);
+			state.config = previous;
+		}
 	});
 });
 

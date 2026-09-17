@@ -23,14 +23,13 @@ import { makeReplaceTool } from "./pi/replace-tool.ts";
 export default function (pi: ExtensionAPI) {
 	const cwd = process.cwd();
 
-	// refresh config on session start / reload
-	pi.on("session_start", async () => {
-		const state = getState();
-		state.config = loadConfig(cwd);
-	});
+	const state = getState();
+	state.config = loadConfig(cwd);
 
-	pi.registerTool(makeReadOverride(cwd));
-	pi.registerTool(makeEditOverride(cwd));
+	if (state.config.enabled) {
+		pi.registerTool(makeReadOverride(cwd));
+		pi.registerTool(makeEditOverride(cwd));
+	}
 	pi.registerTool(makeGrepOverride(cwd));
 	pi.registerTool(makeReplaceTool(cwd));
 }
