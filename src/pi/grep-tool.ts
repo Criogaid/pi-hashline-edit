@@ -55,15 +55,16 @@ const GREP_MAX_LINE_LENGTH = 500;
 
 /** Locate ripgrep: pi's bundled bin first, then PATH. Returns null if not found. */
 async function findRg(): Promise<string | null> {
+  const executable = process.platform === "win32" ? "rg.exe" : "rg";
   const agentDir = getAgentDir();
-  const piRg = join(agentDir, "bin", "rg");
+  const piRg = join(agentDir, "bin", executable);
   try {
     await access(piRg, constants.X_OK);
     return piRg;
   } catch {}
   for (const dir of process.env.PATH?.split(delimiter) ?? []) {
     if (!dir) continue;
-    const p = join(dir, "rg");
+    const p = join(dir, executable);
     try {
       await access(p, constants.X_OK);
       return p;
