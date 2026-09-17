@@ -4,11 +4,12 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { computeLineHash } from "../core/hash.ts";
 import { makeGrepOverrideWithBackend, type GrepBackend } from "./grep-tool.ts";
+import { makeEditOverride } from "./edit-tool.ts";
 import { getState } from "./state.ts";
 
 type FakeOptions = {
@@ -107,6 +108,37 @@ test("formats parsed rg matches with full-line hash anchors", async () => {
         path: "/fake/rg",
         args: ["--json", "--line-number", "--color=never", "--hidden", "-e", "alpha", "--", dir],
       });
+    }),
+  );
+});
+
+test("grep in a subdirectory returns a path that edits the matching file", async () => {
+  await withDir(async (dir) =>
+    withEnabled(true, async () => {
+      await mkdir(join(dir, "src"));
+      const original = "export const status = 1;\n";
+      const rootFile = join(dir, "status.ts");
+      const matchedFile = join(dir, "src", "status.ts");
+      await writeFile(rootFile, original);
+      await writeFile(matchedFile, original);
+      const fake = fakeBackend({ lines: [rgMatch(matchedFile, 1, original)] });
+      const result = await call(makeGrepOverrideWithBackend(dir, fake.backend), {
+        pattern: "status",
+        path: "src",
+      });
+      const output = text(result);
+      const displayPath = output.split(" · ")[0];
+      const edit: any = makeEditOverride(dir);
+      await call(edit, {
+        path: displayPath,
+        edits: [{
+          op: "replace",
+          anchor: { line: 1, hash: computeLineHash(1, original.trimEnd()) },
+          body: ["export const status = 2;"],
+        }],
+      });
+      assert.equal(await readFile(matchedFile, "utf-8"), "export const status = 2;\n");
+      assert.equal(await readFile(rootFile, "utf-8"), original);
     }),
   );
 });

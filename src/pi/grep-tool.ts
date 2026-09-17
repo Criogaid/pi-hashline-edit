@@ -42,7 +42,7 @@ import { Text } from "@earendil-works/pi-tui";
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 import { access, constants, readFile, stat } from "node:fs/promises";
-import { basename, delimiter, join, relative } from "node:path";
+import { delimiter, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { hashFileLines } from "../core/hash.ts";
 import { splitLines } from "../core/lines.ts";
 import { getState } from "./state.ts";
@@ -411,11 +411,9 @@ export function makeGrepOverrideWithBackend(cwd: string, overrides: Partial<Grep
       })();
       const hashLen = state.config.hashLen;
 
-      // Verify search paths upfront; remember dir-ness for relative display.
-      const roots: { path: string; isDir: boolean }[] = [];
       for (const sp of searchPaths) {
         try {
-          roots.push({ path: sp, isDir: (await stat(sp)).isDirectory() });
+          await stat(sp);
         } catch {
           throw new Error(`Path not found: ${sp}`);
         }
@@ -528,12 +526,11 @@ export function makeGrepOverrideWithBackend(cwd: string, overrides: Partial<Grep
             };
 
             const formatPath = (fp: string): string => {
-              for (const root of roots) {
-                if (!root.isDir) continue;
-                const rel = relative(root.path, fp).replace(/\\/g, "/");
-                if (rel && !rel.startsWith("..")) return rel;
-              }
-              return basename(fp);
+              const abs = resolve(cwd, fp);
+              const rel = relative(cwd, abs);
+              return rel && rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel)
+                ? rel.replace(/\\/g, "/")
+                : abs;
             };
 
             const blocks: string[] = [];
