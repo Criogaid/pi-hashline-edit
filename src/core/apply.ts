@@ -30,7 +30,7 @@
  */
 
 import { computeLineHash } from "./hash.ts";
-import { detectLineEnding, joinLines, splitLines } from "./lines.ts";
+import { detectLineEnding, hasFinalNewline, joinLines, splitLines } from "./lines.ts";
 import type { Anchor, AnchorFailure, AnchorRecovery, ApplyResult, Edit } from "./types.ts";
 
 /** Line-level operation: replace the raw lines in the `[lo, hi)` range (0-based, hi exclusive) with newLines. */
@@ -218,7 +218,7 @@ export function applyEdits(text: string, edits: Edit[], hashLen = 4, shiftRadius
 		result = [...result.slice(0, op.lo), ...op.newLines, ...result.slice(op.hi)];
 	}
 
-	const newText = joinLines(result, ending);
+	const newText = joinLines(result, ending, hasFinalNewline(text));
 	if (newText === text) {
 		return {
 			ok: false,

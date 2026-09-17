@@ -15,7 +15,7 @@ import { readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { homedir } from "node:os";
 import { hashFileLines } from "../core/hash.ts";
-import { splitLines } from "../core/lines.ts";
+import { hasFinalNewline, splitLines } from "../core/lines.ts";
 import { getState } from "./state.ts";
 import { parseHashline } from "./render.ts";
 
@@ -60,9 +60,10 @@ function renderReadBody(raw: string, path: string, theme: any): string {
 	if (lines.length === 0) return "";
 	const out: string[] = [];
 
-	// Header: "<path> · <N> lines" optionally followed by " (from line <offset>)".
+	// Header: "<path> · <N> lines", optionally followed by " (from line <offset>)"
+	// and/or " · no trailing newline".
 	let bodyStart = 0;
-	const h = lines[0].match(/^(.+?) · (\d+ lines(?: \(from line \d+\))?)$/);
+	const h = lines[0].match(/^(.+?) · (\d+ lines(?: \(from line \d+\))?(?: · no trailing newline)?)$/);
 	if (h) {
 		out.push(theme.fg("success", h[1]) + theme.fg("dim", ` · ${h[2]}`));
 		bodyStart = 1;
@@ -184,8 +185,12 @@ export function makeReadOverride(cwd: string) {
 			}
 
 			const shownFrom = offset > 1 ? ` (from line ${offset})` : "";
+			// A file whose last line carries no terminator is a byte-level fact that the
+			// numbered rows cannot show; state it in the header, the one line the model
+			// never copies into an edit `body`.
+			const noFinalNewline = hasFinalNewline(text) ? "" : " · no trailing newline";
 			const tail = truncated ? `\n… (truncated at ${MAX_BYTES >> 10}KB; use offset/limit to read more)` : "";
-			const header = `${params.path} · ${totalLines} lines${shownFrom}\n`;
+			const header = `${params.path} · ${totalLines} lines${shownFrom}${noFinalNewline}\n`;
 			const body = rows.join("\n");
 
 			return {

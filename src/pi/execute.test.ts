@@ -49,6 +49,36 @@ test("read execute: text outputs LINE#HASH│content", async () => {
 	});
 });
 
+test("read execute: a missing final newline is stated in the header", async () => {
+	await withDir(async (dir) => {
+		await writeFile(join(dir, "f.txt"), "line1\nline2");
+		const bare: any = await call(makeReadOverride(dir), { path: "f.txt" });
+		assert.match(bare.content[0].text, /f\.txt · 2 lines · no trailing newline/);
+
+		await writeFile(join(dir, "g.txt"), "line1\nline2\n");
+		const terminated: any = await call(makeReadOverride(dir), { path: "g.txt" });
+		assert.doesNotMatch(terminated.content[0].text, /no trailing newline/);
+	});
+});
+
+test("edit execute: a file without a final newline stays byte-exact", async () => {
+	await withDir(async (dir) => {
+		const f = join(dir, "f.txt");
+		// The benchmark's literal-1-no-final-newline fixture: no terminator, plus a
+		// word-joiner the model cannot see. Only line 2 may change; the missing
+		// terminator must not turn into a new byte.
+		const text = "guard\nold value\u2060";
+		await writeFile(f, text);
+		await call(makeReadOverride(dir), { path: "f.txt" });
+		const r: any = await call(makeEditOverride(dir), {
+			path: "f.txt",
+			edits: [{ op: "replace", anchor: h(text, 2), body: ["new value\u2060"] }],
+		});
+		assert.equal(r.isError, undefined, "should not be an error");
+		assert.equal(await readFile(f, "utf-8"), "guard\nnew value\u2060");
+	});
+});
+
 test("edit execute: hashline round-trip (read → edit → file changed)", async () => {
 	await withDir(async (dir) => {
 		const f = join(dir, "f.txt");

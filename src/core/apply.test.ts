@@ -171,6 +171,37 @@ test("CRLF line endings preserved", () => {
 	if (r.ok) assert.equal(r.text, "A\r\nb\r\n");
 });
 
+test("a file without a final newline keeps not having one", () => {
+	const text = "a\nb";
+	const r = applyEdits(text, [{ op: "replace", start: at(text, 2), body: ["B"] }]);
+	assert.equal(r.ok, true);
+	if (r.ok) assert.equal(r.text, "a\nB");
+});
+
+test("CRLF without a final newline keeps not having one", () => {
+	const text = "a\r\nb";
+	const r = applyEdits(text, [{ op: "replace", start: at(text, 1), body: ["A"] }]);
+	assert.equal(r.ok, true);
+	if (r.ok) assert.equal(r.text, "A\r\nb");
+});
+
+test("appending to a file without a final newline keeps it absent", () => {
+	const text = "a";
+	const r = applyEdits(text, [{ op: "append", body: ["b"] }]);
+	assert.equal(r.ok, true);
+	if (r.ok) assert.equal(r.text, "a\nb");
+});
+
+test("noop is still detected when the file lacks a final newline", () => {
+	// Before the final-newline fix, joinLines appended a terminator, so a
+	// byte-identical body looked like a change and the edit silently rewrote the
+	// file — the noop guard never fired.
+	const text = "a\nb";
+	const r = applyEdits(text, [{ op: "replace", start: at(text, 1), body: ["a"] }]);
+	assert.equal(r.ok, false);
+	if (!r.ok) assert.equal(r.failure.kind, "noop");
+});
+
 // --- shifted-anchor recovery ---
 
 test("shifted recovery: content moved down → found with a fresh anchor", () => {
