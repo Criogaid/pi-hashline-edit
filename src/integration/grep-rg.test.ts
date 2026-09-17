@@ -12,7 +12,7 @@ import { makeGrepOverrideWithBackend } from "../pi/grep-tool.ts";
 async function findPathRg(): Promise<string | null> {
   for (const directory of process.env.PATH?.split(delimiter) ?? []) {
     if (!directory) continue;
-    const candidate = join(directory, "rg");
+    const candidate = join(directory, process.platform === "win32" ? "rg.exe" : "rg");
     try {
       await access(candidate, constants.X_OK);
       return candidate;
@@ -31,15 +31,16 @@ test("real rg emits anchored matches from a temporary directory", {
     const file = join(directory, "fixture.ts");
     await writeFile(file, "needle\nother\n");
     const tool = makeGrepOverrideWithBackend(directory, {
-      findRg: async () => rgPath,
       delegate: async () => {
         throw new Error("integration test must not invoke the built-in grep delegate");
       },
     });
 
-    const result: any = await tool.execute("0", { pattern: "needle" }, undefined, undefined);
-    assert.match(result.content[0].text, /fixture\.ts · 1 match/);
-    assert.match(result.content[0].text, /1#[0-9A-Z]+│needle/);
+    for (const pattern of ["needle", ["needle"]]) {
+      const result: any = await tool.execute("0", { pattern }, undefined, undefined);
+      assert.match(result.content[0].text, /fixture\.ts · 1 match/);
+      assert.match(result.content[0].text, /1#[0-9A-Z]+│needle/);
+    }
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
