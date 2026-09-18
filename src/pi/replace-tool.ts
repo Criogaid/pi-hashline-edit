@@ -210,12 +210,6 @@ export function makeReplaceTool(cwd: string) {
 
 		async execute(toolCallId: string, params: ReplaceParams, signal: AbortSignal | undefined, onUpdate: any) {
 			const state = getState();
-			// Gated by the same `enabled` switch as read/grep/edit — they delegate to the
-			// built-ins when disabled; replace has no built-in counterpart, so it refuses.
-			if (!state.config.enabled)
-				throw new Error(
-					"Replace is unavailable: hashlineEdit is disabled. Set hashlineEdit.enabled = true to use it.",
-				);
 			const path = params.path;
 			const absPath = canonicalPath(cwd, path);
 

@@ -254,9 +254,6 @@ export function makeEditOverride(cwd: string) {
 		},
 
 		async execute(toolCallId: string, params: Static<typeof editSchema>, signal: AbortSignal | undefined, onUpdate: any) {
-			const state = getState();
-			if (!state.config.enabled) return errResult("Hashline edit is disabled; reload to use the built-in edit tool.");
-
 			const path = params.path;
 			const absPath = canonicalPath(cwd, path);
 

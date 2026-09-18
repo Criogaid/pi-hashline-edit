@@ -26,10 +26,12 @@ export default function (pi: ExtensionAPI) {
 	const state = getState();
 	state.config = loadConfig(cwd);
 
+	// `enabled: false` leaves the extension fully inert — pi's built-in
+	// read/edit/grep stay in place, as if this package were not installed.
 	if (state.config.enabled) {
 		pi.registerTool(makeReadOverride(cwd));
 		pi.registerTool(makeEditOverride(cwd));
+		pi.registerTool(makeGrepOverride(cwd));
+		pi.registerTool(makeReplaceTool(cwd));
 	}
-	pi.registerTool(makeGrepOverride(cwd));
-	pi.registerTool(makeReplaceTool(cwd));
 }

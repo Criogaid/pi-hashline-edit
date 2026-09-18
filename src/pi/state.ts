@@ -2,7 +2,8 @@
  * Session-level config holder.
  *
  * globalThis singleton (consistent with the repo's module-identity guidance).
- * Config is loaded on session_start and read by the read/edit overrides.
+ * Config is loaded when the extension registers and read by the tool
+ * overrides.
  *
  * @module pi-hashline-edit/pi
  */

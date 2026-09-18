@@ -245,7 +245,7 @@ test("edit execute: delete op", async () => {
 	});
 });
 
-test("disabled config leaves Pi's built-in read/edit tools available", async () => {
+test("disabled config registers no tools — built-ins remain", async () => {
 	await withDir(async (dir) => {
 		const oldCwd = process.cwd();
 		const state = getState();
@@ -257,7 +257,7 @@ test("disabled config leaves Pi's built-in read/edit tools available", async () 
 			process.chdir(dir);
 			const registered: string[] = [];
 			registerHashline({ on() {}, registerTool(tool: { name: string }) { registered.push(tool.name); } } as any);
-			assert.deepEqual(registered, ["grep", "replace"]);
+			assert.deepEqual(registered, []);
 			const builtin = createEditTool(dir);
 			const params = validateToolArguments(builtin, {
 				name: "edit", arguments: { path: "f.txt", edits: [{ oldText: "old value", newText: "new value" }] },

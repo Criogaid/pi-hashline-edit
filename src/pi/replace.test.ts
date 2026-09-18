@@ -14,7 +14,6 @@ import { join } from "node:path";
 import { initTheme } from "@earendil-works/pi-coding-agent";
 import { makeReplaceTool } from "./replace-tool.ts";
 import { makeEditOverride } from "./edit-tool.ts";
-import { getState } from "./state.ts";
 
 async function withDir<T>(fn: (dir: string) => Promise<T>): Promise<T> {
 	const dir = await mkdtemp(join(tmpdir(), "hl-replace-"));
@@ -284,24 +283,5 @@ test("replace header: renderResult refreshes the call header in place — no inv
 		assert.ok(header.text.includes("+2"), "header should show added count");
 		assert.ok(header.text.includes("-1"), "header should show removed count");
 		assert.ok(!invalidated, "renderResult must not call invalidate");
-	});
-});
-
-test("replace: refuses and leaves the file untouched when hashlineEdit is disabled", async () => {
-	await withDir(async (dir) => {
-		const f = join(dir, "f.txt");
-		await writeFile(f, "a\nb\na\n");
-		const state = getState();
-		const saved = state.config;
-		state.config = { ...saved, enabled: false };
-		try {
-			await assert.rejects(
-				call(makeReplaceTool(dir), { path: "f.txt", find: "a", replace: "b" }),
-				/disabled/,
-			);
-			assert.equal(await readFile(f, "utf-8"), "a\nb\na\n", "file untouched when disabled");
-		} finally {
-			state.config = saved;
-		}
 	});
 });

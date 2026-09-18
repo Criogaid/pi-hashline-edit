@@ -131,11 +131,13 @@ test("grep in a subdirectory returns a path that edits the matching file", async
       const edit: any = makeEditOverride(dir);
       await call(edit, {
         path: displayPath,
-        edits: [{
-          op: "replace",
-          anchor: { line: 1, hash: computeLineHash(1, original.trimEnd()) },
-          body: ["export const status = 2;"],
-        }],
+        edits: [
+          {
+            op: "replace",
+            anchor: { line: 1, hash: computeLineHash(1, original.trimEnd()) },
+            body: ["export const status = 2;"],
+          },
+        ],
       });
       assert.equal(await readFile(matchedFile, "utf-8"), "export const status = 2;\n");
       assert.equal(await readFile(rootFile, "utf-8"), original);
@@ -292,24 +294,6 @@ test("delegates only safe fallbacks and rejects extended missing-rg requests", a
         }),
         /ripgrep \(rg\) not found/,
       );
-    });
-
-    const file = join(dir, "a.ts");
-    await writeFile(file, "x y\n");
-    const disabled = fakeBackend({ lines: [rgMatch(file, 1, "x y\n")] });
-    await withEnabled(false, async () => {
-      assert.equal(
-        text(await call(makeGrepOverrideWithBackend(dir, disabled.backend), { pattern: "x" })),
-        "delegated",
-      );
-      assert.equal(disabled.calls.length, 0);
-      const extended = await call(makeGrepOverrideWithBackend(dir, disabled.backend), {
-        pattern: ["x", "y"],
-        matchMode: "all",
-      });
-      assert.match(text(extended), /a\.ts:1: x y/);
-      assert.doesNotMatch(text(extended), /#[0-9A-Z]+│/);
-      assert.equal(disabled.calls.length, 1);
     });
   });
 });

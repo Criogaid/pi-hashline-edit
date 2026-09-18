@@ -188,6 +188,15 @@ test("inserting and deleting in mixed-ending files preserves surviving separator
 	if (deleted.ok) assert.equal(deleted.text, "a\r\nc\r\nlast");
 });
 
+test("replacing one line with several keeps the block's trailing gap", () => {
+	const before = "a\r\nb\nc\r\nd";
+	const result = applyEdits(before, [{ op: "replace", start: at(before, 2), body: ["X", "Y", "Z"] }]);
+	assert.equal(result.ok, true);
+	// b's gap (\n) moves to the last new line, so the boundary to c is unchanged;
+	// the two new interior gaps borrow positionally, then fall back to crlf.
+	if (result.ok) assert.equal(result.text, "a\r\nX\nY\r\nZ\nc\r\nd");
+});
+
 test("a file without a final newline keeps not having one", () => {
 	const text = "a\nb";
 	const r = applyEdits(text, [{ op: "replace", start: at(text, 2), body: ["B"] }]);
@@ -210,9 +219,6 @@ test("appending to a file without a final newline keeps it absent", () => {
 });
 
 test("noop is still detected when the file lacks a final newline", () => {
-	// Before the final-newline fix, joinLines appended a terminator, so a
-	// byte-identical body looked like a change and the edit silently rewrote the
-	// file — the noop guard never fired.
 	const text = "a\nb";
 	const r = applyEdits(text, [{ op: "replace", start: at(text, 1), body: ["a"] }]);
 	assert.equal(r.ok, false);

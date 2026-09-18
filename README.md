@@ -24,7 +24,7 @@ Routine local code editing in pi — the common case. If you spend turns fightin
 
 ## When to turn it off
 
-Set `hashlineEdit.enabled = false` (or uninstall) to fall back to the built-in `read`/`edit`/`grep` when you need **remote or custom-storage files** — the overrides read/write/search the local filesystem directly, so pi's custom `ReadOperations`/`GrepOperations` (SSH, etc.) aren't supported. The same switch lets you opt out per-project. All four tools — `read`, `grep`, `edit`, `replace` — are one set governed by this switch: when disabled, `read`/`edit` and plain `grep` calls delegate to the built-ins (`grep` calls using the extended params below still run locally, formatted without anchors) and `replace` refuses (it has no built-in counterpart).
+Set `hashlineEdit.enabled = false` (or uninstall) to fall back to the built-in `read`/`edit`/`grep` when you need **remote or custom-storage files** — the overrides read/write/search the local filesystem directly, so pi's custom `ReadOperations`/`GrepOperations` (SSH, etc.) aren't supported. The same switch lets you opt out per-project. All four tools — `read`, `grep`, `edit`, `replace` — are one set governed by this switch: when disabled the extension registers none of them and pi behaves as if it were not installed (reload pi after changing the setting).
 
 ## Model Compatibility
 
@@ -212,7 +212,7 @@ Add a `hashlineEdit` field to `~/.pi/agent/settings.json` (global) or `.pi/setti
 ```jsonc
 {
   "hashlineEdit": {
-    "enabled": true,     // set false to fall back to the built-in read/edit
+    "enabled": true,     // set false to disable the extension entirely (built-ins remain; reload pi)
     "hashLen": 4,        // hash length, 2–8 (default 4)
     "shiftRadius": 15    // ±lines scanned to rescue a stale anchor (default 15; 0 disables)
   }

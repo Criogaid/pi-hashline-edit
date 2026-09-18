@@ -212,6 +212,12 @@ export function applyEdits(text: string, edits: Edit[], hashLen = 4, shiftRadius
 		}
 	}
 
+	// Mixed line endings: each line carries the separator that FOLLOWED it in
+	// the original (its gap), so surviving lines keep theirs byte for byte. New
+	// gaps borrow the removed block's separators positionally — the last new
+	// line inherits the block's trailing gap, leaving the boundary to the next
+	// surviving line unchanged; gaps past the removed block's length (or in a
+	// pure insertion) fall back to the file's customary ending.
 	const separators = text.match(/\r?\n/g) ?? [];
 	const separator = ending === "crlf" ? "\r\n" : "\n";
 	let result = lines.map((content, i) => ({ content, separator: separators[i] ?? "" }));

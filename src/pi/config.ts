@@ -11,7 +11,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 
 export interface HashlineEditConfig {
-	/** Whether hashline is enabled (when false, delegate to the built-in read/edit). */
+	/** Master switch: when false the extension registers no tools — pi's built-ins remain. */
 	enabled: boolean;
 	/** Line hash length (default 4). */
 	hashLen: number;

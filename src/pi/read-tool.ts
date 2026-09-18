@@ -144,8 +144,8 @@ export function makeReadOverride(cwd: string) {
 		},
 
 		async execute(toolCallId: string, params: any, signal: AbortSignal | undefined, onUpdate: any) {
-			// Not enabled OR user cancelled → delegate to the built-in (builtin handles abort itself)
-			if (!getState().config.enabled || signal?.aborted) return builtin.execute(toolCallId, params, signal, onUpdate);
+			// User cancelled → delegate to the built-in (builtin handles abort itself)
+			if (signal?.aborted) return builtin.execute(toolCallId, params, signal, onUpdate);
 
 			const absPath = canonicalPath(cwd, params.path as string);
 			let buf: Buffer;

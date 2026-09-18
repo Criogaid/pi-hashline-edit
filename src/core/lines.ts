@@ -4,13 +4,15 @@
  *
  * CRLF: splitLines strips the trailing `\r` from each line (hashes are based on
  * clean lines, matching the `\r`-free content the model copies from the
- * display); detectLineEnding records the original ending so joinLines can
- * restore it — guaranteeing a CRLF file keeps its endings after edit.
+ * display); detectLineEnding records whether the file uses CRLF at all (any
+ * `\r\n` counts) so new boundaries added by an edit can use the file's
+ * customary ending.
  *
  * Final newline: splitLines discards whether the input ended with a terminator
  * (a trailing newline terminates the last line, it does not create one).
- * joinLines therefore takes that state as an argument rather than assuming it —
- * a file that lacked a final newline must not silently gain one.
+ * hasFinalNewline recovers that state so a file that lacked a final newline
+ * does not silently gain one — editing reassembles per-line separators and
+ * must suppress the last line's terminator accordingly.
  *
  * @module pi-hashline-edit/core
  */
@@ -34,14 +36,14 @@ export function splitLines(text: string): string[] {
 	return normalized.split("\n").map((l) => (l.endsWith("\r") ? l.slice(0, -1) : l));
 }
 
-/** Detect the dominant line ending of the text (any `\r\n` counts as CRLF). */
+/** Whether the text uses CRLF at all (any `\r\n` counts; mixed files report "crlf"). */
 export function detectLineEnding(text: string): LineEnding {
 	return text.includes("\r\n") ? "crlf" : "lf";
 }
 
 /**
  * Whether the text ends with a line terminator — the state splitLines discards
- * and joinLines needs in order to reproduce a document byte for byte.
+ * and edit application needs in order to reproduce a document byte for byte.
  *
  * The empty string has no lines and no terminator; it reports `true` so that
  * rejoining its (also empty) line array — which yields `""` either way —
@@ -49,19 +51,4 @@ export function detectLineEnding(text: string): LineEnding {
  */
 export function hasFinalNewline(text: string): boolean {
 	return text === "" || text.endsWith("\n");
-}
-
-/**
- * Join a line array back into text, restoring the given line ending (default LF)
- * and final-newline state (default: terminates with a newline, the convention
- * for freshly created content).
- *
- * Reconstructing an *existing* file must pass `hasFinalNewline(originalText)` so
- * a missing terminator stays missing.
- */
-export function joinLines(lines: readonly string[], ending: LineEnding = "lf", finalNewline = true): string {
-	if (lines.length === 0) return "";
-	const sep = ending === "crlf" ? "\r\n" : "\n";
-	const body = lines.join(sep);
-	return finalNewline ? body + sep : body;
 }

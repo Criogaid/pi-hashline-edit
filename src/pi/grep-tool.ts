@@ -22,9 +22,9 @@
  * pre-filter candidates. Context windows are likewise rebuilt client-side from
  * the surviving matches — context lines of a filtered-out match never leak.
  *
- * Falls back to the built-in grep when: hashline disabled with plain params,
- * aborted, or ripgrep cannot be located (the built-in can auto-download rg).
- * Extended params never delegate — the built-in would misread them.
+ * Falls back to the built-in grep when aborted or when ripgrep cannot be
+ * located (the built-in can auto-download rg). Extended params never
+ * delegate — the built-in would misread them.
  *
  * @module pi-hashline-edit/pi
  */
@@ -382,10 +382,6 @@ export function makeGrepOverrideWithBackend(cwd: string, overrides: Partial<Grep
         params.wordMatch === undefined &&
         !Array.isArray(params.path);
 
-      // disabled + plain params → built-in grep, exactly as before
-      if (!state.config.enabled && legacyShaped)
-        return backend.delegate(toolCallId, params, signal, onUpdate);
-
       const rgPath = await backend.findRg();
       // ripgrep unavailable → built-in (it can auto-download rg), but only for plain params
       if (!rgPath) {
@@ -394,9 +390,6 @@ export function makeGrepOverrideWithBackend(cwd: string, overrides: Partial<Grep
           "ripgrep (rg) not found; extended grep params cannot fall back to the built-in grep. Retry with a simple pattern first, or use bash",
         );
       }
-
-      // disabled + extended params still run locally, formatted without anchors
-      const anchored = state.config.enabled;
 
       const patterns = toArray(params.pattern);
       const excludes = toArray(params.excludePattern);
@@ -411,6 +404,8 @@ export function makeGrepOverrideWithBackend(cwd: string, overrides: Partial<Grep
       })();
       const hashLen = state.config.hashLen;
 
+      // Verify search paths upfront so a typo fails fast with a clear error
+      // (rg's own diagnostics are less actionable).
       for (const sp of searchPaths) {
         try {
           await stat(sp);
@@ -537,7 +532,6 @@ export function makeGrepOverrideWithBackend(cwd: string, overrides: Partial<Grep
             if (outputMode === "content") {
               for (const [fp, matchLines] of byFile) {
                 const { lines, hashes } = await getFile(fp);
-                const matchSet = new Set(matchLines);
                 // Context windows are rebuilt from surviving matches so context
                 // lines of a filtered-out match never leak.
                 const windowSet = new Set<number>();
@@ -545,18 +539,14 @@ export function makeGrepOverrideWithBackend(cwd: string, overrides: Partial<Grep
                   for (let n = Math.max(1, ln - ctx); n <= Math.min(lines.length, ln + ctx); n++)
                     windowSet.add(n);
                 }
-                const header = anchored
-                  ? `${formatPath(fp)} · ${matchLines.length} match${matchLines.length !== 1 ? "es" : ""}\n`
-                  : "";
+                const header = `${formatPath(fp)} · ${matchLines.length} match${matchLines.length !== 1 ? "es" : ""}\n`;
                 const rows: string[] = [];
                 for (const n of [...windowSet].sort((a, b) => a - b)) {
                   const content = lines[n - 1] ?? "";
                   const hash = hashes[n - 1] ?? "";
                   const { text: disp, wasTruncated } = truncateLine(content.replace(/\r/g, ""));
                   if (wasTruncated) linesTruncated = true;
-                  if (anchored) rows.push(`${n}#${hash}│${disp}`);
-                  else if (matchSet.has(n)) rows.push(`${formatPath(fp)}:${n}: ${disp}`);
-                  else rows.push(`${formatPath(fp)}-${n}- ${disp}`);
+                  rows.push(`${n}#${hash}│${disp}`);
                 }
                 blocks.push(`${header}${rows.join("\n")}`);
               }
