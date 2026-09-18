@@ -171,6 +171,23 @@ test("CRLF line endings preserved", () => {
 	if (r.ok) assert.equal(r.text, "A\r\nb\r\n");
 });
 
+test("editing a mixed-ending file preserves untouched separators", () => {
+	const before = "first\r\nsecond\nthird\r\n";
+	const result = applyEdits(before, [{ op: "replace", start: at(before, 2), body: ["SECOND"] }]);
+	assert.equal(result.ok, true);
+	if (result.ok) assert.equal(result.text, "first\r\nSECOND\nthird\r\n");
+});
+
+test("inserting and deleting in mixed-ending files preserves surviving separators", () => {
+	const before = "a\r\nb\nc\r\nlast";
+	const inserted = applyEdits(before, [{ op: "insert_after", anchor: at(before, 2), body: ["x"] }]);
+	assert.equal(inserted.ok, true);
+	if (inserted.ok) assert.equal(inserted.text, "a\r\nb\nx\r\nc\r\nlast");
+	const deleted = applyEdits(before, [{ op: "delete", start: at(before, 2) }]);
+	assert.equal(deleted.ok, true);
+	if (deleted.ok) assert.equal(deleted.text, "a\r\nc\r\nlast");
+});
+
 test("a file without a final newline keeps not having one", () => {
 	const text = "a\nb";
 	const r = applyEdits(text, [{ op: "replace", start: at(text, 2), body: ["B"] }]);

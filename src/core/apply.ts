@@ -30,7 +30,7 @@
  */
 
 import { computeLineHash } from "./hash.ts";
-import { detectLineEnding, hasFinalNewline, joinLines, splitLines } from "./lines.ts";
+import { detectLineEnding, hasFinalNewline, splitLines } from "./lines.ts";
 import type { Anchor, AnchorFailure, AnchorRecovery, ApplyResult, Edit } from "./types.ts";
 
 /** Line-level operation: replace the raw lines in the `[lo, hi)` range (0-based, hi exclusive) with newLines. */
@@ -212,13 +212,23 @@ export function applyEdits(text: string, edits: Edit[], hashLen = 4, shiftRadius
 		}
 	}
 
-	// Apply back-to-front (lo descending) so original lo/hi stay valid
-	let result = [...lines];
+	const separators = text.match(/\r?\n/g) ?? [];
+	const separator = ending === "crlf" ? "\r\n" : "\n";
+	let result = lines.map((content, i) => ({ content, separator: separators[i] ?? "" }));
 	for (const op of [...sorted].sort((a, b) => b.lo - a.lo)) {
-		result = [...result.slice(0, op.lo), ...op.newLines, ...result.slice(op.hi)];
+		const removed = result.slice(op.lo, op.hi);
+		const inserted = op.newLines.map((content, i) => ({
+			content,
+			separator: i === op.newLines.length - 1 && removed.length > 0
+				? removed[removed.length - 1].separator
+				: removed[i]?.separator || separator,
+		}));
+		result.splice(op.lo, op.hi - op.lo, ...inserted);
 	}
-
-	const newText = joinLines(result, ending, hasFinalNewline(text));
+	const finalNewline = hasFinalNewline(text);
+	const newText = result.map(({ content, separator: current }, i) =>
+		content + (i < result.length - 1 || finalNewline ? current || separator : ""),
+	).join("");
 	if (newText === text) {
 		return {
 			ok: false,
