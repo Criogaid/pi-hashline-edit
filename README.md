@@ -224,6 +224,8 @@ When `actionFusion` is true, `edit`, `replace`, and `write` accept an optional `
 `write` preserves Pi's complete-content `{ path, content }` shape. By default it creates missing files and overwrites existing files. `mode: "create"` refuses an existing target; `mode: "overwrite"` requires an existing target; `expectedRevision` is optional, but is checked strictly when supplied. Hashline does not automatically strip `LINE#HASH│` prefixes from write content.
 The setting is disabled by default. Keep it false when commands should not be available from Hashline mutations.
 
+In the TUI, each `then_run` gets a separate transcript card showing the command, waiting/running state, live output, and final outcome. Cards reuse Pi's native Bash command and output renderers, including the collapsed output preview and expand hint, with the same pending/success/error background colors as native tools. Expand them to inspect the captured output. Cards preserve their final state across session reloads without adding messages to model context. If the session ended before a final outcome was saved, the card reports an interrupted command with unknown final status. RPC hosts receive the same progress through tool execution updates; rendering depends on the host.
+
 ### File publication boundaries
 
 All three mutation tools use the same `commitFile` layer. Complete content is prepared in a sibling temporary directory and synced before publication.

@@ -21,6 +21,7 @@ import { makeGrepOverride } from "./pi/grep-tool.ts";
 import { makeReplaceTool } from "./pi/replace-tool.ts";
 import { makeWriteTool } from "./pi/write-tool.ts";
 import { createActionFusionExecutor } from "./pi/action-fusion.ts";
+import { registerFusionCards } from "./pi/fusion-card.ts";
 
 export default function (pi: ExtensionAPI) {
 	const cwd = process.cwd();
@@ -31,7 +32,8 @@ export default function (pi: ExtensionAPI) {
 	// `enabled: false` leaves the extension fully inert — pi's built-in
 	// read/edit/grep/replace/write stay in place, as if this package were not installed.
 	if (state.config.enabled) {
-		const fusion = state.config.actionFusion ? createActionFusionExecutor() : undefined;
+		const reportProgress = registerFusionCards(pi);
+		const fusion = state.config.actionFusion ? createActionFusionExecutor(undefined, reportProgress) : undefined;
 		pi.registerTool(makeReadOverride(cwd));
 		pi.registerTool(makeEditOverride(cwd, fusion));
 		pi.registerTool(makeGrepOverride(cwd));

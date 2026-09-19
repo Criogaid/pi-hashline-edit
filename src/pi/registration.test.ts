@@ -16,7 +16,13 @@ test("enabled registration installs the Hashline write and shared Fusion schemas
 		await writeFile(join(dir, ".pi", "settings.json"), JSON.stringify({ hashlineEdit: { enabled: true, actionFusion: true } }));
 		process.chdir(dir);
 		const tools: any[] = [];
-		registerHashline({ on() {}, registerTool(tool: any) { tools.push(tool); } } as any);
+		const entries: any[] = [];
+		registerHashline({
+			on() {},
+			registerEntryRenderer() {},
+			appendEntry(customType: string, data: unknown) { entries.push({ customType, data }); },
+			registerTool(tool: any) { tools.push(tool); },
+		} as any);
 		assert.deepEqual(tools.map((tool) => tool.name), ["read", "edit", "grep", "replace", "write"]);
 		for (const tool of tools.filter((tool) => ["edit", "replace", "write"].includes(tool.name))) {
 			assert.ok(tool.parameters.properties.then_run, `${tool.name} should expose then_run when actionFusion is enabled`);
@@ -26,6 +32,8 @@ test("enabled registration installs the Hashline write and shared Fusion schemas
 			writeTool.execute("write-error", { path: "published.txt", content: "published\n", then_run: { command: "node -e \\\"process.exit(1)\\\"" } }, undefined, undefined, { cwd: dir }),
 			(error: unknown) => error instanceof Error && /publication=PUBLISHED/.test(error.message) && /command=failed/.test(error.message),
 		);
+		assert.deepEqual(entries.map((entry) => entry.data.command), ["waiting", "failed"]);
+		assert.equal(entries[1].data.publication, "PUBLISHED");
 	} finally {
 		process.chdir(previousCwd);
 		state.config = previousConfig;

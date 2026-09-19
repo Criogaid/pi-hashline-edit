@@ -173,7 +173,7 @@ export function makeReplaceTool(cwd: string, fusion?: ReturnType<typeof createAc
 		},
 
 		renderResult(result: any, { isPartial, expanded }: any, theme: any, context: any) {
-			if (isPartial) return new Text(theme.fg("warning", "Replacing…"), 0, 0);
+			if (isPartial && result.details?.actionFusion?.publication !== "PUBLISHED") return new Text(theme.fg("warning", "Replacing…"), 0, 0);
 			const content = result.content?.[0];
 			const fusionOutput = result.content?.slice(1).filter((block: any) => block.type === "text").map((block: any) => block.text).join("\n");
 			if (context.isError) {
@@ -206,7 +206,7 @@ export function makeReplaceTool(cwd: string, fusion?: ReturnType<typeof createAc
 			const absolutePath = canonicalPath(cwd, path);
 			const mutate = () => withFileMutationQueue(absolutePath, () => runReplace(absolutePath, path, mutationParams, state.config.hashLen, signal));
 			if (!fusion) return mutate();
-			return fusion({ toolName: "replace", toolCallId, absolutePath, thenRun: then_run, mutate, signal, ctx });
+			return fusion({ toolCallId, absolutePath, thenRun: then_run, mutate, signal, ctx, onUpdate });
 		},
 	};
 }

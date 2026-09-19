@@ -51,12 +51,12 @@ export function makeWriteTool(cwd: string, fusion?: ReturnType<typeof createActi
 			return text;
 		},
 		renderResult(result: any, { isPartial }: any, theme: any) {
-			if (isPartial) return new Text(theme.fg("warning", "Writing…"), 0, 0);
+			if (isPartial && result.details?.actionFusion?.publication !== "PUBLISHED") return new Text(theme.fg("warning", "Writing…"), 0, 0);
 			const summary = result.content?.[0]?.type === "text" ? result.content[0].text : "Wrote file";
 			const fusionOutput = result.content?.slice(1).filter((block: any) => block.type === "text").map((block: any) => block.text).join("\n");
 			return new Text(theme.fg("success", fusionOutput ? `${summary}\n${fusionOutput}` : summary), 0, 0);
 		},
-		async execute(toolCallId: string, params: WriteParams, signal: AbortSignal | undefined, _onUpdate: any, ctx: any) {
+		async execute(toolCallId: string, params: WriteParams, signal: AbortSignal | undefined, onUpdate: any, ctx: any) {
 			const { then_run, ...mutationParams } = params;
 			if (!fusion && then_run !== undefined) throw new Error("then_run is unavailable because hashlineEdit.actionFusion is disabled");
 			const absolutePath = canonicalPath(cwd, mutationParams.path);
@@ -77,7 +77,7 @@ export function makeWriteTool(cwd: string, fusion?: ReturnType<typeof createActi
 				}
 			});
 			if (!fusion) return mutate();
-			return fusion({ toolName: "write", toolCallId, absolutePath, thenRun: then_run, mutate, signal, ctx });
+			return fusion({ toolCallId, absolutePath, thenRun: then_run, mutate, signal, ctx, onUpdate });
 		},
 	};
 }

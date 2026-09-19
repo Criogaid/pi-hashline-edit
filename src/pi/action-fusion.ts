@@ -1,10 +1,9 @@
-import { createHash } from "node:crypto";
-import { realpath, readFile } from "node:fs/promises";
+import { realpath } from "node:fs/promises";
 import { basename, dirname, resolve } from "node:path";
-import type { AgentToolResult } from "@earendil-works/pi-agent-core";
+import type { AgentToolResult, AgentToolUpdateCallback } from "@earendil-works/pi-agent-core";
 import { createBashToolDefinition, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { FileMutationError, type PublicationStatus } from "./file-commit.ts";
+import { fileRevision, FileMutationError, type PublicationStatus } from "./file-commit.ts";
 
 export const THEN_RUN_SUCCEEDED = "[then_run:succeeded]";
 export const THEN_RUN_FAILED = "[then_run:failed]";
@@ -16,8 +15,6 @@ export interface ThenRunInput {
 	timeout?: number;
 }
 
-export type ActionFusionAuthorizer = (input: { toolName: "edit" | "replace" | "write"; absolutePath: string; cwd: string; thenRun: ThenRunInput }) => void | Promise<void>;
-
 export type CommandStatus = "not_requested" | "skipped" | "succeeded" | "failed" | "timeout" | "cancelled";
 export type Freshness = "unchanged" | "changed" | "missing" | "unknown";
 export interface ActionFusionDetails {
@@ -26,6 +23,16 @@ export interface ActionFusionDetails {
 	freshness: Freshness;
 }
 
+export interface ActionFusionProgress extends Omit<ActionFusionDetails, "command"> {
+	toolCallId: string;
+	path: string;
+	commandText: string;
+	command: Exclude<CommandStatus, "not_requested"> | "waiting" | "running";
+	output: string;
+}
+
+type ProgressReporter = (progress: ActionFusionProgress, ctx: ExtensionContext) => void;
+
 export function createThenRunSchema(description: string) {
 	return Type.Optional(Type.Object({
 		command: Type.String({ minLength: 1, description: "Bash command to run" }),
@@ -33,7 +40,7 @@ export function createThenRunSchema(description: string) {
 	}, { description }));
 }
 
-type CommandRunner = (toolCallId: string, input: ThenRunInput, signal: AbortSignal | undefined, ctx: ExtensionContext) => Promise<string>;
+type CommandRunner = (toolCallId: string, input: ThenRunInput, signal: AbortSignal | undefined, ctx: ExtensionContext, onUpdate?: AgentToolUpdateCallback<unknown>) => Promise<string>;
 
 type MutationResult<TDetails> = AgentToolResult<TDetails>;
 
@@ -41,13 +48,9 @@ function errorText(error: unknown): string {
 	return error instanceof Error ? error.message : String(error);
 }
 
-async function sha256(path: string): Promise<string> {
-	return createHash("sha256").update(await readFile(path)).digest("hex");
-}
-
 async function readFreshness(path: string, baseline: string): Promise<Freshness> {
 	try {
-		return (await sha256(path)) === baseline ? "unchanged" : "changed";
+		return (await fileRevision(path)) === baseline ? "unchanged" : "changed";
 	} catch (error) {
 		if (typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT") return "missing";
 		return "unknown";
@@ -56,9 +59,9 @@ async function readFreshness(path: string, baseline: string): Promise<Freshness>
 
 async function assertUnchangedBeforeCommand(path: string, baseline: string): Promise<void> {
 	try {
-		const before = await sha256(path);
+		const before = await fileRevision(path);
 		await new Promise<void>((resolve) => setImmediate(resolve));
-		const after = await sha256(path);
+		const after = await fileRevision(path);
 		if (before !== baseline || after !== baseline) {
 			throw new Error("target content changed after the fused mutation");
 		}
@@ -100,9 +103,9 @@ function validateThenRun(input: ThenRunInput): void {
 	}
 }
 
-async function defaultCommandRunner(toolCallId: string, input: ThenRunInput, signal: AbortSignal | undefined, ctx: ExtensionContext): Promise<string> {
+async function defaultCommandRunner(toolCallId: string, input: ThenRunInput, signal: AbortSignal | undefined, ctx: ExtensionContext, onUpdate?: AgentToolUpdateCallback<unknown>): Promise<string> {
 	const bash = createBashToolDefinition(ctx.cwd);
-	const result = await bash.execute(`${toolCallId}:then_run`, input, signal, undefined, ctx);
+	const result = await bash.execute(`${toolCallId}:then_run`, input, signal, onUpdate, ctx);
 	return result.content.filter((block) => block.type === "text").map((block) => block.text).join("\n");
 }
 
@@ -122,7 +125,7 @@ async function canonicalQueueKey(path: string): Promise<string> {
 	}
 }
 
-export function createActionFusionExecutor(commandRunner: CommandRunner = defaultCommandRunner, authorize?: ActionFusionAuthorizer) {
+export function createActionFusionExecutor(commandRunner: CommandRunner = defaultCommandRunner, onProgress?: ProgressReporter) {
 	const queueTails = new Map<string, Promise<void>>();
 
 	async function withQueue<T>(path: string, work: () => Promise<T>): Promise<T> {
@@ -143,25 +146,33 @@ export function createActionFusionExecutor(commandRunner: CommandRunner = defaul
 
 	return async function execute<TDetails>({
 		toolCallId,
-		toolName,
 		absolutePath,
 		thenRun,
 		mutate,
 		signal,
 		ctx,
+		onUpdate,
 	}: {
 		toolCallId: string;
-		toolName: "edit" | "replace" | "write";
 		absolutePath: string;
 		thenRun: ThenRunInput | undefined;
 		mutate: () => Promise<MutationResult<TDetails>>;
 		signal: AbortSignal | undefined;
 		ctx: ExtensionContext;
+		onUpdate?: AgentToolUpdateCallback<TDetails>;
 	}): Promise<MutationResult<TDetails>> {
-		if (thenRun !== undefined) {
-			validateThenRun(thenRun);
-			await authorize?.({ toolName, absolutePath, cwd: ctx.cwd, thenRun });
-		}
+		if (thenRun !== undefined) validateThenRun(thenRun);
+		let completedMutation: MutationResult<TDetails> | undefined;
+		const report = (command: ActionFusionProgress["command"], publication: PublicationStatus, freshness: Freshness, output = "") => {
+			if (!thenRun) return;
+			const progress: ActionFusionProgress = { toolCallId, path: absolutePath, commandText: thenRun.command, command, publication, freshness, output };
+			onProgress?.(progress, ctx);
+			onUpdate?.({
+				content: [...(completedMutation?.content ?? []), { type: "text", text: `then_run ${command}: ${thenRun.command}\n${output}` }],
+				details: { ...(completedMutation?.details as object ?? {}), actionFusion: progress },
+			} as MutationResult<TDetails>);
+		};
+		report("waiting", "NOT_PUBLISHED", "unknown");
 		return withQueue(absolutePath, async () => {
 			try { signal?.throwIfAborted(); } catch (error) {
 				if (thenRun !== undefined) throw new ActionFusionError("mutation was cancelled before it started; the command was not run", { publication: "NOT_PUBLISHED", command: "cancelled", freshness: "unknown" }, { cause: error });
@@ -170,6 +181,7 @@ export function createActionFusionExecutor(commandRunner: CommandRunner = defaul
 			let mutationResult: MutationResult<TDetails>;
 			try {
 				mutationResult = await mutate();
+				completedMutation = mutationResult;
 			} catch (error) {
 				const publication = error instanceof FileMutationError ? error.publication : "NOT_PUBLISHED";
 				if (thenRun !== undefined) {
@@ -188,7 +200,7 @@ export function createActionFusionExecutor(commandRunner: CommandRunner = defaul
 
 			let baseline: string | undefined;
 			try {
-				baseline = await sha256(absolutePath);
+				baseline = await fileRevision(absolutePath);
 				signal?.throwIfAborted();
 				await assertUnchangedBeforeCommand(absolutePath, baseline);
 				signal?.throwIfAborted();
@@ -197,10 +209,14 @@ export function createActionFusionExecutor(commandRunner: CommandRunner = defaul
 				throw new ActionFusionError("mutation completed; the command was not run", { publication, command: signal?.aborted ? "cancelled" : "skipped", freshness }, { cause: error });
 			}
 
+			report("running", publication, "unchanged");
 			let output: string;
 			let commandError: unknown;
 			try {
-				output = await commandRunner(toolCallId, thenRun, signal, ctx);
+				output = await commandRunner(toolCallId, thenRun, signal, ctx, (partial) => {
+					const text = partial.content.filter((block) => block.type === "text").map((block) => block.text).join("\n");
+					report("running", publication, "unknown", text);
+				});
 			} catch (error) {
 				commandError = error;
 				output = "";
@@ -211,12 +227,18 @@ export function createActionFusionExecutor(commandRunner: CommandRunner = defaul
 			}
 
 			const actionFusion: ActionFusionDetails = { publication, command: "succeeded", freshness };
+			report("succeeded", publication, freshness, output);
 			return {
 				...mutationResult,
 				details: { ...(mutationResult.details as object ?? {}), actionFusion },
 
 				content: [...mutationResult.content, { type: "text", text: freshness === "unchanged" ? (output ? `${THEN_RUN_SUCCEEDED}\n${output}` : THEN_RUN_SUCCEEDED) : `${THEN_RUN_SUCCEEDED}\n${THEN_RUN_STALE} freshness=${freshness}${output ? `\n${output}` : ""}` }],
 			} as MutationResult<TDetails>;
+		}).catch((error: unknown) => {
+			report(error instanceof ActionFusionError ? error.command as ActionFusionProgress["command"] : "skipped",
+				error instanceof ActionFusionError ? error.publication : "NOT_PUBLISHED",
+				error instanceof ActionFusionError ? error.freshness : "unknown", errorText(error));
+			throw error;
 		});
 	};
 }

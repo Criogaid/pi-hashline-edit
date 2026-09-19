@@ -239,7 +239,7 @@ export function makeEditOverride(cwd: string, fusion?: ReturnType<typeof createA
 		},
 
 		renderResult(result: any, { isPartial, expanded }: any, theme: any, context: any) {
-			if (isPartial) return new Text(theme.fg("warning", "Editing…"), 0, 0);
+			if (isPartial && result.details?.actionFusion?.publication !== "PUBLISHED") return new Text(theme.fg("warning", "Editing…"), 0, 0);
 			const content = result.content?.[0];
 			const fusionOutput = result.content?.slice(1).filter((block: any) => block.type === "text").map((block: any) => block.text).join("\n");
 			if (context.isError) {
@@ -276,12 +276,12 @@ export function makeEditOverride(cwd: string, fusion?: ReturnType<typeof createA
 			if (!fusion) return mutate();
 			return fusion({
 				toolCallId,
-				toolName: "edit",
 				absolutePath,
 				thenRun: then_run,
 				mutate,
 				signal,
 				ctx,
+				onUpdate,
 			});
 		},
 	};
