@@ -80,6 +80,19 @@ function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+const REGEX_SYNTAX = /[.*+?^${}()|[\]\\]/;
+
+function resolveLiteralMode(patterns: readonly string[], explicit: boolean | undefined): boolean {
+	if (explicit !== undefined) return explicit;
+	let hasRegexSyntax = false;
+	for (const pattern of patterns) {
+		if (!REGEX_SYNTAX.test(pattern)) continue;
+		hasRegexSyntax = true;
+		try { new RegExp(pattern); } catch { return true; }
+	}
+	return !hasRegexSyntax;
+}
+
 /**
  * Compile a pattern for the client-side line checks (`matchMode: "all"` and
  * `excludePattern`), mirroring the flags rg was given — `literal`,
@@ -117,7 +130,7 @@ function clampContext(context: number | undefined): number {
 const grepOverrideSchema = Type.Object({
   pattern: Type.Union([Type.String(), Type.Array(Type.String())], {
     description:
-      "Search pattern (regex, or literal with literal:true). Must be non-empty; pure wildcard regexes are rejected. String or array; an array combines patterns per matchMode (any = OR, all = AND on the same line)",
+      "Search pattern (auto-detected as regex or literal; override with literal). Must be non-empty; pure wildcard regexes are rejected. String or array; an array combines patterns per matchMode (any = OR, all = AND on the same line)",
   }),
   matchMode: Type.Optional(
     Type.Union([Type.Literal("any"), Type.Literal("all")], {
@@ -152,7 +165,7 @@ const grepOverrideSchema = Type.Object({
   ),
   literal: Type.Optional(
     Type.Boolean({
-      description: "Treat pattern as literal string instead of regex (default: false)",
+      description: "Force literal (true) or regex (false); omit to auto-detect",
     }),
   ),
   context: Type.Optional(
@@ -384,7 +397,7 @@ export function makeGrepOverrideWithBackend(cwd: string, overrides: Partial<Grep
       if (patterns.some((pattern) => pattern.trim() === "")) {
         throw new Error("pattern must not be empty");
       }
-      if (!params.literal) {
+      if (params.literal !== true) {
         const wildcard = patterns.find((pattern) => WILDCARD_ONLY_REGEX.test(pattern.trim()));
         if (wildcard !== undefined) {
           throw new Error(
@@ -417,7 +430,8 @@ export function makeGrepOverrideWithBackend(cwd: string, overrides: Partial<Grep
       const matchMode: "any" | "all" = params.matchMode ?? "any";
       const outputMode: "content" | "files" | "count" = params.outputMode ?? "content";
       const globs = toArray(params.glob);
-      const { ignoreCase, literal, wordMatch, context, limit } = params;
+      const literal = resolveLiteralMode([...patterns, ...excludes], params.literal);
+      const { ignoreCase, wordMatch, context, limit } = params;
       const ctx = clampContext(context);
       const searchPaths = (() => {
         const raw = toArray(params.path);

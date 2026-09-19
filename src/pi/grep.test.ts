@@ -108,7 +108,7 @@ test("formats parsed rg matches with full-line hash anchors", async () => {
       assert.match(output, /3#[0-9A-Z]+│alpha only/);
       assert.deepEqual(fake.calls[0], {
         path: "/fake/rg",
-        args: ["--json", "--line-number", "--color=never", "--hidden", "-e", "alpha", "--", dir],
+        args: ["--json", "--line-number", "--color=never", "--hidden", "--fixed-strings", "-e", "alpha", "--", dir],
       });
     }),
   );
@@ -263,6 +263,24 @@ test("counts only surviving matches toward the limit and stops the fake runner",
   );
 });
 
+test("auto-detects literal and regex modes while preserving explicit overrides", async () => {
+  await withDir(async (dir) => {
+    const fake = fakeBackend();
+    const tool = makeGrepOverrideWithBackend(dir, fake.backend);
+
+    await call(tool, { pattern: "queueTool(" });
+    await call(tool, { pattern: "value.*" });
+    await call(tool, { pattern: "plain", literal: false });
+    await call(tool, { pattern: ["plain", "broken("] });
+    await call(tool, { pattern: "value.*", literal: true });
+
+    assert.deepEqual(
+      fake.calls.map(({ args }) => args.includes("--fixed-strings")),
+      [true, false, false, true, true],
+    );
+  });
+});
+
 test("rejects empty and wildcard-only regexes without blocking literal or empty-line searches", async () => {
   await withDir(async (dir) => {
     const fake = fakeBackend();
@@ -293,7 +311,7 @@ test("reports empty output and ripgrep execution failures", async () => {
 
       const failed = fakeBackend({ code: 2, stderr: "bad regex" });
       await assert.rejects(
-        call(makeGrepOverrideWithBackend(dir, failed.backend), { pattern: "[" }),
+        call(makeGrepOverrideWithBackend(dir, failed.backend), { pattern: "[", literal: false }),
         /bad regex/,
       );
 
