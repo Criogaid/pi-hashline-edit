@@ -23,7 +23,7 @@ test("enabled registration installs the Hashline write and shared Fusion schemas
 			appendEntry(customType: string, data: unknown) { entries.push({ customType, data }); },
 			registerTool(tool: any) { tools.push(tool); },
 		} as any);
-		assert.deepEqual(tools.map((tool) => tool.name), ["read", "edit", "grep", "replace", "write"]);
+		assert.deepEqual(tools.map((tool) => tool.name), ["write", "edit", "replace", "read", "grep"]);
 		for (const tool of tools.filter((tool) => ["edit", "replace", "write"].includes(tool.name))) {
 			assert.ok(tool.parameters.properties.then_run, `${tool.name} should expose then_run when actionFusion is enabled`);
 		}

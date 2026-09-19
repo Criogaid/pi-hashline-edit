@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { makeWriteTool } from "./write-tool.ts";
+import { makeWriteOverride } from "./write-tool.ts";
 import { createActionFusionExecutor } from "./action-fusion.ts";
 import { fileRevision } from "./file-commit.ts";
 import { makeEditOverride } from "./edit-tool.ts";
@@ -17,13 +17,13 @@ async function withTemp<T>(run: (dir: string) => Promise<T>): Promise<T> {
 }
 
 test("write schema follows the shared actionFusion switch", () => {
-	assert.equal((makeWriteTool("/tmp") as any).parameters.properties.then_run, undefined);
+	assert.equal((makeWriteOverride("/tmp") as any).parameters.properties.then_run, undefined);
 	const fusion = createActionFusionExecutor();
-	assert.ok((makeWriteTool("/tmp", fusion) as any).parameters.properties.then_run);
+	assert.ok((makeWriteOverride("/tmp", fusion) as any).parameters.properties.then_run);
 });
 
 test("write preserves native default create/overwrite behavior", async () => withTemp(async (dir) => {
-	const write = makeWriteTool(dir) as any;
+	const write = makeWriteOverride(dir) as any;
 	const target = join(dir, "file.txt");
 	await write.execute("create", { path: "file.txt", content: "one\n" }, undefined, undefined, context(dir));
 	assert.equal(await readFile(target, "utf8"), "one\n");
@@ -32,7 +32,7 @@ test("write preserves native default create/overwrite behavior", async () => wit
 }));
 
 test("write supports create-only, overwrite-only, and expectedRevision", async () => withTemp(async (dir) => {
-	const write = makeWriteTool(dir) as any;
+	const write = makeWriteOverride(dir) as any;
 	await write.execute("create", { path: "new.txt", content: "new\n", mode: "create" }, undefined, undefined, context(dir));
 	await assert.rejects(write.execute("create-again", { path: "new.txt", content: "bad\n", mode: "create" }, undefined, undefined, context(dir)), /already exists/);
 	await assert.rejects(write.execute("missing-overwrite", { path: "missing.txt", content: "bad\n", mode: "overwrite" }, undefined, undefined, context(dir)), /does not exist/);
@@ -46,7 +46,7 @@ test("concurrent writes cannot both consume the same expectedRevision", async ()
 	const target = join(dir, "concurrent.txt");
 	await writeFile(target, "original\n");
 	const expectedRevision = await fileRevision(target);
-	const write = makeWriteTool(dir);
+	const write = makeWriteOverride(dir);
 	const results = await Promise.allSettled(["first\n", "second\n"].map((content) =>
 		write.execute("concurrent", { path: target, content, expectedRevision }, undefined, undefined, context(dir)),
 	));
@@ -61,7 +61,7 @@ test("write anchors chain into edit with a non-default hash length", async () =>
 	const previousConfig = state.config;
 	try {
 		state.config = { ...previousConfig, hashLen: 6 };
-		const result = await makeWriteTool(dir).execute("write", { path: "anchors.txt", content: "before\n" }, undefined, undefined, context(dir));
+		const result = await makeWriteOverride(dir).execute("write", { path: "anchors.txt", content: "before\n" }, undefined, undefined, context(dir));
 		const anchor = result.content[0].text.match(/1#([0-9A-Z]+)/);
 		assert.ok(anchor);
 		assert.equal(anchor[1].length, 6);
@@ -76,7 +76,7 @@ test("write anchors chain into edit with a non-default hash length", async () =>
 test("write shares Action Fusion and reports command-induced stale content", async () => withTemp(async (dir) => {
 	const target = join(dir, "fused.txt");
 	const fusion = createActionFusionExecutor(async () => { await writeFile(target, "command changed\n"); return "checked"; });
-	const write = makeWriteTool(dir, fusion) as any;
+	const write = makeWriteOverride(dir, fusion) as any;
 	const result = await write.execute("fused", { path: "fused.txt", content: "mutation\n", then_run: { command: "check" } }, undefined, undefined, context(dir));
 	const text = result.content.filter((block: any) => block.type === "text").map((block: any) => block.text).join("\n");
 	assert.match(text, /\[then_run:stale\]/);
@@ -85,7 +85,7 @@ test("write shares Action Fusion and reports command-induced stale content", asy
 test("write keeps anchors and Fusion output for the model without duplicating the preview", async () => withTemp(async (dir) => {
 	const target = join(dir, "rendered.txt");
 	const fusion = createActionFusionExecutor(async () => { await writeFile(target, "command changed\n"); return "checked"; });
-	const write = makeWriteTool(dir, fusion) as any;
+	const write = makeWriteOverride(dir, fusion) as any;
 	const result = await write.execute("rendered", { path: "rendered.txt", content: "mutation\n", then_run: { command: "check" } }, undefined, undefined, context(dir));
 	const text = result.content.map((block: any) => block.text).join("\n");
 	assert.match(text, /Revision:[\s\S]*Fresh anchors:/);

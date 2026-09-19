@@ -30,7 +30,7 @@ function formatAnchors(content: string, hashLen: number): string {
 	return shown.length ? `\nFresh anchors: ${shown.join(", ")}${suffix}` : "";
 }
 
-export function makeWriteTool(cwd: string, fusion?: ReturnType<typeof createActionFusionExecutor>): any {
+export function makeWriteOverride(cwd: string, fusion?: ReturnType<typeof createActionFusionExecutor>): any {
 	const parameters = createWriteSchema(fusion !== undefined);
 	const builtin = createWriteToolDefinition(cwd);
 	return {

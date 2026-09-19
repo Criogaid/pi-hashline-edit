@@ -19,7 +19,7 @@ import { makeEditOverride } from "./pi/edit-tool.ts";
 import { makeReadOverride } from "./pi/read-tool.ts";
 import { makeGrepOverride } from "./pi/grep-tool.ts";
 import { makeReplaceTool } from "./pi/replace-tool.ts";
-import { makeWriteTool } from "./pi/write-tool.ts";
+import { makeWriteOverride } from "./pi/write-tool.ts";
 import { createActionFusionExecutor } from "./pi/action-fusion.ts";
 import { registerFusionCards } from "./pi/fusion-card.ts";
 
@@ -34,10 +34,11 @@ export default function (pi: ExtensionAPI) {
 	if (state.config.enabled) {
 		const reportProgress = registerFusionCards(pi);
 		const fusion = state.config.actionFusion ? createActionFusionExecutor(undefined, reportProgress) : undefined;
-		pi.registerTool(makeReadOverride(cwd));
+		pi.registerTool(makeWriteOverride(cwd, fusion));
 		pi.registerTool(makeEditOverride(cwd, fusion));
-		pi.registerTool(makeGrepOverride(cwd));
 		pi.registerTool(makeReplaceTool(cwd, fusion));
-		pi.registerTool(makeWriteTool(cwd, fusion));
+
+		pi.registerTool(makeReadOverride(cwd));
+		pi.registerTool(makeGrepOverride(cwd));
 	}
 }

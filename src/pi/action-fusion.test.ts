@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { makeEditOverride } from "./edit-tool.ts";
 import { makeReplaceTool } from "./replace-tool.ts";
-import { makeWriteTool } from "./write-tool.ts";
+import { makeWriteOverride } from "./write-tool.ts";
 import type { ActionFusionProgress } from "./action-fusion.ts";
 import { ACTION_FUSION_GUIDELINES, createActionFusionExecutor, THEN_RUN_FAILED, THEN_RUN_SKIPPED, THEN_RUN_SUCCEEDED } from "./action-fusion.ts";
 
@@ -17,7 +17,7 @@ const ctx = (cwd: string) => ({ cwd }) as any;
 
 test("actionFusion schemas and shared usage guidance are opt-in for every mutation tool", () => {
 	const fusion = createActionFusionExecutor();
-	for (const makeTool of [makeEditOverride, makeReplaceTool, makeWriteTool]) {
+	for (const makeTool of [makeEditOverride, makeReplaceTool, makeWriteOverride]) {
 		const disabled = makeTool("/tmp") as any;
 		const enabled = makeTool("/tmp", fusion) as any;
 		assert.equal(disabled.parameters.properties.then_run, undefined);
@@ -149,7 +149,7 @@ test("all mutation tools forward command progress before completion in RPC mode"
 		const cases = [
 			{ tool: makeEditOverride(dir, fusion), input: { edits: [{ op: "append", body: ["after"] }] } },
 			{ tool: makeReplaceTool(dir, fusion), input: { find: "before", replace: "after" } },
-			{ tool: makeWriteTool(dir, fusion), input: { content: "after\n" } },
+			{ tool: makeWriteOverride(dir, fusion), input: { content: "after\n" } },
 		];
 		for (const { tool, input } of cases) {
 			events.length = 0;
@@ -182,7 +182,7 @@ test("progress reports skipped mutations and failed commands without rolling bac
 		assert.deepEqual(events.map((event) => event.command), ["waiting", "skipped"]);
 		assert.equal(await readFile(join(dir, "replace.txt"), "utf8"), "original\n");
 		events.length = 0;
-		const failed = await makeWriteTool(dir, fusion).execute("fail", { path: "failed.txt", content: "published\n", then_run: { command: "check" } }, undefined, undefined, ctx(dir));
+		const failed = await makeWriteOverride(dir, fusion).execute("fail", { path: "failed.txt", content: "published\n", then_run: { command: "check" } }, undefined, undefined, ctx(dir));
 		assert.equal(failed.details.actionFusion.command, "failed");
 		assert.deepEqual(events.map((event) => event.command), ["waiting", "running", "failed"]);
 		assert.match(events.at(-1)!.output, /diagnostic[\s\S]*code 7/);

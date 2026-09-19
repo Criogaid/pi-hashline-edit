@@ -13,7 +13,7 @@ import { validateToolArguments } from "@earendil-works/pi-ai";
 import registerHashline from "../index.ts";
 import { makeEditOverride } from "./edit-tool.ts";
 import { makeReadOverride } from "./read-tool.ts";
-import { makeWriteTool } from "./write-tool.ts";
+import { makeWriteOverride } from "./write-tool.ts";
 import { makeReplaceTool } from "./replace-tool.ts";
 import { createActionFusionExecutor } from "./action-fusion.ts";
 import { getState } from "./state.ts";
@@ -427,7 +427,7 @@ test("native read and write renderers preserve resource titles, previews, and fu
 	const read = makeReadOverride(dir);
 	const readCall = read.renderCall!({ path: "SKILL.md", offset: 2, limit: 3 }, stubTheme as any, { ...context, args: { path: "SKILL.md" } } as any);
 	assert.match(readCall.render(120).join("\n"), /\[skill\]/);
-	const write = makeWriteTool(dir);
+	const write = makeWriteOverride(dir);
 	const writeCall = write.renderCall({ path: "preview.txt", content: "native content preview\n" }, stubTheme, context);
 	assert.match(writeCall.render(120).join("\n"), /native content preview/);
 	const error = write.renderResult({ content: [{ type: "text", text: "first error\nsecond error" }] }, { isPartial: false, expanded: false }, stubTheme, { ...context, isError: true });
@@ -482,7 +482,7 @@ test("failed commands preserve mutation results and stay out of all main card re
 	const cases = [
 		{ tool: makeEditOverride(dir, fusion), args: { path: "edit.txt", edits: [{ op: "append", body: ["after"] }] }, expected: "before\nafter\n" },
 		{ tool: makeReplaceTool(dir, fusion), args: { path: "replace.txt", find: "before", replace: "after" }, expected: "after\n" },
-		{ tool: makeWriteTool(dir, fusion), args: { path: "write.txt", content: "after\n" }, expected: "after\n" },
+		{ tool: makeWriteOverride(dir, fusion), args: { path: "write.txt", content: "after\n" }, expected: "after\n" },
 	];
 	for (const { tool, args, expected } of cases) {
 		await writeFile(join(dir, args.path), "before\n");

@@ -6,7 +6,7 @@ import { test } from "node:test";
 import { spawn } from "node:child_process";
 import { commitFile, FileMutationError, fileRevision } from "./file-commit.ts";
 import { createActionFusionExecutor } from "./action-fusion.ts";
-import { makeWriteTool } from "./write-tool.ts";
+import { makeWriteOverride } from "./write-tool.ts";
 
 async function withTemp<T>(run: (dir: string) => Promise<T>): Promise<T> {
 	const dir = await mkdtemp(join(tmpdir(), "hashline-commit-"));
@@ -154,7 +154,7 @@ test("Windows shared access failure preserves the target, skips then_run, and re
 	await writeFile(target, "original\n");
 	const holder = await holdWindowsExclusive(target);
 	let commandRuns = 0;
-	const tool = makeWriteTool(dir, createActionFusionExecutor(async () => { commandRuns++; return "ok"; }));
+	const tool = makeWriteOverride(dir, createActionFusionExecutor(async () => { commandRuns++; return "ok"; }));
 	try {
 		await assert.rejects(
 			tool.execute("shared-failure", { path: target, content: "replacement\n", then_run: { command: "deterministic-command" } }, undefined, undefined, { cwd: dir }),
