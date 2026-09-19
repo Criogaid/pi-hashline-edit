@@ -194,7 +194,7 @@ test("passes output flags and formats files and counts", async () => {
       const files = await call(makeGrepOverrideWithBackend(dir, fake.backend), {
         pattern: ["Foo", "a.b"],
         path: ["a.ts", "b.ts"],
-        glob: "*.ts",
+        glob: ["*.ts", "!**/*.test.ts"],
         ignoreCase: true,
         literal: true,
         wordMatch: true,
@@ -211,6 +211,8 @@ test("passes output flags and formats files and counts", async () => {
         "--word-regexp",
         "--glob",
         "*.ts",
+        "--glob",
+        "!**/*.test.ts",
         "-e",
         "Foo",
         "-e",

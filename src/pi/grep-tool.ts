@@ -136,7 +136,9 @@ const grepOverrideSchema = Type.Object({
       "Directory or file to search (string or array of paths; default: current directory)",
   })),
   glob: Type.Optional(
-    Type.String({ description: "Filter files by glob pattern, e.g. '*.ts' or '**/*.spec.ts'" }),
+    Type.Union([Type.String(), Type.Array(Type.String())], {
+      description: "Filter files by glob pattern; pass an array for multiple filters and prefix exclusions with `!`, e.g. ['*.ts', '!**/*.test.ts']",
+    }),
   ),
   ignoreCase: Type.Optional(
     Type.Boolean({ description: "Case-insensitive search (default: false)" }),
@@ -334,7 +336,7 @@ export function makeGrepOverrideWithBackend(cwd: string, overrides: Partial<Grep
         text += theme.fg("toolOutput", ` -v:${ex}`);
       }
       if (args?.wordMatch) text += theme.fg("toolOutput", " -w");
-      if (args?.glob) text += theme.fg("toolOutput", ` (${args.glob})`);
+      if (args?.glob) text += theme.fg("toolOutput", ` (${toArray(args.glob).join(", ")})`);
       if (args?.outputMode && args.outputMode !== "content")
         text += theme.fg("success", ` → ${args.outputMode}`);
       if (args?.limit !== undefined) text += theme.fg("toolOutput", ` limit ${args.limit}`);
@@ -377,6 +379,7 @@ export function makeGrepOverrideWithBackend(cwd: string, overrides: Partial<Grep
         params.excludePattern === undefined &&
         params.outputMode === undefined &&
         params.wordMatch === undefined &&
+        !Array.isArray(params.glob) &&
         !Array.isArray(params.path);
 
       const rgPath = await backend.findRg();
@@ -393,7 +396,8 @@ export function makeGrepOverrideWithBackend(cwd: string, overrides: Partial<Grep
       if (patterns.length === 0) throw new Error("pattern is required (got an empty array)");
       const matchMode: "any" | "all" = params.matchMode ?? "any";
       const outputMode: "content" | "files" | "count" = params.outputMode ?? "content";
-      const { glob, ignoreCase, literal, wordMatch, context, limit } = params;
+      const globs = toArray(params.glob);
+      const { ignoreCase, literal, wordMatch, context, limit } = params;
       const ctx = context && context > 0 ? context : 0;
       const searchPaths = (() => {
         const raw = toArray(params.path);
@@ -438,7 +442,7 @@ export function makeGrepOverrideWithBackend(cwd: string, overrides: Partial<Grep
         if (ignoreCase) args.push("--ignore-case");
         if (literal) args.push("--fixed-strings");
         if (wordMatch) args.push("--word-regexp");
-        if (glob) args.push("--glob", glob);
+        for (const glob of globs) args.push("--glob", glob);
         for (const p of patterns) args.push("-e", p);
         args.push("--", ...searchPaths);
 
