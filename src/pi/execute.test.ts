@@ -14,6 +14,8 @@ import registerHashline from "../index.ts";
 import { makeEditOverride } from "./edit-tool.ts";
 import { makeReadOverride } from "./read-tool.ts";
 import { makeWriteTool } from "./write-tool.ts";
+import { makeReplaceTool } from "./replace-tool.ts";
+import { createActionFusionExecutor } from "./action-fusion.ts";
 import { getState } from "./state.ts";
 import { computeLineHash } from "../core/hash.ts";
 import { splitLines } from "../core/lines.ts";
@@ -472,4 +474,26 @@ test("shifted-anchor recovery returns a token that can be copied into the retry"
 	});
 	await call(edit, { path: "shift.txt", edits: [{ op: "replace", anchor: replacement, body: ["B"] }] });
 	assert.equal(await readFile(join(dir, "shift.txt"), "utf8"), "prefix\na\nB\n");
+}));
+
+test("failed commands preserve mutation results and stay out of all main card renderers", async () => withDir(async (dir) => {
+	const commands: string[] = [];
+	const fusion = createActionFusionExecutor(async () => { throw new Error("command-only diagnostic\nCommand exited with code 7"); }, event => commands.push(event.command));
+	const cases = [
+		{ tool: makeEditOverride(dir, fusion), args: { path: "edit.txt", edits: [{ op: "append", body: ["after"] }] }, expected: "before\nafter\n" },
+		{ tool: makeReplaceTool(dir, fusion), args: { path: "replace.txt", find: "before", replace: "after" }, expected: "after\n" },
+		{ tool: makeWriteTool(dir, fusion), args: { path: "write.txt", content: "after\n" }, expected: "after\n" },
+	];
+	for (const { tool, args, expected } of cases) {
+		await writeFile(join(dir, args.path), "before\n");
+		const result = await tool.execute(args.path, { ...args, then_run: { command: "check" } }, undefined, undefined, { cwd: dir });
+		assert.equal(result.isError, undefined);
+		assert.equal(result.details.actionFusion.command, "failed");
+		assert.match(result.content.at(-1).text, /then_run:failed[\s\S]*command-only diagnostic/);
+		if (tool.name !== "write") assert.equal(typeof result.details.diff, "string");
+		const rendered = tool.renderResult(result, { expanded: true, isPartial: false }, stubTheme, { args, state: {}, cwd: dir, isError: false });
+		assert.doesNotMatch(rendered.render(120).join("\n"), /command-only diagnostic|then_run:failed/);
+		assert.equal(await readFile(join(dir, args.path), "utf8"), expected);
+	}
+	assert.deepEqual(commands, ["waiting", "running", "failed", "waiting", "running", "failed", "waiting", "running", "failed"]);
 }));

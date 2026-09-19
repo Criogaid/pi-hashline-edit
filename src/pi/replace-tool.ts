@@ -170,7 +170,6 @@ export function makeReplaceTool(cwd: string, fusion?: ReturnType<typeof createAc
 		renderResult(result: any, { isPartial, expanded }: any, theme: any, context: any) {
 			if (isPartial && result.details?.actionFusion?.publication !== "PUBLISHED") return new Text(theme.fg("warning", "Replacing…"), 0, 0);
 			const content = result.content?.[0];
-			const fusionOutput = result.content?.slice(1).filter((block: any) => block.type === "text").map((block: any) => block.text).join("\n");
 			if (context.isError) {
 				const t = content?.type === "text" ? content.text.split("\n")[0] : "Error";
 				return new Text(theme.fg("error", t), 0, 0);
@@ -185,12 +184,12 @@ export function makeReplaceTool(cwd: string, fusion?: ReturnType<typeof createAc
 				// No net diff: show only the summary line — content.text also carries
 				// `Updated anchors` (hashline) for the model.
 				const summary = content?.type === "text" ? content.text.split("\n")[0] : "Replaced";
-				return new Text(theme.fg("success", expanded && fusionOutput ? `${summary}\n${fusionOutput}` : summary), 0, 0);
+				return new Text(theme.fg("success", summary), 0, 0);
 			}
 			// details.diff is pi-format (+N/-N/<space>N content); renderDiff handles
 			// semantic colors plus intra-line change highlighting
 			const rendered = renderDiffPreview(diff, expanded, theme);
-			return new Text(expanded && fusionOutput ? `${rendered}\n${fusionOutput}` : rendered, 0, 0);
+			return new Text(rendered, 0, 0);
 		},
 
 		async execute(toolCallId: string, params: ReplaceParams & { then_run?: ThenRunInput }, signal: AbortSignal | undefined, onUpdate: any, ctx: any) {

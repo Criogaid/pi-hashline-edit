@@ -245,7 +245,6 @@ export function makeEditOverride(cwd: string, fusion?: ReturnType<typeof createA
 		renderResult(result: any, { isPartial, expanded }: any, theme: any, context: any) {
 			if (isPartial && result.details?.actionFusion?.publication !== "PUBLISHED") return new Text(theme.fg("warning", "Editing…"), 0, 0);
 			const content = result.content?.[0];
-			const fusionOutput = result.content?.slice(1).filter((block: any) => block.type === "text").map((block: any) => block.text).join("\n");
 			if (context.isError) {
 				const t = content?.type === "text" ? content.text.split("\n")[0] : "Error";
 				return new Text(theme.fg("error", t), 0, 0);
@@ -260,12 +259,12 @@ export function makeEditOverride(cwd: string, fusion?: ReturnType<typeof createA
 				// No net diff (e.g. a successful but non-mutating edit): show only the summary
 				// line — content.text also carries `Updated anchors` (hashline) for the model.
 				const summary = content?.type === "text" ? content.text.split("\n")[0] : "Edited";
-				return new Text(theme.fg("success", expanded && fusionOutput ? `${summary}\n${fusionOutput}` : summary), 0, 0);
+				return new Text(theme.fg("success", summary), 0, 0);
 			}
 			// details.diff is pi-format (+N/-N/<space>N content); renderDiff handles
 			// semantic colors plus intra-line change highlighting
 			const rendered = renderDiffPreview(diff, expanded, theme);
-			return new Text(expanded && fusionOutput ? `${rendered}\n${fusionOutput}` : rendered, 0, 0);
+			return new Text(rendered, 0, 0);
 		},
 
 		async execute(toolCallId: string, params: EditParams, signal: AbortSignal | undefined, onUpdate: any, ctx: any) {

@@ -28,10 +28,9 @@ test("enabled registration installs the Hashline write and shared Fusion schemas
 			assert.ok(tool.parameters.properties.then_run, `${tool.name} should expose then_run when actionFusion is enabled`);
 		}
 		const writeTool = tools.find((tool) => tool.name === "write");
-		await assert.rejects(
-			writeTool.execute("write-error", { path: "published.txt", content: "published\n", then_run: { command: "node -e \\\"process.exit(1)\\\"" } }, undefined, undefined, { cwd: dir }),
-			(error: unknown) => error instanceof Error && /File changes are saved/.test(error.message) && /Command failed/.test(error.message),
-		);
+		const result = await writeTool.execute("write-error", { path: "published.txt", content: "published\n", then_run: { command: "node -e \\\"process.exit(1)\\\"" } }, undefined, undefined, { cwd: dir });
+		assert.equal(result.details.actionFusion.command, "failed");
+		assert.match(result.content[1].text, /File changes are saved[\s\S]*Command failed/);
 		assert.deepEqual(entries.map((entry) => entry.data.command), ["waiting", "failed"]);
 		assert.equal(entries[1].data.publication, "PUBLISHED");
 	} finally {

@@ -242,6 +242,14 @@ export function createActionFusionExecutor(commandRunner: CommandRunner = defaul
 			report(error instanceof ActionFusionError ? error.command as ActionFusionProgress["command"] : "skipped",
 				error instanceof ActionFusionError ? error.publication : "NOT_PUBLISHED",
 				error instanceof ActionFusionError ? error.freshness : "unknown", errorText(error));
+			// A completed mutation remains successful; command failure belongs to its own card.
+			if (completedMutation && error instanceof ActionFusionError) {
+				return {
+					...completedMutation,
+					details: { ...(completedMutation.details as object ?? {}), actionFusion: { publication: error.publication, command: error.command, freshness: error.freshness } satisfies ActionFusionDetails },
+					content: [...completedMutation.content, { type: "text", text: error.message }],
+				} as MutationResult<TDetails>;
+			}
 			throw error;
 		});
 	};

@@ -60,10 +60,10 @@ test("mutation failure skips the command and command failure does not roll back"
 		assert.equal(calls, 0);
 		const target = join(dir, "changed.txt");
 		await writeFile(target, "changed\n");
-		await assert.rejects(
-			fusion({ toolCallId: "y", absolutePath: target, thenRun: { command: "check" }, mutate: async () => ({ content: [{ type: "text", text: "mutation" }], details: { ok: true } }), signal: undefined, ctx: ctx(dir) }),
-			(error: Error) => error.message.includes(THEN_RUN_FAILED) && error.message.includes("mutation completed") && error.message.includes(commandFailure),
-		);
+		const result = await fusion({ toolCallId: "y", absolutePath: target, thenRun: { command: "check" }, mutate: async () => ({ content: [{ type: "text", text: "mutation" }], details: { ok: true } }), signal: undefined, ctx: ctx(dir) });
+		assert.equal(result.content[0].type === "text" && result.content[0].text, "mutation");
+		const diagnostic = result.content[1].type === "text" ? result.content[1].text : "";
+		assert.ok(diagnostic.includes(THEN_RUN_FAILED) && diagnostic.includes(commandFailure));
 		assert.equal(await readFile(target, "utf8"), "changed\n");
 		assert.equal(calls, 1);
 	} finally {
@@ -178,7 +178,8 @@ test("progress reports skipped mutations and failed commands without rolling bac
 		assert.deepEqual(events.map((event) => event.command), ["waiting", "skipped"]);
 		assert.equal(await readFile(join(dir, "replace.txt"), "utf8"), "original\n");
 		events.length = 0;
-		await assert.rejects(makeWriteTool(dir, fusion).execute("fail", { path: "failed.txt", content: "published\n", then_run: { command: "check" } }, undefined, undefined, ctx(dir)));
+		const failed = await makeWriteTool(dir, fusion).execute("fail", { path: "failed.txt", content: "published\n", then_run: { command: "check" } }, undefined, undefined, ctx(dir));
+		assert.equal(failed.details.actionFusion.command, "failed");
 		assert.deepEqual(events.map((event) => event.command), ["waiting", "running", "failed"]);
 		assert.match(events.at(-1)!.output, /diagnostic[\s\S]*code 7/);
 		assert.equal(await readFile(join(dir, "failed.txt"), "utf8"), "published\n");
