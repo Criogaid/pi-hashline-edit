@@ -149,15 +149,10 @@ export function makeReplaceTool(cwd: string, fusion?: ReturnType<typeof createAc
 		name: "replace" as const,
 		label: "replace",
 		description:
-			"Bulk text replacement with regex support. Replaces ALL occurrences of `find` with `replace` across the whole file — for renames and pattern-based transforms that would need many individual edits. Location-blind (unverified): prefer `edit` for surgical, anchor-verified changes.",
-		promptSnippet: "Replace all occurrences of a string/regex across a file (bulk + regex; returns diff and fresh anchors)",
+			"Replace all matching text across a file. Supports literal strings and JavaScript regex; fails on zero matches. Returns a diff and fresh anchors.",
+		promptSnippet: "Replace matching text across a file",
 		promptGuidelines: [
-			"Pass `path`, `find`, `replace`. ALL occurrences are replaced (not just the first).",
-			"`regex: true` treats `find` as a JS regex pattern; capture groups are usable in `replace` via $1, $2, $&. Default false = literal substring (replace text inserted verbatim, no $ expansion).",
-			"`flags` adds regex flags ('g' is always forced so every occurrence is replaced). Common: 'i' (case-insensitive), 'm' (^/$ per line), 's' (dotall, . matches \\n), 'u' (unicode). Applies in both modes.",
-			"`maxMatches` caps the match count (default 2000) — errors before writing if exceeded; raise it for deliberate bulk transforms.",
-			"Returns a diff plus fresh anchors for the changed region; chain edits, or re-read if you need the whole file's anchors.",
-			"0 matches is an error. This is a location-blind bulk tool — for one verified change use `edit` instead.",
+			"Use replace for bulk changes; prefer edit for a specific, anchor-verified location.",
 		],
 		parameters,
 		renderShell: "default" as const,

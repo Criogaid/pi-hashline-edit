@@ -69,7 +69,7 @@ A separate, location-blind tool for transforms `edit` can't express: replace **a
 
 ## Design
 
-- **Per-line hash + line number, dual anchor**: `read` shows each line as `3#aF3│code`; `edit` references `LINE#HASH`. The line number is the address; the hash is a checksum that the line at that address is still what was read.
+- **Per-line hash + line number, dual anchor**: `read` shows each line as `3#AF32│code`; `edit` references `LINE#HASH`. The line number is the address; the hash is a checksum that the line at that address is still what was read.
 - **Line folded into the hash**: each line's hash mixes its 1-based line number into its content, so every line is unique by construction — no in-file collisions, no length extension. The hash changes only when the line's own content changes, never when a neighbor changes.
 - **Live, surgical verification**: at apply time each cited anchor's hash is recomputed from the current line content and compared — no stored snapshot, no whole-file stale check. A line that changed (or was misremembered) fails its own anchor; an unrelated change elsewhere never blocks the edit. No fuzzy matching, no boundary repair.
 - **Shifted-anchor recovery**: a mismatched anchor isn't a dead end. The applicator rescans ±`shiftRadius` lines for the original content — holding the original line number fixed and re-hashing each candidate (`hash(line, candidate) === cited` iff the candidate *is* the original) — and returns a ready-to-resend anchor on a unique hit, the candidate list when ambiguous, or the cited line's live content when nothing matches. The model retries without a re-read in the common drift case.
@@ -143,19 +143,19 @@ Including the ones that argue *for* the route I didn't take.
 
 ```
 src/foo.ts · 6 lines
-1#aF3│import { compute } from "./util"
-2#7Qk│
-3#mP0│export function foo(x: number) {
+1#AF32│import { compute } from "./util"
+2#7QK3│
+3#MP04│export function foo(x: number) {
 ```
 
 `grep` output (results grouped by file, each line anchored — copy `LINE#HASH` straight into an edit):
 
 ```
 src/foo.ts · 2 matches
-3#mP0│export function foo(x: number) {
-4#kLp│  return x + 1
+3#MP04│export function foo(x: number) {
+4#K7P2│  return x + 1
 src/util.ts · 1 match
-10#aF3│  const z = compute(x)
+10#AF32│  const z = compute(x)
 ```
 
 The `grep` override also covers the compound queries that otherwise push models into bash pipelines:
@@ -169,19 +169,23 @@ The `grep` override also covers the compound queries that otherwise push models 
 Filters run before the match limit counts, and context windows are rebuilt from surviving matches, so `limit` and `context` compose cleanly with `matchMode`/`excludePattern`.
 
 
-`edit` takes `path` + `edits` (an array of ops, each with `op`, `anchor`/`end` `{line, hash}` from read, and `body` string[]):
+`edit` takes `path` + `edits`. Copy `anchor` and `end` directly as `"LINE#HASH"` strings; `body` contains the new lines:
 
 ```jsonc
 {
   "path": "src/foo.ts",
   "edits": [
-    { "op": "replace", "anchor": { "line": 4, "hash": "kLp" }, "body": ["  return x + 1"] },
-    { "op": "insert_after", "anchor": { "line": 6, "hash": "b2H" }, "body": ["", "export const bar = foo"] }
+    { "op": "replace", "anchor": "4#K7P2", "body": ["  return x + 2"] },
+    { "op": "insert_after", "anchor": "6#B2H4", "body": ["", "export const bar = foo"] }
   ]
 }
 ```
 
-Ops: `replace` · `delete` · `insert_after` · `insert_before` · `append` · `prepend`. `anchor`/`end` = `{line, hash}` from read; `body` = new content lines (string[], omit for `delete`).
+Ops: `replace` · `delete` · `insert_after` · `insert_before` · `append` · `prepend`. Replace/delete affect only the anchor line unless an inclusive `end` is supplied. To change multiple existing lines, supply both anchors. Insert operations keep the anchor line and accept no `end`; append/prepend accept neither anchor. `body` is required except for delete, which accepts no body. Conflicting fields are rejected before publication.
+
+**Migration:** Object anchors (`{ "line": 4, "hash": "K7P2" }`) are no longer accepted by the tool. Use `"4#K7P2"` instead, including in saved calls and retry code. Core library anchors remain objects.
+
+Successful `write` results include a revision and compact anchor tokens (up to 40), without echoing the content just supplied. Edit/replace results retain changed-line content where it helps identify subsequent edits. Parameter rules live in the schemas; prompt guidelines cover only tool selection and batching.
 
 `replace` takes `path`, `find`, `replace` (+ optional `regex`, `flags`, `maxMatches`) and substitutes **every** match:
 
@@ -225,6 +229,8 @@ When `actionFusion` is true, `edit`, `replace`, and `write` accept an optional `
 The setting is disabled by default. Keep it false when commands should not be available from Hashline mutations.
 
 In the TUI, each `then_run` gets a separate transcript card showing the command, waiting/running state, live output, and final outcome. Cards reuse Pi's native Bash command and output renderers, including the collapsed output preview and expand hint, with the same pending/success/error background colors as native tools. Expand them to inspect the captured output. Cards preserve their final state across session reloads without adding messages to model context. If the session ended before a final outcome was saved, the card reports an interrupted command with unknown final status. RPC hosts receive the same progress through tool execution updates; rendering depends on the host.
+
+Fusion errors tell the model whether file changes were saved and whether the command ran. Stale results explicitly request a fresh read before further editing. Structured publication, command, and freshness states remain available to the card and other consumers.
 
 ### File publication boundaries
 

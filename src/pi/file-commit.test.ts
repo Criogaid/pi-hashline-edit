@@ -158,7 +158,7 @@ test("Windows shared access failure preserves the target, skips then_run, and re
 	try {
 		await assert.rejects(
 			tool.execute("shared-failure", { path: target, content: "replacement\n", then_run: { command: "deterministic-command" } }, undefined, undefined, { cwd: dir }),
-			(error: unknown) => error instanceof Error && /publication=(UNKNOWN|NOT_PUBLISHED)/.test(error.message) && /command=skipped/.test(error.message),
+			(error: unknown) => error instanceof Error && /File state is uncertain|No file changes were published/.test(error.message) && /Command skipped/.test(error.message),
 		);
 		assert.equal(commandRuns, 0);
 	} finally {

@@ -25,9 +25,9 @@ type WriteParams = Omit<Static<typeof writeSchema>, "then_run"> & { then_run?: T
 function formatAnchors(content: string, hashLen: number): string {
 	const lines = splitLines(content);
 	const hashes = hashFileLines(lines, hashLen);
-	const shown = lines.slice(0, 40).map((line, index) => `${index + 1}#${hashes[index]}│${line}`);
+	const shown = lines.slice(0, 40).map((_, index) => `${index + 1}#${hashes[index]}`);
 	const suffix = lines.length > shown.length ? `\n… (${lines.length - shown.length} more; read again for full anchors)` : "";
-	return shown.length ? `\nFresh anchors:\n${shown.join("\n")}${suffix}` : "";
+	return shown.length ? `\nFresh anchors: ${shown.join(", ")}${suffix}` : "";
 }
 
 export function makeWriteTool(cwd: string, fusion?: ReturnType<typeof createActionFusionExecutor>): any {
@@ -38,11 +38,6 @@ export function makeWriteTool(cwd: string, fusion?: ReturnType<typeof createActi
 		label: "write",
 		description: "Write complete file content. By default, creates missing files and overwrites existing files.",
 		promptSnippet: "Write complete file content to a path",
-		promptGuidelines: [
-			"Pass path and complete content.",
-			"Use mode=create to refuse overwriting an existing file.",
-			"Use expectedRevision to protect an overwrite against an unexpected current file revision.",
-		],
 		parameters,
 		renderShell: "default" as const,
 		renderCall: builtin.renderCall,

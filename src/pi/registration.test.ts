@@ -30,7 +30,7 @@ test("enabled registration installs the Hashline write and shared Fusion schemas
 		const writeTool = tools.find((tool) => tool.name === "write");
 		await assert.rejects(
 			writeTool.execute("write-error", { path: "published.txt", content: "published\n", then_run: { command: "node -e \\\"process.exit(1)\\\"" } }, undefined, undefined, { cwd: dir }),
-			(error: unknown) => error instanceof Error && /publication=PUBLISHED/.test(error.message) && /command=failed/.test(error.message),
+			(error: unknown) => error instanceof Error && /File changes are saved/.test(error.message) && /Command failed/.test(error.message),
 		);
 		assert.deepEqual(entries.map((entry) => entry.data.command), ["waiting", "failed"]);
 		assert.equal(entries[1].data.publication, "PUBLISHED");

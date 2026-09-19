@@ -31,14 +31,14 @@ const call = (tool: any, params: any) => tool.execute("0", params, undefined, un
 
 /** Anchor a model would copy from read output for `line` of `text` (1-based). */
 function h(text: string, line: number) {
-	return { line, hash: computeLineHash(line, splitLines(text)[line - 1]) };
+	return `${line}#${computeLineHash(line, splitLines(text)[line - 1])}`;
 }
 
 /** Extract a `LINE#HASH` anchor from a read/edit result text block. */
 function anchorLine(block: string, line: number) {
 	const m = new RegExp(`^${line}#([0-9A-Z]+)│`, "m").exec(block);
 	if (!m) throw new Error(`line ${line} anchor not found in block`);
-	return { line, hash: m[1] };
+	return `${line}#${m[1]}`;
 }
 
 test("read execute: text outputs LINE#HASH│content", async () => {
@@ -201,7 +201,7 @@ test("edit execute: no read before edit → anchor verification fails", async ()
 		await assert.rejects(
 			call(makeEditOverride(dir), {
 				path: "f.txt",
-				edits: [{ op: "replace", anchor: { line: 1, hash: "XXXX" }, body: ["A"] }],
+				edits: [{ op: "replace", anchor: "1#XXXX", body: ["A"] }],
 			}),
 			/anchor|re-read/i,
 		);
@@ -224,7 +224,7 @@ test("edit execute: malformed op (replace without body) → throws", async () =>
 		await assert.rejects(
 			call(makeEditOverride(dir), {
 				path: "f.txt",
-				edits: [{ op: "replace", anchor: { line: 1, hash: "XX" } }],
+				edits: [{ op: "replace", anchor: "1#XX" }],
 			}),
 			/body/i,
 		);
@@ -355,7 +355,7 @@ test("edit error: renderResult renders the error line without throwing", async (
 		let thrown: any;
 		await call(edit, {
 			path: "f.txt",
-			edits: [{ op: "replace", anchor: { line: 1, hash: "XXXX" }, body: ["A"] }],
+			edits: [{ op: "replace", anchor: "1#XXXX", body: ["A"] }],
 		}).catch((e: any) => {
 			thrown = e;
 		});
@@ -430,4 +430,46 @@ test("native read and write renderers preserve resource titles, previews, and fu
 	assert.match(writeCall.render(120).join("\n"), /native content preview/);
 	const error = write.renderResult({ content: [{ type: "text", text: "first error\nsecond error" }] }, { isPartial: false, expanded: false }, stubTheme, { ...context, isError: true });
 	assert.match(error.render(120).join("\n"), /first error[\s\S]*second error/);
+}));
+
+test("copied string anchors validate and replace an inclusive range", async () => withDir(async (dir) => {
+	const original = "a\nb\nc\nd\n";
+	await writeFile(join(dir, "range.txt"), original);
+	const read = await call(makeReadOverride(dir), { path: "range.txt" });
+	const edit = makeEditOverride(dir);
+	const args = validateToolArguments(edit as any, { type: "toolCall", id: "range", name: "edit", arguments: { path: "range.txt", edits: [{ op: "replace", anchor: anchorLine(read.content[0].text, 2), end: anchorLine(read.content[0].text, 3), body: ["merged"] }] } });
+	await call(edit, args);
+	assert.equal(await readFile(join(dir, "range.txt"), "utf8"), "a\nmerged\nd\n");
+}));
+
+test("invalid anchors and conflicting fields fail before changing the file", async () => withDir(async (dir) => {
+	const original = "a\nb\n";
+	await writeFile(join(dir, "invalid.txt"), original);
+	const edit = makeEditOverride(dir);
+	const anchor = h(original, 1);
+	const invalid = [
+		{ op: "replace", anchor: { line: 1, hash: anchor.split("#")[1] }, body: ["changed"] },
+		...['0#AB', '-1#AB', '1.5#AB', '1#', '1#ab', '1#AB│a', '9007199254740993#AB'].map(anchor => ({ op: "replace", anchor, body: ["changed"] })),
+		{ op: "insert_after", anchor, end: anchor, body: ["changed"] },
+		{ op: "append", anchor, body: ["changed"] },
+		{ op: "delete", anchor, body: ["changed"] },
+	];
+	for (const operation of invalid) {
+		await assert.rejects(call(edit, { path: "invalid.txt", edits: [operation] }), /Invalid anchor|does not accept/);
+		assert.equal(await readFile(join(dir, "invalid.txt"), "utf8"), original);
+	}
+	assert.throws(() => validateToolArguments(edit as any, { type: "toolCall", id: "invalid", name: "edit", arguments: { path: "invalid.txt", edits: [invalid[0]] } }));
+}));
+
+test("shifted-anchor recovery returns a token that can be copied into the retry", async () => withDir(async (dir) => {
+	const original = "a\nb\n";
+	await writeFile(join(dir, "shift.txt"), "prefix\n" + original);
+	const edit = makeEditOverride(dir);
+	let replacement = "";
+	await assert.rejects(call(edit, { path: "shift.txt", edits: [{ op: "replace", anchor: h(original, 2), body: ["B"] }] }), (error: Error) => {
+		replacement = /"(3#[0-9A-Z]+)"/.exec(error.message)?.[1] ?? "";
+		return replacement !== "";
+	});
+	await call(edit, { path: "shift.txt", edits: [{ op: "replace", anchor: replacement, body: ["B"] }] });
+	assert.equal(await readFile(join(dir, "shift.txt"), "utf8"), "prefix\na\nB\n");
 }));

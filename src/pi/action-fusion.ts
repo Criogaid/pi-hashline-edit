@@ -76,7 +76,11 @@ export class ActionFusionError extends Error {
 	readonly freshness: Freshness;
 
 	constructor(message: string, state: { publication: PublicationStatus; command: CommandStatus; freshness: Freshness }, options?: { cause?: unknown }) {
-		super(`${message} ${state.command === "skipped" || state.command === "cancelled" ? THEN_RUN_SKIPPED : state.command === "succeeded" ? THEN_RUN_SUCCEEDED : THEN_RUN_FAILED} [publication=${state.publication} command=${state.command} freshness=${state.freshness}]`, options);
+		const fileState = state.publication === "PUBLISHED" ? "File changes are saved."
+			: state.publication === "NOT_PUBLISHED" ? "No file changes were published." : "File state is uncertain; read before retrying.";
+		const nextStep = state.publication === "PUBLISHED" && state.freshness !== "unchanged"
+			? " Re-read the file before further edits." : "";
+		super(`${message} ${state.command === "skipped" || state.command === "cancelled" ? THEN_RUN_SKIPPED : state.command === "succeeded" ? THEN_RUN_SUCCEEDED : THEN_RUN_FAILED}\n${fileState} Command ${state.command}.${nextStep}`, options);
 		// Pi exposes error.message to the model, but does not serialize Error.cause.
 		if (options?.cause !== undefined) this.message += `\n${errorText(options.cause)}`;
 		this.name = "ActionFusionError";
@@ -232,7 +236,7 @@ export function createActionFusionExecutor(commandRunner: CommandRunner = defaul
 				...mutationResult,
 				details: { ...(mutationResult.details as object ?? {}), actionFusion },
 
-				content: [...mutationResult.content, { type: "text", text: freshness === "unchanged" ? (output ? `${THEN_RUN_SUCCEEDED}\n${output}` : THEN_RUN_SUCCEEDED) : `${THEN_RUN_SUCCEEDED}\n${THEN_RUN_STALE} freshness=${freshness}${output ? `\n${output}` : ""}` }],
+				content: [...mutationResult.content, { type: "text", text: freshness === "unchanged" ? (output ? `${THEN_RUN_SUCCEEDED}\n${output}` : THEN_RUN_SUCCEEDED) : `${THEN_RUN_SUCCEEDED}\n${THEN_RUN_STALE} Re-read the file before further edits; previous anchors may no longer match.${output ? `\n${output}` : ""}` }],
 			} as MutationResult<TDetails>;
 		}).catch((error: unknown) => {
 			report(error instanceof ActionFusionError ? error.command as ActionFusionProgress["command"] : "skipped",

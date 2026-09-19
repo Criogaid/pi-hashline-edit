@@ -35,17 +35,20 @@ import { formatDiffCounts, publishDiffCounts, renderDiffPreview, type DiffCounts
 /** Cap on the number of updated anchors returned inline (bounds token cost for large inserts). */
 const MAX_ANCHOR_LINES = 40;
 
-/** `{line, hash}` anchor pair as an op field, described per use. */
+const ANCHOR_PATTERN = "^([1-9][0-9]*)#([0-9A-Z]{2,8})$";
+
 function anchorRef(description: string) {
-	return Type.Optional(
-		Type.Object(
-			{
-				line: Type.Number({ description: "1-based line number" }),
-				hash: Type.String({ description: "Line content hash copied from read output (the #HASH after the line number)" }),
-			},
-			{ description },
-		),
-	);
+	return Type.Optional(Type.String({ pattern: ANCHOR_PATTERN, description }));
+}
+
+/** Parse copied tokens at the boundary; core edits retain numeric anchors. */
+function parseAnchor(value: string | undefined) {
+	if (value === undefined) return undefined;
+	const match = typeof value === "string" ? new RegExp(ANCHOR_PATTERN).exec(value) : null;
+	if (!match || !Number.isSafeInteger(Number(match[1]))) {
+		throw new Error('Invalid anchor; copy a complete "LINE#HASH" token from the latest tool result.');
+	}
+	return { line: Number(match[1]), hash: match[2] };
 }
 
 const editOpSchema = Type.Object({
@@ -65,10 +68,10 @@ const editOpSchema = Type.Object({
 		{ description: "Operation kind" },
 	),
 	anchor: anchorRef(
-		"First line of the range (replace/delete) or the insertion point (insert_after/insert_before).",
+		'Copy "LINE#HASH" from the latest read, grep, or mutation result. Required for replace/delete/insert; omit for append/prepend.',
 	),
 	end: anchorRef(
-		"Last line of the range to replace/delete, inclusive: the op touches exactly [anchor..end]. Omit only for a single-line change (end == anchor). A multi-line change that forgets `end` succeeds silently with the rest of the intended range left in the file — a corrupted file, not an error.",
+		'Inclusive last "LINE#HASH" for replace/delete ranges. Required to change multiple existing lines; omitted means only the anchor line. Omit for insert/append/prepend.',
 	),
 	body: Type.Optional(Type.Array(Type.String(), { description: "New content lines (required for replace/insert/append/prepend; omit for delete)" })),
 });
@@ -107,7 +110,7 @@ function formatFailure(failure: ApplyFailure, path: string): string {
 			case "found": {
 				found++;
 				lines.push(
-					`• ${where}: content shifted to line ${f.recovery.newLine}. Resend this op with ${f.which} { "line": ${f.recovery.newLine}, "hash": "${f.recovery.newHash}" }.`,
+					`• ${where}: content shifted. Resend with ${f.which} "${f.recovery.newLine}#${f.recovery.newHash}".`,
 				);
 				break;
 			}
@@ -115,7 +118,7 @@ function formatFailure(failure: ApplyFailure, path: string): string {
 				ambiguous++;
 				const nums = f.recovery.candidates.map((c) => c.line).join(", ");
 				const list = f.recovery.candidates
-					.map((c) => `{ "line": ${c.line}, "hash": "${c.hash}" }`)
+					.map((c) => `"${c.line}#${c.hash}"`)
 					.join(" / ");
 				lines.push(
 					`• ${where}: ambiguous — same content at lines ${nums}. Pick the right one and resend ${f.which} ${list}.`,
@@ -145,21 +148,26 @@ function formatFailure(failure: ApplyFailure, path: string): string {
 function toCoreEdits(ops: readonly EditOpInput[]): { ok: true; edits: Edit[] } | { ok: false; error: string } {
 	const edits: Edit[] = [];
 	for (const o of ops) {
+		const anchor = parseAnchor(o.anchor);
+		const end = parseAnchor(o.end);
+		if (o.op !== "replace" && o.op !== "delete" && end) return { ok: false, error: `${o.op} does not accept \`end\`` };
+		if ((o.op === "append" || o.op === "prepend") && anchor) return { ok: false, error: `${o.op} does not accept \`anchor\`` };
+		if (o.op === "delete" && o.body !== undefined) return { ok: false, error: "delete does not accept `body`" };
 		switch (o.op) {
 			case "replace":
-				if (!o.anchor) return { ok: false, error: "replace needs `anchor` {line, hash}" };
+				if (!anchor) return { ok: false, error: 'replace needs `anchor` "LINE#HASH"' };
 				if (!o.body) return { ok: false, error: "replace needs `body`" };
-				edits.push({ op: "replace", start: o.anchor, end: o.end, body: o.body });
+				edits.push({ op: "replace", start: anchor, end, body: o.body });
 				break;
 			case "delete":
-				if (!o.anchor) return { ok: false, error: "delete needs `anchor` {line, hash}" };
-				edits.push({ op: "delete", start: o.anchor, end: o.end });
+				if (!anchor) return { ok: false, error: 'delete needs `anchor` "LINE#HASH"' };
+				edits.push({ op: "delete", start: anchor, end });
 				break;
 			case "insert_after":
 			case "insert_before":
-				if (!o.anchor) return { ok: false, error: `${o.op} needs \`anchor\` {line, hash}` };
+				if (!anchor) return { ok: false, error: `${o.op} needs \`anchor\` "LINE#HASH"` };
 				if (!o.body) return { ok: false, error: `${o.op} needs \`body\`` };
-				edits.push({ op: o.op, anchor: o.anchor, body: o.body });
+				edits.push({ op: o.op, anchor, body: o.body });
 				break;
 			case "append":
 			case "prepend":
@@ -215,15 +223,11 @@ export function makeEditOverride(cwd: string, fusion?: ReturnType<typeof createA
 		name: "edit" as const,
 		label: "edit",
 		description:
-		"Edit a file via hashline ops (LINE#HASH anchors, content-verified). Each op in `edits` references line anchors from your latest read, grep, replace, or edit result.",
-		promptSnippet: "Edit files via hashline ops (edits[] with LINE#HASH anchors from read)",
+			"Edit file lines using content-verified anchors. Returns fresh anchors for subsequent edits.",
+		promptSnippet: "Edit file lines using verified anchors",
 		promptGuidelines: [
-			"Pass `edits`: an array of ops. Each op = {op, anchor?, end?, body?}.",
-		"Prefer one `edit` with multiple ops for several changes to the same file, rather than several separate `edit` calls.",
-			"op ∈ replace | delete | insert_after | insert_before | append | prepend.",
-		"anchor & end = {line, hash} copied from your latest read, grep, replace, or edit result (the `#HASH` after each line number); grep's `-C` context lines are anchored and editable too. replace/delete take anchor (+ optional end for a range); insert_after/insert_before take anchor; append/prepend take neither.",
-			"body = string[] of new content lines (required for replace/insert/append/prepend; omit for delete).",
-			"A successful edit returns `Updated anchors` for the changed lines — use those (not stale line numbers) for the next edit to the same file; re-read only if you need lines outside that set.",
+			"Batch changes to the same file in one edit call.",
+			"Use the latest returned anchors for subsequent edits; read again only for lines not covered by those results.",
 		],
 		parameters,
 		renderShell: "default" as const,

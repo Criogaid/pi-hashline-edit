@@ -134,7 +134,7 @@ test("grep in a subdirectory returns a path that edits the matching file", async
         edits: [
           {
             op: "replace",
-            anchor: { line: 1, hash: computeLineHash(1, original.trimEnd()) },
+            anchor: `1#${computeLineHash(1, original.trimEnd())}`,
             body: ["export const status = 2;"],
           },
         ],

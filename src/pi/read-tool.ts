@@ -105,10 +105,9 @@ export function makeReadOverride(cwd: string) {
 		label: "read",
 		description:
 			"Read file contents. Text files display per-line content hashes (LINE#HASH│content) for hashline-verified editing.",
-		promptSnippet: "Read files; each text line shows a content hash (LINE#HASH│content) anchoring it for edits",
+		promptSnippet: "Read files with editable line anchors",
 		promptGuidelines: [
-			'Text files display as `LINE#HASH│content` (e.g. `12#aF3│  return x`). The `#HASH` anchors each line for precise editing.',
-			"Pass `path`; optionally `offset` (1-indexed start line) and `limit` (max lines). Prefer read over cat/sed for files you intend to edit.",
+			"Prefer read over shell output for files you intend to edit.",
 		],
 		parameters: builtin.parameters,
 		renderShell: "default" as const,

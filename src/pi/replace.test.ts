@@ -30,7 +30,7 @@ const call = (tool: any, params: any) => tool.execute("0", params, undefined, un
 function anchorLine(block: string, line: number) {
 	const m = new RegExp(`^${line}#([0-9A-Z]+)│`, "m").exec(block);
 	if (!m) throw new Error(`line ${line} anchor not found in block`);
-	return { line, hash: m[1] };
+	return `${line}#${m[1]}`;
 }
 
 const stubTheme = { fg: (_k: string, s: string) => s, bold: (s: string) => s };
@@ -190,7 +190,7 @@ test("replace: returns fresh anchors for the changed region", async () => {
 		assert.match(out, /Updated anchors/);
 		// line 2 now holds "B"; its anchor must be present and correct
 		const a2 = anchorLine(out, 2);
-		assert.ok(a2.hash.length >= 2);
+		assert.match(a2, /^2#[0-9A-Z]{2,8}$/);
 	});
 });
 

@@ -62,10 +62,11 @@ test("write anchors chain into edit with a non-default hash length", async () =>
 	try {
 		state.config = { ...previousConfig, hashLen: 6 };
 		const result = await makeWriteTool(dir).execute("write", { path: "anchors.txt", content: "before\n" }, undefined, undefined, context(dir));
-		const anchor = result.content[0].text.match(/1#([^│]+)│/);
+		const anchor = result.content[0].text.match(/1#([0-9A-Z]+)/);
 		assert.ok(anchor);
 		assert.equal(anchor[1].length, 6);
-		await makeEditOverride(dir).execute("edit", { path: "anchors.txt", edits: [{ op: "replace", anchor: { line: 1, hash: anchor[1] }, body: ["after"] }] }, undefined, undefined, context(dir));
+		assert.doesNotMatch(result.content[0].text, /before|│/);
+		await makeEditOverride(dir).execute("edit", { path: "anchors.txt", edits: [{ op: "replace", anchor: anchor[0], body: ["after"] }] }, undefined, undefined, context(dir));
 		assert.equal(await readFile(join(dir, "anchors.txt"), "utf8"), "after\n");
 	} finally {
 		state.config = previousConfig;
