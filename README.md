@@ -2,7 +2,7 @@
 
 [![npm version](https://img.shields.io/npm/v/@d3ara1n/pi-hashline-edit)](https://www.npmjs.com/package/@d3ara1n/pi-hashline-edit) [![npm downloads](https://img.shields.io/npm/dm/@d3ara1n/pi-hashline-edit)](https://www.npmjs.com/package/@d3ara1n/pi-hashline-edit) [![license](https://img.shields.io/npm/l/@d3ara1n/pi-hashline-edit)](https://www.npmjs.com/package/@d3ara1n/pi-hashline-edit) [![Explicit Edit Benchmark](https://img.shields.io/endpoint?url=https://huggingface.co/datasets/alexshpunt/explicit-edit-benchmark/resolve/main/badges/d3ara1n-pi-hashline-edit.json&style=flat-square)](https://huggingface.co/spaces/alexshpunt/benchmark-explorer?card=harness%3Ad3ara1n-pi-hashline-edit%40latest)
 
-> Hashline-style file editing for [pi](https://github.com/earendil-works/pi-coding-agent) — line-anchored edits verified by content hash (replacing `oldText`/`newText` matching), plus a location-blind `replace` tool for bulk + regex transforms.
+> Hashline-style file editing for [pi](https://github.com/earendil-works/pi-coding-agent) — line-anchored edits verified by content hash (replacing `oldText`/`newText` matching), a complete-file `write`, plus a location-blind `replace` tool for bulk + regex transforms.
 
 Edits reference lines by `LINE#HASH` anchors (copied from `read`/`grep` output) instead of retyping the code to be changed — eliminating string-not-found loops and whitespace battles at the root.
 
@@ -24,7 +24,7 @@ Routine local code editing in pi — the common case. If you spend turns fightin
 
 ## When to turn it off
 
-Set `hashlineEdit.enabled = false` (or uninstall) to fall back to the built-in `read`/`edit`/`grep` when you need **remote or custom-storage files** — the overrides read/write/search the local filesystem directly, so pi's custom `ReadOperations`/`GrepOperations` (SSH, etc.) aren't supported. The same switch lets you opt out per-project. All four tools — `read`, `grep`, `edit`, `replace` — are one set governed by this switch: when disabled the extension registers none of them and pi behaves as if it were not installed (reload pi after changing the setting).
+Set `hashlineEdit.enabled = false` (or uninstall) to fall back to the built-in `read`/`edit`/`grep`/`write` when you need **remote or custom-storage files** — the overrides read/write/search the local filesystem directly, so pi's custom `ReadOperations`/`GrepOperations` (SSH, etc.) aren't supported. The same switch lets you opt out per-project. All five tools — `read`, `grep`, `edit`, `replace`, `write` — are one set governed by this switch: when disabled the extension registers none of them and pi behaves as if it were not installed (reload pi after changing the setting).
 
 ## Model Compatibility
 
@@ -213,11 +213,34 @@ Add a `hashlineEdit` field to `~/.pi/agent/settings.json` (global) or `.pi/setti
 {
   "hashlineEdit": {
     "enabled": true,     // set false to disable the extension entirely (built-ins remain; reload pi)
+    "actionFusion": false, // set true to expose then_run on edit/replace/write
     "hashLen": 4,        // hash length, 2–8 (default 4)
     "shiftRadius": 15    // ±lines scanned to rescue a stale anchor (default 15; 0 disables)
   }
 }
 ```
+
+When `actionFusion` is true, `edit`, `replace`, and `write` accept an optional `then_run` object. The mutation runs first; a successful mutation is followed by the command using the same file-scoped Hashline Fusion queue. A command failure does not roll back the mutation. The command uses Pi's built-in Bash definition directly and does not create a separate Bash tool call, so Bash-only approval or sandbox extensions must explicitly account for `edit.then_run`, `replace.then_run`, and `write.then_run`.
+`write` preserves Pi's complete-content `{ path, content }` shape. By default it creates missing files and overwrites existing files. `mode: "create"` refuses an existing target; `mode: "overwrite"` requires an existing target; `expectedRevision` is optional, but is checked strictly when supplied. Hashline does not automatically strip `LINE#HASH│` prefixes from write content.
+The setting is disabled by default. Keep it false when commands should not be available from Hashline mutations.
+
+### File publication boundaries
+
+All three mutation tools use the same `commitFile` layer. Complete content is prepared in a sibling temporary directory and synced before publication.
+
+- `mode: "create"` publishes with same-filesystem `link(temp, target)`, so a target that appears during the race is rejected rather than overwritten.
+- Replacement publishes with `rename(temp, target)` and never deletes the old target first.
+- Existing symlinks are resolved for overwrite and preserved; dangling or unresolvable symlinks are rejected.
+- Existing regular files with multiple hard links are rejected instead of silently splitting the link set.
+- Existing permission bits are copied to the replacement; new files are created with `0600`, which is also their final default mode. There is no separate public permission setting.
+- `publication` remains `PUBLISHED` if revision calculation, directory sync, or temporary cleanup fails after publication; an unconfirmed publish is `UNKNOWN`.
+- POSIX directory synchronization is attempted after publication. Windows does not provide the same directory-sync path here, so this package does not claim crash-persistence guarantees there.
+
+The default workspace path behavior is unchanged. Strict workspace jail remains an explicit future mode, not a default.
+
+### Validation boundary
+
+The current release candidate was exercised on Windows `win32` with NTFS using Node `v26.9.0`, npm `11.19.1`, and Pi `0.85.1`. The packed tarball was installed into a temporary project and loaded from its installed package directory through Pi's extension loader. Linux, macOS/APFS, network filesystems, full crash durability, Windows symlink permissions, and successful Windows atomic-read visibility remain unverified.
 
 ## Installation
 

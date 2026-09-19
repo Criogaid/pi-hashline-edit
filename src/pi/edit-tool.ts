@@ -22,7 +22,9 @@
 import { generateDiffString, generateUnifiedPatch, withFileMutationQueue, type EditToolDetails } from "@earendil-works/pi-coding-agent";
 import { Type, type Static } from "typebox";
 import { Text } from "@earendil-works/pi-tui";
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
+import { createActionFusionExecutor, createThenRunSchema, type ThenRunInput } from "./action-fusion.ts";
+import { commitFile, FileMutationError, type PublicationStatus } from "./file-commit.ts";
 import { applyEdits, hashFileLines } from "../core/index.ts";
 import { splitLines } from "../core/lines.ts";
 import type { ApplyFailure, Edit } from "../core/types.ts";
@@ -71,10 +73,16 @@ const editOpSchema = Type.Object({
 	body: Type.Optional(Type.Array(Type.String(), { description: "New content lines (required for replace/insert/append/prepend; omit for delete)" })),
 });
 
-const editSchema = Type.Object({
-	path: Type.String({ description: "Path to the file to edit (relative or absolute)" }),
-	edits: Type.Array(editOpSchema, { description: "Hashline ops, each referencing LINE#HASH anchors from your latest read or edit result" }),
-});
+function createEditSchema(actionFusion: boolean) {
+	return Type.Object({
+		path: Type.String({ description: "Path to the file to edit (relative or absolute)" }),
+		edits: Type.Array(editOpSchema, { description: "Hashline ops, each referencing LINE#HASH anchors from your latest read or edit result" }),
+		...(actionFusion ? { then_run: createThenRunSchema("Command to run after the edit succeeds; failure does not roll back the edit.") } : {}),
+	});
+}
+
+const editSchema = createEditSchema(false);
+type EditParams = Omit<Static<typeof editSchema>, "then_run"> & { then_run?: ThenRunInput };
 
 type EditOpInput = Static<typeof editOpSchema>;
 
@@ -191,7 +199,7 @@ function formatUpdatedAnchors(newText: string, touched: readonly number[], hashL
 }
 
 /** Call-header line: `edit path — N ops: op`, plus `+N -N` once the result's diff counts are known. */
-function editHeader(args: Static<typeof editSchema>, theme: any, counts?: DiffCounts): string {
+function editHeader(args: any, theme: any, counts?: DiffCounts): string {
 	let t = theme.fg("toolTitle", theme.bold("edit "));
 	t += theme.fg("accent", args.path);
 	const n = args.edits?.length ?? 0;
@@ -200,7 +208,8 @@ function editHeader(args: Static<typeof editSchema>, theme: any, counts?: DiffCo
 	return t;
 }
 
-export function makeEditOverride(cwd: string) {
+export function makeEditOverride(cwd: string, fusion?: ReturnType<typeof createActionFusionExecutor>): any {
+	const parameters = createEditSchema(fusion !== undefined);
 
 	return {
 		name: "edit" as const,
@@ -216,10 +225,10 @@ export function makeEditOverride(cwd: string) {
 			"body = string[] of new content lines (required for replace/insert/append/prepend; omit for delete).",
 			"A successful edit returns `Updated anchors` for the changed lines — use those (not stale line numbers) for the next edit to the same file; re-read only if you need lines outside that set.",
 		],
-		parameters: editSchema,
+		parameters,
 		renderShell: "default" as const,
 
-		renderCall(args: Static<typeof editSchema>, theme: any, context: any) {
+		renderCall(args: EditParams, theme: any, context: any) {
 			const text = (context?.lastComponent as Text | undefined) ?? new Text("", 0, 0);
 			// Stash the header for renderResult: the diff counts land after
 			// execution and are refreshed in place (renderResult's lastComponent
@@ -232,6 +241,7 @@ export function makeEditOverride(cwd: string) {
 		renderResult(result: any, { isPartial, expanded }: any, theme: any, context: any) {
 			if (isPartial) return new Text(theme.fg("warning", "Editing…"), 0, 0);
 			const content = result.content?.[0];
+			const fusionOutput = result.content?.slice(1).filter((block: any) => block.type === "text").map((block: any) => block.text).join("\n");
 			if (context.isError) {
 				const t = content?.type === "text" ? content.text.split("\n")[0] : "Error";
 				return new Text(theme.fg("error", t), 0, 0);
@@ -245,23 +255,34 @@ export function makeEditOverride(cwd: string) {
 			if (!diff) {
 				// No net diff (e.g. a successful but non-mutating edit): show only the summary
 				// line — content.text also carries `Updated anchors` (hashline) for the model.
-				const t = content?.type === "text" ? content.text.split("\n")[0] : "Edited";
-				return new Text(theme.fg("success", t), 0, 0);
+				const summary = content?.type === "text" ? content.text.split("\n")[0] : "Edited";
+				return new Text(theme.fg("success", expanded && fusionOutput ? `${summary}\n${fusionOutput}` : summary), 0, 0);
 			}
 			// details.diff is pi-format (+N/-N/<space>N content); renderDiff handles
 			// semantic colors plus intra-line change highlighting
-			return new Text(renderDiffPreview(diff, expanded, theme), 0, 0);
+			const rendered = renderDiffPreview(diff, expanded, theme);
+			return new Text(expanded && fusionOutput ? `${rendered}\n${fusionOutput}` : rendered, 0, 0);
 		},
 
-		async execute(toolCallId: string, params: Static<typeof editSchema>, signal: AbortSignal | undefined, onUpdate: any) {
-			const path = params.path;
-			const absPath = canonicalPath(cwd, path);
-
-			if (!params.edits?.length) {
-				return errResult(`Edit ${path}: \`edits\` is empty or missing.`);
-			}
-			// withFileMutationQueue serializes read-modify-write for the same file, preventing parallel-edit data loss
-			return await withFileMutationQueue(absPath, () => runHashline(absPath, path, params.edits, signal));
+		async execute(toolCallId: string, params: EditParams, signal: AbortSignal | undefined, onUpdate: any, ctx: any) {
+			const { then_run, ...mutationParams } = params;
+			if (!fusion && then_run !== undefined) throw new Error("then_run is unavailable because hashlineEdit.actionFusion is disabled");
+			const absolutePath = canonicalPath(cwd, mutationParams.path);
+			const mutate = () => {
+				const path = mutationParams.path;
+				if (!mutationParams.edits?.length) return errResult(`Edit ${path}: \`edits\` is empty or missing.`);
+				return withFileMutationQueue(absolutePath, () => runHashline(absolutePath, path, mutationParams.edits, signal));
+			};
+			if (!fusion) return mutate();
+			return fusion({
+				toolCallId,
+				toolName: "edit",
+				absolutePath,
+				thenRun: then_run,
+				mutate,
+				signal,
+				ctx,
+			});
 		},
 	};
 }
@@ -295,26 +316,31 @@ async function runHashline(absPath: string, displayPath: string, editOps: readon
 	// Check for cancel before write: if aborted, don't touch the disk; the file stays untouched
 	if (signal?.aborted) return errResult(`Edit ${displayPath} aborted before write.`);
 
+	let publication: PublicationStatus = "NOT_PUBLISHED";
 	try {
-		await writeFile(absPath, result.text);
+		publication = (await commitFile(absPath, result.text, { mode: "overwrite", signal })).publication;
 	} catch (e) {
-		const msg = e instanceof Error ? e.message : String(e);
-		return errResult(`Error writing ${displayPath}: ${msg}`);
+		if (e instanceof FileMutationError) throw e;
+		throw new FileMutationError("commit", "UNKNOWN", `Error writing ${displayPath}: ${e instanceof Error ? e.message : String(e)}`, { cause: e });
 	}
 
-	// generateDiffString / generateUnifiedPatch split on \n, so raw CRLF content would
-	// leave a trailing \r on every diff line — the TUI line-wrapper (wrapTextWithAnsi)
-	// then emits a spurious blank line per diff line. Normalize to LF for diff/patch
-	// only; the disk write above already preserved the original line endings.
-	const oldLf = currentText.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
-	const newLf = result.text.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
-	const { diff, firstChangedLine } = generateDiffString(oldLf, newLf);
-	const details: EditToolDetails = {
-		diff,
-		patch: generateUnifiedPatch(displayPath, oldLf, newLf),
-		firstChangedLine,
-	};
-	const anchors = formatUpdatedAnchors(result.text, result.touchedLines, hashLen);
+	let details: EditToolDetails & { publication: PublicationStatus };
+	let anchors: string;
+	try {
+		// diff 和 anchors 的计算属于发布后的后处理；失败时仍保留 publication。
+		const oldLf = currentText.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+		const newLf = result.text.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+		const { diff, firstChangedLine } = generateDiffString(oldLf, newLf);
+		details = {
+			diff,
+			patch: generateUnifiedPatch(displayPath, oldLf, newLf),
+			firstChangedLine,
+			publication,
+		};
+		anchors = formatUpdatedAnchors(result.text, result.touchedLines, hashLen);
+	} catch (error) {
+		throw new FileMutationError("post_process", publication, `file was published but edit result generation failed: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
+	}
 	return {
 		content: [{ type: "text" as const, text: `Edited ${displayPath} (${translated.edits.length} op(s)).${anchors}` }],
 		details,

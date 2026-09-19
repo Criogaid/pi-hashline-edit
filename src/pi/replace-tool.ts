@@ -31,8 +31,10 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { Type, type Static } from "typebox";
 import { Text } from "@earendil-works/pi-tui";
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { hashFileLines, splitLines } from "../core/index.ts";
+import { createActionFusionExecutor, createThenRunSchema, type ThenRunInput } from "./action-fusion.ts";
+import { commitFile, FileMutationError, type PublicationStatus } from "./file-commit.ts";
 import { getState } from "./state.ts";
 import { canonicalPath } from "./read-tool.ts";
 import { formatDiffCounts, publishDiffCounts, renderDiffPreview, type DiffCounts } from "./render.ts";
@@ -44,36 +46,21 @@ const DEFAULT_MAX_MATCHES = 2000;
 /** Valid JavaScript regular-expression flag characters (ES2023+, incl. hasIndices `d`). */
 const VALID_FLAGS = new Set(["g", "i", "m", "s", "u", "y", "d"]);
 
-const replaceSchema = Type.Object({
-	path: Type.String({ description: "Path to the file to edit (relative or absolute)" }),
-	find: Type.String({
-		description:
-			"Text to find. Literal substring when `regex` is false/omitted; a JavaScript regex pattern source when `regex` is true.",
-	}),
-	replace: Type.String({
-		description:
-			"Replacement text. Literal mode: inserted verbatim (no $ expansion). Regex mode: supports $1, $2, $&, $`, $' etc.",
-	}),
-	regex: Type.Optional(
-		Type.Boolean({
-			description:
-				"Treat `find` as a JavaScript regex pattern source (default false = literal substring, all occurrences replaced).",
-		}),
-	),
-	flags: Type.Optional(
-		Type.String({
-			description:
-				"Regex flags appended in BOTH modes ('g' is always forced so every occurrence is replaced). Default ''. Common: 'i' (case-insensitive), 'm' (^/$ per line), 's' (dotall, . matches \\n), 'u' (unicode).",
-		}),
-	),
-	maxMatches: Type.Optional(
-		Type.Number({
-			description: `Safety cap: errors before writing if more matches than this (default ${DEFAULT_MAX_MATCHES}). Raise for deliberate bulk transforms.`,
-		}),
-	),
-});
+function createReplaceSchema(actionFusion: boolean) {
+	return Type.Object({
+		path: Type.String({ description: "Path to the file to edit (relative or absolute)" }),
+		find: Type.String({ description: "Text to find. Literal substring when `regex` is false/omitted; a JavaScript regex pattern source when `regex` is true." }),
+		replace: Type.String({ description: "Replacement text. Literal mode: inserted verbatim (no $ expansion). Regex mode: supports $1, $2, $&, $`, $' etc." }),
+		regex: Type.Optional(Type.Boolean({ description: "Treat `find` as a JavaScript regex pattern source (default false = literal substring, all occurrences replaced)." })),
+		flags: Type.Optional(Type.String({ description: "Regex flags appended in BOTH modes ('g' is always forced so every occurrence is replaced)." })),
+		maxMatches: Type.Optional(Type.Number({ description: `Safety cap: errors before writing if more matches than this (default ${DEFAULT_MAX_MATCHES}). Raise for deliberate bulk transforms.` })),
+		...(actionFusion ? { then_run: createThenRunSchema("Command to run after replace succeeds; failure does not roll back the replacement.") } : {}),
+	});
+}
 
-type ReplaceParams = Static<typeof replaceSchema>;
+const replaceSchema = createReplaceSchema(false);
+
+type ReplaceParams = Omit<Static<typeof replaceSchema>, "then_run"> & { then_run?: ThenRunInput };
 
 /** Escape regex metacharacters so a literal string is matched verbatim. */
 function escapeRegex(s: string): string {
@@ -156,7 +143,8 @@ function replaceHeader(args: ReplaceParams, theme: any, counts?: DiffCounts): st
 	return t;
 }
 
-export function makeReplaceTool(cwd: string) {
+export function makeReplaceTool(cwd: string, fusion?: ReturnType<typeof createActionFusionExecutor>): any {
+	const parameters = createReplaceSchema(fusion !== undefined);
 	return {
 		name: "replace" as const,
 		label: "replace",
@@ -171,10 +159,10 @@ export function makeReplaceTool(cwd: string) {
 			"Returns a diff plus fresh anchors for the changed region; chain edits, or re-read if you need the whole file's anchors.",
 			"0 matches is an error. This is a location-blind bulk tool — for one verified change use `edit` instead.",
 		],
-		parameters: replaceSchema,
+		parameters,
 		renderShell: "default" as const,
 
-		renderCall(args: ReplaceParams, theme: any, context: any) {
+		renderCall(args: ReplaceParams & { then_run?: ThenRunInput }, theme: any, context: any) {
 			const text = (context?.lastComponent as Text | undefined) ?? new Text("", 0, 0);
 			// Stash the header for renderResult: the diff counts land after
 			// execution and are refreshed in place (renderResult's lastComponent
@@ -187,6 +175,7 @@ export function makeReplaceTool(cwd: string) {
 		renderResult(result: any, { isPartial, expanded }: any, theme: any, context: any) {
 			if (isPartial) return new Text(theme.fg("warning", "Replacing…"), 0, 0);
 			const content = result.content?.[0];
+			const fusionOutput = result.content?.slice(1).filter((block: any) => block.type === "text").map((block: any) => block.text).join("\n");
 			if (context.isError) {
 				const t = content?.type === "text" ? content.text.split("\n")[0] : "Error";
 				return new Text(theme.fg("error", t), 0, 0);
@@ -200,22 +189,24 @@ export function makeReplaceTool(cwd: string) {
 			if (!diff) {
 				// No net diff: show only the summary line — content.text also carries
 				// `Updated anchors` (hashline) for the model.
-				const t = content?.type === "text" ? content.text.split("\n")[0] : "Replaced";
-				return new Text(theme.fg("success", t), 0, 0);
+				const summary = content?.type === "text" ? content.text.split("\n")[0] : "Replaced";
+				return new Text(theme.fg("success", expanded && fusionOutput ? `${summary}\n${fusionOutput}` : summary), 0, 0);
 			}
 			// details.diff is pi-format (+N/-N/<space>N content); renderDiff handles
 			// semantic colors plus intra-line change highlighting
-			return new Text(renderDiffPreview(diff, expanded, theme), 0, 0);
+			const rendered = renderDiffPreview(diff, expanded, theme);
+			return new Text(expanded && fusionOutput ? `${rendered}\n${fusionOutput}` : rendered, 0, 0);
 		},
 
-		async execute(toolCallId: string, params: ReplaceParams, signal: AbortSignal | undefined, onUpdate: any) {
+		async execute(toolCallId: string, params: ReplaceParams & { then_run?: ThenRunInput }, signal: AbortSignal | undefined, onUpdate: any, ctx: any) {
+			const { then_run, ...mutationParams } = params;
+			if (!fusion && then_run !== undefined) throw new Error("then_run is unavailable because hashlineEdit.actionFusion is disabled");
 			const state = getState();
-			const path = params.path;
-			const absPath = canonicalPath(cwd, path);
-
-			// withFileMutationQueue serializes read-modify-write for the same file,
-			// shared with `edit` — a replace and an edit on the same file never interleave.
-			return await withFileMutationQueue(absPath, () => runReplace(absPath, path, params, state.config.hashLen, signal));
+			const path = mutationParams.path;
+			const absolutePath = canonicalPath(cwd, path);
+			const mutate = () => withFileMutationQueue(absolutePath, () => runReplace(absolutePath, path, mutationParams, state.config.hashLen, signal));
+			if (!fusion) return mutate();
+			return fusion({ toolName: "replace", toolCallId, absolutePath, thenRun: then_run, mutate, signal, ctx });
 		},
 	};
 }
@@ -277,35 +268,39 @@ async function runReplace(
 	// honor cancel before write: if aborted, don't touch the disk
 	if (signal?.aborted) throw new Error(`Replace ${displayPath} aborted before write.`);
 
+	let publication: PublicationStatus = "NOT_PUBLISHED";
 	if (changed) {
 		try {
-			await writeFile(absPath, newText);
+			publication = (await commitFile(absPath, newText, { mode: "overwrite", signal })).publication;
 		} catch (e) {
-			const msg = e instanceof Error ? e.message : String(e);
-			throw new Error(`Error writing ${displayPath}: ${msg}`);
+			if (e instanceof FileMutationError) throw e;
+			throw new FileMutationError("commit", "UNKNOWN", `Error writing ${displayPath}: ${e instanceof Error ? e.message : String(e)}`, { cause: e });
 		}
 	}
 
-	// generateDiffString / generateUnifiedPatch split on \n, so raw CRLF content would
-	// leave a trailing \r on every diff line — the TUI line-wrapper (wrapTextWithAnsi)
-	// then emits a spurious blank line per diff line. Normalize to LF for diff/patch
-	// only; the disk write above already preserved the original line endings.
-	const oldLf = currentText.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
-	const newLf = newText.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
-	const { diff, firstChangedLine } = generateDiffString(oldLf, newLf);
-	const details: EditToolDetails = {
-		diff,
-		patch: generateUnifiedPatch(displayPath, oldLf, newLf),
-		firstChangedLine,
-	};
-
-	const oldLines = splitLines(currentText);
-	const newLines = splitLines(newText);
-	const span = changed ? changedSpan(oldLines, newLines) : null;
-	const anchors = span ? formatSpanAnchors(newLines, span, hashLen) : "";
-
-	const matchWord = `match${count !== 1 ? "es" : ""}`;
-	const note = changed ? `${count} ${matchWord}` : `${count} ${matchWord}, no net change`;
+	let details: EditToolDetails & { publication: PublicationStatus };
+	let anchors: string;
+	let note: string;
+	try {
+		// diff、anchors 和结果文本属于发布后的后处理；失败时保留 publication。
+		const oldLf = currentText.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+		const newLf = newText.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+		const { diff, firstChangedLine } = generateDiffString(oldLf, newLf);
+		details = {
+			diff,
+			patch: generateUnifiedPatch(displayPath, oldLf, newLf),
+			firstChangedLine,
+			publication,
+		};
+		const oldLines = splitLines(currentText);
+		const newLines = splitLines(newText);
+		const span = changed ? changedSpan(oldLines, newLines) : null;
+		anchors = span ? formatSpanAnchors(newLines, span, hashLen) : "";
+		const matchWord = `match${count !== 1 ? "es" : ""}`;
+		note = changed ? `${count} ${matchWord}` : `${count} ${matchWord}, no net change`;
+	} catch (error) {
+		throw new FileMutationError("post_process", publication, `file was published but replace result generation failed: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
+	}
 	return {
 		content: [{ type: "text" as const, text: `Replaced ${displayPath} (${note}).${anchors}` }],
 		details,

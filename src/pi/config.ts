@@ -13,13 +13,15 @@ import * as path from "node:path";
 export interface HashlineEditConfig {
 	/** Master switch: when false the extension registers no tools — pi's built-ins remain. */
 	enabled: boolean;
+	/** Run an optional command after edit/replace succeeds. Disabled by default. */
+	actionFusion: boolean;
 	/** Line hash length (default 4). */
 	hashLen: number;
 	/** ±line radius for shifted-anchor recovery (default 15; 0 disables rescue). */
 	shiftRadius: number;
 }
 
-const DEFAULT_CONFIG: HashlineEditConfig = { enabled: true, hashLen: 4, shiftRadius: 15 };
+const DEFAULT_CONFIG: HashlineEditConfig = { enabled: true, actionFusion: false, hashLen: 4, shiftRadius: 15 };
 
 /** Parse JSON directly without stripping comments (standard JSON forbids comments; on error fall back to default). */
 function readSettings(filePath: string): Record<string, unknown> {
@@ -41,6 +43,7 @@ export function loadConfig(cwd?: string): HashlineEditConfig {
 	const raw = (projectSettings.hashlineEdit ?? globalSettings.hashlineEdit ?? {}) as Record<string, unknown>;
 	return {
 		enabled: typeof raw.enabled === "boolean" ? raw.enabled : DEFAULT_CONFIG.enabled,
+		actionFusion: raw.actionFusion === true,
 		hashLen:
 			typeof raw.hashLen === "number" && raw.hashLen >= 2 && raw.hashLen <= 8
 				? raw.hashLen
