@@ -7,7 +7,7 @@ import { makeEditOverride } from "./edit-tool.ts";
 import { makeReplaceTool } from "./replace-tool.ts";
 import { makeWriteTool } from "./write-tool.ts";
 import type { ActionFusionProgress } from "./action-fusion.ts";
-import { createActionFusionExecutor, THEN_RUN_FAILED, THEN_RUN_SKIPPED, THEN_RUN_SUCCEEDED } from "./action-fusion.ts";
+import { ACTION_FUSION_GUIDELINES, createActionFusionExecutor, THEN_RUN_FAILED, THEN_RUN_SKIPPED, THEN_RUN_SUCCEEDED } from "./action-fusion.ts";
 
 async function tempDir(): Promise<string> {
 	return mkdtemp(join(tmpdir(), "hashline-action-fusion-"));
@@ -15,12 +15,16 @@ async function tempDir(): Promise<string> {
 
 const ctx = (cwd: string) => ({ cwd }) as any;
 
-test("actionFusion is opt-in in the tool schemas", () => {
-	assert.equal((makeEditOverride("/tmp") as any).parameters.properties.then_run, undefined);
-	assert.equal((makeReplaceTool("/tmp") as any).parameters.properties.then_run, undefined);
+test("actionFusion schemas and shared usage guidance are opt-in for every mutation tool", () => {
 	const fusion = createActionFusionExecutor();
-	assert.ok((makeEditOverride("/tmp", fusion) as any).parameters.properties.then_run);
-	assert.ok((makeReplaceTool("/tmp", fusion) as any).parameters.properties.then_run);
+	for (const makeTool of [makeEditOverride, makeReplaceTool, makeWriteTool]) {
+		const disabled = makeTool("/tmp") as any;
+		const enabled = makeTool("/tmp", fusion) as any;
+		assert.equal(disabled.parameters.properties.then_run, undefined);
+		assert.ok(enabled.parameters.properties.then_run);
+		assert.deepEqual(enabled.promptGuidelines, [...(disabled.promptGuidelines ?? []), ...ACTION_FUSION_GUIDELINES]);
+		assert.ok(!(disabled.promptGuidelines ?? []).some((line: string) => ACTION_FUSION_GUIDELINES.includes(line)));
+	}
 });
 
 test("edit and replace share one embedded executor and preserve mutation results", async () => {

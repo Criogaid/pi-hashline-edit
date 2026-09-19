@@ -23,7 +23,7 @@ import { generateDiffString, generateUnifiedPatch, withFileMutationQueue, type E
 import { Type, type Static } from "typebox";
 import { Text } from "@earendil-works/pi-tui";
 import { readFile } from "node:fs/promises";
-import { createActionFusionExecutor, createThenRunSchema, type ThenRunInput } from "./action-fusion.ts";
+import { ACTION_FUSION_GUIDELINES, createActionFusionExecutor, createThenRunSchema, type ThenRunInput } from "./action-fusion.ts";
 import { commitFile, FileMutationError, type PublicationStatus } from "./file-commit.ts";
 import { applyEdits, hashFileLines } from "../core/index.ts";
 import { splitLines } from "../core/lines.ts";
@@ -228,6 +228,7 @@ export function makeEditOverride(cwd: string, fusion?: ReturnType<typeof createA
 		promptGuidelines: [
 			"Batch changes to the same file in one edit call.",
 			"Use the latest returned anchors for subsequent edits; read again only for lines not covered by those results.",
+			...(fusion ? ACTION_FUSION_GUIDELINES : []),
 		],
 		parameters,
 		renderShell: "default" as const,

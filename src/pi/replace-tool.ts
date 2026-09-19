@@ -33,7 +33,7 @@ import { Type, type Static } from "typebox";
 import { Text } from "@earendil-works/pi-tui";
 import { readFile } from "node:fs/promises";
 import { hashFileLines, splitLines } from "../core/index.ts";
-import { createActionFusionExecutor, createThenRunSchema, type ThenRunInput } from "./action-fusion.ts";
+import { ACTION_FUSION_GUIDELINES, createActionFusionExecutor, createThenRunSchema, type ThenRunInput } from "./action-fusion.ts";
 import { commitFile, FileMutationError, type PublicationStatus } from "./file-commit.ts";
 import { getState } from "./state.ts";
 import { canonicalPath } from "./read-tool.ts";
@@ -153,6 +153,7 @@ export function makeReplaceTool(cwd: string, fusion?: ReturnType<typeof createAc
 		promptSnippet: "Replace matching text across a file",
 		promptGuidelines: [
 			"Use replace for bulk changes; prefer edit for a specific, anchor-verified location.",
+			...(fusion ? ACTION_FUSION_GUIDELINES : []),
 		],
 		parameters,
 		renderShell: "default" as const,

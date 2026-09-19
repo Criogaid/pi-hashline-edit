@@ -10,6 +10,11 @@ export const THEN_RUN_FAILED = "[then_run:failed]";
 export const THEN_RUN_SKIPPED = "[then_run:skipped]";
 export const THEN_RUN_STALE = "[then_run:stale]";
 
+export const ACTION_FUSION_GUIDELINES = [
+	"Prefer then_run for a known, authorized follow-up command once all prerequisite edits are complete. Keep it separate if you must inspect the edit result first.",
+	"Check the command outcome before claiming validation passed.",
+];
+
 export interface ThenRunInput {
 	command: string;
 	timeout?: number;

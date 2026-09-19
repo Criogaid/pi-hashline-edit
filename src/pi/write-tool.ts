@@ -1,7 +1,7 @@
 import { Type, type Static } from "typebox";
 import { createWriteToolDefinition, withFileMutationQueue } from "@earendil-works/pi-coding-agent";
 import { getState } from "./state.ts";
-import { createActionFusionExecutor, createThenRunSchema, type ThenRunInput } from "./action-fusion.ts";
+import { ACTION_FUSION_GUIDELINES, createActionFusionExecutor, createThenRunSchema, type ThenRunInput } from "./action-fusion.ts";
 import { commitFile, FileMutationError, type CommitMode } from "./file-commit.ts";
 import { canonicalPath } from "./read-tool.ts";
 import { hashFileLines, splitLines } from "../core/index.ts";
@@ -38,6 +38,7 @@ export function makeWriteTool(cwd: string, fusion?: ReturnType<typeof createActi
 		label: "write",
 		description: "Write complete file content. By default, creates missing files and overwrites existing files.",
 		promptSnippet: "Write complete file content to a path",
+		promptGuidelines: fusion ? ACTION_FUSION_GUIDELINES : [],
 		parameters,
 		renderShell: "default" as const,
 		renderCall: builtin.renderCall,
