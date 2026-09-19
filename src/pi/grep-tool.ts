@@ -81,6 +81,8 @@ function escapeRegex(s: string): string {
 }
 
 const REGEX_SYNTAX = /[.*+?^${}()|[\]\\]/;
+const REGEX_PARSE_ERROR = /^(?:rg: )?regex parse error:/m;
+const LITERAL_FALLBACK_NOTICE = "Invalid regex; searched all patterns as literal text";
 
 async function resolveLiteralMode(
   patterns: readonly string[],
@@ -99,7 +101,7 @@ async function resolveLiteralMode(
   );
   if (signal?.aborted) throw new Error("Operation aborted");
   if (result.code === 0 || result.code === 1) return false;
-  if (result.code === 2 && /^(?:rg: )?regex parse error:/m.test(result.stderr)) return true;
+  if (result.code === 2 && REGEX_PARSE_ERROR.test(result.stderr)) return true;
   throw new Error(result.stderr.trim() || `ripgrep exited with code ${result.code}`);
 }
 
@@ -434,7 +436,26 @@ export function makeGrepOverrideWithBackend(cwd: string, overrides: Partial<Grep
       const rgPath = await backend.findRg();
       // ripgrep unavailable → built-in (it can auto-download rg), but only for plain params
       if (!rgPath) {
-        if (legacyShaped) return backend.delegate(toolCallId, params, signal, onUpdate);
+        if (legacyShaped) {
+          const forwarded = {
+            ...params,
+            ignoreCase: resolveMatcherIgnoreCase(patterns, params.ignoreCase),
+            literal: params.literal ?? !REGEX_SYNTAX.test(params.pattern),
+          };
+          try {
+            return await backend.delegate(toolCallId, forwarded, signal, onUpdate);
+          } catch (error) {
+            if (signal?.aborted) throw new Error("Operation aborted");
+            const message = error instanceof Error ? error.message : String(error);
+            if (params.literal !== undefined || forwarded.literal || !REGEX_PARSE_ERROR.test(message)) throw error;
+            // Let the native rg parser decide whether automatic mode needs a literal retry.
+            const result = await backend.delegate(toolCallId, { ...forwarded, literal: true }, signal, onUpdate);
+            return {
+              ...result,
+              content: [...result.content, { type: "text", text: `[${LITERAL_FALLBACK_NOTICE}]` }],
+            };
+          }
+        }
         throw new Error(
           "ripgrep (rg) not found; extended grep params cannot fall back to the built-in grep. Retry with a simple pattern first, or use bash",
         );
@@ -448,7 +469,6 @@ export function makeGrepOverrideWithBackend(cwd: string, overrides: Partial<Grep
       const literal = await resolveLiteralMode(allPatterns, params.literal, rgPath, backend, signal);
       const literalFallback = params.literal === undefined && literal &&
         allPatterns.some((pattern) => REGEX_SYNTAX.test(pattern));
-      const fallbackNotice = "Invalid regex; searched all patterns as literal text";
       const { ignoreCase, wordMatch, context, limit } = params;
       const matcherIgnoreCase = resolveMatcherIgnoreCase(patterns, ignoreCase);
       const ctx = clampContext(context);
@@ -543,7 +563,7 @@ export function makeGrepOverrideWithBackend(cwd: string, overrides: Partial<Grep
             if (raw.length === 0) {
               resolvePromise({
                 content: [{ type: "text" as const, text: literalFallback
-                  ? `No matches found\n\n[${fallbackNotice}]` : "No matches found" }],
+                  ? `No matches found\n\n[${LITERAL_FALLBACK_NOTICE}]` : "No matches found" }],
                 details: undefined,
               });
               return;
@@ -624,7 +644,7 @@ export function makeGrepOverrideWithBackend(cwd: string, overrides: Partial<Grep
             const truncation = truncateHead(output, { maxBytes: DEFAULT_MAX_BYTES });
             output = truncation.content;
 
-            const notices: string[] = literalFallback ? [fallbackNotice] : [];
+            const notices: string[] = literalFallback ? [LITERAL_FALLBACK_NOTICE] : [];
             if (matchLimitReached)
               notices.push(
                 `${effectiveLimit} matches limit reached. Use limit=${effectiveLimit * 2} for more, or refine pattern`,

@@ -386,6 +386,7 @@ test("delegates only safe fallbacks and rejects extended missing-rg requests", a
         text(await call(makeGrepOverrideWithBackend(dir, absent.backend), { pattern: "x" })),
         "delegated",
       );
+      assert.deepEqual(absent.delegates[0][1], { pattern: "x", ignoreCase: true, literal: true });
       await assert.rejects(
         call(makeGrepOverrideWithBackend(dir, absent.backend), {
           pattern: ["x", "y"],
@@ -393,6 +394,8 @@ test("delegates only safe fallbacks and rejects extended missing-rg requests", a
         }),
         /ripgrep \(rg\) not found/,
       );
+      assert.equal(absent.delegates.length, 1);
+      assert.equal(absent.calls.length, 0);
     });
   });
 });
@@ -423,5 +426,62 @@ test("delegates an already-aborted call and rejects an abort during rg execution
       ),
       /Operation aborted/,
     );
+  });
+});
+
+test("native fallback receives resolved defaults and preserves explicit overrides", async () => {
+  await withDir(async (dir) => {
+    const fake = fakeBackend();
+    fake.backend.findRg = async () => null;
+    const tool = makeGrepOverrideWithBackend(dir, fake.backend);
+    const cases = [
+      { params: { pattern: "foo" }, literal: true, ignoreCase: true },
+      { params: { pattern: "Foo" }, literal: true, ignoreCase: false },
+      { params: { pattern: "(?i)foo" }, literal: false, ignoreCase: true },
+      { params: { pattern: "(?P<name>foo)" }, literal: false, ignoreCase: false },
+      { params: { pattern: "foo", literal: false, ignoreCase: false }, literal: false, ignoreCase: false },
+      { params: { pattern: "queueTool(", literal: true, ignoreCase: true }, literal: true, ignoreCase: true },
+    ];
+    for (const { params, literal, ignoreCase } of cases) {
+      const input = { ...params, path: "fixture.ts", glob: "*.ts", context: 2, limit: 3 };
+      assert.equal(text(await call(tool, input)), "delegated");
+      assert.deepEqual(fake.delegates.at(-1)![1], { ...input, literal, ignoreCase });
+    }
+    assert.equal(fake.delegates.length, cases.length);
+    assert.equal(fake.calls.length, 0);
+  });
+});
+
+test("native fallback retries only automatic regex parse failures as literal text", async () => {
+  await withDir(async (dir) => {
+    for (const scenario of ["auto", "explicit", "download", "abort"]) {
+      const fake = fakeBackend();
+      fake.backend.findRg = async () => null;
+      const controller = new AbortController();
+      const delegate = fake.backend.delegate;
+      fake.backend.delegate = async (...args) => {
+        const result = await delegate(...args);
+        if (args[1].literal) return result;
+        if (scenario === "abort") controller.abort();
+        throw new Error(scenario === "download"
+          ? "ripgrep (rg) is not available and could not be downloaded"
+          : "rg: regex parse error:\nerror: unclosed group");
+      };
+      const params = { pattern: "queueTool(", ...(scenario === "explicit" ? { literal: false } : {}) };
+      const result = call(makeGrepOverrideWithBackend(dir, fake.backend), params, controller.signal);
+      if (scenario === "auto") {
+        assert.deepEqual((await result).content, [
+          { type: "text", text: "delegated" },
+          { type: "text", text: "[Invalid regex; searched all patterns as literal text]" },
+        ]);
+        assert.equal(fake.delegates.length, 2);
+        assert.deepEqual(fake.delegates[1][1], { pattern: "queueTool(", ignoreCase: false, literal: true });
+      } else {
+        await assert.rejects(result, scenario === "download" ? /could not be downloaded/
+          : scenario === "abort" ? /Operation aborted/ : /regex parse error/);
+        assert.equal(fake.delegates.length, 1);
+      }
+      assert.equal(fake.calls.length, 0);
+    }
   });
 });

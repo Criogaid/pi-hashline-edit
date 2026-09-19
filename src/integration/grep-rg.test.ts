@@ -114,3 +114,34 @@ test("real rg validates its own regex syntax and limits automatic literal fallba
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+test("fallback forwarding preserves query semantics with a real rg-backed delegate", {
+  skip: rgPath === null,
+}, async () => {
+  const directory = await mkdtemp(join(tmpdir(), "hl-grep-fallback-"));
+  try {
+    await writeFile(join(directory, "fixture.ts"), "FOO\nfoo\nqueueTool(\n");
+    const delegate = makeGrepOverrideWithBackend(directory, {
+      findRg: async () => rgPath,
+      delegate: async () => { throw new Error("must not invoke the built-in download path"); },
+    });
+    const fallback = makeGrepOverrideWithBackend(directory, {
+      findRg: async () => null,
+      delegate: (...args) => delegate.execute(...args),
+    });
+    for (const pattern of ["foo", "(?i)^foo$", "(?P<name>foo)$", "queueTool("]) {
+      const result: any = await fallback.execute("0", { pattern }, undefined, undefined);
+      const output = result.content.map((block: any) => block.text).join("\n");
+      if (pattern === "queueTool(") {
+        assert.match(output, /│queueTool\(/);
+        assert.match(output, /Invalid regex; searched all patterns as literal text/);
+      } else {
+        assert.match(output, /│foo/);
+        assert.equal(output.includes("│FOO"), !pattern.includes("?P"));
+        assert.doesNotMatch(output, /Invalid regex/);
+      }
+    }
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
