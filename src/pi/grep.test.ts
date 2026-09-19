@@ -108,7 +108,7 @@ test("formats parsed rg matches with full-line hash anchors", async () => {
       assert.match(output, /3#[0-9A-Z]+│alpha only/);
       assert.deepEqual(fake.calls[0], {
         path: "/fake/rg",
-        args: ["--json", "--line-number", "--color=never", "--hidden", "--smart-case", "--fixed-strings", "-e", "alpha", "--", dir],
+        args: ["--json", "--line-number", "--color=never", "--hidden", "--ignore-case", "--fixed-strings", "-e", "alpha", "--", dir],
       });
     }),
   );
@@ -306,9 +306,11 @@ test("uses smart-case by default and preserves explicit case overrides", async (
     await call(tool, { pattern: "Upper" });
     await call(tool, { pattern: "lower", ignoreCase: true });
     await call(tool, { pattern: "lower", ignoreCase: false });
+    await call(tool, { pattern: "foo\\S*" });
+    await call(tool, { pattern: "foo\\S*", ignoreCase: true });
     assert.deepEqual(
-      flags.calls.map(({ args }) => [args.includes("--smart-case"), args.includes("--ignore-case")]),
-      [[true, false], [true, false], [false, true], [false, false]],
+      flags.calls.map(({ args }) => [args.includes("--ignore-case"), args.includes("--case-sensitive")]),
+      [[true, false], [false, true], [true, false], [false, true], [false, true], [true, false]],
     );
   });
 });

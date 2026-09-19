@@ -165,7 +165,7 @@ const grepOverrideSchema = Type.Object({
     }),
   ),
   ignoreCase: Type.Optional(
-    Type.Boolean({ description: "Force case-insensitive (true) or case-sensitive (false); omit for smart-case" }),
+    Type.Boolean({ description: "Force case-insensitive (true) or case-sensitive (false); by default, ignore case only when every search pattern has no uppercase characters (including regex escapes)" }),
   ),
   literal: Type.Optional(
     Type.Boolean({
@@ -478,8 +478,8 @@ export function makeGrepOverrideWithBackend(cwd: string, overrides: Partial<Grep
         }
 
         const args = ["--json", "--line-number", "--color=never", "--hidden"];
-        if (ignoreCase === true) args.push("--ignore-case");
-        else if (ignoreCase === undefined) args.push("--smart-case");
+        // Use the same raw-pattern case decision for rg and client-side filters.
+        args.push(matcherIgnoreCase ? "--ignore-case" : "--case-sensitive");
         if (literal) args.push("--fixed-strings");
         if (wordMatch) args.push("--word-regexp");
         for (const glob of globs) args.push("--glob", glob);

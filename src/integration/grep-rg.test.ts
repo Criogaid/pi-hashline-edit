@@ -45,3 +45,36 @@ test("real rg emits anchored matches from a temporary directory", {
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+test("real rg and line filters share case decisions for uppercase regex escapes", {
+  skip: rgPath === null,
+}, async () => {
+  const directory = await mkdtemp(join(tmpdir(), "hl-grep-case-"));
+  try {
+    await writeFile(join(directory, "fixture.ts"), "FOO abc\nfoo BAR\nfoo bar\n");
+    const tool = makeGrepOverrideWithBackend(directory, {
+      findRg: async () => rgPath,
+      delegate: async () => {
+        throw new Error("integration test must not invoke the built-in grep delegate");
+      },
+    });
+    for (const ignoreCase of [undefined, true, false]) {
+      const expectedCount = ignoreCase === true ? 3 : 2;
+      for (const query of [
+        { pattern: "foo\\S*" },
+        { pattern: ["foo\\S*", "\\S+"], matchMode: "all" },
+      ]) {
+        const result: any = await tool.execute("0", { ...query, ignoreCase }, undefined, undefined);
+        assert.match(result.content[0].text, new RegExp(`fixture\\.ts · ${expectedCount} matches`));
+        assert.equal(result.content[0].text.includes("FOO abc"), ignoreCase === true);
+      }
+      const excluded: any = await tool.execute("0", {
+        pattern: "foo\\S*", excludePattern: "bar", ignoreCase,
+      }, undefined, undefined);
+      assert.match(excluded.content[0].text, /fixture\.ts · 1 match/);
+      assert.ok(excluded.content[0].text.includes(ignoreCase === true ? "FOO abc" : "foo BAR"));
+    }
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
