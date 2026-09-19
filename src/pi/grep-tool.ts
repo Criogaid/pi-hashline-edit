@@ -347,6 +347,7 @@ export function makeGrepOverrideWithBackend(cwd: string, overrides: Partial<Grep
       "Search file contents; respects .gitignore. Groups matches by file with LINE#HASH anchors, including context. Native fallback has no anchors.",
     promptSnippet: "Search file contents",
     promptGuidelines: [
+      "Prefer the grep tool for file-content searches.",
       "Use returned grep anchors directly for edits; no re-read needed.",
       "Prefer files/count for paths/counts; use all/exclude instead of shell pipelines.",
     ],
