@@ -93,6 +93,10 @@ function resolveLiteralMode(patterns: readonly string[], explicit: boolean | und
 	return !hasRegexSyntax;
 }
 
+function resolveMatcherIgnoreCase(patterns: readonly string[], explicit: boolean | undefined): boolean {
+	return explicit ?? patterns.every((pattern) => pattern === pattern.toLowerCase());
+}
+
 /**
  * Compile a pattern for the client-side line checks (`matchMode: "all"` and
  * `excludePattern`), mirroring the flags rg was given — `literal`,
@@ -161,7 +165,7 @@ const grepOverrideSchema = Type.Object({
     }),
   ),
   ignoreCase: Type.Optional(
-    Type.Boolean({ description: "Case-insensitive search (default: false)" }),
+    Type.Boolean({ description: "Force case-insensitive (true) or case-sensitive (false); omit for smart-case" }),
   ),
   literal: Type.Optional(
     Type.Boolean({
@@ -432,6 +436,7 @@ export function makeGrepOverrideWithBackend(cwd: string, overrides: Partial<Grep
       const globs = toArray(params.glob);
       const literal = resolveLiteralMode([...patterns, ...excludes], params.literal);
       const { ignoreCase, wordMatch, context, limit } = params;
+      const matcherIgnoreCase = resolveMatcherIgnoreCase(patterns, ignoreCase);
       const ctx = clampContext(context);
       const searchPaths = (() => {
         const raw = toArray(params.path);
@@ -451,14 +456,14 @@ export function makeGrepOverrideWithBackend(cwd: string, overrides: Partial<Grep
 
       // Client-side line filters — only AND / exclude need them; "any" is native rg (-e OR).
       const excludeMatchers = excludes.map((p) =>
-        compileLineMatcher(p, { literal: !!literal, ignoreCase: !!ignoreCase, word: false }),
+        compileLineMatcher(p, { literal, ignoreCase: matcherIgnoreCase, word: false }),
       );
       const andMatchers =
         matchMode === "all" && patterns.length > 1
           ? patterns.map((p) =>
               compileLineMatcher(p, {
-                literal: !!literal,
-                ignoreCase: !!ignoreCase,
+                literal,
+                ignoreCase: matcherIgnoreCase,
                 word: !!wordMatch,
               }),
             )
@@ -473,7 +478,8 @@ export function makeGrepOverrideWithBackend(cwd: string, overrides: Partial<Grep
         }
 
         const args = ["--json", "--line-number", "--color=never", "--hidden"];
-        if (ignoreCase) args.push("--ignore-case");
+        if (ignoreCase === true) args.push("--ignore-case");
+        else if (ignoreCase === undefined) args.push("--smart-case");
         if (literal) args.push("--fixed-strings");
         if (wordMatch) args.push("--word-regexp");
         for (const glob of globs) args.push("--glob", glob);

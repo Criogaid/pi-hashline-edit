@@ -108,7 +108,7 @@ test("formats parsed rg matches with full-line hash anchors", async () => {
       assert.match(output, /3#[0-9A-Z]+│alpha only/);
       assert.deepEqual(fake.calls[0], {
         path: "/fake/rg",
-        args: ["--json", "--line-number", "--color=never", "--hidden", "--fixed-strings", "-e", "alpha", "--", dir],
+        args: ["--json", "--line-number", "--color=never", "--hidden", "--smart-case", "--fixed-strings", "-e", "alpha", "--", dir],
       });
     }),
   );
@@ -277,6 +277,38 @@ test("auto-detects literal and regex modes while preserving explicit overrides",
     assert.deepEqual(
       fake.calls.map(({ args }) => args.includes("--fixed-strings")),
       [true, false, false, true, true],
+    );
+  });
+});
+
+test("uses smart-case by default and preserves explicit case overrides", async () => {
+  await withDir(async (dir) => {
+    const target = join(dir, "case.ts");
+    await writeFile(target, "FOO alpha\n");
+
+    const lower = fakeBackend({ lines: [rgMatch(target, 1, "FOO alpha\n")] });
+    const lowerResult = await call(makeGrepOverrideWithBackend(dir, lower.backend), {
+      pattern: ["foo", "alpha"],
+      matchMode: "all",
+    });
+    assert.match(text(lowerResult), /FOO alpha/);
+
+    const mixed = fakeBackend({ lines: [rgMatch(target, 1, "FOO alpha\n")] });
+    const mixedResult = await call(makeGrepOverrideWithBackend(dir, mixed.backend), {
+      pattern: ["Foo", "alpha"],
+      matchMode: "all",
+    });
+    assert.equal(text(mixedResult), "No matches found");
+
+    const flags = fakeBackend();
+    const tool = makeGrepOverrideWithBackend(dir, flags.backend);
+    await call(tool, { pattern: "lower" });
+    await call(tool, { pattern: "Upper" });
+    await call(tool, { pattern: "lower", ignoreCase: true });
+    await call(tool, { pattern: "lower", ignoreCase: false });
+    assert.deepEqual(
+      flags.calls.map(({ args }) => [args.includes("--smart-case"), args.includes("--ignore-case")]),
+      [[true, false], [true, false], [false, true], [false, false]],
     );
   });
 });
