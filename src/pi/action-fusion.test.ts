@@ -49,17 +49,18 @@ test("mutation failure skips the command and command failure does not roll back"
 	const dir = await tempDir();
 	try {
 		let calls = 0;
-		const fusion = createActionFusionExecutor(async () => { calls++; throw new Error("command failed"); });
+		const commandFailure = "compiler: unexpected token\nCommand exited with code 7";
+		const fusion = createActionFusionExecutor(async () => { calls++; throw new Error(commandFailure); });
 		await assert.rejects(
-			fusion({ toolName: "edit", toolCallId: "x", absolutePath: join(dir, "missing.txt"), thenRun: { command: "check" }, mutate: async () => { throw new Error("mutation failed"); }, signal: undefined, ctx: ctx(dir) }),
-			(error: Error) => error.message.includes(THEN_RUN_SKIPPED),
+			fusion({ toolName: "edit", toolCallId: "x", absolutePath: join(dir, "missing.txt"), thenRun: { command: "check" }, mutate: async () => { throw new Error("anchor mismatch: current 1#ABCD"); }, signal: undefined, ctx: ctx(dir) }),
+			(error: Error) => error.message.includes(THEN_RUN_SKIPPED) && error.message.includes("anchor mismatch: current 1#ABCD"),
 		);
 		assert.equal(calls, 0);
 		const target = join(dir, "changed.txt");
 		await writeFile(target, "changed\n");
 		await assert.rejects(
 			fusion({ toolName: "replace", toolCallId: "y", absolutePath: target, thenRun: { command: "check" }, mutate: async () => ({ content: [{ type: "text", text: "mutation" }], details: { ok: true } }), signal: undefined, ctx: ctx(dir) }),
-			(error: Error) => error.message.includes(THEN_RUN_FAILED) && error.message.includes("mutation completed"),
+			(error: Error) => error.message.includes(THEN_RUN_FAILED) && error.message.includes("mutation completed") && error.message.includes(commandFailure),
 		);
 		assert.equal(await readFile(target, "utf8"), "changed\n");
 		assert.equal(calls, 1);

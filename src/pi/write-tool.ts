@@ -1,5 +1,7 @@
 import { Type, type Static } from "typebox";
 import { Text } from "@earendil-works/pi-tui";
+import { withFileMutationQueue } from "@earendil-works/pi-coding-agent";
+import { getState } from "./state.ts";
 import { createActionFusionExecutor, createThenRunSchema, type ThenRunInput } from "./action-fusion.ts";
 import { commitFile, FileMutationError, type CommitMode } from "./file-commit.ts";
 import { canonicalPath } from "./read-tool.ts";
@@ -21,9 +23,9 @@ function createWriteSchema(actionFusion: boolean) {
 const writeSchema = createWriteSchema(false);
 type WriteParams = Omit<Static<typeof writeSchema>, "then_run"> & { then_run?: ThenRunInput };
 
-function formatAnchors(content: string): string {
+function formatAnchors(content: string, hashLen: number): string {
 	const lines = splitLines(content);
-	const hashes = hashFileLines(lines, 4);
+	const hashes = hashFileLines(lines, hashLen);
 	const shown = lines.slice(0, 40).map((line, index) => `${index + 1}#${hashes[index]}│${line}`);
 	const suffix = lines.length > shown.length ? `\n… (${lines.length - shown.length} more; read again for full anchors)` : "";
 	return shown.length ? `\nFresh anchors:\n${shown.join("\n")}${suffix}` : "";
@@ -58,7 +60,7 @@ export function makeWriteTool(cwd: string, fusion?: ReturnType<typeof createActi
 			const { then_run, ...mutationParams } = params;
 			if (!fusion && then_run !== undefined) throw new Error("then_run is unavailable because hashlineEdit.actionFusion is disabled");
 			const absolutePath = canonicalPath(cwd, mutationParams.path);
-			const mutate = async () => {
+			const mutate = () => withFileMutationQueue(absolutePath, async () => {
 				signal?.throwIfAborted();
 				const result = await commitFile(absolutePath, mutationParams.content, {
 					mode: mutationParams.mode as CommitMode | undefined,
@@ -67,13 +69,13 @@ export function makeWriteTool(cwd: string, fusion?: ReturnType<typeof createActi
 				});
 				try {
 					return {
-						content: [{ type: "text" as const, text: `${result.created ? "Created" : "Wrote"} ${mutationParams.path}.\nRevision: ${result.revision}${formatAnchors(mutationParams.content)}` }],
+						content: [{ type: "text" as const, text: `${result.created ? "Created" : "Wrote"} ${mutationParams.path}.\nRevision: ${result.revision}${formatAnchors(mutationParams.content, getState().config.hashLen)}` }],
 						details: { path: mutationParams.path, revision: result.revision, created: result.created, publication: result.publication },
 					};
 				} catch (error) {
 					throw new FileMutationError("post_process", "PUBLISHED", `file was published but write result generation failed: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
 				}
-			};
+			});
 			if (!fusion) return mutate();
 			return fusion({ toolName: "write", toolCallId, absolutePath, thenRun: then_run, mutate, signal, ctx });
 		},

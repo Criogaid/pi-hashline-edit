@@ -6,6 +6,8 @@ import { test } from "node:test";
 import { makeWriteTool } from "./write-tool.ts";
 import { createActionFusionExecutor } from "./action-fusion.ts";
 import { fileRevision } from "./file-commit.ts";
+import { makeEditOverride } from "./edit-tool.ts";
+import { getState } from "./state.ts";
 
 const context = (cwd: string) => ({ cwd }) as any;
 
@@ -38,6 +40,36 @@ test("write supports create-only, overwrite-only, and expectedRevision", async (
 	await write.execute("revision", { path: "new.txt", content: "updated\n", expectedRevision: revision }, undefined, undefined, context(dir));
 	await assert.rejects(write.execute("stale", { path: "new.txt", content: "bad\n", expectedRevision: revision }, undefined, undefined, context(dir)), /expectedRevision/);
 	assert.equal(await readFile(join(dir, "new.txt"), "utf8"), "updated\n");
+}));
+
+test("concurrent writes cannot both consume the same expectedRevision", async () => withTemp(async (dir) => {
+	const target = join(dir, "concurrent.txt");
+	await writeFile(target, "original\n");
+	const expectedRevision = await fileRevision(target);
+	const write = makeWriteTool(dir);
+	const results = await Promise.allSettled(["first\n", "second\n"].map((content) =>
+		write.execute("concurrent", { path: target, content, expectedRevision }, undefined, undefined, context(dir)),
+	));
+	assert.equal(results.filter((result) => result.status === "fulfilled").length, 1);
+	const rejected = results.find((result) => result.status === "rejected");
+	assert.ok(rejected && rejected.status === "rejected");
+	assert.match(rejected.reason.message, /expectedRevision/);
+}));
+
+test("write anchors chain into edit with a non-default hash length", async () => withTemp(async (dir) => {
+	const state = getState();
+	const previousConfig = state.config;
+	try {
+		state.config = { ...previousConfig, hashLen: 6 };
+		const result = await makeWriteTool(dir).execute("write", { path: "anchors.txt", content: "before\n" }, undefined, undefined, context(dir));
+		const anchor = result.content[0].text.match(/1#([^│]+)│/);
+		assert.ok(anchor);
+		assert.equal(anchor[1].length, 6);
+		await makeEditOverride(dir).execute("edit", { path: "anchors.txt", edits: [{ op: "replace", anchor: { line: 1, hash: anchor[1] }, body: ["after"] }] }, undefined, undefined, context(dir));
+		assert.equal(await readFile(join(dir, "anchors.txt"), "utf8"), "after\n");
+	} finally {
+		state.config = previousConfig;
+	}
 }));
 
 test("write shares Action Fusion and reports command-induced stale content", async () => withTemp(async (dir) => {

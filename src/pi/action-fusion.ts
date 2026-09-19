@@ -74,6 +74,8 @@ export class ActionFusionError extends Error {
 
 	constructor(message: string, state: { publication: PublicationStatus; command: CommandStatus; freshness: Freshness }, options?: { cause?: unknown }) {
 		super(`${message} ${state.command === "skipped" || state.command === "cancelled" ? THEN_RUN_SKIPPED : state.command === "succeeded" ? THEN_RUN_SUCCEEDED : THEN_RUN_FAILED} [publication=${state.publication} command=${state.command} freshness=${state.freshness}]`, options);
+		// Pi exposes error.message to the model, but does not serialize Error.cause.
+		if (options?.cause !== undefined) this.message += `\n${errorText(options.cause)}`;
 		this.name = "ActionFusionError";
 		this.publication = state.publication;
 		this.command = state.command;
