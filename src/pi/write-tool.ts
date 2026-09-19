@@ -1,6 +1,5 @@
 import { Type, type Static } from "typebox";
-import { Text } from "@earendil-works/pi-tui";
-import { withFileMutationQueue } from "@earendil-works/pi-coding-agent";
+import { createWriteToolDefinition, withFileMutationQueue } from "@earendil-works/pi-coding-agent";
 import { getState } from "./state.ts";
 import { createActionFusionExecutor, createThenRunSchema, type ThenRunInput } from "./action-fusion.ts";
 import { commitFile, FileMutationError, type CommitMode } from "./file-commit.ts";
@@ -33,6 +32,7 @@ function formatAnchors(content: string, hashLen: number): string {
 
 export function makeWriteTool(cwd: string, fusion?: ReturnType<typeof createActionFusionExecutor>): any {
 	const parameters = createWriteSchema(fusion !== undefined);
+	const builtin = createWriteToolDefinition(cwd);
 	return {
 		name: "write" as const,
 		label: "write",
@@ -45,17 +45,8 @@ export function makeWriteTool(cwd: string, fusion?: ReturnType<typeof createActi
 		],
 		parameters,
 		renderShell: "default" as const,
-		renderCall(args: WriteParams, theme: any, context: any) {
-			const text = (context?.lastComponent as Text | undefined) ?? new Text("", 0, 0);
-			text.setText(theme.fg("toolTitle", theme.bold("write ")) + theme.fg("accent", args.path));
-			return text;
-		},
-		renderResult(result: any, { isPartial }: any, theme: any) {
-			if (isPartial && result.details?.actionFusion?.publication !== "PUBLISHED") return new Text(theme.fg("warning", "Writing…"), 0, 0);
-			const summary = result.content?.[0]?.type === "text" ? result.content[0].text : "Wrote file";
-			const fusionOutput = result.content?.slice(1).filter((block: any) => block.type === "text").map((block: any) => block.text).join("\n");
-			return new Text(theme.fg("success", fusionOutput ? `${summary}\n${fusionOutput}` : summary), 0, 0);
-		},
+		renderCall: builtin.renderCall,
+		renderResult: builtin.renderResult,
 		async execute(toolCallId: string, params: WriteParams, signal: AbortSignal | undefined, onUpdate: any, ctx: any) {
 			const { then_run, ...mutationParams } = params;
 			if (!fusion && then_run !== undefined) throw new Error("then_run is unavailable because hashlineEdit.actionFusion is disabled");

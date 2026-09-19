@@ -81,13 +81,16 @@ test("write shares Action Fusion and reports command-induced stale content", asy
 	assert.match(text, /\[then_run:stale\]/);
 	assert.equal(result.details.actionFusion.freshness, "changed");
 
-test("write renderer keeps Fusion output and stale marker visible", async () => withTemp(async (dir) => {
+test("write keeps anchors and Fusion output for the model without duplicating the preview", async () => withTemp(async (dir) => {
 	const target = join(dir, "rendered.txt");
 	const fusion = createActionFusionExecutor(async () => { await writeFile(target, "command changed\n"); return "checked"; });
 	const write = makeWriteTool(dir, fusion) as any;
 	const result = await write.execute("rendered", { path: "rendered.txt", content: "mutation\n", then_run: { command: "check" } }, undefined, undefined, context(dir));
-	const rendered: any = write.renderResult(result, { isPartial: false }, { fg: (_key: string, value: string) => value });
-	assert.match(rendered.text, /checked/);
-	assert.match(rendered.text, /then_run:stale/);
+	const text = result.content.map((block: any) => block.text).join("\n");
+	assert.match(text, /Revision:[\s\S]*Fresh anchors:/);
+	assert.match(text, /checked/);
+	assert.match(text, /then_run:stale/);
+	const rendered = write.renderResult(result, { isPartial: false }, {}, { isError: false });
+	assert.deepEqual(rendered.render(100), []);
 }));
 }));

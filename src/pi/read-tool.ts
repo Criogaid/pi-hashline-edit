@@ -9,7 +9,7 @@
  * @module pi-hashline-edit/pi
  */
 
-import { createReadTool, getLanguageFromPath, highlightCode } from "@earendil-works/pi-coding-agent";
+import { createReadToolDefinition, getLanguageFromPath, highlightCode, truncateHead } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
@@ -37,14 +37,6 @@ function expandTilde(p: string): string {
 		return join(homedir(), p.slice(2));
 	}
 	return p;
-}
-
-/** Offset/limit range suffix for the read call line, e.g. `:50-99` (mirrors pi core's read tool). */
-function formatReadLineRange(args: any, theme: any): string {
-	if (args?.offset === undefined && args?.limit === undefined) return "";
-	const start = args.offset ?? 1;
-	const end = args.limit !== undefined ? start + args.limit - 1 : "";
-	return theme.fg("warning", `:${start}${end ? `-${end}` : ""}`);
 }
 
 /**
@@ -106,7 +98,7 @@ function renderReadBody(raw: string, path: string, theme: any): string {
 
 /** Build the read override (a ToolDefinition fragment for registerTool). */
 export function makeReadOverride(cwd: string) {
-	const builtin = createReadTool(cwd);
+	const builtin = createReadToolDefinition(cwd);
 
 	return {
 		name: "read" as const,
@@ -121,13 +113,7 @@ export function makeReadOverride(cwd: string) {
 		parameters: builtin.parameters,
 		renderShell: "default" as const,
 
-		renderCall(args: any, theme: any) {
-			const pathDisplay = String(args?.path ?? "");
-			let text = theme.fg("toolTitle", theme.bold("read")) + " " + theme.fg("accent", pathDisplay);
-			const range = formatReadLineRange(args, theme);
-			if (range) text += range;
-			return new Text(text, 0, 0);
-		},
+		renderCall: builtin.renderCall,
 
 		renderResult(result: any, { isPartial, expanded }: any, theme: any, context: any) {
 			if (isPartial) return new Text(theme.fg("warning", "Reading…"), 0, 0);
@@ -143,9 +129,9 @@ export function makeReadOverride(cwd: string) {
 			return new Text(renderReadBody(raw, String(context?.args?.path ?? ""), theme), 0, 0);
 		},
 
-		async execute(toolCallId: string, params: any, signal: AbortSignal | undefined, onUpdate: any) {
+		async execute(toolCallId: string, params: any, signal: AbortSignal | undefined, onUpdate: any, ctx?: any) {
 			// User cancelled → delegate to the built-in (builtin handles abort itself)
-			if (signal?.aborted) return builtin.execute(toolCallId, params, signal, onUpdate);
+			if (signal?.aborted) return builtin.execute(toolCallId, params, signal, onUpdate, ctx);
 
 			const absPath = canonicalPath(cwd, params.path as string);
 			let buf: Buffer;
@@ -153,11 +139,11 @@ export function makeReadOverride(cwd: string) {
 				buf = await readFile(absPath);
 			} catch {
 				// read error → delegate to the built-in (it has polished error messages)
-				return builtin.execute(toolCallId, params, signal, onUpdate);
+				return builtin.execute(toolCallId, params, signal, onUpdate, ctx);
 			}
 
 			// binary/image detection (null byte) → delegate to the built-in (it uses file-type for images)
-			if (buf.includes(0)) return builtin.execute(toolCallId, params, signal, onUpdate);
+			if (buf.includes(0)) return builtin.execute(toolCallId, params, signal, onUpdate, ctx);
 
 			const text = buf.toString("utf-8");
 			const allLines = splitLines(text);
@@ -170,32 +156,23 @@ export function makeReadOverride(cwd: string) {
 			const startIdx = Math.max(0, offset - 1);
 			const endIdx = Math.min(totalLines, startIdx + limit);
 
-			const rows: string[] = [];
-			let bytes = 0;
-			let truncated = false;
-			for (let i = startIdx; i < endIdx; i++) {
-				const lineNo = i + 1;
-				const row = `${lineNo}#${hashes[i]}│${allLines[i]}`;
-				bytes += Buffer.byteLength(row, "utf-8");
-				if (bytes > MAX_BYTES) {
-					truncated = true;
-					break;
-				}
-				rows.push(row);
-			}
+			const rows = allLines.slice(startIdx, endIdx).map((line, index) => `${startIdx + index + 1}#${hashes[startIdx + index]}│${line}`);
+			const truncation = truncateHead(rows.join("\n"), { maxBytes: MAX_BYTES, maxLines: rows.length });
 
 			const shownFrom = offset > 1 ? ` (from line ${offset})` : "";
 			// A file whose last line carries no terminator is a byte-level fact that the
 			// numbered rows cannot show; state it in the header, the one line the model
 			// never copies into an edit `body`.
 			const noFinalNewline = hasFinalNewline(text) ? "" : " · no trailing newline";
-			const tail = truncated ? `\n… (truncated at ${MAX_BYTES >> 10}KB; use offset/limit to read more)` : "";
+			const tail = truncation.firstLineExceedsLimit
+				? `\n… (line ${offset} exceeds ${MAX_BYTES >> 10}KB; cannot return a complete anchor row)`
+				: truncation.truncated ? `\n… (truncated at ${MAX_BYTES >> 10}KB; use offset/limit to read more)` : "";
 			const header = `${params.path} · ${totalLines} lines${shownFrom}${noFinalNewline}\n`;
-			const body = rows.join("\n");
+			const body = truncation.content;
 
 			return {
 				content: [{ type: "text" as const, text: header + body + tail }],
-				details: undefined,
+				details: truncation.truncated ? { truncation } : undefined,
 			};
 		},
 	};

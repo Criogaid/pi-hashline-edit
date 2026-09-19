@@ -13,6 +13,7 @@ import { validateToolArguments } from "@earendil-works/pi-ai";
 import registerHashline from "../index.ts";
 import { makeEditOverride } from "./edit-tool.ts";
 import { makeReadOverride } from "./read-tool.ts";
+import { makeWriteTool } from "./write-tool.ts";
 import { getState } from "./state.ts";
 import { computeLineHash } from "../core/hash.ts";
 import { splitLines } from "../core/lines.ts";
@@ -381,3 +382,52 @@ test("hash length stays 4 even for runs of identical lines (no explosion)", asyn
 		}
 	});
 });
+
+test("read byte truncation counts UTF-8 and separators without cutting anchors", async () => withDir(async (dir) => {
+	const maxBytes = 256 * 1024;
+	const hashLen = getState().config.hashLen;
+	const prefixBytes = Buffer.byteLength(`1#${"X".repeat(hashLen)}│`);
+	const first = "界".repeat(40000);
+	const second = "x".repeat(maxBytes - Buffer.byteLength(first) - 2 * prefixBytes);
+	await writeFile(join(dir, "large.txt"), `${first}\n${second}\n`);
+	const result = await call(makeReadOverride(dir), { path: "large.txt" });
+	assert.equal(result.details.truncation.outputLines, 1);
+	assert.equal(result.details.truncation.truncatedBy, "bytes");
+	assert.match(result.content[0].text, /truncated at 256KB/);
+	assert.ok(result.content[0].text.includes(`1#${computeLineHash(1, first, hashLen)}│${first}\n`));
+	assert.doesNotMatch(result.content[0].text, /\n2#/);
+	const next = await call(makeReadOverride(dir), { path: "large.txt", offset: 2, limit: 1 });
+	assert.ok(next.content[0].text.includes(`2#${computeLineHash(2, second, hashLen)}│${second}`));
+}));
+
+test("read reports an oversized first row without suggesting an ineffective retry", async () => withDir(async (dir) => {
+	await writeFile(join(dir, "long.txt"), "x".repeat(256 * 1024));
+	const result = await call(makeReadOverride(dir), { path: "long.txt" });
+	assert.equal(result.details.truncation.firstLineExceedsLimit, true);
+	assert.equal(result.details.truncation.outputLines, 0);
+	assert.match(result.content[0].text, /cannot return a complete anchor row/);
+	assert.doesNotMatch(result.content[0].text, /use offset\/limit/);
+}));
+
+test("read preserves empty files and explicit limits above the native default", async () => withDir(async (dir) => {
+	await writeFile(join(dir, "empty.txt"), "");
+	const empty = await call(makeReadOverride(dir), { path: "empty.txt" });
+	assert.match(empty.content[0].text, /0 lines/);
+	assert.equal(empty.details, undefined);
+	await writeFile(join(dir, "many.txt"), "x\n".repeat(2001));
+	const many = await call(makeReadOverride(dir), { path: "many.txt", limit: 2001 });
+	assert.match(many.content[0].text, /\n2001#[0-9A-Z]+│x/);
+	assert.equal(many.details, undefined);
+}));
+
+test("native read and write renderers preserve resource titles, previews, and full errors", async () => withDir(async (dir) => {
+	const context = { cwd: dir, state: {}, argsComplete: true, expanded: false, isPartial: false, lastComponent: undefined };
+	const read = makeReadOverride(dir);
+	const readCall = read.renderCall!({ path: "SKILL.md", offset: 2, limit: 3 }, stubTheme as any, { ...context, args: { path: "SKILL.md" } } as any);
+	assert.match(readCall.render(120).join("\n"), /\[skill\]/);
+	const write = makeWriteTool(dir);
+	const writeCall = write.renderCall({ path: "preview.txt", content: "native content preview\n" }, stubTheme, context);
+	assert.match(writeCall.render(120).join("\n"), /native content preview/);
+	const error = write.renderResult({ content: [{ type: "text", text: "first error\nsecond error" }] }, { isPartial: false, expanded: false }, stubTheme, { ...context, isError: true });
+	assert.match(error.render(120).join("\n"), /first error[\s\S]*second error/);
+}));
