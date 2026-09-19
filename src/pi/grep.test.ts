@@ -96,7 +96,9 @@ test("formats parsed rg matches with full-line hash anchors", async () => {
         ],
       });
 
-      const result = await call(makeGrepOverrideWithBackend(dir, fake.backend), {
+      const tool = makeGrepOverrideWithBackend(dir, fake.backend);
+      assert.deepEqual(tool.parameters.required, ["pattern"]);
+      const result = await call(tool, {
         pattern: "alpha",
       });
       const output = text(result);

@@ -131,10 +131,10 @@ const grepOverrideSchema = Type.Object({
     }),
   ),
   wordMatch: Type.Optional(Type.Boolean({ description: "Match whole words only (rg -w)" })),
-  path: Type.Union([Type.String(), Type.Array(Type.String())], {
+  path: Type.Optional(Type.Union([Type.String(), Type.Array(Type.String())], {
     description:
       "Directory or file to search (string or array of paths; default: current directory)",
-  }),
+  })),
   glob: Type.Optional(
     Type.String({ description: "Filter files by glob pattern, e.g. '*.ts' or '**/*.spec.ts'" }),
   ),
