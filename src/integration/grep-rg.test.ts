@@ -46,12 +46,12 @@ test("real rg emits anchored matches from a temporary directory", {
   }
 });
 
-test("real rg and line filters share case decisions for uppercase regex escapes", {
+test("real rg and line filters share case and Unicode semantics", {
   skip: rgPath === null,
 }, async () => {
   const directory = await mkdtemp(join(tmpdir(), "hl-grep-case-"));
   try {
-    await writeFile(join(directory, "fixture.ts"), "FOO abc\nfoo BAR\nfoo bar\n");
+    await writeFile(join(directory, "fixture.ts"), "FOO abc\nfoo BAR\nfoo bar\nK zip\nk zip\n");
     const tool = makeGrepOverrideWithBackend(directory, {
       findRg: async () => rgPath,
       delegate: async () => {
@@ -74,6 +74,16 @@ test("real rg and line filters share case decisions for uppercase regex escapes"
       assert.match(excluded.content[0].text, /fixture\.ts · 1 match/);
       assert.ok(excluded.content[0].text.includes(ignoreCase === true ? "FOO abc" : "foo BAR"));
     }
+    const unicodeAll: any = await tool.execute("0", {
+      pattern: ["k", "zip"], matchMode: "all",
+    }, undefined, undefined);
+    assert.match(unicodeAll.content[0].text, /fixture\.ts · 2 matches/);
+    assert.ok(unicodeAll.content[0].text.includes("K zip"));
+
+    const unicodeExcluded: any = await tool.execute("0", {
+      pattern: "zip", excludePattern: "k",
+    }, undefined, undefined);
+    assert.equal(unicodeExcluded.content[0].text, "No matches found");
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

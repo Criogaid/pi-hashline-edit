@@ -122,7 +122,7 @@ function compileLineMatcher(
 ): RegExp {
   let source = opts.literal ? escapeRegex(pattern) : pattern;
   if (opts.word) source = `\\b(?:${source})\\b`;
-  const flags = opts.ignoreCase ? "i" : "";
+  const flags = opts.ignoreCase ? "iu" : "u";
   try {
     return new RegExp(source, flags);
   } catch (err) {
