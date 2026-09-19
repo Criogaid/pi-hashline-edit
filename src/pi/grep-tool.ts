@@ -146,27 +146,27 @@ function clampContext(context: number | undefined): number {
 const grepOverrideSchema = Type.Object({
   pattern: Type.Union([Type.String(), Type.Array(Type.String())], {
     description:
-      "Search pattern (auto-detected as regex or literal; override with literal). Must be non-empty; pure wildcard regexes are rejected. String or array; an array combines patterns per matchMode (any = OR, all = AND on the same line)",
+      "Non-empty pattern(s). Arrays use matchMode. Wildcard-only searches require literal:true.",
   }),
   matchMode: Type.Optional(
     Type.Union([Type.Literal("any"), Type.Literal("all")], {
       description:
-        'How multiple patterns combine (default "any"). "any": line matches at least one pattern. "all": line must match every pattern — equivalent to `grep A | grep B`',
+        '"any" (default): OR. "all": AND on the same line.',
     }),
   ),
   excludePattern: Type.Optional(
     Type.Union([Type.String(), Type.Array(Type.String())], {
       description:
-        "Drop lines matching this pattern, like grep -v (string or array; same regex/literal/ignoreCase settings as pattern). Applied after pattern matching",
+        "Drop lines matching any exclusion after pattern matching.",
     }),
   ),
   outputMode: Type.Optional(
     Type.Union([Type.Literal("content"), Type.Literal("files"), Type.Literal("count")], {
       description:
-        'Output shape (default "content"). "content": anchored matching lines. "files": only file paths with matches (rg -l). "count": per-file match counts + total (grep -c)',
+        '"content" (default): anchored lines. "files": paths. "count": matching lines per file and total.',
     }),
   ),
-  wordMatch: Type.Optional(Type.Boolean({ description: "Match whole words only (rg -w)" })),
+  wordMatch: Type.Optional(Type.Boolean({ description: "Whole words in pattern only (rg -w)" })),
   path: Type.Optional(Type.Union([Type.String(), Type.Array(Type.String())], {
     description:
       "Directory or file to search (string or array of paths; default: current directory)",
@@ -177,11 +177,11 @@ const grepOverrideSchema = Type.Object({
     }),
   ),
   ignoreCase: Type.Optional(
-    Type.Boolean({ description: "Force case-insensitive (true) or case-sensitive (false); by default, ignore case only when every search pattern has no uppercase characters (including regex escapes)" }),
+    Type.Boolean({ description: "true: ignore case; false: match case. Default: ignore case if no string in pattern contains uppercase (escapes count). Applies to exclusions too." }),
   ),
   literal: Type.Optional(
     Type.Boolean({
-      description: "Force literal (true) or regex (false); omit to auto-detect",
+      description: "true: literal; false: regex, no fallback. Shared by pattern/excludePattern. Default: literal unless any pattern has regex syntax; any rg parse failure makes all literal. AND/exclude regexes must also compile in JS.",
     }),
   ),
   context: Type.Optional(
@@ -344,11 +344,11 @@ export function makeGrepOverrideWithBackend(cwd: string, overrides: Partial<Grep
     name: "grep" as const,
     label: "grep",
     description:
-      "Search file contents, respecting .gitignore. Returns results grouped by file with editable LINE#HASH anchors, including context lines. Supports files-only and count output.",
-    promptSnippet: "Search files with editable line anchors",
+      "Search file contents; respects .gitignore. Groups matches by file with LINE#HASH anchors, including context. Native fallback has no anchors.",
+    promptSnippet: "Search file contents",
     promptGuidelines: [
-      "Use grep results directly for editing; no extra read is needed for the returned lines.",
-      "Prefer files/count output when you only need locations or counts, and all/exclude filters instead of shell pipelines.",
+      "Use returned grep anchors directly for edits; no re-read needed.",
+      "Prefer files/count for paths/counts; use all/exclude instead of shell pipelines.",
     ],
     parameters: grepOverrideSchema,
 
