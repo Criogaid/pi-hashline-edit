@@ -163,11 +163,16 @@ test("applies all, exclude, context, and CRLF filtering after rg output", async 
         ],
       });
 
-      const result = await call(makeGrepOverrideWithBackend(dir, fake.backend), {
+      const tool = makeGrepOverrideWithBackend(dir, fake.backend);
+      const contextSchema: any = tool.parameters.properties.context;
+      assert.equal(contextSchema.type, "integer");
+      assert.equal(contextSchema.minimum, 0);
+      assert.equal(contextSchema.maximum, 20);
+      const result = await call(tool, {
         pattern: ["alpha", "beta$"],
         matchMode: "all",
         excludePattern: "drop",
-        context: 1,
+        context: 1.9,
       });
       assert.equal(
         text(result),
