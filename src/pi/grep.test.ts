@@ -16,6 +16,7 @@ type FakeOptions = {
   lines?: string[];
   code?: number | null;
   stderr?: string;
+  validation?: { code: number | null; stderr: string };
   error?: Error;
   onRun?: () => void;
 };
@@ -47,6 +48,9 @@ function fakeBackend(options: FakeOptions = {}) {
       calls.push({ path, args });
       options.onRun?.();
       if (options.error) throw options.error;
+      if (args.includes("--quiet")) {
+        return { code: 1, stderr: "", ...options.validation, stopped: false };
+      }
       for (const line of options.lines ?? []) {
         if (!onLine(line)) return { code: null, stderr: options.stderr ?? "", stopped: true };
       }
@@ -263,21 +267,34 @@ test("counts only surviving matches toward the limit and stops the fake runner",
   );
 });
 
-test("auto-detects literal and regex modes while preserving explicit overrides", async () => {
+test("auto-detects modes with rg validation while preserving explicit overrides", async () => {
   await withDir(async (dir) => {
-    const fake = fakeBackend();
-    const tool = makeGrepOverrideWithBackend(dir, fake.backend);
+    const valid = fakeBackend();
+    const invalid = fakeBackend({ validation: { code: 2, stderr: "regex parse error:\nerror: unclosed group" } });
+    const tool = makeGrepOverrideWithBackend(dir, valid.backend);
+    const fallback = makeGrepOverrideWithBackend(dir, invalid.backend);
 
-    await call(tool, { pattern: "queueTool(" });
+    const result = await call(fallback, { pattern: "queueTool(" });
+    assert.match(text(result), /Invalid regex; searched all patterns as literal text/);
+    await call(fallback, { pattern: ["plain", "broken("] });
     await call(tool, { pattern: "value.*" });
     await call(tool, { pattern: "plain", literal: false });
-    await call(tool, { pattern: ["plain", "broken("] });
     await call(tool, { pattern: "value.*", literal: true });
 
     assert.deepEqual(
-      fake.calls.map(({ args }) => args.includes("--fixed-strings")),
-      [true, false, false, true, true],
+      [...invalid.calls, ...valid.calls].filter(({ args }) => !args.includes("--quiet"))
+        .map(({ args }) => args.includes("--fixed-strings")),
+      [true, true, false, false, true],
     );
+    assert.equal(valid.calls.filter(({ args }) => args.includes("--quiet")).length, 1);
+    assert.deepEqual(invalid.calls[0].args, ["--quiet", "-e", "queueTool(", "--", "-"]);
+
+    const failed = fakeBackend({ validation: { code: 2, stderr: "Permission denied" } });
+    await assert.rejects(
+      call(makeGrepOverrideWithBackend(dir, failed.backend), { pattern: "value.*" }),
+      /Permission denied/,
+    );
+    assert.equal(failed.calls.length, 1);
   });
 });
 
@@ -309,7 +326,8 @@ test("uses smart-case by default and preserves explicit case overrides", async (
     await call(tool, { pattern: "foo\\S*" });
     await call(tool, { pattern: "foo\\S*", ignoreCase: true });
     assert.deepEqual(
-      flags.calls.map(({ args }) => [args.includes("--ignore-case"), args.includes("--case-sensitive")]),
+      flags.calls.filter(({ args }) => !args.includes("--quiet"))
+        .map(({ args }) => [args.includes("--ignore-case"), args.includes("--case-sensitive")]),
       [[true, false], [false, true], [true, false], [false, true], [false, true], [true, false]],
     );
   });
@@ -330,7 +348,8 @@ test("rejects empty and wildcard-only regexes without blocking literal or empty-
 
     assert.equal(text(await call(tool, { pattern: ".*", literal: true })), "No matches found");
     assert.equal(text(await call(tool, { pattern: "^$" })), "No matches found");
-    assert.equal(fake.calls.length, 2);
+    assert.equal(fake.calls.filter(({ args }) => !args.includes("--quiet")).length, 2);
+    assert.equal(fake.calls.filter(({ args }) => args.includes("--quiet")).length, 1);
   });
 });
 

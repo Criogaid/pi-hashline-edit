@@ -78,3 +78,39 @@ test("real rg and line filters share case decisions for uppercase regex escapes"
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+test("real rg validates its own regex syntax and limits automatic literal fallback", {
+  skip: rgPath === null,
+}, async () => {
+  const directory = await mkdtemp(join(tmpdir(), "hl-grep-regex-"));
+  try {
+    await writeFile(join(directory, "fixture.ts"), "FOO\nfoo\nqueueTool(\nfoo(?=bar)\n");
+    const tool = makeGrepOverrideWithBackend(directory, {
+      findRg: async () => rgPath,
+      delegate: async () => {
+        throw new Error("integration test must not invoke the built-in grep delegate");
+      },
+    });
+    for (const pattern of ["(?i)^foo$", "(?P<name>foo)$"]) {
+      const result: any = await tool.execute("0", { pattern }, undefined, undefined);
+      assert.match(result.content[0].text, /│foo/);
+      assert.doesNotMatch(result.content[0].text, /Invalid regex/);
+    }
+    for (const pattern of ["queueTool(", "foo(?=bar)"]) {
+      const result: any = await tool.execute("0", { pattern }, undefined, undefined);
+      assert.ok(result.content[0].text.includes(`│${pattern}`));
+      assert.match(result.content[0].text, /Invalid regex; searched all patterns as literal text/);
+      await assert.rejects(
+        tool.execute("0", { pattern, literal: false }, undefined, undefined),
+        /regex parse error/,
+      );
+    }
+    const missing: any = await tool.execute("0", { pattern: "missing(" }, undefined, undefined);
+    assert.match(missing.content[0].text, /No matches found\n\n\[Invalid regex/);
+    const explicit: any = await tool.execute("0", { pattern: "queueTool(", literal: true }, undefined, undefined);
+    assert.match(explicit.content[0].text, /│queueTool\(/);
+    assert.doesNotMatch(explicit.content[0].text, /Invalid regex/);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});

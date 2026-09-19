@@ -82,15 +82,25 @@ function escapeRegex(s: string): string {
 
 const REGEX_SYNTAX = /[.*+?^${}()|[\]\\]/;
 
-function resolveLiteralMode(patterns: readonly string[], explicit: boolean | undefined): boolean {
-	if (explicit !== undefined) return explicit;
-	let hasRegexSyntax = false;
-	for (const pattern of patterns) {
-		if (!REGEX_SYNTAX.test(pattern)) continue;
-		hasRegexSyntax = true;
-		try { new RegExp(pattern); } catch { return true; }
-	}
-	return !hasRegexSyntax;
+async function resolveLiteralMode(
+  patterns: readonly string[],
+  explicit: boolean | undefined,
+  rgPath: string,
+  backend: GrepBackend,
+  signal: AbortSignal | undefined,
+): Promise<boolean> {
+  if (explicit !== undefined) return explicit;
+  if (!patterns.some((pattern) => REGEX_SYNTAX.test(pattern))) return true;
+
+  // Validate with rg's parser against empty stdin, without scanning any files.
+  const result = await backend.runRg(
+    rgPath, ["--quiet", ...patterns.flatMap((pattern) => ["-e", pattern]), "--", "-"],
+    signal, () => true,
+  );
+  if (signal?.aborted) throw new Error("Operation aborted");
+  if (result.code === 0 || result.code === 1) return false;
+  if (result.code === 2 && /^(?:rg: )?regex parse error:/m.test(result.stderr)) return true;
+  throw new Error(result.stderr.trim() || `ripgrep exited with code ${result.code}`);
 }
 
 function resolveMatcherIgnoreCase(patterns: readonly string[], explicit: boolean | undefined): boolean {
@@ -434,7 +444,11 @@ export function makeGrepOverrideWithBackend(cwd: string, overrides: Partial<Grep
       const matchMode: "any" | "all" = params.matchMode ?? "any";
       const outputMode: "content" | "files" | "count" = params.outputMode ?? "content";
       const globs = toArray(params.glob);
-      const literal = resolveLiteralMode([...patterns, ...excludes], params.literal);
+      const allPatterns = [...patterns, ...excludes];
+      const literal = await resolveLiteralMode(allPatterns, params.literal, rgPath, backend, signal);
+      const literalFallback = params.literal === undefined && literal &&
+        allPatterns.some((pattern) => REGEX_SYNTAX.test(pattern));
+      const fallbackNotice = "Invalid regex; searched all patterns as literal text";
       const { ignoreCase, wordMatch, context, limit } = params;
       const matcherIgnoreCase = resolveMatcherIgnoreCase(patterns, ignoreCase);
       const ctx = clampContext(context);
@@ -528,7 +542,8 @@ export function makeGrepOverrideWithBackend(cwd: string, overrides: Partial<Grep
             }
             if (raw.length === 0) {
               resolvePromise({
-                content: [{ type: "text", text: "No matches found" }],
+                content: [{ type: "text" as const, text: literalFallback
+                  ? `No matches found\n\n[${fallbackNotice}]` : "No matches found" }],
                 details: undefined,
               });
               return;
@@ -609,7 +624,7 @@ export function makeGrepOverrideWithBackend(cwd: string, overrides: Partial<Grep
             const truncation = truncateHead(output, { maxBytes: DEFAULT_MAX_BYTES });
             output = truncation.content;
 
-            const notices: string[] = [];
+            const notices: string[] = literalFallback ? [fallbackNotice] : [];
             if (matchLimitReached)
               notices.push(
                 `${effectiveLimit} matches limit reached. Use limit=${effectiveLimit * 2} for more, or refine pattern`,
