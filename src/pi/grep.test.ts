@@ -263,6 +263,25 @@ test("counts only surviving matches toward the limit and stops the fake runner",
   );
 });
 
+test("rejects empty and wildcard-only regexes without blocking literal or empty-line searches", async () => {
+  await withDir(async (dir) => {
+    const fake = fakeBackend();
+    const tool = makeGrepOverrideWithBackend(dir, fake.backend);
+
+    for (const pattern of ["", "  ", []]) {
+      await assert.rejects(call(tool, { pattern }), /pattern (?:is required|must not be empty)/);
+    }
+    for (const pattern of [".*", "^.+$", ".?", "*"]) {
+      await assert.rejects(call(tool, { pattern }), /is wildcard-only/);
+    }
+    assert.equal(fake.calls.length, 0);
+
+    assert.equal(text(await call(tool, { pattern: ".*", literal: true })), "No matches found");
+    assert.equal(text(await call(tool, { pattern: "^$" })), "No matches found");
+    assert.equal(fake.calls.length, 2);
+  });
+});
+
 test("reports empty output and ripgrep execution failures", async () => {
   await withDir(async (dir) =>
     withEnabled(true, async () => {

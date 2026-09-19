@@ -53,6 +53,7 @@ const DEFAULT_LIMIT = 100;
 /** Max chars per result line for display (mirrors pi's truncate.ts; not exported there). */
 const GREP_MAX_LINE_LENGTH = 500;
 const GREP_CONTEXT_MAX = 20;
+const WILDCARD_ONLY_REGEX = /^(?:\^?\.(?:[*+?][+?]?)?\$?|[*+?])$/;
 
 /** Locate ripgrep: pi's bundled bin first, then PATH. Returns null if not found. */
 async function findRg(): Promise<string | null> {
@@ -116,7 +117,7 @@ function clampContext(context: number | undefined): number {
 const grepOverrideSchema = Type.Object({
   pattern: Type.Union([Type.String(), Type.Array(Type.String())], {
     description:
-      "Search pattern (regex, or literal with literal:true). String or array; an array combines patterns per matchMode (any = OR, all = AND on the same line)",
+      "Search pattern (regex, or literal with literal:true). Must be non-empty; pure wildcard regexes are rejected. String or array; an array combines patterns per matchMode (any = OR, all = AND on the same line)",
   }),
   matchMode: Type.Optional(
     Type.Union([Type.Literal("any"), Type.Literal("all")], {
@@ -378,6 +379,20 @@ export function makeGrepOverrideWithBackend(cwd: string, overrides: Partial<Grep
       // aborted → built-in grep (it handles abort itself)
       if (signal?.aborted) return backend.delegate(toolCallId, params, signal, onUpdate);
 
+      const patterns = toArray(params.pattern);
+      if (patterns.length === 0) throw new Error("pattern is required (got an empty array)");
+      if (patterns.some((pattern) => pattern.trim() === "")) {
+        throw new Error("pattern must not be empty");
+      }
+      if (!params.literal) {
+        const wildcard = patterns.find((pattern) => WILDCARD_ONLY_REGEX.test(pattern.trim()));
+        if (wildcard !== undefined) {
+          throw new Error(
+            `Pattern ${JSON.stringify(wildcard)} is wildcard-only; use read for a known file or provide a concrete substring or identifier`,
+          );
+        }
+      }
+
       // Plain built-in-shaped params (single string pattern/path, no new fields)
       // can delegate safely; anything else must run the local pipeline below.
       const legacyShaped =
@@ -398,9 +413,7 @@ export function makeGrepOverrideWithBackend(cwd: string, overrides: Partial<Grep
         );
       }
 
-      const patterns = toArray(params.pattern);
       const excludes = toArray(params.excludePattern);
-      if (patterns.length === 0) throw new Error("pattern is required (got an empty array)");
       const matchMode: "any" | "all" = params.matchMode ?? "any";
       const outputMode: "content" | "files" | "count" = params.outputMode ?? "content";
       const globs = toArray(params.glob);
