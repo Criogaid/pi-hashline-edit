@@ -482,7 +482,7 @@ test("invalid anchors and conflicting fields fail before changing the file", asy
 		await assert.rejects(call(edit, { path: "invalid.txt", edits: [operation] }), /Invalid anchor|does not accept/);
 		assert.equal(await readFile(join(dir, "invalid.txt"), "utf8"), original);
 	}
-	assert.throws(() => validateToolArguments(edit as any, { type: "toolCall", id: "invalid", name: "edit", arguments: { path: "invalid.txt", edits: [invalid[0]] } }));
+	assert.throws(() => validateToolArguments(edit as any, { type: "toolCall", id: "invalid", name: "edit", arguments: { path: "invalid.txt", edits: [invalid[0]] } as any }));
 }));
 
 test("shifted-anchor recovery returns a token that can be copied into the retry", async () => withDir(async (dir) => {

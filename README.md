@@ -1,6 +1,6 @@
-# @d3ara1n/pi-hashline-edit
+# @criogaid/pi-hashline-edit
 
-[![npm version](https://img.shields.io/npm/v/@d3ara1n/pi-hashline-edit)](https://www.npmjs.com/package/@d3ara1n/pi-hashline-edit) [![npm downloads](https://img.shields.io/npm/dm/@d3ara1n/pi-hashline-edit)](https://www.npmjs.com/package/@d3ara1n/pi-hashline-edit) [![license](https://img.shields.io/npm/l/@d3ara1n/pi-hashline-edit)](https://www.npmjs.com/package/@d3ara1n/pi-hashline-edit) [![Explicit Edit Benchmark](https://img.shields.io/endpoint?url=https://huggingface.co/datasets/alexshpunt/explicit-edit-benchmark/resolve/main/badges/d3ara1n-pi-hashline-edit.json&style=flat-square)](https://huggingface.co/spaces/alexshpunt/benchmark-explorer?card=harness%3Ad3ara1n-pi-hashline-edit%40latest)
+[![npm version](https://img.shields.io/npm/v/@criogaid/pi-hashline-edit)](https://www.npmjs.com/package/@criogaid/pi-hashline-edit) [![npm downloads](https://img.shields.io/npm/dm/@criogaid/pi-hashline-edit)](https://www.npmjs.com/package/@criogaid/pi-hashline-edit) [![license](https://img.shields.io/npm/l/@criogaid/pi-hashline-edit)](https://www.npmjs.com/package/@criogaid/pi-hashline-edit)
 
 > Hashline-style file editing for [pi](https://github.com/earendil-works/pi-coding-agent) — line-anchored edits verified by content hash (replacing `oldText`/`newText` matching), a complete-file `write`, plus a location-blind `replace` tool for bulk + regex transforms.
 
@@ -259,7 +259,7 @@ The current release candidate was exercised on Windows `win32` with NTFS using N
 ## Installation
 
 ```bash
-pi install npm:@d3ara1n/pi-hashline-edit
+pi install npm:@criogaid/pi-hashline-edit
 ```
 
 Or add to `~/.pi/agent/settings.json`:
@@ -267,11 +267,11 @@ Or add to `~/.pi/agent/settings.json`:
 ```jsonc
 {
   "extensions": [
-    "/absolute/path/to/pi-extensions/packages/pi-hashline-edit"
+    "/absolute/path/to/pi-hashline-edit"
   ]
 }
 ```
 
 ## Dependencies
 
-- No additional `@d3ara1n/pi-*` dependencies; peer `@earendil-works/pi-coding-agent` ships with pi (framework-level, not listed by convention).
+- No additional `@criogaid/pi-*` dependencies; peer `@earendil-works/pi-coding-agent` ships with pi (framework-level, not listed by convention).
