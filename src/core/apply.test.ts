@@ -19,6 +19,15 @@ test("replace single line", () => {
 	if (r.ok) assert.equal(r.text, "a\nB\nc\n");
 });
 
+test("editing another line preserves standalone carriage returns at EOF", () => {
+	for (const ending of ["\n", "\r\n"]) {
+		const text = `first${ending}last\r`;
+		const r = applyEdits(text, [{ op: "replace", start: at(text, 1), body: ["changed"] }]);
+		assert.equal(r.ok, true);
+		if (r.ok) assert.equal(r.text, `changed${ending}last\r`);
+	}
+});
+
 test("replace range", () => {
 	const text = "a\nb\nc\nd\ne\n";
 	const r = applyEdits(text, [{ op: "replace", start: at(text, 2), end: at(text, 4), body: ["X", "Y"] }]);

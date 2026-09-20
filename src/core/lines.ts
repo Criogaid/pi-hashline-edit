@@ -2,10 +2,9 @@
  * Line text helpers: split/join with CRLF normalization, line-ending detection
  * and final-newline fidelity.
  *
- * CRLF: splitLines strips the trailing `\r` from each line (hashes are based on
- * clean lines, matching the `\r`-free content the model copies from the
- * display); detectLineEnding records whether the file uses CRLF at all (any
- * `\r\n` counts) so new boundaries added by an edit can use the file's
+ * CRLF: splitLines normalizes `\r\n` boundaries while preserving standalone
+ * `\r` content. detectLineEnding records whether the file uses CRLF at all
+ * (any `\r\n` counts) so new boundaries added by an edit can use the file's
  * customary ending.
  *
  * Final newline: splitLines discards whether the input ended with a terminator
@@ -20,8 +19,7 @@
 import type { LineEnding } from "./types.ts";
 
 /**
- * Split text into lines, stripping the trailing `\r` of each line (CRLF
- * normalization, so hashes are based on clean lines).
+ * Split text into lines, normalizing CRLF boundaries and preserving standalone `\r`.
  *
  * Convention: a trailing newline is treated as the terminator of the last line,
  * not as producing an extra empty trailing line.
@@ -32,8 +30,8 @@ import type { LineEnding } from "./types.ts";
  */
 export function splitLines(text: string): string[] {
 	if (text === "") return [];
-	const normalized = text.endsWith("\n") ? text.slice(0, -1) : text;
-	return normalized.split("\n").map((l) => (l.endsWith("\r") ? l.slice(0, -1) : l));
+	const normalized = text.replace(/\r\n/g, "\n");
+	return (normalized.endsWith("\n") ? normalized.slice(0, -1) : normalized).split("\n");
 }
 
 /** Whether the text uses CRLF at all (any `\r\n` counts; mixed files report "crlf"). */
