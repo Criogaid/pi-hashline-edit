@@ -4,7 +4,7 @@ import { getState } from "./state.ts";
 import { ACTION_FUSION_GUIDELINES, createActionFusionExecutor, createThenRunSchema, type ThenRunInput } from "./action-fusion.ts";
 import { commitFile, FileMutationError, type CommitMode } from "./file-commit.ts";
 import { canonicalPath } from "./read-tool.ts";
-import { hashFileLines, splitLines } from "../core/index.ts";
+import { computeLineHash, splitLines } from "../core/index.ts";
 
 function createWriteSchema(actionFusion: boolean) {
 	return Type.Object({
@@ -24,8 +24,7 @@ type WriteParams = Omit<Static<typeof writeSchema>, "then_run"> & { then_run?: T
 
 function formatAnchors(content: string, hashLen: number): string {
 	const lines = splitLines(content);
-	const hashes = hashFileLines(lines, hashLen);
-	const shown = lines.slice(0, 40).map((_, index) => `${index + 1}#${hashes[index]}`);
+	const shown = lines.slice(0, 40).map((line, index) => `${index + 1}#${computeLineHash(index + 1, line, hashLen)}`);
 	const suffix = lines.length > shown.length ? `\n… (${lines.length - shown.length} more; read again for full anchors)` : "";
 	return shown.length ? `\nFresh anchors: ${shown.join(", ")}${suffix}` : "";
 }
@@ -47,6 +46,8 @@ export function makeWriteOverride(cwd: string, fusion?: ReturnType<typeof create
 			const { then_run, ...mutationParams } = params;
 			if (!fusion && then_run !== undefined) throw new Error("then_run is unavailable because hashlineEdit.actionFusion is disabled");
 			const absolutePath = canonicalPath(cwd, mutationParams.path);
+			const hashLen = getState().config.hashLen;
+			let mutationAnchors = "";
 			const mutate = () => withFileMutationQueue(absolutePath, async () => {
 				signal?.throwIfAborted();
 				const result = await commitFile(absolutePath, mutationParams.content, {
@@ -55,16 +56,28 @@ export function makeWriteOverride(cwd: string, fusion?: ReturnType<typeof create
 					signal,
 				});
 				try {
+					mutationAnchors = formatAnchors(mutationParams.content, hashLen);
 					return {
-						content: [{ type: "text" as const, text: `${result.created ? "Created" : "Wrote"} ${mutationParams.path}.\nRevision: ${result.revision}${formatAnchors(mutationParams.content, getState().config.hashLen)}` }],
+						content: [{ type: "text" as const, text: `${result.created ? "Created" : "Wrote"} ${mutationParams.path}.\nRevision: ${result.revision}` }],
 						details: { path: mutationParams.path, revision: result.revision, created: result.created, publication: result.publication },
 					};
 				} catch (error) {
 					throw new FileMutationError("post_process", "PUBLISHED", `file was published but write result generation failed: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
 				}
 			});
-			if (!fusion) return mutate();
-			return fusion({ toolCallId, absolutePath, thenRun: then_run, mutate, signal, ctx, onUpdate });
+			const finalizeMutation = (result: any, publishAnchors: boolean) => {
+				const details = result.details as { path: string; revision: string; created: boolean };
+				const revisionLabel = publishAnchors ? "Revision" : "Mutation revision";
+				return {
+					...result,
+					content: [{
+						type: "text" as const,
+						text: `${details.created ? "Created" : "Wrote"} ${details.path}.\n${revisionLabel}: ${details.revision}${publishAnchors ? mutationAnchors : ""}`,
+					}],
+				};
+			};
+			if (!fusion) return finalizeMutation(await mutate(), true);
+			return fusion({ toolCallId, absolutePath, thenRun: then_run, mutate, finalizeMutation, signal, ctx, onUpdate });
 		},
 	};
 }

@@ -49,6 +49,16 @@ export function createThenRunSchema(description: string) {
 type CommandRunner = (toolCallId: string, input: ThenRunInput, signal: AbortSignal | undefined, ctx: ExtensionContext, onUpdate?: AgentToolUpdateCallback<unknown>) => Promise<string>;
 
 type MutationResult<TDetails> = AgentToolResult<TDetails>;
+type MutationFinalizer<TDetails> = (result: MutationResult<TDetails>, publishAnchors: boolean) => MutationResult<TDetails>;
+
+function staleAnchorNotice<TDetails>(result: MutationResult<TDetails>): string {
+	const revision = (result.details as { revision?: unknown } | undefined)?.revision;
+	return [
+		`${THEN_RUN_STALE} Target freshness was not confirmed unchanged after then_run.`,
+		"Pre-command anchors are omitted. Re-read before further edits.",
+		...(typeof revision === "string" ? ["The mutation revision may not describe the final file."] : []),
+	].join("\n");
+}
 
 function errorText(error: unknown): string {
 	return error instanceof Error ? error.message : String(error);
@@ -162,6 +172,7 @@ export function createActionFusionExecutor(commandRunner: CommandRunner = defaul
 		signal,
 		ctx,
 		onUpdate,
+		finalizeMutation,
 	}: {
 		toolCallId: string;
 		absolutePath: string;
@@ -170,6 +181,7 @@ export function createActionFusionExecutor(commandRunner: CommandRunner = defaul
 		signal: AbortSignal | undefined;
 		ctx: ExtensionContext;
 		onUpdate?: AgentToolUpdateCallback<TDetails>;
+		finalizeMutation?: MutationFinalizer<TDetails>;
 	}): Promise<MutationResult<TDetails>> {
 		if (thenRun !== undefined) validateThenRun(thenRun);
 		let completedMutation: MutationResult<TDetails> | undefined;
@@ -202,9 +214,10 @@ export function createActionFusionExecutor(commandRunner: CommandRunner = defaul
 
 			const publication = mutationPublication(mutationResult);
 			if (thenRun === undefined) {
+				const finalized = finalizeMutation?.(mutationResult, true) ?? mutationResult;
 				return {
-					...mutationResult,
-					details: { ...(mutationResult.details as object ?? {}), actionFusion: { publication, command: "not_requested", freshness: "unknown" } satisfies ActionFusionDetails },
+					...finalized,
+					details: { ...(finalized.details as object ?? {}), actionFusion: { publication, command: "not_requested", freshness: "unknown" } satisfies ActionFusionDetails },
 				} as MutationResult<TDetails>;
 			}
 
@@ -238,11 +251,18 @@ export function createActionFusionExecutor(commandRunner: CommandRunner = defaul
 
 			const actionFusion: ActionFusionDetails = { publication, command: "succeeded", freshness };
 			report("succeeded", publication, freshness, output);
+			const finalized = finalizeMutation?.(mutationResult, freshness === "unchanged") ?? mutationResult;
+			const commandText = freshness === "unchanged"
+				? (output ? `${THEN_RUN_SUCCEEDED}\n${output}` : THEN_RUN_SUCCEEDED)
+				: `${THEN_RUN_SUCCEEDED}\n${
+					finalizeMutation
+						? staleAnchorNotice(finalized)
+						: `${THEN_RUN_STALE} Re-read the file before further edits; previous anchors may no longer match.`
+				}${output ? `\n${output}` : ""}`;
 			return {
-				...mutationResult,
-				details: { ...(mutationResult.details as object ?? {}), actionFusion },
-
-				content: [...mutationResult.content, { type: "text", text: freshness === "unchanged" ? (output ? `${THEN_RUN_SUCCEEDED}\n${output}` : THEN_RUN_SUCCEEDED) : `${THEN_RUN_SUCCEEDED}\n${THEN_RUN_STALE} Re-read the file before further edits; previous anchors may no longer match.${output ? `\n${output}` : ""}` }],
+				...finalized,
+				details: { ...(finalized.details as object ?? {}), actionFusion },
+				content: [...finalized.content, { type: "text", text: commandText }],
 			} as MutationResult<TDetails>;
 		}).catch((error: unknown) => {
 			report(error instanceof ActionFusionError ? error.command as ActionFusionProgress["command"] : "skipped",
@@ -250,10 +270,12 @@ export function createActionFusionExecutor(commandRunner: CommandRunner = defaul
 				error instanceof ActionFusionError ? error.freshness : "unknown", errorText(error));
 			// A completed mutation remains successful; command failure belongs to its own card.
 			if (completedMutation && error instanceof ActionFusionError) {
+				const finalized = finalizeMutation?.(completedMutation, error.freshness === "unchanged") ?? completedMutation;
+				const anchorNotice = finalizeMutation && error.freshness !== "unchanged" ? `\n${staleAnchorNotice(finalized)}` : "";
 				return {
-					...completedMutation,
-					details: { ...(completedMutation.details as object ?? {}), actionFusion: { publication: error.publication, command: error.command, freshness: error.freshness } satisfies ActionFusionDetails },
-					content: [...completedMutation.content, { type: "text", text: error.message }],
+					...finalized,
+					details: { ...(finalized.details as object ?? {}), actionFusion: { publication: error.publication, command: error.command, freshness: error.freshness } satisfies ActionFusionDetails },
+					content: [...finalized.content, { type: "text", text: `${error.message}${anchorNotice}` }],
 				} as MutationResult<TDetails>;
 			}
 			throw error;

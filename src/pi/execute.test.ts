@@ -197,6 +197,28 @@ test("edit on a line that changed externally → anchor mismatch", async () => {
 	});
 });
 
+test("unresolved anchor context supplies a fresh nearby token for a verified retry", async () => {
+	await withDir(async (dir) => {
+		const file = join(dir, "recover.txt");
+		const observed = ["one", "two", "three", "four", "old marker", "six", "seven", "eight"].join("\n") + "\n";
+		await writeFile(file, ["one", "two", "three", "four", "changed", "six", "new marker", "eight"].join("\n") + "\n");
+		const edit = makeEditOverride(dir);
+		let retryAnchor = "";
+		await assert.rejects(call(edit, {
+			path: "recover.txt",
+			edits: [{ op: "replace", anchor: h(observed, 5), body: ["updated"] }],
+		}), (error: Error) => {
+			assert.match(error.message, /Anchor mismatch: 1 unresolved/);
+			assert.match(error.message, /No changes written by this edit batch/);
+			assert.match(error.message, /@@ lines 2-8 @@/);
+			retryAnchor = /^(7#[0-9A-Z]+)│new marker$/m.exec(error.message)?.[1] ?? "";
+			return retryAnchor !== "";
+		});
+		await call(edit, { path: "recover.txt", edits: [{ op: "replace", anchor: retryAnchor, body: ["updated"] }] });
+		assert.equal(await readFile(file, "utf8"), "one\ntwo\nthree\nfour\nchanged\nsix\nupdated\neight\n");
+	});
+});
+
 test("edit execute: no read before edit → anchor verification fails", async () => {
 	await withDir(async (dir) => {
 		await writeFile(join(dir, "f.txt"), "a\nb\n");

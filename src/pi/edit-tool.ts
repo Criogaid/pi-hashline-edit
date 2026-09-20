@@ -31,6 +31,7 @@ import type { ApplyFailure, Edit } from "../core/types.ts";
 import { canonicalPath } from "./read-tool.ts";
 import { getState } from "./state.ts";
 import { formatDiffCounts, publishDiffCounts, renderDiffPreview, type DiffCounts } from "./render.ts";
+import { formatFailureContext } from "./failure-context.ts";
 
 /** Cap on the number of updated anchors returned inline (bounds token cost for large inserts). */
 const MAX_ANCHOR_LINES = 40;
@@ -89,14 +90,11 @@ type EditParams = Omit<Static<typeof editSchema>, "then_run"> & { then_run?: The
 
 type EditOpInput = Static<typeof editOpSchema>;
 
-/**
- * Turn an ApplyFailure into LLM-facing text. The FIRST line is a terse summary
- * (the TUI's renderResult shows only the first line of an error result); the
- * remaining lines carry the structured detail the model needs to retry without a
- * re-read — rescued anchors / ambiguous candidates / the cited line's live
- * content. range/noop are already terse single-line messages.
- */
-function formatFailure(failure: ApplyFailure, path: string): string {
+/** Format a failed batch with retryable shifted anchors and bounded live context. */
+function formatFailure(
+	failure: ApplyFailure,
+	snapshot: Readonly<{ currentText: string; hashLen: number }>,
+): string {
 	if (failure.kind === "range") return failure.message;
 	if (failure.kind === "noop") return failure.message;
 
@@ -107,41 +105,35 @@ function formatFailure(failure: ApplyFailure, path: string): string {
 	for (const f of failure.failures) {
 		const where = `op #${f.opIndex} ${f.op} ${f.which} (line ${f.cited.line})`;
 		switch (f.recovery.kind) {
-			case "found": {
+			case "found":
 				found++;
-				lines.push(
-					`• ${where}: content shifted. Resend with ${f.which} "${f.recovery.newLine}#${f.recovery.newHash}".`,
-				);
+				lines.push(`• ${where}: content shifted. Resend with ${f.which} "${f.recovery.newLine}#${f.recovery.newHash}".`);
 				break;
-			}
 			case "ambiguous": {
 				ambiguous++;
-				const nums = f.recovery.candidates.map((c) => c.line).join(", ");
-				const list = f.recovery.candidates
-					.map((c) => `"${c.line}#${c.hash}"`)
-					.join(" / ");
+				const nums = f.recovery.candidates.map((candidate) => candidate.line).join(", ");
+				const list = f.recovery.candidates.map((candidate) => `"${candidate.line}#${candidate.hash}"`).join(" / ");
+				lines.push(`• ${where}: ambiguous — same content at lines ${nums}. Pick the right one and resend ${f.which} ${list}.`);
+				break;
+			}
+			case "none":
+				none++;
 				lines.push(
-					`• ${where}: ambiguous — same content at lines ${nums}. Pick the right one and resend ${f.which} ${list}.`,
+					`• ${where}: original content not found within the configured shift-recovery window.` +
+						(f.current === null ? " Cited line is out of range." : ""),
 				);
 				break;
-			}
-			case "none": {
-				none++;
-				const cur =
-					f.current != null
-						? `current line ${f.cited.line}: ${f.cited.line}#${f.current.hash}│${f.current.content}`
-						: `line ${f.cited.line} is out of range`;
-				lines.push(`• ${where}: not found nearby — content changed. ${cur}. Re-read ${path} for fresh anchors.`);
-				break;
-			}
 		}
 	}
 	const parts: string[] = [];
-	if (found) parts.push(`${found} rescued`);
+	if (found) parts.push(`${found} shifted`);
 	if (ambiguous) parts.push(`${ambiguous} ambiguous`);
-	if (none) parts.push(`${none} need re-read`);
-	const brief = `Anchor mismatch: ${parts.join(", ")}.`;
-	return `${brief}\n${lines.join("\n")}`;
+	if (none) parts.push(`${none} unresolved`);
+	return [
+		`Anchor mismatch: ${parts.join(", ")}.`,
+		"No changes written by this edit batch.",
+		...lines,
+	].join("\n") + formatFailureContext(snapshot.currentText, failure.failures, snapshot.hashLen);
 }
 
 /** Translate JSON edit ops into core Edit[]. Validates conditional required fields (anchor/body per op). */
@@ -223,7 +215,7 @@ export function makeEditOverride(cwd: string, fusion?: ReturnType<typeof createA
 		name: "edit" as const,
 		label: "edit",
 		description:
-			"Edit file lines using content-verified anchors. Returns fresh anchors for subsequent edits.",
+			"Edit file lines using content-verified anchors. Returns fresh anchors for subsequent edits. Unrecoverable anchor errors may include bounded current-file anchors; retries are always verified again and never run automatically.",
 		promptSnippet: "Edit file lines using verified anchors",
 		promptGuidelines: [
 			"Batch changes to the same file in one edit call.",
@@ -272,17 +264,33 @@ export function makeEditOverride(cwd: string, fusion?: ReturnType<typeof createA
 			const { then_run, ...mutationParams } = params;
 			if (!fusion && then_run !== undefined) throw new Error("then_run is unavailable because hashlineEdit.actionFusion is disabled");
 			const absolutePath = canonicalPath(cwd, mutationParams.path);
+			let mutationAnchors = "";
 			const mutate = () => {
 				const path = mutationParams.path;
 				if (!mutationParams.edits?.length) return errResult(`Edit ${path}: \`edits\` is empty or missing.`);
-				return withFileMutationQueue(absolutePath, () => runHashline(absolutePath, path, mutationParams.edits, signal));
+				return withFileMutationQueue(absolutePath, () => runHashline(
+					absolutePath,
+					path,
+					mutationParams.edits,
+					signal,
+					(anchors) => { mutationAnchors = anchors; },
+				));
 			};
-			if (!fusion) return mutate();
+			const finalizeMutation = (result: any, publishAnchors: boolean) => ({
+				...result,
+				content: result.content.map((block: any, index: number) =>
+					index === 0 && block.type === "text"
+						? { ...block, text: `${block.text}${publishAnchors ? mutationAnchors : ""}` }
+						: block,
+				),
+			});
+			if (!fusion) return finalizeMutation(await mutate(), true);
 			return fusion({
 				toolCallId,
 				absolutePath,
 				thenRun: then_run,
 				mutate,
+				finalizeMutation,
 				signal,
 				ctx,
 				onUpdate,
@@ -291,7 +299,13 @@ export function makeEditOverride(cwd: string, fusion?: ReturnType<typeof createA
 	};
 }
 
-async function runHashline(absPath: string, displayPath: string, editOps: readonly EditOpInput[], signal: AbortSignal | undefined) {
+async function runHashline(
+	absPath: string,
+	displayPath: string,
+	editOps: readonly EditOpInput[],
+	signal: AbortSignal | undefined,
+	onAnchors: (anchors: string) => void,
+) {
 	const { hashLen, shiftRadius } = getState().config;
 
 	let currentText: string;
@@ -314,7 +328,7 @@ async function runHashline(absPath: string, displayPath: string, editOps: readon
 	// the batch are collected (nothing written on any failure).
 	const result = applyEdits(currentText, translated.edits, hashLen, shiftRadius);
 	if (!result.ok) {
-		return errResult(formatFailure(result.failure, displayPath));
+		return errResult(formatFailure(result.failure, { currentText, hashLen }));
 	}
 
 	// Check for cancel before write: if aborted, don't touch the disk; the file stays untouched
@@ -342,11 +356,12 @@ async function runHashline(absPath: string, displayPath: string, editOps: readon
 			publication,
 		};
 		anchors = formatUpdatedAnchors(result.text, result.touchedLines, hashLen);
+		onAnchors(anchors);
 	} catch (error) {
 		throw new FileMutationError("post_process", publication, `file was published but edit result generation failed: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
 	}
 	return {
-		content: [{ type: "text" as const, text: `Edited ${displayPath} (${translated.edits.length} op(s)).${anchors}` }],
+		content: [{ type: "text" as const, text: `Edited ${displayPath} (${translated.edits.length} op(s)).` }],
 		details,
 	};
 }

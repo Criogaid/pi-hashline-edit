@@ -6,6 +6,7 @@ import { test } from "node:test";
 import { makeEditOverride } from "./edit-tool.ts";
 import { makeReplaceTool } from "./replace-tool.ts";
 import { makeWriteOverride } from "./write-tool.ts";
+import { computeLineHash } from "../core/hash.ts";
 import type { ActionFusionProgress } from "./action-fusion.ts";
 import { ACTION_FUSION_GUIDELINES, createActionFusionExecutor, THEN_RUN_FAILED, THEN_RUN_SKIPPED, THEN_RUN_SUCCEEDED } from "./action-fusion.ts";
 
@@ -42,6 +43,7 @@ test("edit and replace share one embedded executor and preserve mutation results
 		const editResult = await edit.execute("edit-1", { path: "edit.txt", edits: [{ op: "append", body: ["after"] }], then_run: { command: "check edit" } }, undefined, undefined, ctx(dir));
 		const replaceResult = await replace.execute("replace-1", { path: "replace.txt", find: "before", replace: "after", then_run: { command: "check replace" } }, undefined, undefined, ctx(dir));
 		assert.match(editResult.content.at(-1).text, new RegExp(THEN_RUN_SUCCEEDED));
+		assert.match(editResult.content.map((block: any) => block.text ?? "").join("\n"), /Updated anchors/);
 		assert.match(replaceResult.content.at(-1).text, new RegExp(THEN_RUN_SUCCEEDED));
 		assert.deepEqual(calls, ["check edit", "check replace"]);
 		assert.equal((await readFile(join(dir, "edit.txt"), "utf8")), "before\nafter\n");
@@ -133,6 +135,55 @@ test("marks anchors stale when then_run changes the target", async () => {
 		await rm(dir, { recursive: true, force: true });
 	}
 	});
+
+test("Action Fusion omits structured anchors when target freshness is unknown", async () => {
+	const dir = await tempDir();
+	try {
+		const missing = join(dir, "never-created.txt");
+		let commands = 0;
+		const fusion = createActionFusionExecutor(async () => { commands++; return "unexpected"; });
+		const result = await fusion({
+			toolCallId: "unknown",
+			absolutePath: missing,
+			thenRun: { command: "check" },
+			mutate: async () => ({ content: [{ type: "text", text: "mutated" }], details: {} }),
+			finalizeMutation: (mutation, publishAnchors) => ({
+				...mutation,
+				content: [{ type: "text", text: `mutated${publishAnchors ? " ANCHOR" : ""}` }],
+			}),
+			signal: undefined,
+			ctx: ctx(dir),
+		});
+		const output = result.content.map((block) => block.type === "text" ? block.text : "").join("\n");
+		assert.equal(commands, 0);
+		assert.equal((result.details as any).actionFusion.freshness, "unknown");
+		assert.doesNotMatch(output, /ANCHOR/);
+		assert.match(output, /Pre-command anchors are omitted/);
+	} finally {
+		await rm(dir, { recursive: true, force: true });
+	}
+});
+
+test("edit omits Updated anchors when then_run changes the target", async () => {
+	const dir = await tempDir();
+	try {
+		const target = join(dir, "edit-stale.txt");
+		await writeFile(target, "before\n");
+		const fusion = createActionFusionExecutor(async () => { await writeFile(target, "command changed\n"); return "changed"; });
+		const result = await makeEditOverride(dir, fusion).execute("edit-stale", {
+			path: "edit-stale.txt",
+			edits: [{ op: "replace", anchor: `1#${computeLineHash(1, "before")}`, body: ["after"] }],
+			then_run: { command: "change target" },
+		}, undefined, undefined, ctx(dir));
+		const output = result.content.map((block: any) => block.text ?? "").join("\n");
+		assert.equal(result.details.actionFusion.freshness, "changed");
+		assert.match(output, /Pre-command anchors are omitted/);
+		assert.doesNotMatch(output, /Updated anchors|\b1#[0-9A-Z]+│/);
+		assert.equal(await readFile(target, "utf8"), "command changed\n");
+	} finally {
+		await rm(dir, { recursive: true, force: true });
+	}
+});
 
 test("all mutation tools forward command progress before completion in RPC mode", async () => {
 	const dir = await tempDir();

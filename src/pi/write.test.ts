@@ -73,25 +73,54 @@ test("write anchors chain into edit with a non-default hash length", async () =>
 	}
 }));
 
-test("write shares Action Fusion and reports command-induced stale content", async () => withTemp(async (dir) => {
-	const target = join(dir, "fused.txt");
-	const fusion = createActionFusionExecutor(async () => { await writeFile(target, "command changed\n"); return "checked"; });
-	const write = makeWriteOverride(dir, fusion) as any;
-	const result = await write.execute("fused", { path: "fused.txt", content: "mutation\n", then_run: { command: "check" } }, undefined, undefined, context(dir));
-	const text = result.content.filter((block: any) => block.type === "text").map((block: any) => block.text).join("\n");
-	assert.match(text, /\[then_run:stale\]/);
-	assert.equal(result.details.actionFusion.freshness, "changed");
-
-test("write keeps anchors and Fusion output for the model without duplicating the preview", async () => withTemp(async (dir) => {
-	const target = join(dir, "rendered.txt");
-	const fusion = createActionFusionExecutor(async () => { await writeFile(target, "command changed\n"); return "checked"; });
-	const write = makeWriteOverride(dir, fusion) as any;
-	const result = await write.execute("rendered", { path: "rendered.txt", content: "mutation\n", then_run: { command: "check" } }, undefined, undefined, context(dir));
-	const text = result.content.map((block: any) => block.text).join("\n");
-	assert.match(text, /Revision:[\s\S]*Fresh anchors:/);
-	assert.match(text, /checked/);
-	assert.match(text, /then_run:stale/);
-	const rendered = write.renderResult(result, { isPartial: false }, {}, { isError: false });
-	assert.deepEqual(rendered.render(100), []);
+test("write returns at most 40 default anchors", async () => withTemp(async (dir) => {
+	const content = Array.from({ length: 500 }, (_, index) => `line ${index + 1}`).join("\n");
+	const result = await makeWriteOverride(dir).execute("write", { path: "large.txt", content }, undefined, undefined, context(dir));
+	assert.equal(result.content[0].text.match(/\b\d+#[0-9A-Z]+\b/g)?.length, 40);
+	assert.match(result.content[0].text, /… \(460 more/);
 }));
+
+test("write publishes anchors after an unchanged then_run", async () => withTemp(async (dir) => {
+	const fusion = createActionFusionExecutor(async () => "checked");
+	const write = makeWriteOverride(dir, fusion) as any;
+	const result = await write.execute("unchanged", { path: "unchanged.txt", content: "mutation\n", then_run: { command: "check" } }, undefined, undefined, context(dir));
+	const text = result.content.map((block: any) => block.text).join("\n");
+	assert.match(text, /Revision:[\s\S]*Fresh anchors: 1#[0-9A-Z]+/);
+	assert.match(text, /\[then_run:succeeded\]/);
+	assert.equal(result.details.actionFusion.freshness, "unchanged");
+}));
+
+test("write omits pre-command anchors when then_run changes the target", async () => withTemp(async (dir) => {
+	const target = join(dir, "changed.txt");
+	const fusion = createActionFusionExecutor(async () => { await writeFile(target, "command changed\n"); return "checked"; });
+	const write = makeWriteOverride(dir, fusion) as any;
+	const result = await write.execute("changed", { path: "changed.txt", content: "mutation\n", then_run: { command: "check" } }, undefined, undefined, context(dir));
+	const text = result.content.map((block: any) => block.text).join("\n");
+	assert.match(text, /Mutation revision:/);
+	assert.match(text, /Pre-command anchors are omitted/);
+	assert.match(text, /mutation revision may not describe the final file/i);
+	assert.doesNotMatch(text, /Fresh anchors:|\b1#[0-9A-Z]+\b/);
+	assert.equal(result.details.actionFusion.freshness, "changed");
+	assert.deepEqual(write.renderResult(result, { isPartial: false }, {}, { isError: false }).render(100), []);
+}));
+
+test("write omits anchors when then_run removes the target", async () => withTemp(async (dir) => {
+	const target = join(dir, "missing.txt");
+	const fusion = createActionFusionExecutor(async () => { await rm(target); return "removed"; });
+	const result = await makeWriteOverride(dir, fusion).execute("missing", { path: "missing.txt", content: "mutation\n", then_run: { command: "remove" } }, undefined, undefined, context(dir));
+	const text = result.content.map((block: any) => block.text).join("\n");
+	assert.equal(result.details.actionFusion.freshness, "missing");
+	assert.match(text, /Pre-command anchors are omitted/);
+	assert.doesNotMatch(text, /Fresh anchors:/);
+}));
+
+test("write omits anchors when a failed then_run changed the target", async () => withTemp(async (dir) => {
+	const target = join(dir, "failed.txt");
+	const fusion = createActionFusionExecutor(async () => { await writeFile(target, "changed before failure\n"); throw new Error("command failed"); });
+	const result = await makeWriteOverride(dir, fusion).execute("failed", { path: "failed.txt", content: "mutation\n", then_run: { command: "fail" } }, undefined, undefined, context(dir));
+	const text = result.content.map((block: any) => block.text).join("\n");
+	assert.equal(result.details.actionFusion.freshness, "changed");
+	assert.equal(result.details.actionFusion.command, "failed");
+	assert.match(text, /Pre-command anchors are omitted/);
+	assert.doesNotMatch(text, /Fresh anchors:/);
 }));
