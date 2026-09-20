@@ -22,6 +22,7 @@ type FakeOptions = {
   error?: Error;
   onRun?: () => void;
   smartCase?: boolean;
+  paths?: string[];
 };
 
 async function withDir<T>(fn: (dir: string) => Promise<T>): Promise<T> {
@@ -82,8 +83,11 @@ function fakeBackend(options: FakeOptions = {}) {
         stopped: false,
       };
     },
-    async runRgPaths() {
-      return { code: 1, stderr: "", stopped: false };
+    async runRgPaths(_path, _args, _signal, onPath) {
+      for (const path of options.paths ?? []) {
+        if (!await onPath(path)) return { code: null, stderr: "", stopped: true };
+      }
+      return { code: options.paths?.length ? 0 : 1, stderr: "", stopped: false };
     },
     async resolveIgnoreCase(_path, patterns, modes, explicit) {
       modeCalls.push({ patterns, literal: modes.literal, explicit });
@@ -230,7 +234,10 @@ test("passes output flags and formats files and counts", async () => {
       const b = join(dir, "b.ts");
       await writeFile(a, "Foo a.b\n");
       await writeFile(b, "foo a.b\n");
-      const fake = fakeBackend({ lines: [rgMatch(a, 1, "Foo a.b\n"), rgMatch(b, 1, "foo a.b\n")] });
+      const fake = fakeBackend({
+        lines: [rgMatch(a, 1, "Foo a.b\n"), rgMatch(b, 1, "foo a.b\n")],
+        paths: [a, b],
+      });
 
       const files = await call(makeGrepOverrideWithBackend(dir, fake.backend), {
         pattern: ["Foo", "a.b"],
@@ -274,6 +281,26 @@ test("passes output flags and formats files and counts", async () => {
       assert.equal(text(count), "a.ts: 1\nb.ts: 1\nTotal: 2 matches in 2 files");
     }),
   );
+});
+
+test("aligns TUI line numbers across files to the widest result", () => {
+  const tool = makeGrepOverrideWithBackend(process.cwd(), fakeBackend().backend);
+  const raw = [
+    "a.ts · 2 matches",
+    "99#ABCD│  alpha",
+    "100#ABCD│    beta",
+    "b.ts · 1 match",
+    "7#ABCD│gamma",
+  ].join("\n");
+  const theme = { fg: (_color: string, value: string) => value };
+  const rendered = tool.renderResult!(
+    { content: [{ type: "text", text: raw }] },
+    { isPartial: false, expanded: true },
+    theme,
+    {},
+  ).render(80).map((line: string) => line.trimEnd());
+  const rows = rendered.filter((line: string) => /^\s+\d+:/.test(line));
+  assert.deepEqual(rows.map((line: string) => line.indexOf(":")), [6, 6, 6]);
 });
 
 test("counts only surviving matches toward the limit and stops the fake runner", async () => {

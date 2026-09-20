@@ -251,6 +251,33 @@ test("noIgnore searches ignored files while explicit excluding globs still apply
   }
 });
 
+test("explicit file paths obey ordered glob filters without inheriting ignore rules", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "hl-grep-file-glob-"));
+  try {
+    const kept = join(directory, "keep.ts");
+    const excluded = join(directory, "drop.test.ts");
+    const ignored = join(directory, "ignored.ts");
+    await writeFile(join(directory, ".ignore"), "ignored.ts\n");
+    await Promise.all([kept, excluded, ignored].map((path) => writeFile(path, "needle\n")));
+    const tool = makeGrepOverrideWithBackend(directory, {});
+    const result: any = await tool.execute("0", {
+      pattern: "needle",
+      path: [kept, excluded, ignored],
+      glob: ["*.ts", "!**/*.test.ts"],
+      outputMode: "files",
+    }, undefined, undefined);
+    const files = new Set(result.content[0].text.split("\n"));
+    assert.deepEqual(files, new Set(["keep.ts", "ignored.ts"]));
+
+    const none: any = await tool.execute("0", {
+      pattern: "needle", path: excluded, glob: "!**/*.test.ts",
+    }, undefined, undefined);
+    assert.equal(none.content[0].text, "No matches found");
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("follow returns a resolved target path that edit can update without replacing the link", async (t) => {
   const directory = await mkdtemp(join(tmpdir(), "hl-grep-follow-"));
   try {

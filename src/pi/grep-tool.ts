@@ -34,7 +34,7 @@ import { rgPath as bundledRgPath } from "@vscode/ripgrep";
 import { Type } from "typebox";
 import { Text } from "@earendil-works/pi-tui";
 import { readFile, realpath, stat } from "node:fs/promises";
-import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { hashFileLines } from "../core/hash.ts";
 import { splitLines } from "../core/lines.ts";
 import { getState } from "./state.ts";
@@ -217,6 +217,50 @@ function scopeArgs(scope: SearchScope): string[] {
     ...(scope.follow ? ["--follow"] : []),
     ...scope.globs.flatMap((glob) => ["--glob", glob]),
   ];
+}
+
+interface SearchPathInfo {
+  path: string;
+  isFile: boolean;
+}
+
+function fileKey(path: string): string {
+  const absolute = resolve(path);
+  return process.platform === "win32" ? absolute.toLowerCase() : absolute;
+}
+
+async function filterExplicitFilesByGlob(
+  backend: GrepBackend,
+  rgPath: string,
+  scope: SearchScope,
+  paths: readonly SearchPathInfo[],
+  signal: AbortSignal | undefined,
+): Promise<string[]> {
+  const explicitFiles = paths.filter(({ isFile }) => isFile);
+  if (scope.globs.length === 0 || explicitFiles.length === 0) return paths.map(({ path }) => path);
+
+  const parents = [...new Set(explicitFiles.map(({ path }) => dirname(path)))];
+  const allowed = new Set<string>();
+  // Direct file arguments bypass ignore and symlink traversal; let only the ordered globs decide admission.
+  const args = [
+    ...COMMON_RG_ARGS,
+    ...scopeArgs({ ...scope, noIgnore: true, follow: true }),
+    "--files",
+    "--null",
+    "--max-depth=1",
+    "--",
+    ...parents,
+  ];
+  const listed = await backend.runRgPaths(rgPath, args, signal, async (path) => {
+    allowed.add(fileKey(path));
+    return true;
+  });
+  if (!listed.stopped && listed.code !== 0 && listed.code !== 1) {
+    throw new Error(listed.stderr.trim() || `ripgrep exited with code ${listed.code}`);
+  }
+  return paths
+    .filter(({ path, isFile }) => !isFile || allowed.has(fileKey(path)))
+    .map(({ path }) => path);
 }
 
 async function fileIdentity(path: string): Promise<FileIdentity> {
@@ -414,6 +458,10 @@ function countLeading(s: string): number {
 function toDisplayLines(raw: string, theme: any): string[] {
   const out: string[] = [];
   const lines = raw.split("\n");
+  const lineNoWidth = lines.reduce(
+    (width, line) => Math.max(width, parseHashline(line)?.lineNo.length ?? 0),
+    0,
+  );
   let i = 0;
   while (i < lines.length) {
     const line = lines[i];
@@ -434,7 +482,7 @@ function toDisplayLines(raw: string, theme: any): string[] {
       const marker = base > 0 ? theme.fg("dim", "›") + " " : "";
       for (const g of group) {
         const body = g.content.slice(base);
-        out.push(theme.fg("dim", `   ${g.lineNo}: `) + marker + theme.fg("toolOutput", body));
+        out.push(theme.fg("dim", `   ${g.lineNo.padStart(lineNoWidth)}: `) + marker + theme.fg("toolOutput", body));
       }
       i = j;
       continue;
@@ -574,7 +622,7 @@ export function makeGrepOverrideWithBackend(cwd: string, overrides: Partial<Grep
         const values = toArray(params.path);
         return (values.length ? values : ["."]).map((path) => canonicalPath(cwd, path));
       })();
-      const scope: SearchScope = {
+      let scope: SearchScope = {
         globs,
         noIgnore: params.noIgnore === true,
         follow: params.follow === true,
@@ -582,10 +630,15 @@ export function makeGrepOverrideWithBackend(cwd: string, overrides: Partial<Grep
       };
       const hashLen = state.config.hashLen;
 
+      const pathInfo: SearchPathInfo[] = [];
       for (const searchPath of searchPaths) {
-        try { await stat(searchPath); }
+        try { pathInfo.push({ path: searchPath, isFile: (await stat(searchPath)).isFile() }); }
         catch { throw new Error(`Path not found: ${searchPath}`); }
       }
+      scope = {
+        ...scope,
+        searchPaths: await filterExplicitFilesByGlob(backend, rgPath, scope, pathInfo, signal),
+      };
       if (matchMode === "all" && patterns.length > MAX_ALL_PATTERNS) {
         throw new Error(`matchMode:"all" supports at most ${MAX_ALL_PATTERNS} patterns`);
       }
@@ -597,7 +650,10 @@ export function makeGrepOverrideWithBackend(cwd: string, overrides: Partial<Grep
       let strictIdentities: Map<string, FileIdentity> | undefined;
       let linesTruncated = false;
 
-      if (complex) {
+      if (scope.searchPaths.length === 0) {
+        raw = [];
+        matchLimitReached = false;
+      } else if (complex) {
         await backend.validatePatterns(rgPath, patterns, modes, !!wordMatch, signal);
         await backend.validatePatterns(rgPath, excludes, modes, false, signal);
         const result = await complexSearch({
@@ -618,7 +674,7 @@ export function makeGrepOverrideWithBackend(cwd: string, overrides: Partial<Grep
           ...scopeArgs(scope),
         ];
         for (const pattern of matchMode === "all" ? patterns.slice(0, 1) : patterns) args.push("-e", pattern);
-        args.push("--", ...searchPaths);
+        args.push("--", ...scope.searchPaths);
 
         const andPredicates = matchMode === "all"
           ? patterns.slice(1).map((pattern) => backend.createLinePredicate(rgPath, [pattern], modes, !!wordMatch, signal))
