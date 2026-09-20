@@ -1,10 +1,12 @@
 # @criogaid/pi-hashline-edit
 
-[![npm version](https://img.shields.io/npm/v/@criogaid/pi-hashline-edit)](https://www.npmjs.com/package/@criogaid/pi-hashline-edit) [![npm downloads](https://img.shields.io/npm/dm/@criogaid/pi-hashline-edit)](https://www.npmjs.com/package/@criogaid/pi-hashline-edit) [![license](https://img.shields.io/npm/l/@criogaid/pi-hashline-edit)](https://www.npmjs.com/package/@criogaid/pi-hashline-edit)
+[![CI](https://github.com/Criogaid/pi-hashline-edit/actions/workflows/ci.yml/badge.svg)](https://github.com/Criogaid/pi-hashline-edit/actions/workflows/ci.yml) [![npm version](https://img.shields.io/npm/v/@criogaid/pi-hashline-edit)](https://www.npmjs.com/package/@criogaid/pi-hashline-edit) [![npm downloads](https://img.shields.io/npm/dm/@criogaid/pi-hashline-edit)](https://www.npmjs.com/package/@criogaid/pi-hashline-edit) [![license](https://img.shields.io/npm/l/@criogaid/pi-hashline-edit)](https://www.npmjs.com/package/@criogaid/pi-hashline-edit)
 
-> Hashline-style file editing for [pi](https://github.com/earendil-works/pi-coding-agent) — line-anchored edits verified by content hash (replacing `oldText`/`newText` matching), a complete-file `write`, plus a location-blind `replace` tool for bulk + regex transforms.
+> Hashline-style local file tools for [pi](https://github.com/earendil-works/pi-coding-agent) — `read` and `grep` emit content-verified `LINE#HASH` anchors, `edit` applies surgical anchored changes, `replace` handles whole-file string/regex transforms, and `write` publishes complete content safely.
 
-Edits reference lines by `LINE#HASH` anchors (copied from `read`/`grep` output) instead of retyping the code to be changed — eliminating string-not-found loops and whitespace battles at the root.
+All five tools replace pi's local-filesystem toolset as one switchable unit. Optional Hashline Fusion attaches a `then_run` command to a successful `edit`/`replace`/`write` mutation, with file-scoped serialization and explicit publication, command, and freshness state.
+
+This repository is the standalone home of the implementation. The `@criogaid` release line starts at `0.1.0`; pre-split Git history is retained for provenance, while releases of the former `@d3ara1n` package belong to that package and are not releases of this one.
 
 ## Why hashline?
 
@@ -70,8 +72,8 @@ A separate, location-blind tool for transforms `edit` can't express: replace **a
 ## Design
 
 - **Per-line hash + line number, dual anchor**: `read` shows each line as `3#AF32│code`; `edit` references `LINE#HASH`. The line number is the address; the hash is a checksum that the line at that address is still what was read.
-- **Line folded into the hash**: each line's hash mixes its 1-based line number into its content, so every line is unique by construction — no in-file collisions, no length extension. The hash changes only when the line's own content changes, never when a neighbor changes.
-- **Live, surgical verification**: at apply time each cited anchor's hash is recomputed from the current line content and compared — no stored snapshot, no whole-file stale check. A line that changed (or was misremembered) fails its own anchor; an unrelated change elsewhere never blocks the edit. No fuzzy matching, no boundary repair.
+- **Line folded into the hash**: each line's hash mixes its 1-based line number into its content, so every line is unique by construction — no in-file collisions, no length extension. The hash changes when either the content or line number changes; editing a neighbor in place does not affect it.
+- **Live, surgical verification**: at apply time each cited anchor's hash is recomputed from the current line content and compared — no stored snapshot, no whole-file stale check. A line that changed (or was misremembered) fails its own anchor; an unrelated in-place change elsewhere does not. Insertions or deletions above the target trigger shifted-anchor recovery instead of silently retargeting the edit. No fuzzy matching, no boundary repair.
 - **Shifted-anchor recovery**: a mismatched anchor isn't a dead end. The applicator rescans ±`shiftRadius` lines for the original content — holding the original line number fixed and re-hashing each candidate (`hash(line, candidate) === cited` iff the candidate *is* the original) — and returns a ready-to-resend anchor on a unique hit or the candidate list when ambiguous. When the content cannot be recovered, the failure includes a bounded `LINE#HASH│content` window from the validation snapshot; the model must re-evaluate the intended change, and every retry is verified again.
 - **Atomic batches, all failures collected**: every op in one `edit` is verified against the same snapshot; if any anchor fails, *all* failures (each with its recovery) are returned together and nothing is written — partial writes would shift lines and invalidate the very recovery info just returned.
 - **Chain edits without re-reading**: a successful `edit` returns `Updated anchors` for the lines it produced (and the line that shifted into a deletion gap), so the next edit can cite them directly.
@@ -254,7 +256,7 @@ The default workspace path behavior is unchanged. Strict workspace jail remains 
 
 ### Validation boundary
 
-The current release candidate was exercised on Windows `win32` with NTFS using Node `v26.9.0`, npm `11.19.1`, and Pi `0.85.1`. The packed tarball was installed into a temporary project and loaded from its installed package directory through Pi's extension loader. Linux, macOS/APFS, network filesystems, full crash durability, Windows symlink permissions, and successful Windows atomic-read visibility remain unverified.
+The standalone `0.1.0` candidate was typechecked against Pi `0.86.1` and passed the unit and bundled-ripgrep integration suites on GitHub-hosted Ubuntu, macOS, and Windows under Node 24. The same suites and an npm pack dry run passed locally on Windows `win32` with NTFS using Node `v26.9.0` and npm `11.19.1`; the tarball contains only the README, license, package metadata, and `src`. An installed-package loader smoke test was previously completed on Windows with Pi `0.85.1`. Network filesystems, full crash durability, Windows symlink permissions, and successful Windows atomic-read visibility remain unverified.
 
 ## Installation
 
