@@ -82,10 +82,14 @@ function fakeBackend(options: FakeOptions = {}) {
         stopped: false,
       };
     },
-    async resolveIgnoreCase(_path, patterns, literal, explicit) {
-      modeCalls.push({ patterns, literal, explicit });
+    async runRgPaths() {
+      return { code: 1, stderr: "", stopped: false };
+    },
+    async resolveIgnoreCase(_path, patterns, modes, explicit) {
+      modeCalls.push({ patterns, literal: modes.literal, explicit });
       return explicit ?? options.smartCase ?? fakeSmartCase(patterns);
     },
+    async validatePatterns() {},
     createLinePredicate(_path, patterns, modes, word) {
       return fakePredicate(patterns, modes, word);
     },
@@ -127,6 +131,9 @@ test("formats parsed rg matches with full-line hash anchors", async () => {
 
       const tool = makeGrepOverrideWithBackend(dir, fake.backend);
       assert.deepEqual(tool.parameters.required, ["pattern"]);
+      for (const option of ["noIgnore", "follow", "pcre2", "multiline"] as const) {
+        assert.equal(tool.parameters.properties[option].type, "boolean");
+      }
       const result = await call(tool, {
         pattern: "alpha",
       });
@@ -137,7 +144,7 @@ test("formats parsed rg matches with full-line hash anchors", async () => {
       assert.match(output, /3#[0-9A-Z]+│alpha only/);
       assert.deepEqual(fake.calls[0], {
         path: rgPath,
-        args: ["--no-config", "--engine=default", "--no-multiline", "--color=never", "--crlf", "--json", "--line-number", "--hidden", "--ignore-case", "--fixed-strings", "-e", "alpha", "--", dir],
+        args: ["--no-config", "--color=never", "--crlf", "--engine=default", "--no-multiline", "--ignore-case", "--fixed-strings", "--json", "--line-number", "--hidden", "-e", "alpha", "--", dir],
       });
     }),
   );
@@ -237,16 +244,16 @@ test("passes output flags and formats files and counts", async () => {
       assert.equal(text(files), "a.ts\nb.ts");
       assert.deepEqual(fake.calls[0].args, [
         "--no-config",
-        "--engine=default",
-        "--no-multiline",
         "--color=never",
         "--crlf",
-        "--json",
-        "--line-number",
-        "--hidden",
+        "--engine=default",
+        "--no-multiline",
         "--ignore-case",
         "--fixed-strings",
         "--word-regexp",
+        "--json",
+        "--line-number",
+        "--hidden",
         "--glob",
         "*.ts",
         "--glob",
@@ -317,7 +324,7 @@ test("auto-detects modes with rg validation while preserving explicit overrides"
     );
     assert.equal(valid.calls.filter(({ args }) => args.includes("--quiet")).length, 2);
     assert.deepEqual(invalid.calls[0].args, [
-      "--no-config", "--engine=default", "--no-multiline", "--color=never", "--crlf",
+      "--no-config", "--color=never", "--crlf", "--engine=default", "--no-multiline",
       "--quiet", "-e", "queueTool(", "--", "-",
     ]);
 

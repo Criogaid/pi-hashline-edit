@@ -165,9 +165,14 @@ The `grep` override also covers the compound queries that otherwise push models 
 - `wordMatch` — whole words only (`rg -w`)
 - `outputMode: "files"` / `"count"` — just the file paths (`rg -l`) or per-file counts + total (`grep -c`); `"files"` output pastes straight back as a `path` array
 - `pattern` and `path` accept arrays — several patterns combined per `matchMode`, several search roots in one call
+- `noIgnore` — include files excluded by `.gitignore`, `.ignore`, or `.rgignore`; explicit `glob` filters still apply
+- `follow` — traverse symbolic links and return resolved target paths
+- `pcre2` — opt into PCRE2 lookarounds and backreferences; this is strict regex mode and cannot be combined with `literal: true`
+- `multiline` — allow matches across physical lines; results, filtering, limits, and counts remain line-based, and `.` crosses line breaks only with inline `(?s)`
 
-Filters run before the match limit counts, and context windows are rebuilt from surviving matches, so `limit` and `context` compose cleanly with `matchMode`/`excludePattern`.
-The extension installs a platform-specific ripgrep executable through `@vscode/ripgrep` and invokes that bundled binary directly. Search behavior does not depend on a system `rg` installation or `PATH`.
+Filters run before the match limit counts, and context windows are rebuilt from surviving matches, so `limit` and `context` compose cleanly with `matchMode`/`excludePattern`. `files` and `count` use the same limited set of matching physical lines; they are not unlimited repository totals.
+
+All inclusion and exclusion patterns are evaluated by ripgrep. The default engine is ripgrep's standard Rust regex engine with query-level smart-case; `pcre2: true` selects the bundled PCRE2 engine without silently changing engines or falling back to literal text. Searches are CRLF-aware and single-line by default. The extension passes `--no-config`, includes hidden files while retaining ignore rules, and invokes the platform-specific binary installed through `@vscode/ripgrep`, independent of a system `rg` or `PATH`.
 
 
 `edit` takes `path` + `edits`. Copy `anchor` and `end` directly as `"LINE#HASH"` strings; `body` contains the new lines:

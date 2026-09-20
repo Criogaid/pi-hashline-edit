@@ -1,0 +1,106 @@
+export type LineRange = readonly [start: number, endExclusive: number];
+
+export interface RgSubmatch {
+  start: number;
+  end: number;
+}
+
+function assertRange(range: LineRange): void {
+  if (!Number.isSafeInteger(range[0]) || !Number.isSafeInteger(range[1]) || range[0] < 1 || range[1] <= range[0]) {
+    throw new Error("Invalid physical line range");
+  }
+}
+
+export function normalizeRanges(ranges: readonly LineRange[]): LineRange[] {
+  const sorted = ranges.map((range) => {
+    assertRange(range);
+    return range;
+  }).sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+  const result: LineRange[] = [];
+  for (const range of sorted) {
+    const previous = result[result.length - 1];
+    if (!previous || range[0] > previous[1]) result.push([range[0], range[1]]);
+    else if (range[1] > previous[1]) result[result.length - 1] = [previous[0], range[1]];
+  }
+  return result;
+}
+
+export function unionRanges(left: readonly LineRange[], right: readonly LineRange[]): LineRange[] {
+  return normalizeRanges([...left, ...right]);
+}
+
+export function intersectRanges(left: readonly LineRange[], right: readonly LineRange[]): LineRange[] {
+  const a = normalizeRanges(left);
+  const b = normalizeRanges(right);
+  const result: LineRange[] = [];
+  let i = 0;
+  let j = 0;
+  while (i < a.length && j < b.length) {
+    const start = Math.max(a[i][0], b[j][0]);
+    const end = Math.min(a[i][1], b[j][1]);
+    if (start < end) result.push([start, end]);
+    if (a[i][1] < b[j][1]) i++;
+    else j++;
+  }
+  return result;
+}
+
+export function subtractRanges(left: readonly LineRange[], right: readonly LineRange[]): LineRange[] {
+  const source = normalizeRanges(left);
+  const removed = normalizeRanges(right);
+  const result: LineRange[] = [];
+  let j = 0;
+  for (const [start, end] of source) {
+    let cursor = start;
+    while (j < removed.length && removed[j][1] <= cursor) j++;
+    let k = j;
+    while (k < removed.length && removed[k][0] < end) {
+      if (removed[k][0] > cursor) result.push([cursor, Math.min(removed[k][0], end)]);
+      cursor = Math.max(cursor, removed[k][1]);
+      if (cursor >= end) break;
+      k++;
+    }
+    if (cursor < end) result.push([cursor, end]);
+  }
+  return result;
+}
+
+function countLfBefore(bytes: Buffer, offset: number): number {
+  let count = 0;
+  for (let i = 0; i < offset; i++) if (bytes[i] === 10) count++;
+  return count;
+}
+
+function zeroWidthLine(bytes: Buffer, offset: number, eventStartLine: number, fileLineCount: number): number | undefined {
+  if (fileLineCount === 0) return undefined;
+  const candidate = eventStartLine + countLfBefore(bytes, offset);
+  return Math.min(candidate, fileLineCount);
+}
+
+/** Convert rg UTF-8 byte offsets into normalized 1-based physical line ranges. */
+export function submatchesToLineRanges(
+  bytes: Buffer,
+  eventStartLine: number,
+  submatches: readonly RgSubmatch[],
+  fileLineCount: number,
+): LineRange[] {
+  if (!Number.isSafeInteger(eventStartLine) || eventStartLine < 1 || !Number.isSafeInteger(fileLineCount) || fileLineCount < 0) {
+    throw new Error("Invalid rg physical line metadata");
+  }
+  const ranges: LineRange[] = [];
+  for (const submatch of submatches) {
+    const { start, end } = submatch;
+    if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start < 0 || end < start || end > bytes.length) {
+      throw new Error("Invalid rg submatch byte offsets");
+    }
+    if (start === end) {
+      const line = zeroWidthLine(bytes, start, eventStartLine, fileLineCount);
+      if (line !== undefined) ranges.push([line, line + 1]);
+      continue;
+    }
+    const first = eventStartLine + countLfBefore(bytes, start);
+    const last = eventStartLine + countLfBefore(bytes, end - 1);
+    if (first <= fileLineCount) ranges.push([first, Math.min(last, fileLineCount) + 1]);
+  }
+  return normalizeRanges(ranges);
+}
