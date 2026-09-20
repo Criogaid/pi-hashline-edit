@@ -11,7 +11,8 @@ export const THEN_RUN_SKIPPED = "[then_run:skipped]";
 export const THEN_RUN_STALE = "[then_run:stale]";
 
 export const ACTION_FUSION_GUIDELINES = [
-	"Prefer then_run for a known, authorized follow-up command once all prerequisite edits are complete. Keep it separate if you must inspect the edit result first.",
+	"Before each file mutation, identify its next command. If that command is known, authorized, and ready once the mutation succeeds, you MUST include it in then_run instead of making a separate command call (for example, write a script and execute it, or finish edits and run a typecheck).",
+	"When several edits are prerequisites, attach then_run to the last one. Separate the command only when its choice or arguments depend on inspecting the mutation result, or a required approval or user reload is still pending.",
 	"Check the command outcome before claiming validation passed.",
 ];
 
