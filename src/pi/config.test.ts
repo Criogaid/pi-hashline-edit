@@ -8,8 +8,9 @@ import { loadConfig } from "./config.ts";
 test("actionFusion defaults off and can be enabled without changing other defaults", async () => {
 	const root = await mkdtemp(join(tmpdir(), "hashline-config-"));
 	try {
-		assert.equal(loadConfig(root).actionFusion, false);
 		await mkdir(join(root, ".pi"));
+		await writeFile(join(root, ".pi", "settings.json"), JSON.stringify({ hashlineEdit: {} }));
+		assert.equal(loadConfig(root).actionFusion, false);
 		await writeFile(join(root, ".pi", "settings.json"), JSON.stringify({ hashlineEdit: { actionFusion: true } }));
 		const config = loadConfig(root);
 		assert.equal(config.actionFusion, true);

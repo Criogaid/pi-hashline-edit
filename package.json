@@ -16,6 +16,9 @@
     "test": "node --test src/core/*.test.ts src/pi/*.test.ts",
     "test:integration": "node --test src/integration/*.test.ts"
   },
+  "dependencies": {
+    "@vscode/ripgrep": "1.18.0"
+  },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*"
   },

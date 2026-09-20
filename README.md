@@ -167,6 +167,7 @@ The `grep` override also covers the compound queries that otherwise push models 
 - `pattern` and `path` accept arrays — several patterns combined per `matchMode`, several search roots in one call
 
 Filters run before the match limit counts, and context windows are rebuilt from surviving matches, so `limit` and `context` compose cleanly with `matchMode`/`excludePattern`.
+The extension installs a platform-specific ripgrep executable through `@vscode/ripgrep` and invokes that bundled binary directly. Search behavior does not depend on a system `rg` installation or `PATH`.
 
 
 `edit` takes `path` + `edits`. Copy `anchor` and `end` directly as `"LINE#HASH"` strings; `body` contains the new lines:
