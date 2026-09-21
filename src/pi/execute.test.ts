@@ -558,3 +558,13 @@ test("edit preserves a UTF-8 BOM and reports bound mutation revisions", async ()
 	assert.equal(result.details.observedRevision, result.details.publishedRevision);
 	assert.equal(result.details.revision, result.details.publishedRevision);
 }));
+
+test("edit and replace reject NUL output without rewriting source bytes", async () => withDir(async (dir) => {
+	const target = join(dir, "output.txt");
+	const original = Buffer.from("\ufeffbefore\r\n", "utf8");
+	await writeFile(target, original);
+	await assert.rejects(call(makeEditOverride(dir), { path: "output.txt", edits: [{ op: "append", body: ["bad\0text"] }] }), /UNSUPPORTED_TEXT/);
+	assert.deepEqual(await readFile(target), original);
+	await assert.rejects(call(makeReplaceTool(dir), { path: "output.txt", find: "before", replace: "bad\0text" }), /UNSUPPORTED_TEXT/);
+	assert.deepEqual(await readFile(target), original);
+}));

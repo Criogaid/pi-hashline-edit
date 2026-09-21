@@ -147,6 +147,7 @@ async function syncDirectory(path: string): Promise<void> {
 
 /** 统一 mutation 提交：先准备并同步临时文件，再按创建/替换语义发布；调用方负责外层文件队列。 */
 export async function commitFile(path: string, content: string, options: CommitOptions = {}): Promise<CommitResult> {
+	if (content.includes("\0")) throw prepareError("UNSUPPORTED_TEXT: NUL bytes are not editable.");
 	const target = await inspectTarget(path);
 	const mode = options.mode ?? (target.existed ? "overwrite" : "create");
 	if (mode === "create" && target.existed) throw prepareError("target already exists; use mode=overwrite");
