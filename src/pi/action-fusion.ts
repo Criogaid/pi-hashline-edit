@@ -35,6 +35,8 @@ export interface ActionFusionProgress extends Omit<ActionFusionDetails, "command
 	commandText: string;
 	command: Exclude<CommandStatus, "not_requested"> | "waiting" | "running";
 	output: string;
+	/** True only after mutation execution and result generation both succeed. */
+	mutationCompleted: boolean;
 }
 
 type ProgressReporter = (progress: ActionFusionProgress, ctx: ExtensionContext) => void;
@@ -192,7 +194,7 @@ export function createActionFusionExecutor(commandRunner: CommandRunner = defaul
 		let completedMutation: MutationResult<TDetails> | undefined;
 		const report = (command: ActionFusionProgress["command"], publication: PublicationStatus, freshness: Freshness, output = "") => {
 			if (!thenRun) return;
-			const progress: ActionFusionProgress = { toolCallId, path: absolutePath, commandText: thenRun.command, command, publication, freshness, output };
+			const progress: ActionFusionProgress = { toolCallId, path: absolutePath, commandText: thenRun.command, command, publication, freshness, output, mutationCompleted: completedMutation !== undefined };
 			onProgress?.(progress, ctx);
 			onUpdate?.({
 				content: [...(completedMutation?.content ?? []), { type: "text", text: `then_run ${command}: ${thenRun.command}\n${output}` }],
@@ -218,6 +220,7 @@ export function createActionFusionExecutor(commandRunner: CommandRunner = defaul
 			}
 
 			const publication = mutationPublication(mutationResult);
+			report("waiting", publication, "unknown");
 			if (thenRun === undefined) {
 				const finalized = finalizeMutation?.(mutationResult, true) ?? mutationResult;
 				return {

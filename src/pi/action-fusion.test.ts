@@ -208,7 +208,8 @@ test("all mutation tools forward command progress before completion in RPC mode"
 			updates.length = 0;
 			await writeFile(join(dir, "progress.txt"), "before\n");
 			await tool.execute(tool.name, { path: "progress.txt", ...input, then_run: { command: "check" } }, undefined, (update: any) => updates.push(update), { cwd: dir, mode: "rpc" });
-			assert.deepEqual(events.map((event) => event.command), ["waiting", "running", "running", "succeeded"]);
+			assert.deepEqual(events.map((event) => event.command), ["waiting", "waiting", "running", "running", "succeeded"]);
+			assert.deepEqual(events.map((event) => event.mutationCompleted), [false, true, true, true, true]);
 			assert.equal(events.at(-1)?.output, "final output");
 			assert.equal(events.at(-1)?.publication, "PUBLISHED");
 			assert.equal(updates.at(-1).details.actionFusion.command, "succeeded");
@@ -236,7 +237,7 @@ test("progress reports skipped mutations and failed commands without rolling bac
 		events.length = 0;
 		const failed = await makeWriteOverride(dir, fusion).execute("fail", { path: "failed.txt", content: "published\n", then_run: { command: "check" } }, undefined, undefined, ctx(dir));
 		assert.equal(failed.details.actionFusion.command, "failed");
-		assert.deepEqual(events.map((event) => event.command), ["waiting", "running", "failed"]);
+		assert.deepEqual(events.map((event) => event.command), ["waiting", "waiting", "running", "failed"]);
 		assert.match(events.at(-1)!.output, /diagnostic[\s\S]*code 7/);
 		assert.equal(await readFile(join(dir, "failed.txt"), "utf8"), "published\n");
 	} finally {

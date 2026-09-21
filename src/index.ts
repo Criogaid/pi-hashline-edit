@@ -22,6 +22,7 @@ import { makeReplaceTool } from "./pi/replace-tool.ts";
 import { makeWriteOverride } from "./pi/write-tool.ts";
 import { createActionFusionExecutor } from "./pi/action-fusion.ts";
 import { registerFusionCards } from "./pi/fusion-card.ts";
+import { withMutationStatus } from "./pi/render.ts";
 
 export default function (pi: ExtensionAPI) {
 	const cwd = process.cwd();
@@ -34,9 +35,9 @@ export default function (pi: ExtensionAPI) {
 	if (state.config.enabled) {
 		const reportProgress = registerFusionCards(pi);
 		const fusion = state.config.actionFusion ? createActionFusionExecutor(undefined, reportProgress) : undefined;
-		pi.registerTool(makeWriteOverride(cwd, fusion));
-		pi.registerTool(makeEditOverride(cwd, fusion));
-		pi.registerTool(makeReplaceTool(cwd, fusion));
+		for (const tool of [makeWriteOverride(cwd, fusion), makeEditOverride(cwd, fusion), makeReplaceTool(cwd, fusion)]) {
+			pi.registerTool(fusion ? withMutationStatus(tool) : tool);
+		}
 
 		pi.registerTool(makeReadOverride(cwd));
 		pi.registerTool(makeGrepOverride(cwd));

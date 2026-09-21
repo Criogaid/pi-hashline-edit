@@ -518,7 +518,7 @@ test("failed commands preserve mutation results and stay out of all main card re
 		assert.doesNotMatch(rendered.render(120).join("\n"), /command-only diagnostic|then_run:failed/);
 		assert.equal(await readFile(join(dir, args.path), "utf8"), expected);
 	}
-	assert.deepEqual(commands, ["waiting", "running", "failed", "waiting", "running", "failed", "waiting", "running", "failed"]);
+	assert.deepEqual(commands, cases.flatMap(() => ["waiting", "waiting", "running", "failed"]));
 }));
 
 test("text tools reject malformed UTF-8 and NUL bytes without rewriting source bytes", async () => withDir(async (dir) => {

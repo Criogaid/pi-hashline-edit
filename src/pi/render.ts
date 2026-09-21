@@ -9,8 +9,8 @@
  * @module pi-hashline-edit/pi
  */
 
-import { renderDiff } from "@earendil-works/pi-coding-agent";
-import { Text } from "@earendil-works/pi-tui";
+import { renderDiff, type ToolDefinition } from "@earendil-works/pi-coding-agent";
+import { Box, Container, Text } from "@earendil-works/pi-tui";
 
 const HASHLINE_RE = /^(\d+)#[A-Za-z0-9]+│(.*)$/;
 
@@ -125,4 +125,29 @@ export function renderMutationResult(
 		return new Text(theme.fg("success", summary), 0, 0);
 	}
 	return new Text(renderDiffPreview(diff, expanded, theme), 0, 0);
+}
+
+/** Keep the mutation card's background independent of the fused command's lifetime. */
+export function withMutationStatus(tool: ToolDefinition<any, any, any>): ToolDefinition<any, any, any> {
+	return {
+		...tool,
+		renderShell: "self",
+		renderCall(args, theme, context) {
+			const shell = context.state.mutationShell ??= { box: new Box(1, 1) };
+			shell.call = tool.renderCall!(args, theme, { ...context, lastComponent: shell.call });
+			shell.box.clear();
+			shell.box.addChild(shell.call);
+			shell.box.setBgFn((line: string) => theme.bg(context.isPartial ? "toolPendingBg" : context.isError ? "toolErrorBg" : "toolSuccessBg", line));
+			return shell.box;
+		},
+		renderResult(result, options, theme, context) {
+			const shell = context.state.mutationShell;
+			const isPartial = options.isPartial && result.details?.actionFusion?.mutationCompleted !== true;
+			shell.result = tool.renderResult!(result, { ...options, isPartial }, theme, { ...context, isPartial, lastComponent: shell.result });
+			// Pi runs renderCall first; update its box in place without invalidating the tool row.
+			shell.box.addChild(shell.result);
+			shell.box.setBgFn((line: string) => theme.bg(isPartial ? "toolPendingBg" : context.isError ? "toolErrorBg" : "toolSuccessBg", line));
+			return new Container();
+		},
+	};
 }

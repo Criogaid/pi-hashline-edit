@@ -32,7 +32,7 @@ function harness(entries: any[] = []) {
 
 const waiting: ActionFusionProgress = {
 	toolCallId: "call-1", path: "file.ts", commandText: "npm test", command: "waiting",
-	publication: "NOT_PUBLISHED", freshness: "unknown", output: "",
+	publication: "NOT_PUBLISHED", freshness: "unknown", output: "", mutationCompleted: false,
 };
 
 test("one independent card updates live and only persists its endpoints", () => {
