@@ -35,7 +35,7 @@ import { Type } from "typebox";
 import { Text } from "@earendil-works/pi-tui";
 import { readFile, realpath, stat } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
-import { hashFileLines } from "../core/hash.ts";
+import { computeLineHash } from "../core/hash.ts";
 import { splitLines } from "../core/lines.ts";
 import { decodeEditableText } from "../core/text.ts";
 import { getState } from "./state.ts";
@@ -754,7 +754,7 @@ export function makeGrepOverrideWithBackend(cwd: string, overrides: Partial<Grep
       }
       for (const lines of byFile.values()) lines.sort((a, b) => a - b);
 
-      // byFile visits each path once; hash the full lines for its result block.
+      // Read each file once; only hash the selected match/context rows below.
       const getFile = async (filePath: string) => {
         let bytes: Buffer;
         try {
@@ -770,8 +770,7 @@ export function makeGrepOverrideWithBackend(cwd: string, overrides: Partial<Grep
             throw new Error("File changed during search; rerun the query.");
           }
         }
-        const lines = splitLines(content);
-        return { lines, hashes: hashFileLines(lines, hashLen) };
+        return splitLines(content);
       };
 
       const formatPath = (filePath: string): string => {
@@ -785,7 +784,7 @@ export function makeGrepOverrideWithBackend(cwd: string, overrides: Partial<Grep
       const blocks: string[] = [];
       if (outputMode === "content") {
         for (const [filePath, matchLines] of byFile) {
-          const { lines, hashes } = await getFile(filePath);
+          const lines = await getFile(filePath);
           // Context windows are rebuilt from surviving matches so context
           // lines of a filtered-out match never leak.
           const windowSet = new Set<number>();
@@ -800,7 +799,7 @@ export function makeGrepOverrideWithBackend(cwd: string, overrides: Partial<Grep
           const rows: string[] = [];
           for (const n of [...windowSet].sort((a, b) => a - b)) {
             const content = lines[n - 1] ?? "";
-            const hash = hashes[n - 1] ?? "";
+            const hash = n <= lines.length ? computeLineHash(n, content, hashLen) : "";
             const { text: display, wasTruncated } = truncateLine(content.replace(/\r/g, ""));
             if (wasTruncated) linesTruncated = true;
             rows.push(`${n}#${hash}│${display}`);

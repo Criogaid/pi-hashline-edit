@@ -14,7 +14,7 @@ import { Text } from "@earendil-works/pi-tui";
 import { readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { homedir } from "node:os";
-import { decodeUtf8, hashFileLines } from "../core/index.ts";
+import { decodeUtf8, computeLineHash } from "../core/index.ts";
 import { hasFinalNewline, splitLines } from "../core/lines.ts";
 import { getState } from "./state.ts";
 import { parseHashline } from "./render.ts";
@@ -147,7 +147,7 @@ export function makeReadOverride(cwd: string) {
 			const text = decodeUtf8(buf);
 			const allLines = splitLines(text);
 			const totalLines = allLines.length;
-			const hashes = hashFileLines(allLines, getState().config.hashLen);
+			const hashLen = getState().config.hashLen;
 
 			// offset/limit
 			const offset = (params.offset as number | undefined) ?? 1;
@@ -155,7 +155,7 @@ export function makeReadOverride(cwd: string) {
 			const startIdx = Math.max(0, offset - 1);
 			const endIdx = Math.min(totalLines, startIdx + limit);
 
-			const rows = allLines.slice(startIdx, endIdx).map((line, index) => `${startIdx + index + 1}#${hashes[startIdx + index]}│${line}`);
+			const rows = allLines.slice(startIdx, endIdx).map((line, index) => `${startIdx + index + 1}#${computeLineHash(startIdx + index + 1, line, hashLen)}│${line}`);
 			const truncation = truncateHead(rows.join("\n"), { maxBytes: MAX_BYTES, maxLines: rows.length });
 
 			const shownFrom = offset > 1 ? ` (from line ${offset})` : "";
