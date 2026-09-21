@@ -754,30 +754,24 @@ export function makeGrepOverrideWithBackend(cwd: string, overrides: Partial<Grep
       }
       for (const lines of byFile.values()) lines.sort((a, b) => a - b);
 
-      // Read each file once and hash all its lines; hash is computed from the FULL line.
-      const fileCache = new Map<string, { lines: string[]; hashes: string[] }>();
+      // byFile visits each path once; hash the full lines for its result block.
       const getFile = async (filePath: string) => {
-        let entry = fileCache.get(filePath);
-        if (!entry) {
-          let bytes: Buffer;
-          try {
-            bytes = await readFile(filePath);
-          } catch (error) {
-            if (strictIdentities) throw error;
-            bytes = Buffer.alloc(0);
-          }
-          const content = decodeEditableText(bytes);
-          if (strictIdentities) {
-            const baseline = strictIdentities.get(filePath);
-            if (!baseline || !sameIdentity(baseline, await fileIdentity(filePath))) {
-              throw new Error("File changed during search; rerun the query.");
-            }
-          }
-          const lines = splitLines(content);
-          entry = { lines, hashes: hashFileLines(lines, hashLen) };
-          fileCache.set(filePath, entry);
+        let bytes: Buffer;
+        try {
+          bytes = await readFile(filePath);
+        } catch (error) {
+          if (strictIdentities) throw error;
+          bytes = Buffer.alloc(0);
         }
-        return entry;
+        const content = decodeEditableText(bytes);
+        if (strictIdentities) {
+          const baseline = strictIdentities.get(filePath);
+          if (!baseline || !sameIdentity(baseline, await fileIdentity(filePath))) {
+            throw new Error("File changed during search; rerun the query.");
+          }
+        }
+        const lines = splitLines(content);
+        return { lines, hashes: hashFileLines(lines, hashLen) };
       };
 
       const formatPath = (filePath: string): string => {

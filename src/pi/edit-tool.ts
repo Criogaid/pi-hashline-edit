@@ -30,7 +30,7 @@ import { splitLines } from "../core/lines.ts";
 import type { ApplyFailure, Edit } from "../core/types.ts";
 import { canonicalPath } from "./read-tool.ts";
 import { getState } from "./state.ts";
-import { formatDiffCounts, publishDiffCounts, renderDiffPreview, type DiffCounts } from "./render.ts";
+import { formatDiffCounts, renderMutationResult, type DiffCounts } from "./render.ts";
 import { formatFailureContext } from "./failure-context.ts";
 
 /** Cap on the number of updated anchors returned inline (bounds token cost for large inserts). */
@@ -171,18 +171,6 @@ function toCoreEdits(ops: readonly EditOpInput[]): { ok: true; edits: Edit[] } |
 }
 
 /**
- * Fail the edit by throwing. pi's contract: a tool failure is signaled by throwing,
- * not by returning `{ isError: true }` — the framework derives `context.isError` from
- * whether execute threw, and overwrites `result.isError` with it
- * (`updateResult({ ...result, isError: event.isError })`). Returning an isError object
- * left the TUI rendering failures as success (green). The thrown message reaches the
- * LLM verbatim; renderResult shows its first line in red.
- */
-function errResult(text: string): never {
-	throw new Error(text);
-}
-
-/**
  * Format the updated anchors (fresh LINE#HASH│content) for the touched new-file
  * lines, so the model can chain edits without a re-read. Capped to bound tokens.
  */
@@ -234,29 +222,8 @@ export function makeEditOverride(cwd: string, fusion?: ReturnType<typeof createA
 			return text;
 		},
 
-		renderResult(result: any, { isPartial, expanded }: any, theme: any, context: any) {
-			if (isPartial && result.details?.actionFusion?.publication !== "PUBLISHED") return new Text(theme.fg("warning", "Editing…"), 0, 0);
-			const content = result.content?.[0];
-			if (context.isError) {
-				const t = content?.type === "text" ? content.text.split("\n")[0] : "Error";
-				return new Text(theme.fg("error", t), 0, 0);
-			}
-			const diff: string | undefined = result.details?.diff;
-			// refresh the call header's +N -N in place — never invalidate from
-			// inside a renderer (re-enters updateDisplay, diff renders twice)
-			publishDiffCounts(diff, context, (counts) => {
-				context.state?.callText?.setText(editHeader(context.args, theme, counts));
-			});
-			if (!diff) {
-				// No net diff (e.g. a successful but non-mutating edit): show only the summary
-				// line — content.text also carries `Updated anchors` (hashline) for the model.
-				const summary = content?.type === "text" ? content.text.split("\n")[0] : "Edited";
-				return new Text(theme.fg("success", summary), 0, 0);
-			}
-			// details.diff is pi-format (+N/-N/<space>N content); renderDiff handles
-			// semantic colors plus intra-line change highlighting
-			const rendered = renderDiffPreview(diff, expanded, theme);
-			return new Text(rendered, 0, 0);
+		renderResult(result: any, options: any, theme: any, context: any) {
+			return renderMutationResult(result, options, theme, context, "Editing…", "Edited", editHeader);
 		},
 
 		async execute(toolCallId: string, params: EditParams, signal: AbortSignal | undefined, onUpdate: any, ctx: any) {
@@ -266,7 +233,7 @@ export function makeEditOverride(cwd: string, fusion?: ReturnType<typeof createA
 			let mutationAnchors = "";
 			const mutate = () => {
 				const path = mutationParams.path;
-				if (!mutationParams.edits?.length) return errResult(`Edit ${path}: \`edits\` is empty or missing.`);
+				if (!mutationParams.edits?.length) throw new Error(`Edit ${path}: \`edits\` is empty or missing.`);
 				return withFileMutationQueue(absolutePath, () => runHashline(
 					absolutePath,
 					path,
@@ -315,13 +282,13 @@ async function runHashline(
 		currentText = decodeEditableText(currentBytes);
 	} catch (e) {
 		const msg = e instanceof Error ? e.message : String(e);
-		return errResult(`Error reading ${displayPath}: ${msg}`);
+		throw new Error(`Error reading ${displayPath}: ${msg}`);
 	}
 	// Check for cancel after read: if the user aborted, don't proceed to parse/apply; the file stays untouched
-	if (signal?.aborted) return errResult(`Edit ${displayPath} aborted before apply.`);
+	if (signal?.aborted) throw new Error(`Edit ${displayPath} aborted before apply.`);
 
 	const translated = toCoreEdits(editOps);
-	if (!translated.ok) return errResult(translated.error);
+	if (!translated.ok) throw new Error(translated.error);
 
 	// Anchors are verified against the current content. A line that changed (or a
 	// hash the model didn't actually read) fails its own anchor — but first we try
@@ -330,11 +297,11 @@ async function runHashline(
 	// the batch are collected (nothing written on any failure).
 	const result = applyEdits(currentText, translated.edits, hashLen, shiftRadius);
 	if (!result.ok) {
-		return errResult(formatFailure(result.failure, { currentText, hashLen }));
+		throw new Error(formatFailure(result.failure, { currentText, hashLen }));
 	}
 
 	// Check for cancel before write: if aborted, don't touch the disk; the file stays untouched
-	if (signal?.aborted) return errResult(`Edit ${displayPath} aborted before write.`);
+	if (signal?.aborted) throw new Error(`Edit ${displayPath} aborted before write.`);
 
 	let publication: PublicationStatus = "NOT_PUBLISHED";
 	let versions: MutationVersions;

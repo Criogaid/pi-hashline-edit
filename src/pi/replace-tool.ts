@@ -37,7 +37,7 @@ import { ACTION_FUSION_GUIDELINES, createActionFusionExecutor, createThenRunSche
 import { byteRevision, commitFile, FileMutationError, type MutationVersions, type PublicationStatus } from "./file-commit.ts";
 import { getState } from "./state.ts";
 import { canonicalPath } from "./read-tool.ts";
-import { formatDiffCounts, publishDiffCounts, renderDiffPreview, type DiffCounts } from "./render.ts";
+import { formatDiffCounts, renderMutationResult, type DiffCounts } from "./render.ts";
 
 /** Cap on updated-anchor lines returned inline (bounds token cost for large spans). */
 const MAX_ANCHOR_LINES = 40;
@@ -168,29 +168,8 @@ export function makeReplaceTool(cwd: string, fusion?: ReturnType<typeof createAc
 			return text;
 		},
 
-		renderResult(result: any, { isPartial, expanded }: any, theme: any, context: any) {
-			if (isPartial && result.details?.actionFusion?.publication !== "PUBLISHED") return new Text(theme.fg("warning", "Replacing…"), 0, 0);
-			const content = result.content?.[0];
-			if (context.isError) {
-				const t = content?.type === "text" ? content.text.split("\n")[0] : "Error";
-				return new Text(theme.fg("error", t), 0, 0);
-			}
-			const diff: string | undefined = result.details?.diff;
-			// refresh the call header's +N -N in place — never invalidate from
-			// inside a renderer (re-enters updateDisplay, diff renders twice)
-			publishDiffCounts(diff, context, (counts) => {
-				context.state?.callText?.setText(replaceHeader(context.args, theme, counts));
-			});
-			if (!diff) {
-				// No net diff: show only the summary line — content.text also carries
-				// `Updated anchors` (hashline) for the model.
-				const summary = content?.type === "text" ? content.text.split("\n")[0] : "Replaced";
-				return new Text(theme.fg("success", summary), 0, 0);
-			}
-			// details.diff is pi-format (+N/-N/<space>N content); renderDiff handles
-			// semantic colors plus intra-line change highlighting
-			const rendered = renderDiffPreview(diff, expanded, theme);
-			return new Text(rendered, 0, 0);
+		renderResult(result: any, options: any, theme: any, context: any) {
+			return renderMutationResult(result, options, theme, context, "Replacing…", "Replaced", replaceHeader);
 		},
 
 		async execute(toolCallId: string, params: ReplaceParams & { then_run?: ThenRunInput }, signal: AbortSignal | undefined, onUpdate: any, ctx: any) {

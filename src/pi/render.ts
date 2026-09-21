@@ -10,6 +10,7 @@
  */
 
 import { renderDiff } from "@earendil-works/pi-coding-agent";
+import { Text } from "@earendil-works/pi-tui";
 
 const HASHLINE_RE = /^(\d+)#[A-Za-z0-9]+│(.*)$/;
 
@@ -100,4 +101,28 @@ export function publishDiffCounts(
 	const prev: DiffCounts | undefined = context.state.diffCounts;
 	context.state.diffCounts = counts;
 	if (!prev || prev.added !== counts.added || prev.removed !== counts.removed) refreshHeader(counts);
+}
+
+/** Render mutation status or a diff, refreshing the call header's counts in place. */
+export function renderMutationResult(
+	result: any, { isPartial, expanded }: any, theme: any, context: any,
+	pending: string, fallback: string, header: (args: any, theme: any, counts?: DiffCounts) => string,
+): Text {
+	if (isPartial && result.details?.actionFusion?.publication !== "PUBLISHED") return new Text(theme.fg("warning", pending), 0, 0);
+	const content = result.content?.[0];
+	if (context.isError) {
+		const text = content?.type === "text" ? content.text.split("\n")[0] : "Error";
+		return new Text(theme.fg("error", text), 0, 0);
+	}
+	const diff: string | undefined = result.details?.diff;
+	// Refresh in place: invalidation inside a renderer re-enters updateDisplay.
+	publishDiffCounts(diff, context, (counts) => {
+		context.state?.callText?.setText(header(context.args, theme, counts));
+	});
+	if (!diff) {
+		// Only the summary is displayed; subsequent anchor rows are for the model.
+		const summary = content?.type === "text" ? content.text.split("\n")[0] : fallback;
+		return new Text(theme.fg("success", summary), 0, 0);
+	}
+	return new Text(renderDiffPreview(diff, expanded, theme), 0, 0);
 }
