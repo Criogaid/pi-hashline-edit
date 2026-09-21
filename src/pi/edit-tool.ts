@@ -19,22 +19,23 @@
  * @module pi-hashline-edit/pi
  */
 
-import { generateDiffString, generateUnifiedPatch, withFileMutationQueue, type EditToolDetails } from "@earendil-works/pi-coding-agent";
+import { generateDiffString, generateUnifiedPatch, truncateHead, withFileMutationQueue, type EditToolDetails } from "@earendil-works/pi-coding-agent";
 import { Type, type Static } from "typebox";
 import { Text } from "@earendil-works/pi-tui";
 import { readFile } from "node:fs/promises";
 import { ACTION_FUSION_GUIDELINES, createActionFusionExecutor, createThenRunSchema, type ThenRunInput } from "./action-fusion.ts";
 import { byteRevision, commitFile, FileMutationError, type MutationVersions, type PublicationStatus } from "./file-commit.ts";
-import { applyEdits, decodeEditableText, hashFileLines } from "../core/index.ts";
+import { applyEdits, decodeEditableText } from "../core/index.ts";
 import { splitLines } from "../core/lines.ts";
 import type { ApplyFailure, Edit } from "../core/types.ts";
 import { canonicalPath } from "./read-tool.ts";
 import { getState } from "./state.ts";
 import { formatDiffCounts, renderMutationResult, type DiffCounts } from "./render.ts";
 import { formatFailureContext } from "./failure-context.ts";
+import { finalizeMutationResult, formatMutationAnchors } from "./mutation-result.ts";
 
-/** Cap on the number of updated anchors returned inline (bounds token cost for large inserts). */
-const MAX_ANCHOR_LINES = 40;
+/** Bound detailed failures before constructing diagnostics; the final message also has a byte cap. */
+const MAX_FAILURE_DETAILS = 40;
 
 const ANCHOR_PATTERN = "^([1-9][0-9]*)#([0-9A-Z]{2,8})$";
 
@@ -102,21 +103,22 @@ function formatFailure(
 	let ambiguous = 0;
 	let none = 0;
 	for (const f of failure.failures) {
+		if (f.recovery.kind === "found") found++;
+		else if (f.recovery.kind === "ambiguous") ambiguous++;
+		else none++;
+		if (lines.length >= MAX_FAILURE_DETAILS) continue;
 		const where = `op #${f.opIndex} ${f.op} ${f.which} (line ${f.cited.line})`;
 		switch (f.recovery.kind) {
 			case "found":
-				found++;
-				lines.push(`• ${where}: content shifted. Resend with ${f.which} "${f.recovery.newLine}#${f.recovery.newHash}".`);
+				lines.push(`• ${where}: checksum-matching candidate. Resend with ${f.which} "${f.recovery.newLine}#${f.recovery.newHash}" after checking the target.`);
 				break;
 			case "ambiguous": {
-				ambiguous++;
-				const nums = f.recovery.candidates.map((candidate) => candidate.line).join(", ");
-				const list = f.recovery.candidates.map((candidate) => `"${candidate.line}#${candidate.hash}"`).join(" / ");
-				lines.push(`• ${where}: ambiguous — same content at lines ${nums}. Pick the right one and resend ${f.which} ${list}.`);
+				const list = f.recovery.candidates.slice(0, 8).map((candidate) => `"${candidate.line}#${candidate.hash}"`).join(" / ");
+				const more = f.recovery.candidates.length > 8 ? ` (${f.recovery.candidates.length - 8} more candidates omitted; use read)` : "";
+				lines.push(`• ${where}: ambiguous checksum matches. Inspect the target and resend ${f.which} ${list}${more}.`);
 				break;
 			}
 			case "none":
-				none++;
 				lines.push(
 					`• ${where}: original content not found within the configured shift-recovery window.` +
 						(f.current === null ? " Cited line is out of range." : ""),
@@ -128,11 +130,15 @@ function formatFailure(
 	if (found) parts.push(`${found} shifted`);
 	if (ambiguous) parts.push(`${ambiguous} ambiguous`);
 	if (none) parts.push(`${none} unresolved`);
-	return [
+	const message = [
 		`Anchor mismatch: ${parts.join(", ")}.`,
 		"No changes written by this edit batch.",
 		...lines,
+		...(failure.failures.length > lines.length ? [`${failure.failures.length - lines.length} failure details omitted; use read to inspect remaining targets.`] : []),
 	].join("\n") + formatFailureContext(snapshot.currentText, failure.failures, snapshot.hashLen);
+	const notice = "\nDiagnostic output truncated at 16 KiB. Use read to inspect omitted targets.";
+	const bounded = truncateHead(message, { maxBytes: 16 * 1024 - Buffer.byteLength(notice) });
+	return bounded.content + (bounded.truncated ? notice : "");
 }
 
 /** Translate JSON edit ops into core Edit[]. Validates conditional required fields (anchor/body per op). */
@@ -175,14 +181,8 @@ function toCoreEdits(ops: readonly EditOpInput[]): { ok: true; edits: Edit[] } |
  * lines, so the model can chain edits without a re-read. Capped to bound tokens.
  */
 function formatUpdatedAnchors(newText: string, touched: readonly number[], hashLen: number): string {
-	const newLines = splitLines(newText);
-	const newHashes = hashFileLines(newLines, hashLen);
 	const idxs = [...new Set(touched)].sort((a, b) => a - b);
-	if (idxs.length === 0) return "";
-	const rows = idxs.map((i) => `${i + 1}#${newHashes[i]}│${newLines[i]}`);
-	const shown = rows.length > MAX_ANCHOR_LINES ? rows.slice(0, MAX_ANCHOR_LINES) : rows;
-	const more = rows.length > MAX_ANCHOR_LINES ? `\n… (${rows.length - MAX_ANCHOR_LINES} more; re-read for full anchors)` : "";
-	return `\nUpdated anchors (use these for the next edit):\n${shown.join("\n")}${more}`;
+	return formatMutationAnchors(splitLines(newText), idxs, hashLen, "Updated anchors (use these for the next edit):");
 }
 
 /** Call-header line: `edit path — N ops: op`, plus `+N -N` once the result's diff counts are known. */
@@ -250,7 +250,7 @@ export function makeEditOverride(cwd: string, fusion?: ReturnType<typeof createA
 						: block,
 				),
 			});
-			if (!fusion) return finalizeMutation(await mutate(), true);
+			if (!fusion) return finalizeMutationResult(await mutate(), finalizeMutation);
 			return fusion({
 				toolCallId,
 				absolutePath,
@@ -317,7 +317,7 @@ async function runHashline(
 	let details: EditToolDetails & MutationVersions & { publication: PublicationStatus; revision: string };
 	let anchors: string;
 	try {
-		// diff 和 anchors 的计算属于发布后的后处理；失败时仍保留 publication。
+		// Diff and anchor generation happens after publication; preserve that state on failure.
 		const oldLf = currentText.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
 		const newLf = result.text.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
 		const { diff, firstChangedLine } = generateDiffString(oldLf, newLf);

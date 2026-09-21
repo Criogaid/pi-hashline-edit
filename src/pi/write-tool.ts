@@ -5,6 +5,7 @@ import { ACTION_FUSION_GUIDELINES, createActionFusionExecutor, createThenRunSche
 import { commitFile, FileMutationError, type CommitMode } from "./file-commit.ts";
 import { canonicalPath } from "./read-tool.ts";
 import { computeLineHash, splitLines } from "../core/index.ts";
+import { finalizeMutationResult } from "./mutation-result.ts";
 
 function createWriteSchema(actionFusion: boolean) {
 	return Type.Object({
@@ -85,7 +86,7 @@ export function makeWriteOverride(cwd: string, fusion?: ReturnType<typeof create
 					}],
 				};
 			};
-			if (!fusion) return finalizeMutation(await mutate(), true);
+			if (!fusion) return finalizeMutationResult(await mutate(), finalizeMutation);
 			return fusion({ toolCallId, absolutePath, thenRun: then_run, mutate, finalizeMutation, signal, ctx, onUpdate });
 		},
 	};

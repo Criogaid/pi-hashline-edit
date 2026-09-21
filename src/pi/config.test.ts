@@ -20,3 +20,26 @@ test("actionFusion defaults off and can be enabled without changing other defaul
 		await rm(root, { recursive: true, force: true });
 	}
 });
+
+test("config rejects fractional values and tolerates malformed settings shapes", async () => {
+	const root = await mkdtemp(join(tmpdir(), "hashline-config-"));
+	try {
+		await mkdir(join(root, ".pi"));
+		const path = join(root, ".pi", "settings.json");
+		for (const value of [3.5, -1, "4", null]) {
+			await writeFile(path, JSON.stringify({ hashlineEdit: { hashLen: value, shiftRadius: value } }));
+			assert.deepEqual(loadConfig(root), { enabled: true, actionFusion: false, hashLen: 4, shiftRadius: 15 });
+		}
+		for (const rootValue of [null, [], 42, "settings", { hashlineEdit: [] }, { hashlineEdit: "invalid" }]) {
+			await writeFile(path, JSON.stringify(rootValue));
+			const config = loadConfig(root);
+			assert.ok(Number.isInteger(config.hashLen));
+			assert.ok(Number.isInteger(config.shiftRadius));
+		}
+		await writeFile(path, JSON.stringify({ hashlineEdit: { hashLen: 8, shiftRadius: 0 } }));
+		assert.equal(loadConfig(root).hashLen, 8);
+		assert.equal(loadConfig(root).shiftRadius, 0);
+	} finally {
+		await rm(root, { recursive: true, force: true });
+	}
+});

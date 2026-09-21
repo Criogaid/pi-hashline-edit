@@ -75,9 +75,10 @@ A separate, location-blind tool for transforms `edit` can't express: replace **a
 - **Line folded into the hash**: each line's hash mixes its 1-based line number into its content. This disambiguates repeated content in normal use, but the truncated 32-bit checksum can collide and is not an identity credential. The hash changes when either the content or line number changes; editing a neighbor in place does not affect it.
 - **Live, surgical verification**: at apply time each supplied anchor's hash is recomputed from the current line content and compared — no stored snapshot, no whole-file stale check. A changed cited line normally fails its anchor, though short-checksum collisions are possible; an unrelated in-place change elsewhere does not. For a range, the current protocol carries only start and end anchors, so interior before-image verification requires the planned read-receipt protocol. Insertions or deletions above the target trigger shifted-anchor recovery instead of silently retargeting the edit. No fuzzy matching, no boundary repair.
 - **Shifted-anchor recovery**: a mismatched anchor isn't a dead end. The applicator rescans ±`shiftRadius` lines while holding the cited line number fixed and re-hashing each candidate. A unique checksum match is offered as a retry candidate; collisions or repeated candidates can be ambiguous, so recovery never auto-applies. When the content cannot be recovered, the failure includes a bounded `LINE#HASH│content` window from the validation snapshot; the model must re-evaluate the intended change, and every retry is verified again.
-- **Atomic batches, all failures collected**: every op in one `edit` is verified against the same snapshot; if any anchor fails, *all* failures (each with its recovery) are returned together and nothing is written — partial writes would shift lines and invalidate the very recovery info just returned.
+- **Atomic batches, all failures collected**: every op in one `edit` is verified against the same snapshot. If any anchor fails, nothing is written; the result reports failure counts and bounded recovery details. Retries always re-verify the supplied anchors.
 - **Chain edits without re-reading**: a successful `edit` returns `Updated anchors` for the lines it produced (and the line that shifted into a deletion gap), so the next edit can cite them directly.
 - **Byte-faithful writes**: `edit` rewrites only the lines you name. CRLF files keep CRLF, and a file whose last line has no terminator does not gain one — the state `splitLines` discards is captured before the edit and restored after it. `read` states the fact in its header (`· no trailing newline`), since the numbered rows cannot show it.
+- **BOM and output encoding**: `edit` keeps an existing UTF-8 BOM at byte zero when replacing/deleting the first line or inserting before it; deleting all content leaves the BOM. First-line anchor hashes still include the original BOM. A copied leading BOM in the first replacement/insertion line denotes that existing header; interior `U+FEFF` characters are preserved. A BOM-only file retains its existing one-line anchor representation. `write` uses its supplied content exactly, and `replace` retains explicit BOM matching. All mutations reject strings that cannot be encoded losslessly as UTF-8 before publication.
 - **No legacy compatibility on `edit`**: `edit` accepts only structured hashline ops; sending legacy `oldText`/`newText` is rejected at the schema layer (never silently degrades) — so you always know whether hashline is actually in use. Bulk/regex replacement is a *separate* tool, `replace`, not an `edit` mode (see below).
 
 ## Why line hashes, not file tags
@@ -194,7 +195,7 @@ Ops: `replace` · `delete` · `insert_after` · `insert_before` · `append` · `
 
 **Migration:** Object anchors (`{ "line": 4, "hash": "K7P2" }`) are no longer accepted by the tool. Use `"4#K7P2"` instead, including in saved calls and retry code. Core library anchors remain objects.
 
-Successful `write` results include a revision and compact anchor tokens (up to 40), without echoing the content just supplied. Edit/replace results retain changed-line content where it helps identify subsequent edits. Parameter rules live in the schemas; prompt guidelines cover only tool selection and batching.
+Successful `write` results include a revision and compact anchor tokens (up to 40), without echoing the content just supplied. Edit/replace results retain complete changed-line content, capped at 40 anchor rows and 16 KiB for the anchor section including its heading and omission notice. Rows that do not fit are omitted whole, never returned as partial editable lines. Anchor-mismatch diagnostics have a 16 KiB total budget, at most 40 detailed failures, and at most eight candidates per ambiguous failure; omitted details require a fresh read. Parameter rules live in the schemas; prompt guidelines cover only tool selection and batching.
 
 `replace` takes `path`, `find`, `replace` (+ optional `regex`, `flags`, `maxMatches`) and substitutes **every** match:
 
@@ -227,8 +228,8 @@ Add a `hashlineEdit` field to `~/.pi/agent/settings.json` (global) or `.pi/setti
   "hashlineEdit": {
     "enabled": true,     // set false to disable the extension entirely (built-ins remain; reload pi)
     "actionFusion": false, // set true to expose then_run on edit/replace/write
-    "hashLen": 4,        // hash length, 2–8 (default 4)
-    "shiftRadius": 15    // ±lines scanned to rescue a stale anchor (default 15; 0 disables)
+    "hashLen": 4,        // integer hash length, 2–8 (default 4)
+    "shiftRadius": 15    // integer recovery radius, 0–100 (default 15; 0 disables)
   }
 }
 ```
@@ -237,9 +238,11 @@ When `actionFusion` is true, `edit`, `replace`, and `write` accept an optional `
 `write` preserves Pi's complete-content `{ path, content }` shape. By default it creates missing files and overwrites existing files. `mode: "create"` refuses an existing target; `mode: "overwrite"` requires an existing target; `expectedRevision` is optional, but is checked strictly when supplied. Hashline does not automatically strip `LINE#HASH│` prefixes from write content.
 The setting is disabled by default. Keep it false when commands should not be available from Hashline mutations.
 
+Malformed settings objects and invalid field values fall back to the applicable defaults. `hashLen` and `shiftRadius` must be integers within their documented ranges.
+
 In the TUI, each `then_run` gets a separate transcript card showing the command, waiting/running state, live output, and final outcome. The main `edit`/`replace`/`write` card switches to its success background as soon as mutation execution and result generation succeed, while the command card stays pending until its own outcome is known. Streaming updates expose this distinction through `details.actionFusion.mutationCompleted`; file publication alone is not mutation success. If the mutation succeeded but the command failed, the main card retains its successful mutation preview/diff and only the command card shows the failure. Command output is not repeated in the main card. Cards reuse Pi's native Bash command and output renderers, including the collapsed output preview and expand hint, with the same pending/success/error background colors as native tools. Expand them to inspect the captured output. Cards preserve their final state across session reloads without adding messages to model context. If the session ended before a final outcome was saved, the card reports an interrupted command with unknown final status. RPC hosts receive the same progress through tool execution updates; rendering depends on the host.
 
-Fusion errors tell the model whether file changes were saved and whether the command ran. When a requested command leaves freshness anything other than explicitly `unchanged`, pre-command anchors from `write` and `edit` are omitted and the result requests a fresh read before further editing. Structured publication, command, and freshness states remain available to the card and other consumers.
+Fusion errors tell the model whether file changes were saved and whether the command ran. When a requested command leaves freshness anything other than explicitly `unchanged`, pre-command anchors from `write`, `edit`, and `replace` are omitted and the result requests a fresh read. Streaming mutation summaries do not contain anchors. Without a command (including when Fusion is disabled), anchors are exposed only when the commit's `observedRevision` equals its `publishedRevision`. This is an observation at result preparation time; later edits still verify their anchors. Structured publication, command, and freshness states remain available to the card and other consumers. Progress callback failures are reported as display diagnostics without changing the mutation or command outcome.
 
 ### File publication boundaries
 

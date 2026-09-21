@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { computeLineHash } from "./hash.ts";
 import { splitLines } from "./lines.ts";
 import { applyEdits } from "./apply.ts";
-import type { Anchor } from "./types.ts";
+import type { Anchor, Edit } from "./types.ts";
 
 /** Live anchor: hash the current content at the given line (1-based). */
 function at(text: string, line: number): Anchor {
@@ -334,4 +334,33 @@ test("rejects CR or LF embedded in body elements", () => {
 			failure: { kind: "input", message: "INVALID_BODY: each body element must contain exactly one logical line." },
 		});
 	}
+});
+
+test("BOM stays at byte zero through first-line edits while anchors retain their original hashes", () => {
+	for (const text of ["\uFEFFfirst\nsecond\n", "\uFEFFfirst\r\nsecond\r\n", "\uFEFFfirst\r\nsecond\n", "\uFEFFfirst\nsecond"]) {
+		const ending = text.includes("\r\n") ? "\r\n" : "\n";
+		const rest = text.slice(text.indexOf("\n") + 1);
+		const cases: [Edit, string][] = [
+			[{ op: "replace", start: at(text, 1), body: ["changed"] }, `\uFEFFchanged${ending}${rest}`],
+			[{ op: "replace", start: at(text, 1), body: ["\uFEFFchanged"] }, `\uFEFFchanged${ending}${rest}`],
+			[{ op: "delete", start: at(text, 1) }, `\uFEFF${rest}`],
+			[{ op: "prepend", body: ["new"] }, `\uFEFFnew${ending}${text.slice(1)}`],
+			[{ op: "insert_before", anchor: at(text, 1), body: ["new"] }, `\uFEFFnew${ending}${text.slice(1)}`],
+			[{ op: "delete", start: at(text, 1), end: at(text, 2) }, "\uFEFF"],
+		];
+		for (const [edit, expected] of cases) {
+			const result = applyEdits(text, [edit]);
+			assert.ok(result.ok);
+			assert.equal(result.text, expected, `${edit.op}: ${JSON.stringify(text)}`);
+		}
+	}
+	for (const text of ["\uFEFF", "\uFEFFfirst"]) {
+		const result = applyEdits(text, [{ op: "replace", start: at(text, 1), body: ["changed"] }]);
+		assert.ok(result.ok);
+		assert.equal(result.text, "\uFEFFchanged");
+	}
+	const embedded = "\uFEFFfirst\ninside\uFEFFcontent\n";
+	const result = applyEdits(embedded, [{ op: "replace", start: at(embedded, 1), body: ["changed"] }]);
+	assert.ok(result.ok);
+	assert.equal(result.text, "\uFEFFchanged\ninside\uFEFFcontent\n");
 });

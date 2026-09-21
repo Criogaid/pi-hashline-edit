@@ -179,6 +179,7 @@ export function applyEdits(text: string, edits: Edit[], hashLen = 4, shiftRadius
 		return { ok: false, failure: { kind: "input", message: "INVALID_BODY: each body element must contain exactly one logical line." } };
 	}
 	const lines = splitLines(text);
+	const bom = text.startsWith("\uFEFF") ? "\uFEFF" : "";
 	const ending = detectLineEnding(text);
 
 	const ops: SpanOp[] = [];
@@ -227,11 +228,13 @@ export function applyEdits(text: string, edits: Edit[], hashLen = 4, shiftRadius
 	// pure insertion) fall back to the file's customary ending.
 	const separators = text.match(/\r?\n/g) ?? [];
 	const separator = ending === "crlf" ? "\r\n" : "\n";
-	let result = lines.map((content, i) => ({ content, separator: separators[i] ?? "" }));
+	// Verify legacy anchors above before separating the file BOM from movable line content.
+	let result = lines.map((content, i) => ({ content: bom && i === 0 ? content.slice(1) : content, separator: separators[i] ?? "" }));
 	for (const op of [...sorted].sort((a, b) => b.lo - a.lo)) {
 		const removed = result.slice(op.lo, op.hi);
 		const inserted = op.newLines.map((content, i) => ({
-			content,
+			// A copied first-line BOM denotes the existing file header, not a second BOM.
+			content: bom && op.lo === 0 && i === 0 && content.startsWith(bom) ? content.slice(1) : content,
 			separator: i === op.newLines.length - 1 && removed.length > 0
 				? removed[removed.length - 1].separator
 				: removed[i]?.separator || separator,
@@ -239,7 +242,7 @@ export function applyEdits(text: string, edits: Edit[], hashLen = 4, shiftRadius
 		result.splice(op.lo, op.hi - op.lo, ...inserted);
 	}
 	const finalNewline = hasFinalNewline(text);
-	const newText = result.map(({ content, separator: current }, i) =>
+	const newText = bom + result.map(({ content, separator: current }, i) =>
 		content + (i < result.length - 1 || finalNewline ? current || separator : ""),
 	).join("");
 	if (newText === text) {

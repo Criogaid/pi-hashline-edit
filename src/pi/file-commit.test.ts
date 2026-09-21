@@ -209,3 +209,20 @@ test("commit result binds base, published, and observed revisions", async () => 
 	assert.equal(result.observedRevision, result.publishedRevision);
 	assert.equal(result.revision, result.publishedRevision);
 }));
+
+test("commit rejects lossy UTF-8 output before modifying or creating files", async () => withTemp(async (dir) => {
+	const existing = join(dir, "existing.txt");
+	const missing = join(dir, "missing.txt");
+	await writeFile(existing, "original\n");
+	for (const content of ["\ud800", "\udfff", "before\ud800after"]) {
+		for (const path of [existing, missing]) {
+			await assert.rejects(commitFile(path, content), (error: any) => error.publication === "NOT_PUBLISHED" && /INVALID_UNICODE/.test(error.message));
+		}
+	}
+	assert.equal(await readFile(existing, "utf8"), "original\n");
+	await assert.rejects(readFile(missing), { code: "ENOENT" });
+	const content = "\uFEFFvalid 😀\r\n";
+	const result = await commitFile(existing, content);
+	assert.deepEqual(await readFile(existing), Buffer.from(content));
+	assert.equal(result.publishedRevision, byteRevision(Buffer.from(content)));
+}));

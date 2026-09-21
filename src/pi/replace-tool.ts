@@ -32,15 +32,14 @@ import {
 import { Type, type Static } from "typebox";
 import { Text } from "@earendil-works/pi-tui";
 import { readFile } from "node:fs/promises";
-import { decodeEditableText, hashFileLines, splitLines } from "../core/index.ts";
+import { decodeEditableText, splitLines } from "../core/index.ts";
 import { ACTION_FUSION_GUIDELINES, createActionFusionExecutor, createThenRunSchema, type ThenRunInput } from "./action-fusion.ts";
 import { byteRevision, commitFile, FileMutationError, type MutationVersions, type PublicationStatus } from "./file-commit.ts";
 import { getState } from "./state.ts";
 import { canonicalPath } from "./read-tool.ts";
 import { formatDiffCounts, renderMutationResult, type DiffCounts } from "./render.ts";
+import { finalizeMutationResult, formatMutationAnchors } from "./mutation-result.ts";
 
-/** Cap on updated-anchor lines returned inline (bounds token cost for large spans). */
-const MAX_ANCHOR_LINES = 40;
 /** Default safety cap on match count (errors before writing if exceeded). */
 const DEFAULT_MAX_MATCHES = 2000;
 /** Valid JavaScript regular-expression flag characters (ES2023+, incl. hasIndices `d`). */
@@ -118,12 +117,10 @@ function changedSpan(oldLines: readonly string[], newLines: readonly string[]): 
 
 /** Format fresh `LINE#HASH│content` anchors for a contiguous span of the new file, capped. */
 function formatSpanAnchors(newLines: readonly string[], span: { start: number; end: number }, hashLen: number): string {
-	const hashes = hashFileLines(newLines, hashLen);
-	const rows: string[] = [];
-	for (let i = span.start; i <= span.end; i++) rows.push(`${i + 1}#${hashes[i]}│${newLines[i]}`);
-	const shown = rows.length > MAX_ANCHOR_LINES ? rows.slice(0, MAX_ANCHOR_LINES) : rows;
-	const more = rows.length > MAX_ANCHOR_LINES ? `\n… (${rows.length - MAX_ANCHOR_LINES} more; re-read for full anchors)` : "";
-	return `\nUpdated anchors (changed region):\n${shown.join("\n")}${more}`;
+	function* indices() {
+		for (let i = span.start; i <= span.end; i++) yield i;
+	}
+	return formatMutationAnchors(newLines, indices(), hashLen, "Updated anchors (changed region):");
 }
 
 /** Truncate a string for one-line display, folding newlines into a marker. */
@@ -178,9 +175,15 @@ export function makeReplaceTool(cwd: string, fusion?: ReturnType<typeof createAc
 			const state = getState();
 			const path = mutationParams.path;
 			const absolutePath = canonicalPath(cwd, path);
-			const mutate = () => withFileMutationQueue(absolutePath, () => runReplace(absolutePath, path, mutationParams, state.config.hashLen, signal));
-			if (!fusion) return mutate();
-			return fusion({ toolCallId, absolutePath, thenRun: then_run, mutate, signal, ctx, onUpdate });
+			let mutationAnchors = "";
+			const mutate = () => withFileMutationQueue(absolutePath, () => runReplace(absolutePath, path, mutationParams, state.config.hashLen, signal, (anchors) => { mutationAnchors = anchors; }));
+			const finalizeMutation = (result: any, publishAnchors: boolean) => ({
+				...result,
+				content: result.content.map((block: any, index: number) => index === 0 && block.type === "text"
+					? { ...block, text: `${block.text}${publishAnchors ? mutationAnchors : ""}` } : block),
+			});
+			if (!fusion) return finalizeMutationResult(await mutate(), finalizeMutation);
+			return fusion({ toolCallId, absolutePath, thenRun: then_run, mutate, finalizeMutation, signal, ctx, onUpdate });
 		},
 	};
 }
@@ -191,6 +194,7 @@ async function runReplace(
 	params: ReplaceParams,
 	hashLen: number,
 	signal: AbortSignal | undefined,
+	onAnchors: (anchors: string) => void,
 ) {
 	const { find, replace } = params;
 	const isRegex = params.regex === true;
@@ -237,8 +241,6 @@ async function runReplace(
 
 	// Literal mode uses a function replacement so `$` in `replace` stays literal;
 	// regex mode passes the string so $1/$& etc. expand.
-	// Literal mode uses a function replacement so `$` in `replace` stays literal;
-	// regex mode passes the string so $1/$& etc. expand.
 	const newText = isRegex ? currentText.replace(regex, replace) : currentText.replace(regex, () => replace);
 	const changed = newText !== currentText;
 
@@ -262,7 +264,7 @@ async function runReplace(
 	let anchors: string;
 	let note: string;
 	try {
-		// diff、anchors 和结果文本属于发布后的后处理；失败时保留 publication。
+		// Diff, anchors, and summary generation happens after publication; preserve its state on failure.
 		const oldLf = currentText.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
 		const newLf = newText.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
 		const { diff, firstChangedLine } = generateDiffString(oldLf, newLf);
@@ -280,11 +282,12 @@ async function runReplace(
 		anchors = span ? formatSpanAnchors(newLines, span, hashLen) : "";
 		const matchWord = `match${count !== 1 ? "es" : ""}`;
 		note = changed ? `${count} ${matchWord}` : `${count} ${matchWord}, no net change`;
+		onAnchors(anchors);
 	} catch (error) {
 		throw new FileMutationError("post_process", publication, `file was published but replace result generation failed: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
 	}
 	return {
-		content: [{ type: "text" as const, text: `Replaced ${displayPath} (${note}).${anchors}` }],
+		content: [{ type: "text" as const, text: `Replaced ${displayPath} (${note}).` }],
 		details,
 	};
 }

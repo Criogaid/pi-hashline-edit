@@ -100,11 +100,11 @@ async function inspectTarget(path: string): Promise<TargetInfo> {
 	};
 }
 
-async function writeAndSyncTemp(tempPath: string, content: string, modeBits: number | undefined, signal: AbortSignal | undefined): Promise<void> {
+async function writeAndSyncTemp(tempPath: string, content: Buffer, modeBits: number | undefined, signal: AbortSignal | undefined): Promise<void> {
 	signal?.throwIfAborted();
 	const handle = await open(tempPath, "w", modeBits === undefined ? 0o600 : modeBits & 0o7777);
 	try {
-		await handle.writeFile(content, "utf8");
+		await handle.writeFile(content);
 		await handle.sync();
 	} finally {
 		await handle.close();
@@ -145,9 +145,11 @@ async function syncDirectory(path: string): Promise<void> {
 	}
 }
 
-/** 统一 mutation 提交：先准备并同步临时文件，再按创建/替换语义发布；调用方负责外层文件队列。 */
+/** Prepare and sync exact UTF-8 bytes before publication; callers own the outer file queue. */
 export async function commitFile(path: string, content: string, options: CommitOptions = {}): Promise<CommitResult> {
 	if (content.includes("\0")) throw prepareError("UNSUPPORTED_TEXT: NUL bytes are not editable.");
+	const bytes = Buffer.from(content, "utf8");
+	if (bytes.toString("utf8") !== content) throw prepareError("INVALID_UNICODE: content cannot be encoded losslessly as UTF-8.");
 	const target = await inspectTarget(path);
 	const mode = options.mode ?? (target.existed ? "overwrite" : "create");
 	if (mode === "create" && target.existed) throw prepareError("target already exists; use mode=overwrite");
@@ -171,7 +173,7 @@ export async function commitFile(path: string, content: string, options: CommitO
 	let published = false;
 	let failure: unknown;
 	try {
-		await writeAndSyncTemp(tempPath, content, target.modeBits, options.signal);
+		await writeAndSyncTemp(tempPath, bytes, target.modeBits, options.signal);
 		if (mode === "overwrite" && options.expectedRevision !== undefined) {
 			let currentRevision: string;
 			try {
@@ -186,7 +188,7 @@ export async function commitFile(path: string, content: string, options: CommitO
 		published = true;
 		await syncDirectory(publishDirectory);
 		try {
-			const publishedRevision = byteRevision(content);
+			const publishedRevision = byteRevision(bytes);
 			const observedRevision = await fileRevision(publishPath);
 			return {
 				created: mode === "create",

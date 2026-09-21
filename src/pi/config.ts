@@ -27,7 +27,8 @@ const DEFAULT_CONFIG: HashlineEditConfig = { enabled: true, actionFusion: false,
 function readSettings(filePath: string): Record<string, unknown> {
 	try {
 		if (!fs.existsSync(filePath)) return {};
-		return JSON.parse(fs.readFileSync(filePath, "utf-8")) as Record<string, unknown>;
+		const value: unknown = JSON.parse(fs.readFileSync(filePath, "utf-8"));
+		return value !== null && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
 	} catch {
 		return {};
 	}
@@ -40,16 +41,17 @@ function readSettings(filePath: string): Record<string, unknown> {
 export function loadConfig(cwd?: string): HashlineEditConfig {
 	const globalSettings = readSettings(path.join(getAgentDir(), "settings.json"));
 	const projectSettings = cwd ? readSettings(path.join(cwd, ".pi", "settings.json")) : {};
-	const raw = (projectSettings.hashlineEdit ?? globalSettings.hashlineEdit ?? {}) as Record<string, unknown>;
+	const value = projectSettings.hashlineEdit ?? globalSettings.hashlineEdit;
+	const raw = value !== null && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
 	return {
 		enabled: typeof raw.enabled === "boolean" ? raw.enabled : DEFAULT_CONFIG.enabled,
 		actionFusion: raw.actionFusion === true,
 		hashLen:
-			typeof raw.hashLen === "number" && raw.hashLen >= 2 && raw.hashLen <= 8
+			typeof raw.hashLen === "number" && Number.isInteger(raw.hashLen) && raw.hashLen >= 2 && raw.hashLen <= 8
 				? raw.hashLen
 				: DEFAULT_CONFIG.hashLen,
 		shiftRadius:
-			typeof raw.shiftRadius === "number" && raw.shiftRadius >= 0 && raw.shiftRadius <= 100
+			typeof raw.shiftRadius === "number" && Number.isInteger(raw.shiftRadius) && raw.shiftRadius >= 0 && raw.shiftRadius <= 100
 				? raw.shiftRadius
 				: DEFAULT_CONFIG.shiftRadius,
 	};
