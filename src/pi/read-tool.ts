@@ -14,7 +14,7 @@ import { Text } from "@earendil-works/pi-tui";
 import { readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { homedir } from "node:os";
-import { hashFileLines } from "../core/hash.ts";
+import { decodeUtf8, hashFileLines } from "../core/index.ts";
 import { hasFinalNewline, splitLines } from "../core/lines.ts";
 import { getState } from "./state.ts";
 import { parseHashline } from "./render.ts";
@@ -144,7 +144,7 @@ export function makeReadOverride(cwd: string) {
 			// binary/image detection (null byte) → delegate to the built-in (it uses file-type for images)
 			if (buf.includes(0)) return builtin.execute(toolCallId, params, signal, onUpdate, ctx);
 
-			const text = buf.toString("utf-8");
+			const text = decodeUtf8(buf);
 			const allLines = splitLines(text);
 			const totalLines = allLines.length;
 			const hashes = hashFileLines(allLines, getState().config.hashLen);

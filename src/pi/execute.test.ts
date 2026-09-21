@@ -19,6 +19,7 @@ import { createActionFusionExecutor } from "./action-fusion.ts";
 import { getState } from "./state.ts";
 import { computeLineHash } from "../core/hash.ts";
 import { splitLines } from "../core/lines.ts";
+import { byteRevision } from "./file-commit.ts";
 
 async function withDir<T>(fn: (dir: string) => Promise<T>): Promise<T> {
 	const dir = await mkdtemp(join(tmpdir(), "hl-"));
@@ -518,4 +519,42 @@ test("failed commands preserve mutation results and stay out of all main card re
 		assert.equal(await readFile(join(dir, args.path), "utf8"), expected);
 	}
 	assert.deepEqual(commands, ["waiting", "running", "failed", "waiting", "running", "failed", "waiting", "running", "failed"]);
+}));
+
+test("text tools reject malformed UTF-8 and NUL bytes without rewriting source bytes", async () => withDir(async (dir) => {
+	const target = join(dir, "invalid-utf8.txt");
+	const original = Buffer.from([0x61, 0x0a, 0xc3, 0x28, 0x0a]);
+	await writeFile(target, original);
+	await assert.rejects(call(makeReadOverride(dir), { path: "invalid-utf8.txt" }), /UNSUPPORTED_ENCODING/);
+	await assert.rejects(call(makeEditOverride(dir), { path: "invalid-utf8.txt", edits: [{ op: "append", body: ["x"] }] }), /UNSUPPORTED_ENCODING/);
+	await assert.rejects(call(makeReplaceTool(dir), { path: "invalid-utf8.txt", find: "a", replace: "b" }), /UNSUPPORTED_ENCODING/);
+	assert.deepEqual(await readFile(target), original);
+
+	const nulTarget = join(dir, "nul.txt");
+	const nulOriginal = Buffer.from([0x61, 0x00, 0x62]);
+	await writeFile(nulTarget, nulOriginal);
+	await assert.rejects(call(makeEditOverride(dir), { path: "nul.txt", edits: [{ op: "append", body: ["x"] }] }), /UNSUPPORTED_TEXT/);
+	await assert.rejects(call(makeReplaceTool(dir), { path: "nul.txt", find: "a", replace: "b" }), /UNSUPPORTED_TEXT/);
+	assert.deepEqual(await readFile(nulTarget), nulOriginal);
+}));
+
+test("edit rejects embedded line terminators even when schema validation is bypassed", async () => withDir(async (dir) => {
+	const target = join(dir, "body.txt");
+	await writeFile(target, "a\n");
+	await assert.rejects(call(makeEditOverride(dir), { path: "body.txt", edits: [{ op: "append", body: ["x\ny"] }] }), /INVALID_BODY/);
+	assert.equal(await readFile(target, "utf8"), "a\n");
+	assert.throws(() => validateToolArguments(makeEditOverride(dir) as any, { type: "toolCall", id: "body", name: "edit", arguments: { path: "body.txt", edits: [{ op: "append", body: ["x\ny"] }] } }));
+}));
+
+test("edit preserves a UTF-8 BOM and reports bound mutation revisions", async () => withDir(async (dir) => {
+	const target = join(dir, "bom.txt");
+	const original = Buffer.from("\ufeffguard\nold\n", "utf8");
+	await writeFile(target, original);
+	const result: any = await call(makeEditOverride(dir), { path: "bom.txt", edits: [{ op: "replace", anchor: h("\ufeffguard\nold\n", 2), body: ["new"] }] });
+	const expected = Buffer.from("\ufeffguard\nnew\n", "utf8");
+	assert.deepEqual(await readFile(target), expected);
+	assert.equal(result.details.baseRevision, byteRevision(original));
+	assert.equal(result.details.publishedRevision, byteRevision(expected));
+	assert.equal(result.details.observedRevision, result.details.publishedRevision);
+	assert.equal(result.details.revision, result.details.publishedRevision);
 }));

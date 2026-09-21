@@ -540,3 +540,21 @@ test("large candidate lines flush before the batch line-count limit", async () =
     assert.deepEqual(sizes, [2, 1]);
   });
 });
+
+test("grep rejects malformed UTF-8 and NUL bytes instead of hashing binary text", async () => {
+  await withDir(async (dir) =>
+    withEnabled(true, async () => {
+      const cases = [
+        { name: "invalid.txt", bytes: Buffer.from([0x61, 0x0a, 0xc3, 0x28, 0x0a]), error: /UNSUPPORTED_ENCODING/ },
+        { name: "nul.txt", bytes: Buffer.from([0x61, 0x00, 0x62]), error: /UNSUPPORTED_TEXT/ },
+      ];
+      for (const fixture of cases) {
+        const file = join(dir, fixture.name);
+        await writeFile(file, fixture.bytes);
+        const fake = fakeBackend({ lines: [rgMatch(file, 1, "a\n")], paths: [file] });
+        await assert.rejects(call(makeGrepOverrideWithBackend(dir, fake.backend), { pattern: "a", path: file }), fixture.error);
+        assert.deepEqual(await readFile(file), fixture.bytes);
+      }
+    }),
+  );
+});

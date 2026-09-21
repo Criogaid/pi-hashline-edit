@@ -37,6 +37,7 @@ import { readFile, realpath, stat } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { hashFileLines } from "../core/hash.ts";
 import { splitLines } from "../core/lines.ts";
+import { decodeEditableText } from "../core/text.ts";
 import { getState } from "./state.ts";
 import { canonicalPath } from "./read-tool.ts";
 import { parseHashline } from "./render.ts";
@@ -331,7 +332,7 @@ async function scanPatternRanges(
     if (!files.includes(filePath)) throw new Error("ripgrep returned an unexpected search path");
     let lineCount = lineCounts.get(filePath);
     if (lineCount === undefined) {
-      lineCount = splitLines((await readFile(filePath)).toString("utf8")).length;
+      lineCount = splitLines(decodeEditableText(await readFile(filePath))).length;
       lineCounts.set(filePath, lineCount);
     }
     const bytes = rgBytes(data.lines);
@@ -758,13 +759,14 @@ export function makeGrepOverrideWithBackend(cwd: string, overrides: Partial<Grep
       const getFile = async (filePath: string) => {
         let entry = fileCache.get(filePath);
         if (!entry) {
-          let content: string;
+          let bytes: Buffer;
           try {
-            content = (await readFile(filePath)).toString("utf-8");
+            bytes = await readFile(filePath);
           } catch (error) {
             if (strictIdentities) throw error;
-            content = "";
+            bytes = Buffer.alloc(0);
           }
+          const content = decodeEditableText(bytes);
           if (strictIdentities) {
             const baseline = strictIdentities.get(filePath);
             if (!baseline || !sameIdentity(baseline, await fileIdentity(filePath))) {
