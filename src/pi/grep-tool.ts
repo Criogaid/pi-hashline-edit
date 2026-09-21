@@ -60,7 +60,6 @@ const DEFAULT_LIMIT = 100;
 /** Max chars per result line for display (mirrors pi's truncate.ts; not exported there). */
 const GREP_MAX_LINE_LENGTH = 500;
 const GREP_CONTEXT_MAX = 20;
-const WILDCARD_ONLY_REGEX = /^(?:\^?\.(?:[*+?][+?]?)?\$?|[*+?])$/;
 const MAX_ALL_PATTERNS = 16;
 // ponytail: finite batches bound candidate buffers but still spawn per batch; revisit streaming for sustained large scans.
 const FILTER_BATCH_SIZE = 4096;
@@ -121,7 +120,7 @@ function clampContext(context: number | undefined): number {
 const grepOverrideSchema = Type.Object({
   pattern: Type.Union([Type.String(), Type.Array(Type.String())], {
     description:
-      "Non-empty pattern(s). Arrays use matchMode. Wildcard-only searches require literal:true.",
+      "Non-empty pattern(s). Arrays use matchMode.",
   }),
   matchMode: Type.Optional(
     Type.Union([Type.Literal("any"), Type.Literal("all")], {
@@ -587,14 +586,6 @@ export function makeGrepOverrideWithBackend(cwd: string, overrides: Partial<Grep
       if (patterns.length === 0) throw new Error("pattern is required (got an empty array)");
       if (patterns.some((pattern) => pattern.trim() === "")) {
         throw new Error("pattern must not be empty");
-      }
-      if (params.literal !== true) {
-        const wildcard = patterns.find((pattern) => WILDCARD_ONLY_REGEX.test(pattern.trim()));
-        if (wildcard !== undefined) {
-          throw new Error(
-            `Pattern ${JSON.stringify(wildcard)} is wildcard-only; use read for a known file or provide a concrete substring or identifier`,
-          );
-        }
       }
 
       const rgPath = bundledRgPath;

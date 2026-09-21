@@ -414,7 +414,7 @@ test("bounds rg predicate fanout for matchMode all", async () => {
   });
 });
 
-test("rejects empty and wildcard-only regexes without blocking literal or empty-line searches", async () => {
+test("rejects empty patterns while allowing wildcard, literal, and empty-line searches", async () => {
   await withDir(async (dir) => {
     const fake = fakeBackend();
     const tool = makeGrepOverrideWithBackend(dir, fake.backend);
@@ -422,15 +422,15 @@ test("rejects empty and wildcard-only regexes without blocking literal or empty-
     for (const pattern of ["", "  ", []]) {
       await assert.rejects(call(tool, { pattern }), /pattern (?:is required|must not be empty)/);
     }
-    for (const pattern of [".*", "^.+$", ".?", "*"]) {
-      await assert.rejects(call(tool, { pattern }), /is wildcard-only/);
-    }
     assert.equal(fake.calls.length, 0);
+    for (const pattern of [".*", "^.+$", ".?"]) {
+      assert.equal(text(await call(tool, { pattern })), "No matches found");
+    }
 
     assert.equal(text(await call(tool, { pattern: ".*", literal: true })), "No matches found");
     assert.equal(text(await call(tool, { pattern: "^$" })), "No matches found");
-    assert.equal(fake.calls.filter(({ args }) => !args.includes("--quiet")).length, 2);
-    assert.equal(fake.calls.filter(({ args }) => args.includes("--quiet")).length, 1);
+    assert.equal(fake.calls.filter(({ args }) => !args.includes("--quiet")).length, 5);
+    assert.equal(fake.calls.filter(({ args }) => args.includes("--quiet")).length, 4);
   });
 });
 

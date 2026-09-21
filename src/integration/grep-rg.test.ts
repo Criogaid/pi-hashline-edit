@@ -415,3 +415,23 @@ test("owned rg rejects an oversized JSONL record", async () => {
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+test("real rg accepts wildcard-only regexes and preserves limits and literal mode", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "hl-grep-wildcard-"));
+  try {
+    await writeFile(join(directory, "fixture.txt"), "first\n\n.*\n");
+    const tool = makeGrepOverrideWithBackend(directory, {});
+    for (const [pattern, expected] of [[".*", 3], ["^.+$", 2], [".?", 3]] as const) {
+      const result: any = await tool.execute("count", { pattern, outputMode: "count" }, undefined, undefined);
+      assert.match(result.content[0].text, new RegExp(`Total: ${expected} matches in 1 file`));
+    }
+    const limited: any = await tool.execute("limited", { pattern: ".*", limit: 1 }, undefined, undefined);
+    assert.match(limited.content[0].text, /1#[0-9A-Z]+│first/);
+    assert.doesNotMatch(limited.content[0].text, /[23]#[0-9A-Z]+│/);
+    const literal: any = await tool.execute("literal", { pattern: ".*", literal: true }, undefined, undefined);
+    assert.match(literal.content[0].text, /3#[0-9A-Z]+│\.\*/);
+    await assert.rejects(tool.execute("invalid", { pattern: "*", literal: false }, undefined, undefined), /regex parse error/);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});

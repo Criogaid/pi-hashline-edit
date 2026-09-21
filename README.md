@@ -179,6 +179,7 @@ Filters run before the match limit counts, and context windows are rebuilt from 
 
 All inclusion and exclusion patterns are evaluated by ripgrep. The default engine is ripgrep's standard Rust regex engine with query-level smart-case; `pcre2: true` selects the bundled PCRE2 engine without silently changing engines or falling back to literal text. Searches are CRLF-aware and single-line by default. The extension passes `--no-config`, includes hidden files while retaining ignore rules, and invokes the platform-specific binary installed through `@vscode/ripgrep`, independent of a system `rg` or `PATH`.
 
+Non-empty wildcard-only regexes such as `.*` and `^.+$` are accepted under the same output limits. Use `literal: true` to search for those characters verbatim.
 
 `edit` takes `path` + `edits`. Copy `anchor` and `end` directly as `"LINE#HASH"` strings; `body` contains the new lines:
 
