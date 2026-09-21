@@ -1,10 +1,9 @@
 /**
  * Per-line content hash.
  *
- * The hash mixes the 1-based line number into the line content, so every line
- * gets a unique hash by construction — line numbers are unique, therefore no
- * in-file collision is possible, and no length extension / fallback is ever
- * needed.
+ * The hash mixes the 1-based line number into the line content. It is a compact
+ * checksum of (position, content), not a unique identifier: truncation and the
+ * 32-bit source hash permit collisions.
  *
  * Why line + content (not content alone, not content + neighbors):
  *
@@ -15,8 +14,8 @@
  *   would change an unchanged line's hash when an adjacent line is edited — a
  *   spurious dependency with no benefit under this design's position-fixed
  *   apply.)
- * - Content alone would leave identical lines (blank lines, `}`) sharing a
- *   hash; mixing the line number disambiguates them for free.
+ * - Content alone would make identical lines (blank lines, `}`) share the same
+ *   checksum systematically; mixing the line number avoids that common case.
  *
  * @module pi-hashline-edit/core
  */
@@ -59,10 +58,7 @@ export function computeLineHash(line: number, content: string, len = 4): string 
 	return toBase32(fnv1a32(`${line}\n${content}`), len);
 }
 
-/**
- * Compute per-line hashes for a file. Unique by construction — the 1-based line
- * number is part of each hash, so two identical content lines always differ.
- */
+/** Compute compact per-line checksums; callers must treat collisions as possible. */
 export function hashFileLines(lines: readonly string[], len = 4): string[] {
 	return lines.map((content, i) => computeLineHash(i + 1, content, len));
 }

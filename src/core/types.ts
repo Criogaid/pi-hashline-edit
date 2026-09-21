@@ -67,8 +67,7 @@ export interface AnchorFailure {
 /** Batch-level failure. `anchor` carries every per-anchor failure collected across the batch. */
 export type ApplyFailure =
 	| { readonly kind: "anchor"; readonly failures: readonly AnchorFailure[] }
-	| { readonly kind: "range"; readonly message: string }
-	| { readonly kind: "noop"; readonly message: string };
+	| { readonly kind: "input" | "range" | "noop"; readonly message: string };
 
 /**
  * Apply result. On success, `touchedLines` lists the 0-based line indices in

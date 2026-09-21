@@ -325,3 +325,13 @@ test("shiftRadius=0 disables rescue (always none)", () => {
 	}
 });
 
+
+test("rejects CR or LF embedded in body elements", () => {
+	for (const body of [["x\ny"], ["x\ry"]]) {
+		const result = applyEdits("a\n", [{ op: "append", body }]);
+		assert.deepEqual(result, {
+			ok: false,
+			failure: { kind: "input", message: "INVALID_BODY: each body element must contain exactly one logical line." },
+		});
+	}
+});

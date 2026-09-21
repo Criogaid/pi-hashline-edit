@@ -40,12 +40,16 @@ test("hashFileLines empty file", () => {
 	assert.deepEqual(hashFileLines([]), []);
 });
 
-test("hashFileLines: identical content lines get distinct hashes (no collision, no length bloat)", () => {
-	// runs of identical lines — the case neighbor-aware hashing explodes on
+test("hashFileLines normally disambiguates repeated content without changing hash length", () => {
 	const lines = ["", "", "", "", "", "}", "}", "}", "return", "return", ",", ","];
 	const hashes = hashFileLines(lines);
-	assert.equal(new Set(hashes).size, hashes.length, "duplicate hashes");
+	assert.equal(new Set(hashes).size, hashes.length, "unexpected collision in fixture");
 	for (const h of hashes) assert.equal(h.length, 4, `hash ${h} is not 4 chars`);
+});
+
+test("truncated checksums can collide", () => {
+	assert.equal(computeLineHash(1, "const value = 558;", 4), "TM02");
+	assert.equal(computeLineHash(1, "const value = 9344;", 4), "TM02");
 });
 
 test("hashFileLines respects the length parameter", () => {

@@ -10,4 +10,5 @@
 export * from "./types.ts";
 export { computeLineHash, hashFileLines } from "./hash.ts";
 export { splitLines, detectLineEnding, hasFinalNewline } from "./lines.ts";
+export { decodeUtf8, decodeEditableText } from "./text.ts";
 export { applyEdits } from "./apply.ts";

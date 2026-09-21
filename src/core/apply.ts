@@ -170,7 +170,14 @@ function maxAffected(op: SpanOp): number {
  * @param hashLen     hash length used to verify anchors (default 4)
  * @param shiftRadius ±line radius for shifted-anchor recovery (default 15; 0 disables rescue)
  */
+function hasInvalidBodyLine(edits: readonly Edit[]): boolean {
+	return edits.some((edit) => "body" in edit && edit.body.some((line) => /[\r\n]/.test(line)));
+}
+
 export function applyEdits(text: string, edits: Edit[], hashLen = 4, shiftRadius = DEFAULT_SHIFT_RADIUS): ApplyResult {
+	if (hasInvalidBodyLine(edits)) {
+		return { ok: false, failure: { kind: "input", message: "INVALID_BODY: each body element must contain exactly one logical line." } };
+	}
 	const lines = splitLines(text);
 	const ending = detectLineEnding(text);
 
