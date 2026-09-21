@@ -9,14 +9,14 @@ import { initTheme } from "@earendil-works/pi-coding-agent";
 import { ToolExecutionComponent } from "../../node_modules/@earendil-works/pi-coding-agent/dist/modes/interactive/components/tool-execution.js";
 import { theme } from "../../node_modules/@earendil-works/pi-coding-agent/dist/modes/interactive/theme/theme.js";
 
-test("registered mutation cards finish independently of fused command cards", async () => {
+test("mutation cards use Fusion by default and explicit false removes command support", async () => {
 	const dir = await mkdtemp(join(tmpdir(), "hashline-registration-"));
 	const previousCwd = process.cwd();
 	const state = getState();
 	const previousConfig = state.config;
 	try {
 		await mkdir(join(dir, ".pi"));
-		await writeFile(join(dir, ".pi", "settings.json"), JSON.stringify({ hashlineEdit: { enabled: true, actionFusion: true } }));
+		await writeFile(join(dir, ".pi", "settings.json"), JSON.stringify({ hashlineEdit: { enabled: true } }));
 		process.chdir(dir);
 		const tools: any[] = [];
 		const entries: any[] = [];
@@ -80,6 +80,19 @@ test("registered mutation cards finish independently of fused command cards", as
 			});
 		}
 		assert.deepEqual(entries.map((entry) => entry.data.command), cases.flatMap(() => ["waiting", "failed", "waiting", "skipped"]));
+		await writeFile(join(dir, ".pi", "settings.json"), JSON.stringify({ hashlineEdit: { actionFusion: false } }));
+		const disabledTools: any[] = [];
+		registerHashline({
+			on() {},
+			registerEntryRenderer() {},
+			registerTool(tool: any) { disabledTools.push(tool); },
+		} as any);
+		assert.equal(disabledTools.length, 5);
+		for (const tool of disabledTools.filter((tool) => ["edit", "replace", "write"].includes(tool.name))) {
+			assert.equal(tool.parameters.properties.then_run, undefined);
+			assert.equal(tool.renderShell, "default");
+			await assert.rejects(tool.execute("disabled", { path: "published.txt", then_run: { command: "exit 0" } }, undefined, undefined, { cwd: dir }), /then_run is unavailable/);
+		}
 	} finally {
 		process.chdir(previousCwd);
 		state.config = previousConfig;

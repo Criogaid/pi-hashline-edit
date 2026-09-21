@@ -9,7 +9,7 @@ Overrides `read`, `grep`, `edit`, and `write`, and adds `replace` for bulk trans
 - **Search → edit:** `read` and `grep` return the same `LINE#HASH` anchors, so search results can feed directly into edits.
 - **Batch and chain edits:** submit structured JSON operations together, then use the returned fresh anchors for the next change.
 - **Recover from stale anchors:** rejected edits offer checksum-matching candidates or nearby current-file context for a verified retry. Recovery never applies automatically.
-- **Edit → test:** optional Action Fusion runs a command after a successful mutation, with separate file and command outcomes and separate TUI cards.
+- **Edit → test:** Action Fusion lets a mutation include an optional follow-up command, with separate file and command outcomes and separate TUI cards.
 
 [Quick start](#quick-start) · [Tools](#tools) · [Configuration](#configuration) · [Action Fusion](#action-fusion) · [Safety and design](#safety-and-design)
 
@@ -154,7 +154,7 @@ Add `hashlineEdit` to Pi's global settings (`~/.pi/agent/settings.json` by defau
 {
   "hashlineEdit": {
     "enabled": true,
-    "actionFusion": false,
+    "actionFusion": true,
     "hashLen": 4,
     "shiftRadius": 15
   }
@@ -164,7 +164,7 @@ Add `hashlineEdit` to Pi's global settings (`~/.pi/agent/settings.json` by defau
 | Setting | Default | Meaning |
 | --- | --- | --- |
 | `enabled` | `true` | Enable all five tools as one unit. Set `false` to restore built-in tools. |
-| `actionFusion` | `false` | Expose `then_run` on mutation tools. |
+| `actionFusion` | `true` | Expose `then_run` on mutation tools. Set `false` to disable command support. |
 | `hashLen` | `4` | Integer checksum length, 2–8 characters. |
 | `shiftRadius` | `15` | Integer recovery-search radius, 0–100 lines; `0` disables recovery. |
 
@@ -172,7 +172,7 @@ The project's `hashlineEdit` object replaces the global object as a whole; missi
 
 ## Action Fusion
 
-With `actionFusion: true`, attach a command to a mutation:
+Action Fusion is enabled by default. Set `"actionFusion": false` in `hashlineEdit` and reload Pi to disable it; an existing explicit `false` remains effective. Commands run only when a call supplies `then_run`:
 
 ```json
 {

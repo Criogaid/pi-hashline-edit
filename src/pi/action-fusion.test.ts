@@ -17,7 +17,7 @@ async function tempDir(): Promise<string> {
 
 const ctx = (cwd: string) => ({ cwd }) as any;
 
-test("actionFusion schemas and shared usage guidance are opt-in for every mutation tool", () => {
+test("mutation tools expose Fusion schemas and guidance when supplied an executor", () => {
 	const fusion = createActionFusionExecutor();
 	for (const makeTool of [makeEditOverride, makeReplaceTool, makeWriteOverride]) {
 		const disabled = makeTool("/tmp") as any;
