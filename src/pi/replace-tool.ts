@@ -32,9 +32,9 @@ import {
 import { Type, type Static } from "typebox";
 import { Text } from "@earendil-works/pi-tui";
 import { readFile } from "node:fs/promises";
-import { hashFileLines, splitLines } from "../core/index.ts";
+import { decodeEditableText, hashFileLines, splitLines } from "../core/index.ts";
 import { ACTION_FUSION_GUIDELINES, createActionFusionExecutor, createThenRunSchema, type ThenRunInput } from "./action-fusion.ts";
-import { commitFile, FileMutationError, type PublicationStatus } from "./file-commit.ts";
+import { byteRevision, commitFile, FileMutationError, type MutationVersions, type PublicationStatus } from "./file-commit.ts";
 import { getState } from "./state.ts";
 import { canonicalPath } from "./read-tool.ts";
 import { formatDiffCounts, publishDiffCounts, renderDiffPreview, type DiffCounts } from "./render.ts";
@@ -220,8 +220,11 @@ async function runReplace(
 	if (find === "") throw new Error(`Replace ${displayPath}: \`find\` is empty.`);
 
 	let currentText: string;
+	let baseRevision: string;
 	try {
-		currentText = (await readFile(absPath)).toString("utf-8");
+		const currentBytes = await readFile(absPath);
+		baseRevision = byteRevision(currentBytes);
+		currentText = decodeEditableText(currentBytes);
 	} catch (e) {
 		const msg = e instanceof Error ? e.message : String(e);
 		throw new Error(`Error reading ${displayPath}: ${msg}`);
@@ -264,16 +267,19 @@ async function runReplace(
 	if (signal?.aborted) throw new Error(`Replace ${displayPath} aborted before write.`);
 
 	let publication: PublicationStatus = "NOT_PUBLISHED";
+	let versions: MutationVersions = { baseRevision, publishedRevision: baseRevision, observedRevision: baseRevision };
 	if (changed) {
 		try {
-			publication = (await commitFile(absPath, newText, { mode: "overwrite", signal })).publication;
+			const commit = await commitFile(absPath, newText, { mode: "overwrite", expectedRevision: baseRevision, signal });
+			publication = commit.publication;
+			versions = commit;
 		} catch (e) {
 			if (e instanceof FileMutationError) throw e;
 			throw new FileMutationError("commit", "UNKNOWN", `Error writing ${displayPath}: ${e instanceof Error ? e.message : String(e)}`, { cause: e });
 		}
 	}
 
-	let details: EditToolDetails & { publication: PublicationStatus };
+	let details: EditToolDetails & MutationVersions & { publication: PublicationStatus; revision: string };
 	let anchors: string;
 	let note: string;
 	try {
@@ -286,6 +292,8 @@ async function runReplace(
 			patch: generateUnifiedPatch(displayPath, oldLf, newLf),
 			firstChangedLine,
 			publication,
+			...versions,
+			revision: versions.publishedRevision,
 		};
 		const oldLines = splitLines(currentText);
 		const newLines = splitLines(newText);

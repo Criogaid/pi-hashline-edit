@@ -52,11 +52,11 @@ type MutationResult<TDetails> = AgentToolResult<TDetails>;
 type MutationFinalizer<TDetails> = (result: MutationResult<TDetails>, publishAnchors: boolean) => MutationResult<TDetails>;
 
 function staleAnchorNotice<TDetails>(result: MutationResult<TDetails>): string {
-	const revision = (result.details as { revision?: unknown } | undefined)?.revision;
+	const publishedRevision = (result.details as { publishedRevision?: unknown } | undefined)?.publishedRevision;
 	return [
 		`${THEN_RUN_STALE} Target freshness was not confirmed unchanged after then_run.`,
 		"Pre-command anchors are omitted. Re-read before further edits.",
-		...(typeof revision === "string" ? ["The mutation revision may not describe the final file."] : []),
+		...(typeof publishedRevision === "string" ? ["The published revision may not describe the final file."] : []),
 	].join("\n");
 }
 
@@ -109,6 +109,11 @@ export class ActionFusionError extends Error {
 function mutationPublication<TDetails>(result: MutationResult<TDetails>): PublicationStatus {
 	const details = result.details as { publication?: PublicationStatus } | undefined;
 	return details?.publication ?? "PUBLISHED";
+}
+
+function mutationPublishedRevision<TDetails>(result: MutationResult<TDetails>): string | undefined {
+	const revision = (result.details as { publishedRevision?: unknown } | undefined)?.publishedRevision;
+	return typeof revision === "string" && revision.length > 0 ? revision : undefined;
 }
 
 function commandStatus(error: unknown, signal: AbortSignal | undefined): CommandStatus {
@@ -221,14 +226,16 @@ export function createActionFusionExecutor(commandRunner: CommandRunner = defaul
 				} as MutationResult<TDetails>;
 			}
 
-			let baseline: string | undefined;
+			const baseline = mutationPublishedRevision(mutationResult);
+			if (baseline === undefined) {
+				throw new ActionFusionError("Missing published revision; cannot validate fused command freshness.", { publication, command: "skipped", freshness: "unknown" });
+			}
 			try {
-				baseline = await fileRevision(absolutePath);
 				signal?.throwIfAborted();
 				await assertUnchangedBeforeCommand(absolutePath, baseline);
 				signal?.throwIfAborted();
 			} catch (error) {
-				const freshness = baseline ? await readFreshness(absolutePath, baseline) : "unknown";
+				const freshness = await readFreshness(absolutePath, baseline);
 				throw new ActionFusionError("mutation completed; the command was not run", { publication, command: signal?.aborted ? "cancelled" : "skipped", freshness }, { cause: error });
 			}
 
@@ -244,7 +251,7 @@ export function createActionFusionExecutor(commandRunner: CommandRunner = defaul
 				commandError = error;
 				output = "";
 			}
-			const freshness = baseline ? await readFreshness(absolutePath, baseline) : "unknown";
+			const freshness = await readFreshness(absolutePath, baseline);
 			if (commandError !== undefined) {
 				throw new ActionFusionError("mutation completed; then_run did not complete successfully", { publication, command: commandStatus(commandError, signal), freshness }, { cause: commandError });
 			}

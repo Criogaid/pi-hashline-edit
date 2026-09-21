@@ -45,6 +45,7 @@ export function makeWriteOverride(cwd: string, fusion?: ReturnType<typeof create
 		async execute(toolCallId: string, params: WriteParams, signal: AbortSignal | undefined, onUpdate: any, ctx: any) {
 			const { then_run, ...mutationParams } = params;
 			if (!fusion && then_run !== undefined) throw new Error("then_run is unavailable because hashlineEdit.actionFusion is disabled");
+			if (mutationParams.content.includes("\0")) throw new Error("UNSUPPORTED_TEXT: NUL bytes are not editable.");
 			const absolutePath = canonicalPath(cwd, mutationParams.path);
 			const hashLen = getState().config.hashLen;
 			let mutationAnchors = "";
@@ -59,7 +60,15 @@ export function makeWriteOverride(cwd: string, fusion?: ReturnType<typeof create
 					mutationAnchors = formatAnchors(mutationParams.content, hashLen);
 					return {
 						content: [{ type: "text" as const, text: `${result.created ? "Created" : "Wrote"} ${mutationParams.path}.\nRevision: ${result.revision}` }],
-						details: { path: mutationParams.path, revision: result.revision, created: result.created, publication: result.publication },
+						details: {
+							path: mutationParams.path,
+							revision: result.publishedRevision,
+							baseRevision: result.baseRevision,
+							publishedRevision: result.publishedRevision,
+							observedRevision: result.observedRevision,
+							created: result.created,
+							publication: result.publication,
+						},
 					};
 				} catch (error) {
 					throw new FileMutationError("post_process", "PUBLISHED", `file was published but write result generation failed: ${error instanceof Error ? error.message : String(error)}`, { cause: error });

@@ -98,7 +98,7 @@ test("write omits pre-command anchors when then_run changes the target", async (
 	const text = result.content.map((block: any) => block.text).join("\n");
 	assert.match(text, /Mutation revision:/);
 	assert.match(text, /Pre-command anchors are omitted/);
-	assert.match(text, /mutation revision may not describe the final file/i);
+	assert.match(text, /published revision may not describe the final file/i);
 	assert.doesNotMatch(text, /Fresh anchors:|\b1#[0-9A-Z]+\b/);
 	assert.equal(result.details.actionFusion.freshness, "changed");
 	assert.deepEqual(write.renderResult(result, { isPartial: false }, {}, { isError: false }).render(100), []);
@@ -123,4 +123,10 @@ test("write omits anchors when a failed then_run changed the target", async () =
 	assert.equal(result.details.actionFusion.command, "failed");
 	assert.match(text, /Pre-command anchors are omitted/);
 	assert.doesNotMatch(text, /Fresh anchors:/);
+}));
+
+test("write rejects NUL content", async () => withTemp(async (dir) => {
+	const write = makeWriteOverride(dir);
+	await assert.rejects(write.execute("nul", { path: "nul.txt", content: "a\0b" }, undefined, undefined, context(dir)), /UNSUPPORTED_TEXT/);
+	await assert.rejects(readFile(join(dir, "nul.txt")), /ENOENT/);
 }));

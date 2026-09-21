@@ -9,6 +9,7 @@ import { makeWriteOverride } from "./write-tool.ts";
 import { computeLineHash } from "../core/hash.ts";
 import type { ActionFusionProgress } from "./action-fusion.ts";
 import { ACTION_FUSION_GUIDELINES, createActionFusionExecutor, THEN_RUN_FAILED, THEN_RUN_SKIPPED, THEN_RUN_SUCCEEDED } from "./action-fusion.ts";
+import { byteRevision } from "./file-commit.ts";
 
 async function tempDir(): Promise<string> {
 	return mkdtemp(join(tmpdir(), "hashline-action-fusion-"));
@@ -66,7 +67,7 @@ test("mutation failure skips the command and command failure does not roll back"
 		assert.equal(calls, 0);
 		const target = join(dir, "changed.txt");
 		await writeFile(target, "changed\n");
-		const result = await fusion({ toolCallId: "y", absolutePath: target, thenRun: { command: "check" }, mutate: async () => ({ content: [{ type: "text", text: "mutation" }], details: { ok: true } }), signal: undefined, ctx: ctx(dir) });
+		const result = await fusion({ toolCallId: "y", absolutePath: target, thenRun: { command: "check" }, mutate: async () => ({ content: [{ type: "text", text: "mutation" }], details: { ok: true, publishedRevision: byteRevision("changed\n") } }), signal: undefined, ctx: ctx(dir) });
 		assert.equal(result.content[0].type === "text" && result.content[0].text, "mutation");
 		const diagnostic = result.content[1].type === "text" ? result.content[1].text : "";
 		assert.ok(diagnostic.includes(THEN_RUN_FAILED) && diagnostic.includes(commandFailure));
@@ -103,7 +104,7 @@ test("default runner executes a real local command", async () => {
 			toolCallId: "real",
 			absolutePath: target,
 			thenRun: { command: "node -e \"process.stdout.write('real runner')\"" },
-			mutate: async () => { await writeFile(target, "after\n"); return { content: [{ type: "text", text: "mutated" }], details: { ok: true } }; },
+			mutate: async () => { await writeFile(target, "after\n"); return { content: [{ type: "text", text: "mutated" }], details: { ok: true, publishedRevision: byteRevision("after\n") } }; },
 			signal: undefined,
 			ctx: { ...ctx(dir), sessionManager: { getSessionId: () => "test", getSessionFile: () => undefined } } as any,
 		});
@@ -124,7 +125,7 @@ test("marks anchors stale when then_run changes the target", async () => {
 			toolCallId: "stale",
 			absolutePath: target,
 			thenRun: { command: "mutate target" },
-			mutate: async () => { await writeFile(target, "after mutation\n"); return { content: [{ type: "text", text: "mutated" }], details: {} }; },
+			mutate: async () => { await writeFile(target, "after mutation\n"); return { content: [{ type: "text", text: "mutated" }], details: { publishedRevision: byteRevision("after mutation\n") } }; },
 			signal: undefined,
 			ctx: ctx(dir),
 		});

@@ -4,7 +4,7 @@ import { join } from "node:path";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { spawn } from "node:child_process";
-import { commitFile, FileMutationError, fileRevision } from "./file-commit.ts";
+import { byteRevision, commitFile, FileMutationError, fileRevision } from "./file-commit.ts";
 import { createActionFusionExecutor } from "./action-fusion.ts";
 import { makeWriteOverride } from "./write-tool.ts";
 
@@ -197,4 +197,15 @@ test("cancellation racing publication never reports a settled operation as unpub
 	}
 	const finalContent = await readFile(target, "utf8");
 	assert.ok(finalContent === oldContent || finalContent === newContent);
+}));
+
+test("commit result binds base, published, and observed revisions", async () => withTemp(async (dir) => {
+	const target = join(dir, "versions.txt");
+	await writeFile(target, "before\n");
+	const baseRevision = await fileRevision(target);
+	const result = await commitFile(target, "after\n", { mode: "overwrite", expectedRevision: baseRevision });
+	assert.equal(result.baseRevision, baseRevision);
+	assert.equal(result.publishedRevision, byteRevision("after\n"));
+	assert.equal(result.observedRevision, result.publishedRevision);
+	assert.equal(result.revision, result.publishedRevision);
 }));

@@ -24,8 +24,8 @@ import { Type, type Static } from "typebox";
 import { Text } from "@earendil-works/pi-tui";
 import { readFile } from "node:fs/promises";
 import { ACTION_FUSION_GUIDELINES, createActionFusionExecutor, createThenRunSchema, type ThenRunInput } from "./action-fusion.ts";
-import { commitFile, FileMutationError, type PublicationStatus } from "./file-commit.ts";
-import { applyEdits, hashFileLines } from "../core/index.ts";
+import { byteRevision, commitFile, FileMutationError, type MutationVersions, type PublicationStatus } from "./file-commit.ts";
+import { applyEdits, decodeEditableText, hashFileLines } from "../core/index.ts";
 import { splitLines } from "../core/lines.ts";
 import type { ApplyFailure, Edit } from "../core/types.ts";
 import { canonicalPath } from "./read-tool.ts";
@@ -74,7 +74,7 @@ const editOpSchema = Type.Object({
 	end: anchorRef(
 		'Inclusive last "LINE#HASH" for replace/delete ranges. Required to change multiple existing lines; omitted means only the anchor line. Omit for insert/append/prepend.',
 	),
-	body: Type.Optional(Type.Array(Type.String(), { description: "New content lines (required for replace/insert/append/prepend; omit for delete)" })),
+	body: Type.Optional(Type.Array(Type.String({ pattern: "^[^\\r\\n]*$" }), { description: "New content lines (required for replace/insert/append/prepend; each element must be one logical line without CR/LF; omit for delete)" })),
 });
 
 function createEditSchema(actionFusion: boolean) {
@@ -95,8 +95,7 @@ function formatFailure(
 	failure: ApplyFailure,
 	snapshot: Readonly<{ currentText: string; hashLen: number }>,
 ): string {
-	if (failure.kind === "range") return failure.message;
-	if (failure.kind === "noop") return failure.message;
+	if (failure.kind !== "anchor") return failure.message;
 
 	const lines: string[] = [];
 	let found = 0;
@@ -309,8 +308,11 @@ async function runHashline(
 	const { hashLen, shiftRadius } = getState().config;
 
 	let currentText: string;
+	let baseRevision: string;
 	try {
-		currentText = (await readFile(absPath)).toString("utf-8");
+		const currentBytes = await readFile(absPath);
+		baseRevision = byteRevision(currentBytes);
+		currentText = decodeEditableText(currentBytes);
 	} catch (e) {
 		const msg = e instanceof Error ? e.message : String(e);
 		return errResult(`Error reading ${displayPath}: ${msg}`);
@@ -335,14 +337,17 @@ async function runHashline(
 	if (signal?.aborted) return errResult(`Edit ${displayPath} aborted before write.`);
 
 	let publication: PublicationStatus = "NOT_PUBLISHED";
+	let versions: MutationVersions;
 	try {
-		publication = (await commitFile(absPath, result.text, { mode: "overwrite", signal })).publication;
+		const commit = await commitFile(absPath, result.text, { mode: "overwrite", expectedRevision: baseRevision, signal });
+		publication = commit.publication;
+		versions = commit;
 	} catch (e) {
 		if (e instanceof FileMutationError) throw e;
 		throw new FileMutationError("commit", "UNKNOWN", `Error writing ${displayPath}: ${e instanceof Error ? e.message : String(e)}`, { cause: e });
 	}
 
-	let details: EditToolDetails & { publication: PublicationStatus };
+	let details: EditToolDetails & MutationVersions & { publication: PublicationStatus; revision: string };
 	let anchors: string;
 	try {
 		// diff 和 anchors 的计算属于发布后的后处理；失败时仍保留 publication。
@@ -354,6 +359,8 @@ async function runHashline(
 			patch: generateUnifiedPatch(displayPath, oldLf, newLf),
 			firstChangedLine,
 			publication,
+			...versions,
+			revision: versions.publishedRevision,
 		};
 		anchors = formatUpdatedAnchors(result.text, result.touchedLines, hashLen);
 		onAnchors(anchors);

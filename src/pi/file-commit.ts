@@ -11,8 +11,15 @@ export interface CommitOptions {
 	signal?: AbortSignal;
 }
 
-export interface CommitResult {
+export interface MutationVersions {
+	baseRevision?: string;
+	publishedRevision: string;
+	observedRevision: string;
+}
+
+export interface CommitResult extends MutationVersions {
 	created: boolean;
+	/** Backward-compatible alias for publishedRevision. */
 	revision: string;
 	publication: "PUBLISHED";
 }
@@ -29,8 +36,12 @@ export class FileMutationError extends Error {
 	}
 }
 
+export function byteRevision(content: string | Uint8Array): string {
+	return createHash("sha256").update(content).digest("hex");
+}
+
 export async function fileRevision(path: string): Promise<string> {
-	return createHash("sha256").update(await readFile(path)).digest("hex");
+	return byteRevision(await readFile(path));
 }
 
 function prepareError(message: string, cause?: unknown): FileMutationError {
@@ -160,12 +171,30 @@ export async function commitFile(path: string, content: string, options: CommitO
 	let failure: unknown;
 	try {
 		await writeAndSyncTemp(tempPath, content, target.modeBits, options.signal);
+		if (mode === "overwrite" && options.expectedRevision !== undefined) {
+			let currentRevision: string;
+			try {
+				currentRevision = await fileRevision(publishPath);
+			} catch (error) {
+				throw prepareError(`unable to recheck target revision: ${error instanceof Error ? error.message : String(error)}`, error);
+			}
+			if (currentRevision !== options.expectedRevision) throw prepareError("expectedRevision changed before publication");
+		}
 		if (mode === "create") await publishCreate(tempPath, publishPath, options.signal);
 		else await publishReplace(tempPath, publishPath, options.signal);
 		published = true;
 		await syncDirectory(publishDirectory);
 		try {
-			return { created: mode === "create", revision: await fileRevision(publishPath), publication: "PUBLISHED" };
+			const publishedRevision = byteRevision(content);
+			const observedRevision = await fileRevision(publishPath);
+			return {
+				created: mode === "create",
+				baseRevision: target.beforeRevision,
+				publishedRevision,
+				observedRevision,
+				revision: publishedRevision,
+				publication: "PUBLISHED",
+			};
 		} catch (error) {
 			throw new FileMutationError("post_process", "PUBLISHED", `target was published but final revision could not be read: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
 		}
