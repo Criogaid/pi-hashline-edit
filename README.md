@@ -63,7 +63,7 @@ A separate, location-blind tool for transforms `edit` can't express: replace **a
 
 - **Two modes** — `regex: false` (default) treats `find` as a literal substring (replaceAll; the replacement is inserted verbatim, no `$` expansion); `regex: true` treats `find` as a JavaScript pattern source and `replace` supports `$1`, `$2`, `$&`, …
 - **Flags** — `flags` adds regex flags in both modes (`g` is always forced so every occurrence is replaced): `i` (case-insensitive), `m` (per-line `^`/`$`), `s` (dotall, `.` matches `\n`), `u` (unicode).
-- **Safety** — a `maxMatches` cap (default 2000) errors *before writing* if exceeded, so a runaway pattern can't produce a catastrophic write. `0` matches is an error (no silent no-op).
+- **Safety** — a `maxMatches` cap (default 2000) errors *before writing* if exceeded. `0` matches is an error (no silent no-op). The match-count cap does not bound regex execution time or result size.
 - **Shares the edit queue** — `replace` and `edit` on the same file are serialized via the same mutation queue, so concurrent edits never interleave.
 - **Returns a diff + fresh anchors** for the changed region, so a follow-up `edit` can chain on the new content without a re-read (when the region is small).
 
