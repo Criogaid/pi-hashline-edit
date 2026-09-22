@@ -663,17 +663,16 @@ test("input status distinguishes skipped checks and expires before the next retr
 	assert.equal(await readFile(file, "utf8"), "changed\nb\nc\n");
 }));
 
-test("large failed batches bound status and candidate mappings without implying omitted checks matched", async () => withDir(async (dir) => {
+test("failed batches return more than forty checks and mappings when byte budgets allow", async () => withDir(async (dir) => {
 	const original = "a\ntarget\nz\n";
 	const before = `prefix\n${original}`;
 	const file = join(dir, "many-checks.txt");
 	await writeFile(file, before);
 	const edits = Array.from({ length: 45 }, () => ({ op: "replace", anchor: h(original, 2), body: ["changed"] }));
 	await assert.rejects(call(makeEditOverride(dir), { path: file, edits }), (error: Error) => {
-		assert.match(error.message, /Anchor checks: 40\/45; 5 omitted/);
-		assert.match(error.message, /5 failure details omitted/);
-		assert.equal((error.message.match(/^op \d+ \/ anchor \/ .* \/ mismatched$/gm) ?? []).length, 40);
-		assert.equal((error.message.match(/checksum-matching candidate/g) ?? []).length, 40);
+		assert.doesNotMatch(error.message, /truncated|failure details omitted|Anchor checks: \d+\/\d+/);
+		assert.equal((error.message.match(/^op \d+ \/ anchor \/ .* \/ mismatched$/gm) ?? []).length, 45);
+		assert.equal((error.message.match(/checksum-matching candidate/g) ?? []).length, 45);
 		assert.equal((error.message.match(/^3#[0-9A-Z]+│target$/gm) ?? []).length, 1);
 		assert.doesNotMatch(error.message, /\/ matched/);
 		return true;

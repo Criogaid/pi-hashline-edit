@@ -54,13 +54,12 @@ test("failure context returns no invented anchor for an empty file", () => {
 	assert.doesNotMatch(result, /\d+#[0-9A-Z]+│/);
 });
 
-test("failure context keeps the lowest 40 rows and reports row truncation", () => {
+test("failure context returns more than forty rows when they fit the byte budget", () => {
 	const text = Array.from({ length: 100 }, (_, index) => `line ${index + 1}`).join("\n");
 	const result = formatFailureContext(text, [4, 20, 36, 52, 68, 84].map(unresolved), 4);
-	assert.match(result, /Context rows: 40\/42; 2 omitted/);
-	assert.match(result, /Context truncated: row limit/);
-	assert.match(result, /85#[0-9A-Z]+│line 85/);
-	assert.doesNotMatch(result, /86#[0-9A-Z]+│line 86/);
+	assert.doesNotMatch(result, /omitted|truncated/);
+	assert.equal((result.match(/^\d+#[0-9A-Z]+│/gm) ?? []).length, 42);
+	assert.match(result, /87#[0-9A-Z]+│line 87/);
 });
 
 test("failure context never truncates or skips an oversized first row", () => {
@@ -115,12 +114,11 @@ test("unique candidate context merges windows with full CRLF and BOM-aware ancho
 	assert.equal(formatUniqueCandidateNeighborhoods(lines.join("\n"), [{ ...unresolved(3), recovery: { kind: "ambiguous", candidates: [{ line: 2, hash: "ABCD" }, { line: 6, hash: "EFGH" }] } }], 4).text, "");
 });
 
-test("unique candidate context bounds rows and merges repeated candidate windows", () => {
+test("unique candidate context exceeds forty rows and merges repeated candidate windows", () => {
 	const lines = Array.from({ length: 60 }, (_, index) => `line-${index + 1}`);
 	const result = formatUniqueCandidateNeighborhoods(lines.join("\n"), [4, 14, 24, 34, 44, 54].map((line) => found(lines, line)), 4).text;
-	assert.match(result, /Candidate-neighborhood rows: 40\/42; 2 omitted/);
-	assert.match(result, /truncated: row limit/);
-	assert.equal((result.match(/^\d+#[0-9A-Z]+│/gm) ?? []).length, 40);
+	assert.doesNotMatch(result, /omitted|truncated/);
+	assert.equal((result.match(/^\d+#[0-9A-Z]+│/gm) ?? []).length, 42);
 	const repeated = formatUniqueCandidateNeighborhoods(lines.join("\n"), Array.from({ length: 50 }, (_, opIndex) => ({ ...found(lines, 4), opIndex })), 4).text;
 	assert.equal((repeated.match(/^\d+#[0-9A-Z]+│/gm) ?? []).length, 7);
 	assert.doesNotMatch(repeated, /Candidate op|omitted/);

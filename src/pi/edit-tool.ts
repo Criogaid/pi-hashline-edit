@@ -33,9 +33,7 @@ import { formatDiffCounts, renderMutationCall, renderMutationResult, type DiffCo
 import { formatFailureContext, formatUniqueCandidateNeighborhoods, MAX_RECOVERY_CANDIDATE_BYTES } from "./failure-context.ts";
 import { appendMutationAnchors, finalizeMutationResult, formatMutationAnchors, generateMutationDetails, postProcessMutation } from "./mutation-result.ts";
 
-/** Cap failure details and status rows independently; each text block also has a byte cap. */
-const MAX_FAILURE_DETAILS = 40;
-
+/** Keep independent byte budgets for failure details and input-anchor checks. */
 function boundDiagnostic(message: string, notice: string): string {
 	const bounded = truncateHead(message, { maxBytes: 16 * 1024 - Buffer.byteLength(notice) });
 	return bounded.content + (bounded.truncated ? notice : "");
@@ -112,7 +110,6 @@ function formatFailureDetails(
 		if (f.recovery.kind === "found") found++;
 		else if (f.recovery.kind === "ambiguous") ambiguous++;
 		else none++;
-		if (lines.length >= MAX_FAILURE_DETAILS) continue;
 		const where = `op #${f.opIndex} ${f.op} ${f.which} (line ${f.cited.line})`;
 		switch (f.recovery.kind) {
 			case "found": {
@@ -153,20 +150,17 @@ function formatFailureDetails(
 		`Anchor mismatch: ${parts.join(", ")}.`,
 		"No changes written by this edit batch.",
 		...lines,
-		...(failure.failures.length > lines.length ? [`${failure.failures.length - lines.length} failure details omitted.`] : []),
 	].join("\n") + formatFailureContext(snapshot.currentText, failure.failures, snapshot.anchors);
 	return boundDiagnostic(message, "\nDiagnostic output truncated at 16 KiB.");
 }
 
 function formatAnchorChecks(failure: ApplyFailure, anchors: AnchorFormatter): string {
-	const rows = failure.checks.slice(0, MAX_FAILURE_DETAILS).map((check) =>
+	const rows = failure.checks.map((check) =>
 		`op ${check.opIndex} / ${check.which} / ${anchors.reference(check.cited.line, check.cited.hash)} / ${check.status}`,
 	);
-	const omitted = failure.checks.length - rows.length;
 	const message = [
 		"Input-anchor checks (this snapshot):",
 		...rows,
-		...(omitted ? [`Anchor checks: ${rows.length}/${failure.checks.length}; ${omitted} omitted.`] : []),
 		"Anchor checks only; retries revalidate.",
 	].join("\n");
 	return boundDiagnostic(message, "\nAnchor-check output truncated at 16 KiB; omitted entries are not implied matched.");

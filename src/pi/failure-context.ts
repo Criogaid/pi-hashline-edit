@@ -4,7 +4,6 @@ import type { AnchorFailure } from "../core/types.ts";
 import { mergeRanges } from "../core/ranges.ts";
 
 const CONTEXT_RADIUS = 3;
-const MAX_CONTEXT_ROWS = 40;
 const MAX_CONTEXT_BYTES = 16 * 1024;
 export const MAX_RECOVERY_CANDIDATE_BYTES = 4 * 1024;
 
@@ -35,14 +34,10 @@ function collectContextRows(
 	const total = windows.reduce((sum, [start, end]) => sum + end - start, 0);
 	const rows: ContextRow[] = [];
 	let bytes = 0;
-	let truncatedBy: "row limit" | "byte limit" | "candidate row limit" | undefined;
+	let truncatedBy: "byte limit" | "candidate row limit" | undefined;
 
 	outer: for (const [start, end] of windows) {
 		for (let line = start; line < end; line++) {
-			if (rows.length >= MAX_CONTEXT_ROWS) {
-				truncatedBy = "row limit";
-				break outer;
-			}
 			const content = lines[line - 1];
 			const text = anchors.row(line, content);
 			const rowBytes = Buffer.byteLength(text, "utf8");
@@ -98,7 +93,7 @@ export function formatFailureContext(
 	}
 	if (truncatedBy) {
 		body.push(`Context rows: ${rows.length}/${total}; ${total - rows.length} omitted.`);
-		body.push(`Context truncated: ${truncatedBy} (40 rows/16384 bytes; lowest lines first).`);
+		body.push(`Context truncated: ${truncatedBy} (16384 bytes; lowest lines first).`);
 	}
 	return `\n${body.join("\n")}`;
 }
@@ -125,7 +120,7 @@ export function formatUniqueCandidateNeighborhoods(
 	}
 	if (truncatedBy) {
 		body.push(`Candidate-neighborhood rows: ${rows.length}/${total}; ${total - rows.length} omitted.`);
-		body.push(`Candidate neighborhoods truncated: ${truncatedBy} (40 rows/16384 bytes; candidate row 4096 bytes; lowest lines first).`);
+		body.push(`Candidate neighborhoods truncated: ${truncatedBy} (16384 bytes; candidate row 4096 bytes; lowest lines first).`);
 	}
 	return { text: `\n${body.join("\n")}`, shownLines: new Set(rows.map((row) => row.line)) };
 }

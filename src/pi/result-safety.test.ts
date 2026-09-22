@@ -15,6 +15,18 @@ import { appendMutationAnchors, finalizeMutationResult, postProcessMutation } fr
 
 const text = (result: any): string => result.content.map((block: any) => block.text ?? "").join("\n");
 
+function assertFailureByteBudgets(message: string): void {
+	const checksAt = message.indexOf("\nInput-anchor checks (this snapshot):\n");
+	const guidanceAt = message.indexOf("\nCheck the intended target before retrying;", checksAt);
+	assert.ok(checksAt > 0 && guidanceAt > checksAt);
+	assert.ok(Buffer.byteLength(message.slice(0, checksAt)) <= 16 * 1024);
+	assert.ok(Buffer.byteLength(message.slice(checksAt + 1, guidanceAt)) <= 16 * 1024);
+	assert.match(message, /Diagnostic output truncated at 16 KiB/);
+	assert.match(message, /Anchor-check output truncated at 16 KiB; omitted entries are not implied matched/);
+	const checks = message.match(/^op \d+ \/ anchor \/ .* \/ mismatched$/gm) ?? [];
+	assert.ok(checks.length > 40 && checks.length < 1000);
+}
+
 test("replace withholds anchors in progress and after commands change or remove the file", async () => {
 	const dir = await mkdtemp(join(tmpdir(), "hashline-result-"));
 	try {
@@ -127,7 +139,7 @@ test("mutation anchor output and aggregate anchor diagnostics have byte budgets"
 		await assert.rejects(makeEditOverride(dir).execute("errors", {
 			path, edits: Array.from({ length: 1000 }, () => ({ op: "delete", anchor: "1#XXXX" })),
 		}, undefined, undefined, { cwd: dir }), (error: Error) => {
-			assert.ok(Buffer.byteLength(error.message) <= 16 * 1024);
+			assertFailureByteBudgets(error.message);
 			assert.match(error.message, /omitted|truncated/i);
 			return true;
 		});
@@ -168,7 +180,7 @@ test("ambiguous recovery bounds candidate lists and never claims content identit
 		await assert.rejects(makeEditOverride(dir).execute("ambiguous", {
 			path, edits: Array.from({ length: 1000 }, () => ({ op: "delete", anchor: `50#${computeLineHash(50, "same")}` })),
 		}, undefined, undefined, { cwd: dir }), (error: Error) => {
-			assert.ok(Buffer.byteLength(error.message) <= 16 * 1024);
+			assertFailureByteBudgets(error.message);
 			assert.match(error.message, /ambiguous checksum matches/);
 			assert.match(error.message, /candidates omitted/);
 			assert.doesNotMatch(error.message, /same content/);

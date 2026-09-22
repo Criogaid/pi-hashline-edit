@@ -85,6 +85,8 @@ Rejected batches report each supplied anchor's status from that validation snaps
 
 A unique recovery candidate includes a bounded ±3-line neighborhood from the same snapshot. Candidate content is shown once in that neighborhood; if the neighborhood omits it, a complete candidate row can appear in the failure details within their output limits. Overlapping neighborhoods are merged; neighboring rows are observations, not recommended replacement targets. Inspect the code to choose the correct anchor and operation, then resubmit. No edit or retry is performed automatically, and every submitted anchor is verified again.
 
+When no candidate is found, context is centered on the cited line in the current validation snapshot, clamped to the file's first or last line if out of range. For a nonempty file with `N` lines, let `C = min(N, max(1, citedLine))`; show lines `max(1, C - 3)` through `min(N, C + 3)`, inclusive. Windows from multiple unresolved anchors are merged and emitted in ascending line order within byte budgets. Empty files have no context anchors. This fixed ±3 display radius is separate from `shiftRadius`, the candidate search radius (default ±15).
+
 ### Bulk replacement
 
 For a rename across a file:
@@ -246,11 +248,11 @@ These limits bound model context, not file size. Omission notices direct the cal
 | `read` | Default 2000 rows, overridable with `limit`; 256 KiB of anchored text. No partial anchor rows. |
 | `grep` | Default 100 matching lines, overridable; 500 characters per displayed line, plus Pi's total output limits. Hashes use full content; read truncated lines before reconstructing them. |
 | `edit` / `replace` anchors | 16 KiB including heading/omission notice, with no fixed entry-count limit. Compact tokens for changed positions; selected deletion successors retain complete content. No partial anchor rows. |
-| Anchor failure details | 16 KiB, up to 40 detailed failures and eight candidates per ambiguous failure. Unresolved anchors include nearby current-file context, itself capped at 40 rows/16 KiB. |
-| Input-anchor checks | Independent 16 KiB block, up to 40 entries in input order. Shown/omitted counts appear only when entries are omitted; omitted entries are not implied matched. |
-| Unique-candidate neighborhoods | Up to 40 complete anchored rows/16 KiB of row text, lowest-line first, plus headings. Candidate mappings stay in failure details. Each candidate row is limited to 4 KiB. Truncated rows are omitted in full. |
+| Anchor failure details | 16 KiB, with no fixed failure-count limit; up to eight candidates per ambiguous failure. Unresolved-anchor context has its own 16 KiB row-text budget and shares this details block's final limit. |
+| Input-anchor checks | Independent 16 KiB block, with no fixed entry-count limit. Truncation is reported explicitly; omitted entries are not implied matched. |
+| Unique-candidate neighborhoods | 16 KiB of complete anchored row text, lowest-line first, plus headings; no fixed row-count limit. Candidate mappings stay in failure details. Each candidate row is limited to 4 KiB. Truncated rows are omitted in full. |
 
-The diagnostic blocks have independent budgets; their combined output can exceed 16 KiB. Window budgets and omission counts are reported when truncation occurs. Limits apply to rendered diagnostics; core failure results retain all input-anchor checks.
+The diagnostic blocks have independent budgets; their combined output can exceed 16 KiB. Truncation notices identify exhausted budgets; context windows also report shown/omitted row counts. Limits apply to rendered diagnostics; core failure results retain all input-anchor checks.
 
 ### Publication
 
