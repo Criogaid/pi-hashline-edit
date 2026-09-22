@@ -31,6 +31,8 @@ export type LineEnding = "lf" | "crlf";
  * Candidate checksums hold the ORIGINAL line number fixed. Because checksums
  * can collide, a match is a candidate rather than proof of identity. Returned
  * anchors use each candidate's actual line number and freshly computed hash.
+ * Candidate `scope` records the completed search: local results leave matches
+ * outside the window unchecked; full-file results cover the entire snapshot.
  *
  * - `found` — exactly one line matches in the selected search scope; the caller
  *   checks its content before resending with the provided anchor.
@@ -39,9 +41,10 @@ export type LineEnding = "lf" | "crlf";
  * - `none` — no candidate found, or recovery disabled; re-read.
  */
 export type AnchorRecovery =
-	| { readonly kind: "found"; readonly newLine: number; readonly newHash: string }
+	| { readonly kind: "found"; readonly scope: "local" | "full-file"; readonly newLine: number; readonly newHash: string }
 	| {
 			readonly kind: "ambiguous";
+			readonly scope: "local" | "full-file";
 			readonly candidates: ReadonlyArray<{ readonly line: number; readonly hash: string }>;
 	  }
 	| { readonly kind: "none" };

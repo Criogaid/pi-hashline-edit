@@ -69,6 +69,7 @@ function verifyAnchor(
 	}
 
 	const candidates: { line: number; hash: string }[] = [];
+	let scope: "local" | "full-file" = "local";
 	const scan = (start: number, end: number) => {
 		for (let c = start; c <= end; c++) {
 			if (c === line) continue;
@@ -83,6 +84,7 @@ function verifyAnchor(
 		scan(lo, hi);
 		// Preserve local candidates; scan both remaining regions before deciding uniqueness.
 		if (candidates.length === 0) {
+			scope = "full-file";
 			scan(1, Math.min(lines.length, lo - 1));
 			scan(Math.max(1, hi + 1), lines.length);
 		}
@@ -90,9 +92,9 @@ function verifyAnchor(
 
 	let recovery: AnchorRecovery;
 	if (candidates.length === 1) {
-		recovery = { kind: "found", newLine: candidates[0].line, newHash: candidates[0].hash };
+		recovery = { kind: "found", scope, newLine: candidates[0].line, newHash: candidates[0].hash };
 	} else if (candidates.length > 1) {
-		recovery = { kind: "ambiguous", candidates };
+		recovery = { kind: "ambiguous", scope, candidates };
 	} else {
 		recovery = { kind: "none" };
 	}

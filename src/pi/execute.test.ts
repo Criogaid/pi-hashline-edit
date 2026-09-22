@@ -498,6 +498,11 @@ test("local and full-file recovery return copyable anchors without changing the 
 		await assert.rejects(call(edit, { path: "shift.txt", edits: [{ op: "replace", anchor: h(original, 2), body: ["B"] }] }), (error: Error) => {
 			replacement = new RegExp(`^(${prefixLines + 2}#[0-9A-Z]+)│b$`, "m").exec(error.message)?.[1] ?? "";
 			assert.match(error.message, /Check the intended target/);
+			assert.match(error.message, prefixLines === 1
+				? /Search: local; matches outside the window were not checked\./ : /Search: full file\./);
+			assert.doesNotMatch(error.message, prefixLines === 1 ? /Search: full file/ : /Search: local/);
+			assert.doesNotMatch(error.message, /neighborhoods/);
+			assert.equal((error.message.match(/^\d+#[0-9A-Z]+│/gm) ?? []).length, 1);
 			return replacement !== "";
 		});
 		assert.equal(await readFile(join(dir, "shift.txt"), "utf8"), prefix + original);
@@ -651,6 +656,7 @@ test("ambiguous candidates include distinguishing neighborhoods for a verified r
 		{ op: "replace", anchor: h("header\n  return value;\n", 2), body: ["  return updated;"] },
 	] }), (error: Error) => {
 		assert.match(error.message, /ambiguous checksum matches/);
+		assert.match(error.message, /Search: local; matches outside the window were not checked\./);
 		assert.ok(error.message.includes(`"${h(before, 5)}" / "${h(before, 15)}"`));
 		context = error.message.split("Ambiguous-candidate neighborhoods")[1];
 		assert.ok(context);

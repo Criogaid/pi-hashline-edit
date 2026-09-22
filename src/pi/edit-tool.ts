@@ -111,12 +111,14 @@ function formatFailureDetails(
 		else if (f.recovery.kind === "ambiguous") ambiguous++;
 		else none++;
 		const where = `op #${f.opIndex} ${f.op} ${f.which} (line ${f.cited.line})`;
+		const search = f.recovery.kind === "none" ? "" : f.recovery.scope === "local"
+			? "Search: local; matches outside the window were not checked." : "Search: full file.";
 		switch (f.recovery.kind) {
 			case "found": {
 				const content = currentLines[f.recovery.newLine - 1];
 				const candidate = snapshot.anchors.reference(f.recovery.newLine, f.recovery.newHash);
 				const row = content === undefined ? candidate : snapshot.anchors.row(f.recovery.newLine, content);
-				let detail = `• ${where}: checksum-matching candidate ${candidate}.`;
+				let detail = `• ${where}: checksum-matching candidate ${candidate}. ${search}`;
 				if (!shownCandidates.has(f.recovery.newLine)) {
 					if (content !== undefined && Buffer.byteLength(row, "utf8") <= MAX_RECOVERY_CANDIDATE_BYTES) {
 						detail += `\n${row}`;
@@ -131,7 +133,7 @@ function formatFailureDetails(
 			case "ambiguous": {
 				const list = f.recovery.candidates.slice(0, MAX_AMBIGUOUS_CANDIDATES).map((candidate) => `"${snapshot.anchors.reference(candidate.line, candidate.hash)}"`).join(" / ");
 				const more = f.recovery.candidates.length > MAX_AMBIGUOUS_CANDIDATES ? ` (${f.recovery.candidates.length - MAX_AMBIGUOUS_CANDIDATES} more candidates omitted)` : "";
-				lines.push(`• ${where}: ambiguous checksum matches: ${list}${more}.`);
+				lines.push(`• ${where}: ambiguous checksum matches: ${list}${more}. ${search}`);
 				break;
 			}
 			case "none":

@@ -248,6 +248,7 @@ test("shifted recovery: content moved down → found with a fresh anchor", () =>
 		assert.equal(f.recovery.kind, "found");
 		if (f.recovery.kind === "found") {
 			assert.equal(f.recovery.newLine, 4);
+			assert.equal(f.recovery.scope, "local");
 			// the rescued anchor must verify against the current file
 			assert.equal(computeLineHash(4, splitLines(currentText)[3]), f.recovery.newHash);
 		}
@@ -282,6 +283,7 @@ test("shifted recovery: duplicate content → ambiguous candidates", () => {
 		const f = r.failure.failures[0];
 		assert.equal(f.recovery.kind, "ambiguous");
 		if (f.recovery.kind === "ambiguous") {
+			assert.equal(f.recovery.scope, "local");
 			assert.deepEqual(
 				f.recovery.candidates.map((c) => c.line),
 				[3, 5],
@@ -311,16 +313,16 @@ test("full-file recovery finds distant content and anchors beyond the current EO
 		]);
 		assert.ok(!result.ok && result.failure.kind === "anchor");
 		assert.deepEqual(result.failure.failures[0].recovery, {
-			kind: "found", newLine, newHash: computeLineHash(newLine, "target"),
+			kind: "found", scope: "full-file", newLine, newHash: computeLineHash(newLine, "target"),
 		});
 	}
 });
 
 test("full-file recovery collects both sides while preserving local candidate priority", () => {
-	for (const [positions, selected] of [
-		[[3, 95], [3, 95]],
-		[[3, 49, 95], [49]],
-		[[3, 49, 51, 95], [49, 51]],
+	for (const { positions, selected, scope } of [
+		{ positions: [3, 95], selected: [3, 95], scope: "full-file" },
+		{ positions: [3, 49, 95], selected: [49], scope: "local" },
+		{ positions: [3, 49, 51, 95], selected: [49, 51], scope: "local" },
 	]) {
 		const lines = Array.from({ length: 100 }, () => "filler");
 		for (const line of positions) lines[line - 1] = "target";
@@ -329,8 +331,8 @@ test("full-file recovery collects both sides while preserving local candidate pr
 		]);
 		assert.ok(!result.ok && result.failure.kind === "anchor");
 		assert.deepEqual(result.failure.failures[0].recovery, selected.length === 1
-			? { kind: "found", newLine: selected[0], newHash: computeLineHash(selected[0], "target") }
-			: { kind: "ambiguous", candidates: selected.map(line => ({ line, hash: computeLineHash(line, "target") })) });
+			? { kind: "found", scope, newLine: selected[0], newHash: computeLineHash(selected[0], "target") }
+			: { kind: "ambiguous", scope, candidates: selected.map(line => ({ line, hash: computeLineHash(line, "target") })) });
 	}
 });
 

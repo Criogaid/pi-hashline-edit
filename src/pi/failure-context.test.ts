@@ -10,7 +10,7 @@ function failure(recovery: AnchorFailure["recovery"]): AnchorFailure {
 }
 
 function ambiguous(lines: readonly string[], positions: number[], hashLen = 4): AnchorFailure {
-	return failure({ kind: "ambiguous", candidates: positions.map(line => ({ line, hash: computeLineHash(line, lines[line - 1], hashLen) })) });
+	return failure({ kind: "ambiguous", scope: "local", candidates: positions.map(line => ({ line, hash: computeLineHash(line, lines[line - 1], hashLen) })) });
 }
 
 function format(text: string, failures: readonly AnchorFailure[], hashLen = 4) {
@@ -18,7 +18,7 @@ function format(text: string, failures: readonly AnchorFailure[], hashLen = 4) {
 }
 
 test("unique and unresolved failures produce no neighborhoods", () => {
-	const failures = [failure({ kind: "found", newLine: 2, newHash: "NEW" }), failure({ kind: "none" })];
+	const failures = [failure({ kind: "found", scope: "local", newLine: 2, newHash: "NEW" }), failure({ kind: "none" })];
 	assert.deepEqual(format("a\nb\nc\n", failures), { text: "", shownLines: new Set() });
 	assert.deepEqual(format("", [failure({ kind: "none" })]), { text: "", shownLines: new Set() });
 });
@@ -101,7 +101,7 @@ test("unique candidates inside ambiguous neighborhoods retain the candidate row 
 	const lines = ["prefix", "x".repeat(4096), "match", "match"];
 	const output = format(lines.join("\n"), [
 		ambiguous(lines, [3, 4]),
-		failure({ kind: "found", newLine: 2, newHash: computeLineHash(2, lines[1]) }),
+		failure({ kind: "found", scope: "local", newLine: 2, newHash: computeLineHash(2, lines[1]) }),
 	]).text;
 	assert.match(output, /truncated: candidate row limit/);
 	assert.doesNotMatch(output, /^2#[0-9A-Z]+│/m);
