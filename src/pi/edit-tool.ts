@@ -19,7 +19,7 @@
  * @module pi-hashline-edit/pi
  */
 
-import { generateDiffString, generateUnifiedPatch, truncateHead, withFileMutationQueue, type EditToolDetails } from "@earendil-works/pi-coding-agent";
+import { truncateHead, withFileMutationQueue, type EditToolDetails } from "@earendil-works/pi-coding-agent";
 import { Type, type Static } from "typebox";
 import { Text } from "@earendil-works/pi-tui";
 import { readFile } from "node:fs/promises";
@@ -33,7 +33,7 @@ import { getState } from "./state.ts";
 import { ANCHOR_PATTERN, createAnchorFormatter, type AnchorFormatter } from "./anchor-format.ts";
 import { formatDiffCounts, renderMutationResult, type DiffCounts } from "./render.ts";
 import { formatFailureContext, formatUniqueCandidateNeighborhoods, MAX_RECOVERY_CANDIDATE_BYTES } from "./failure-context.ts";
-import { finalizeMutationResult, formatMutationAnchors } from "./mutation-result.ts";
+import { finalizeMutationResult, formatMutationAnchors, generateMutationDiff } from "./mutation-result.ts";
 
 /** Cap failure details and status rows independently; each text block also has a byte cap. */
 const MAX_FAILURE_DETAILS = 40;
@@ -364,13 +364,8 @@ async function runHashline(
 	let anchors: string;
 	try {
 		// Diff and anchor generation happens after publication; preserve that state on failure.
-		const oldLf = currentText.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
-		const newLf = result.text.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
-		const { diff, firstChangedLine } = generateDiffString(oldLf, newLf);
 		details = {
-			diff,
-			patch: generateUnifiedPatch(displayPath, oldLf, newLf),
-			firstChangedLine,
+			...generateMutationDiff(displayPath, currentText, result.text),
 			publication,
 			...versions,
 			revision: versions.publishedRevision,

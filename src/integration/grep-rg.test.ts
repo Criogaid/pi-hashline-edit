@@ -10,6 +10,9 @@ import { join } from "node:path";
 import { rgPath } from "@vscode/ripgrep";
 import { makeGrepOverrideWithBackend } from "../pi/grep-tool.ts";
 import { makeEditOverride } from "../pi/edit-tool.ts";
+import { makeReadOverride } from "../pi/read-tool.ts";
+import { makeWriteOverride } from "../pi/write-tool.ts";
+import { makeReplaceTool } from "../pi/replace-tool.ts";
 import { COMMON_RG_ARGS, createLinePredicate, resolveIgnoreCase, runRg } from "../pi/rg-line-filter.ts";
 
 const REGEX_MODE = { engine: "default", multiline: false, literal: false } as const;
@@ -431,6 +434,46 @@ test("real rg accepts wildcard-only regexes and preserves limits and literal mod
     const literal: any = await tool.execute("literal", { pattern: ".*", literal: true }, undefined, undefined);
     assert.match(literal.content[0].text, /3#[0-9A-Z]+│\.\*/);
     await assert.rejects(tool.execute("invalid", { pattern: "*", literal: false }, undefined, undefined), /regex parse error/);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("tools share physical lines and anchors across text representations", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "hl-text-integration-"));
+  const call = (tool: any, params: any) => tool.execute("0", params, undefined, undefined);
+  const rows = (result: any): string[] => result.content[0].text.split("\n").filter((line: string) => /^\d+#/.test(line));
+  try {
+    const file = join(directory, "fixture.txt");
+    for (const before of [
+      "a\nold\n",
+      "a\r\nold\r\n",
+      "\uFEFFa\r\nold\nkeep\r\n",
+      "a\rb\nold\n",
+      "a\rb\nold",
+    ]) {
+      await call(makeWriteOverride(directory), { path: file, content: before });
+      assert.equal(await readFile(file, "utf8"), before);
+      const read = await call(makeReadOverride(directory), { path: file });
+      const grep = await call(makeGrepOverrideWithBackend(directory, {}), { path: file, pattern: "old", context: 2 });
+      assert.deepEqual(rows(grep), rows(read));
+      if (before.includes("a\rb")) assert.match(rows(read)[0], /│a␍b$/);
+      const anchor = rows(grep)[1].split("│")[0];
+      const edit = await call(makeEditOverride(directory), { path: file, edits: [{ op: "replace", anchor, body: ["new"] }] });
+      assert.equal(await readFile(file, "utf8"), before.replace("old", "new"));
+      assert.equal(edit.details.firstChangedLine, 2);
+      assert.match(edit.details.diff, /^-2 old/m);
+      assert.match(edit.details.diff, /^\+2 new/m);
+      assert.ok(!edit.details.diff.includes("\r"));
+      if (before.includes("a\rb")) assert.ok(edit.details.patch.includes(" a\rb\n"));
+      const editedRead = await call(makeReadOverride(directory), { path: file });
+      assert.equal(rows(edit)[0], rows(editedRead)[1].split("│")[0]);
+      const replaced = await call(makeReplaceTool(directory), { path: file, find: "new", replace: "next" });
+      assert.equal(await readFile(file, "utf8"), before.replace("old", "next"));
+      assert.equal(replaced.details.firstChangedLine, 2);
+      const replacedRead = await call(makeReadOverride(directory), { path: file });
+      assert.equal(rows(replaced)[0], rows(replacedRead)[1]);
+    }
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

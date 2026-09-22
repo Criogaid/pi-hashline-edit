@@ -721,3 +721,36 @@ test("candidate content falls back to one complete row when its neighborhood is 
 	await call(makeEditOverride(dir), { path: file, edits: [{ op: "replace", anchor: candidate, body: ["updated"] }] });
 	assert.equal(await readFile(file, "utf8"), before.replace("target", "updated"));
 }));
+
+test("CR replacements remain visible in diffs and exact in patches", async () => withDir(async (dir) => {
+	const file = join(dir, "cr.txt");
+	for (const [before, find, replacement] of [
+		["a\rb\n", "\r", "\n"],
+		["a\rb\n", "\r", "␍"],
+		["a\r\nb\r\n", "\r\n", "\n"],
+	]) {
+		await writeFile(file, before);
+		const result = await call(makeReplaceTool(dir), { path: file, find, replace: replacement });
+		assert.equal(await readFile(file, "utf8"), before.replaceAll(find, replacement));
+		assert.equal(result.details.firstChangedLine, 1);
+		assert.match(result.details.diff, /^-1 a␍/m);
+		assert.match(result.details.diff, /^\+1 a/m);
+		assert.ok(!result.details.diff.includes("\r"));
+		assert.ok(result.details.patch.includes(`-a${before.includes("\r\n") ? "\r\n" : "\rb\n"}`));
+		assert.match(result.details.patch, /@@/);
+	}
+}));
+
+test("deletion successors and failure contexts display CR without altering anchors", async () => withDir(async (dir) => {
+	const file = join(dir, "cr.txt");
+	const before = "remove\na\rb\n";
+	await writeFile(file, before);
+	const result = await call(makeEditOverride(dir), { path: file, edits: [{ op: "delete", anchor: h(before, 1) }] });
+	assert.ok(result.content[0].text.includes(`${h("a\rb\n", 1)}│a␍b`));
+	assert.equal(await readFile(file, "utf8"), "a\rb\n");
+	await assert.rejects(call(makeEditOverride(dir), { path: file, edits: [{ op: "delete", anchor: h(before, 1) }] }), (error: Error) => {
+		assert.ok(error.message.includes(`${h("a\rb\n", 1)}│a␍b`));
+		assert.ok(!error.message.includes("\r"));
+		return true;
+	});
+}));

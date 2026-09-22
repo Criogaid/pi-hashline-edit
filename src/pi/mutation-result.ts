@@ -1,6 +1,17 @@
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import { FileMutationError, type MutationVersions, type PublicationStatus } from "./file-commit.ts";
-import type { AnchorFormatter } from "./anchor-format.ts";
+import { generateDiffString, generateUnifiedPatch } from "@earendil-works/pi-coding-agent";
+import { displayCarriageReturns, type AnchorFormatter } from "./anchor-format.ts";
+
+/** Diff raw text so line numbers and patches retain LF boundaries and all source bytes. */
+export function generateMutationDiff(path: string, before: string, after: string) {
+	const { diff, firstChangedLine } = generateDiffString(before, after);
+	return {
+		diff: displayCarriageReturns(diff),
+		firstChangedLine,
+		patch: generateUnifiedPatch(path, before, after),
+	};
+}
 
 export function observedFreshness(result: AgentToolResult<unknown>): "unchanged" | "changed" | "unknown" {
 	const versions = result.details as Partial<MutationVersions> | undefined;
@@ -39,8 +50,7 @@ export function formatMutationAnchors(
 	for (const index of indices) {
 		const content = lines[index];
 		const includeContent = contentIndices === undefined || contentIndices.has(index);
-		const token = anchors.token(index + 1, content);
-		const row = includeContent ? `${token}│${content}` : token;
+		const row = includeContent ? anchors.row(index + 1, content) : anchors.token(index + 1, content);
 		const rowBytes = Buffer.byteLength(row) + 1;
 		if (rows.length >= 40 || bytes + rowBytes > 16 * 1024) {
 			omitted = true;

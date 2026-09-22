@@ -11,6 +11,11 @@ export interface AnchorFormatter {
 	row(line: number, content: string, displayContent?: string): string;
 }
 
+/** Make CR visible without changing the source text used for checksums or patches. */
+export function displayCarriageReturns(text: string): string {
+	return text.replace(/\r/g, "␍");
+}
+
 export function createAnchorFormatter(hashLen = getState().config.hashLen): AnchorFormatter {
 	const reference = (line: number, hash: string) => `${line}#${hash}`;
 	const token = (line: number, content: string) => reference(line, computeLineHash(line, content, hashLen));
@@ -18,6 +23,6 @@ export function createAnchorFormatter(hashLen = getState().config.hashLen): Anch
 		hashLen,
 		token,
 		reference,
-		row: (line, content, displayContent = content) => `${token(line, content)}│${displayContent}`,
+		row: (line, content, displayContent = content) => `${token(line, content)}│${displayCarriageReturns(displayContent)}`,
 	};
 }

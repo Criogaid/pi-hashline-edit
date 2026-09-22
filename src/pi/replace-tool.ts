@@ -24,8 +24,6 @@
  */
 
 import {
-	generateDiffString,
-	generateUnifiedPatch,
 	withFileMutationQueue,
 	type EditToolDetails,
 } from "@earendil-works/pi-coding-agent";
@@ -38,7 +36,7 @@ import { byteRevision, commitFile, FileMutationError, type MutationVersions, typ
 import { createAnchorFormatter, type AnchorFormatter } from "./anchor-format.ts";
 import { canonicalPath } from "./read-tool.ts";
 import { formatDiffCounts, renderMutationResult, type DiffCounts } from "./render.ts";
-import { finalizeMutationResult, formatMutationAnchors } from "./mutation-result.ts";
+import { finalizeMutationResult, formatMutationAnchors, generateMutationDiff } from "./mutation-result.ts";
 
 /** Default safety cap on match count (errors before writing if exceeded). */
 const DEFAULT_MAX_MATCHES = 2000;
@@ -264,13 +262,8 @@ async function runReplace(
 	let note: string;
 	try {
 		// Diff, anchors, and summary generation happens after publication; preserve its state on failure.
-		const oldLf = currentText.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
-		const newLf = newText.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
-		const { diff, firstChangedLine } = generateDiffString(oldLf, newLf);
 		details = {
-			diff,
-			patch: generateUnifiedPatch(displayPath, oldLf, newLf),
-			firstChangedLine,
+			...generateMutationDiff(displayPath, currentText, newText),
 			publication,
 			...versions,
 			revision: versions.publishedRevision,

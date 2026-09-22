@@ -215,6 +215,8 @@ Fusion serializes each mutation/command sequence for its target and checks the p
 
 `read` computes line hashes only for its requested window; `grep` hashes selected matches/context. Both still read and decode whole files. Mutation revision checks cover actual bytes.
 
+Line boundaries are LF or CRLF; a standalone CR remains line content. Anchored rows display standalone CR as `␍` (U+240D), while hashes use the original content. Edit/replace diff previews also show CR as `␍`, including CR in CRLF endings; their unified patches retain the original characters and line endings. The marker is a display aid, not replacement text.
+
 An existing UTF-8 BOM stays at byte zero through first-line replacement/deletion or insertion; deleting all content leaves the BOM. First-line hashes include it. A copied leading BOM in the first replacement/insertion line denotes the existing header; interior `U+FEFF` remains content. BOM-only files retain one anchored line. `replace` can explicitly match the BOM; `write` uses supplied content.
 
 ### Output budgets

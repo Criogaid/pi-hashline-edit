@@ -22,3 +22,9 @@ test("anchor formatter snapshots configured hash length and hashes undisplayed c
 		state.config = previous;
 	}
 });
+
+test("anchor rows expose carriage returns while checksums retain source content", () => {
+	const formatter = createAnchorFormatter(4);
+	assert.equal(formatter.row(1, "a\rb"), `1#${computeLineHash(1, "a\rb", 4)}│a␍b`);
+	assert.notEqual(formatter.token(1, "a\rb"), formatter.token(1, "a␍b"));
+});

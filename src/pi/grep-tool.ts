@@ -37,7 +37,7 @@ import { readFile, realpath, stat } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { splitLines } from "../core/lines.ts";
 import { decodeEditableText } from "../core/text.ts";
-import { createAnchorFormatter } from "./anchor-format.ts";
+import { createAnchorFormatter, displayCarriageReturns } from "./anchor-format.ts";
 import { canonicalPath } from "./read-tool.ts";
 import { parseHashline } from "./render.ts";
 import {
@@ -788,7 +788,7 @@ export function makeGrepOverrideWithBackend(cwd: string, overrides: Partial<Grep
           const rows: string[] = [];
           for (const n of [...windowSet].sort((a, b) => a - b)) {
             const content = lines[n - 1] ?? "";
-            const { text: display, wasTruncated } = truncateLine(content.replace(/\r/g, ""));
+            const { text: display, wasTruncated } = truncateLine(displayCarriageReturns(content));
             if (wasTruncated) linesTruncated = true;
             rows.push(anchors.row(n, content, display));
           }
