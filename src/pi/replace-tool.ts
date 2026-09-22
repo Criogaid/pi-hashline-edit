@@ -15,6 +15,8 @@
  * - `flags` adds regex flags in either mode; `g` is always forced so every
  *   occurrence is replaced. `i` (case-insensitive), `m` (per-line ^/$),
  *   `s` (dotall), `u` (unicode) all work.
+ * - `replacements` batches rules against one original snapshot; conflicting
+ *   ranges or a failing rule reject the entire batch before publication.
  *
  * Concurrency: read-modify-write is wrapped in {@link withFileMutationQueue}
  * (shared with `edit`), so a `replace` and an `edit` on the same file never
@@ -43,21 +45,42 @@ const DEFAULT_MAX_MATCHES = 2000;
 /** Valid JavaScript regular-expression flag characters (ES2023+, incl. hasIndices `d`). */
 const VALID_FLAGS = new Set(["g", "i", "m", "s", "u", "y", "d"]);
 
+const replacementSchema = Type.Object({
+	find: Type.String({ description: "Text to find. Literal substring by default; a JavaScript regex source when regex is true." }),
+	replace: Type.String({ description: "Replacement text. Literal mode inserts verbatim; regex mode supports JavaScript $ substitutions." }),
+	regex: Type.Optional(Type.Boolean({ description: "Interpret find as a JavaScript regex (default false)." })),
+	flags: Type.Optional(Type.String({ description: "Regex flags in either mode; g is always added." })),
+	maxMatches: Type.Optional(Type.Number({ exclusiveMinimum: 0, description: `Per-rule match cap (default ${DEFAULT_MAX_MATCHES}); exceeding it rejects the entire call.` })),
+});
+type Replacement = Static<typeof replacementSchema>;
+
 function createReplaceSchema(actionFusion: boolean) {
 	return Type.Object({
 		path: Type.String({ description: "Path to the file to edit (relative or absolute)" }),
-		find: Type.String({ description: "Text to find. Literal substring when `regex` is false/omitted; a JavaScript regex pattern source when `regex` is true." }),
-		replace: Type.String({ description: "Replacement text. Literal mode: inserted verbatim (no $ expansion). Regex mode: supports $1, $2, $&, $`, $' etc." }),
-		regex: Type.Optional(Type.Boolean({ description: "Treat `find` as a JavaScript regex pattern source (default false = literal substring, all occurrences replaced)." })),
-		flags: Type.Optional(Type.String({ description: "Regex flags appended in BOTH modes ('g' is always forced so every occurrence is replaced)." })),
-		maxMatches: Type.Optional(Type.Number({ description: `Safety cap: errors before writing if more matches than this (default ${DEFAULT_MAX_MATCHES}). Raise for deliberate bulk transforms.` })),
-		...(actionFusion ? { then_run: createThenRunSchema("Command to run after replace succeeds; failure does not roll back the replacement.") } : {}),
+		...Type.Partial(replacementSchema).properties,
+		replacements: Type.Optional(Type.Array(replacementSchema, { minItems: 1, description: "Rules matched against one original snapshot. Mutually exclusive with top-level find/replace/regex/flags/maxMatches. Overlaps reject the entire batch." })),
+		...(actionFusion ? { then_run: createThenRunSchema("Command to run once after all replacements succeed; failure does not roll back the replacement.") } : {}),
 	});
 }
 
 const replaceSchema = createReplaceSchema(false);
-
 type ReplaceParams = Omit<Static<typeof replaceSchema>, "then_run"> & { then_run?: ThenRunInput };
+
+function replacementRules(params: ReplaceParams): Replacement[] {
+	if (params.replacements !== undefined && Object.keys(replacementSchema.properties).some((key) => params[key as keyof Replacement] !== undefined)) {
+		throw new Error("replacements cannot be combined with top-level replacement fields");
+	}
+	const rules = params.replacements ?? [params];
+	if (!Array.isArray(rules) || rules.length === 0) throw new Error("replacements must be a non-empty array");
+	for (const [index, rule] of rules.entries()) {
+		if (!rule || typeof rule.find !== "string" || typeof rule.replace !== "string") throw new Error(`rule ${index}: find and replace must be strings`);
+		if (rule.find === "") throw new Error(`rule ${index}: \`find\` is empty`);
+		if (rule.regex !== undefined && typeof rule.regex !== "boolean") throw new Error(`rule ${index}: regex must be a boolean`);
+		if (rule.flags !== undefined && typeof rule.flags !== "string") throw new Error(`rule ${index}: flags must be a string`);
+		if (rule.maxMatches !== undefined && (!Number.isFinite(rule.maxMatches) || rule.maxMatches <= 0)) throw new Error(`rule ${index}: maxMatches must be finite and positive`);
+	}
+	return rules as Replacement[];
+}
 
 /** Escape regex metacharacters so a literal string is matched verbatim. */
 function escapeRegex(s: string): string {
@@ -66,9 +89,8 @@ function escapeRegex(s: string): string {
 
 /**
  * Build the matcher. `find` is escaped in literal mode; `flags` (validated) get
- * `g` forced so all occurrences replace. Construction errors (bad pattern /
- * conflicting flags such as `g`+`y`) surface as a friendly message rather than
- * a raw `SyntaxError`.
+ * `g` forced so all occurrences replace. Invalid patterns or unsupported flags
+ * surface as a friendly message rather than a raw `SyntaxError`.
  */
 function buildRegex(find: string, isRegex: boolean, flagsRaw: string | undefined): RegExp {
 	for (const c of flagsRaw ?? "") {
@@ -84,6 +106,63 @@ function buildRegex(find: string, isRegex: boolean, flagsRaw: string | undefined
 		const msg = e instanceof Error ? e.message : String(e);
 		throw new Error(`invalid regex /${source}/${flagStr}: ${msg}`);
 	}
+}
+
+/** Expand JS replacement tokens against the original match, including prefix/suffix context. */
+function expandReplacement(template: string, match: RegExpMatchArray, source: string): string {
+	// Without named captures, $<...> is ordinary text and may contain other $ tokens.
+	const tokens = match.groups === undefined ? /\$(\$|&|`|'|\d{1,2})/g : /\$(\$|&|`|'|<[^>]*>|\d{1,2})/g;
+	return template.replace(tokens, (token, key: string) => {
+		if (key === "$") return "$";
+		if (key === "&") return match[0];
+		if (key === "`") return source.slice(0, match.index);
+		if (key === "'") return source.slice(match.index! + match[0].length);
+		if (key.startsWith("<")) return match.groups === undefined ? token : (match.groups[key.slice(1, -1)] ?? "");
+		const index = Number(key);
+		if (index > 0 && index < match.length) return match[index] ?? "";
+		// $12 falls back to capture 1 plus literal 2 when capture 12 does not exist.
+		const first = Number(key[0]);
+		if (key.length === 2 && first > 0 && first < match.length) return (match[first] ?? "") + key[1];
+		return token;
+	});
+}
+
+function applyReplacements(source: string, rules: readonly Replacement[]): { text: string; count: number } {
+	const changes: { start: number; end: number; text: string; rule: number }[] = [];
+	for (const [index, rule] of rules.entries()) {
+		try {
+			const regex = buildRegex(rule.find, rule.regex === true, rule.flags);
+			const maxMatches = rule.maxMatches ?? DEFAULT_MAX_MATCHES;
+			let count = 0;
+			for (const match of source.matchAll(regex)) {
+				if (++count > maxMatches) throw new Error(`${count}+ matches exceed \`maxMatches\` (${maxMatches}). Raise \`maxMatches\` if intentional, or narrow \`find\`.`);
+				changes.push({
+					start: match.index!, end: match.index! + match[0].length, rule: index,
+					text: rule.regex ? expandReplacement(rule.replace, match, source) : rule.replace,
+				});
+			}
+			if (count === 0) throw new Error(`no matches for ${rule.regex ? `/${rule.find}/` : JSON.stringify(rule.find)}.`);
+		} catch (error) {
+			throw new Error(`rule ${index}: ${error instanceof Error ? error.message : String(error)}`);
+		}
+	}
+	changes.sort((a, b) => a.start - b.start || a.end - b.end);
+	for (let i = 1; i < changes.length; i++) {
+		const previous = changes[i - 1];
+		const current = changes[i];
+		// Empty matches at the same start are ambiguous too; an insertion at an end is adjacent.
+		if (current.start < previous.end || current.start === previous.start) {
+			throw new Error(`rules ${previous.rule} and ${current.rule} overlap at offset ${current.start}; no replacements applied`);
+		}
+	}
+	const parts: string[] = [];
+	let cursor = 0;
+	for (const change of changes) {
+		parts.push(source.slice(cursor, change.start), change.text);
+		cursor = change.end;
+	}
+	parts.push(source.slice(cursor));
+	return { text: parts.join(""), count: changes.length };
 }
 
 /**
@@ -131,9 +210,13 @@ function show(s: string, n = 30): string {
 function replaceHeader(args: ReplaceParams, theme: any, counts?: DiffCounts): string {
 	let t = theme.fg("toolTitle", theme.bold("replace "));
 	t += theme.fg("accent", args.path);
-	const mode = args.regex ? "regex" : "lit";
-	const f = args.flags ? `/${args.flags}` : "";
-	t += theme.fg("dim", ` — ${mode}${f} "${show(args.find)}" → "${show(args.replace)}"`);
+	if (args.replacements) {
+		t += theme.fg("dim", ` — ${args.replacements.length} rules`);
+	} else {
+		const mode = args.regex ? "regex" : "lit";
+		const f = args.flags ? `/${args.flags}` : "";
+		t += theme.fg("dim", ` — ${mode}${f} "${show(args.find ?? "")}" → "${show(args.replace ?? "")}"`);
+	}
 	if (counts && (counts.added || counts.removed)) t += formatDiffCounts(counts, theme);
 	return t;
 }
@@ -144,7 +227,7 @@ export function makeReplaceTool(cwd: string, fusion?: ReturnType<typeof createAc
 		name: "replace" as const,
 		label: "replace",
 		description:
-			"Replace all matching text across a file. Supports literal strings and JavaScript regex; fails on zero matches. Returns a diff and fresh anchors.",
+			"Replace all matching text across a file with one rule or a replacements batch. All rules match the original snapshot; overlaps or any zero-match rule reject the entire call. Supports literal strings and JavaScript regex. Returns a diff and fresh anchors.",
 		promptSnippet: "Replace matching text across a file",
 		promptGuidelines: [
 			"Use replace for bulk changes; prefer edit for a specific, anchor-verified location.",
@@ -193,11 +276,10 @@ async function runReplace(
 	onAnchors: (anchors: string) => void,
 ) {
 	const anchorFormatter = createAnchorFormatter();
-	const { find, replace } = params;
-	const isRegex = params.regex === true;
-	const maxMatches = params.maxMatches ?? DEFAULT_MAX_MATCHES;
-
-	if (find === "") throw new Error(`Replace ${displayPath}: \`find\` is empty.`);
+	let rules: Replacement[];
+	try { rules = replacementRules(params); } catch (error) {
+		throw new Error(`Replace ${displayPath}: ${error instanceof Error ? error.message : String(error)}`);
+	}
 
 	let currentText: string;
 	let baseRevision: string;
@@ -212,33 +294,13 @@ async function runReplace(
 	// honor cancel after read: if aborted, don't proceed to match/replace; the file stays untouched
 	if (signal?.aborted) throw new Error(`Replace ${displayPath} aborted before apply.`);
 
-	let regex: RegExp;
+	let newText: string;
+	let count: number;
 	try {
-		regex = buildRegex(find, isRegex, params.flags);
-	} catch (e) {
-		throw new Error(`Replace ${displayPath}: ${e instanceof Error ? e.message : String(e)}`);
+		({ text: newText, count } = applyReplacements(currentText, rules));
+	} catch (error) {
+		throw new Error(`Replace ${displayPath}: ${error instanceof Error ? error.message : String(error)}`);
 	}
-
-	// Count matches with an early guard so a runaway pattern (e.g. an empty-match
-	// regex) can't produce a catastrophic write. matchAll does not mutate the
-	// regex's lastIndex (it clones internally), so the subsequent `replace` is safe.
-	let count = 0;
-	for (const _ of currentText.matchAll(regex)) {
-		count++;
-		if (count > maxMatches) {
-			throw new Error(
-				`Replace ${displayPath}: ${count}+ matches exceed \`maxMatches\` (${maxMatches}). Raise \`maxMatches\` if intentional, or narrow \`find\`.`,
-			);
-		}
-	}
-	if (count === 0) {
-		const shown = isRegex ? `/${find}/` : JSON.stringify(find);
-		throw new Error(`Replace ${displayPath}: no matches for ${shown}.`);
-	}
-
-	// Literal mode uses a function replacement so `$` in `replace` stays literal;
-	// regex mode passes the string so $1/$& etc. expand.
-	const newText = isRegex ? currentText.replace(regex, replace) : currentText.replace(regex, () => replace);
 	const changed = newText !== currentText;
 
 	// honor cancel before write: if aborted, don't touch the disk

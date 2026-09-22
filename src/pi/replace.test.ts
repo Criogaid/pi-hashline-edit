@@ -14,6 +14,8 @@ import { join } from "node:path";
 import { initTheme } from "@earendil-works/pi-coding-agent";
 import { makeReplaceTool } from "./replace-tool.ts";
 import { makeEditOverride } from "./edit-tool.ts";
+import { validateToolArguments } from "@earendil-works/pi-ai";
+import { createActionFusionExecutor } from "./action-fusion.ts";
 
 async function withDir<T>(fn: (dir: string) => Promise<T>): Promise<T> {
 	const dir = await mkdtemp(join(tmpdir(), "hl-replace-"));
@@ -285,3 +287,116 @@ test("replace header: renderResult refreshes the call header in place — no inv
 		assert.ok(!invalidated, "renderResult must not call invalidate");
 	});
 });
+
+test("replacement batches use one snapshot and return anchors for the final content", async () => withDir(async (dir) => {
+	const file = join(dir, "batch.txt");
+	const tool = makeReplaceTool(dir);
+	const args = { path: file, replacements: [{ find: "foo", replace: "bar" }, { find: "bar", replace: "baz" }] };
+	validateToolArguments(tool, { type: "toolCall", id: "0", name: "replace", arguments: args });
+	await writeFile(file, "\uFEFFfoo\r\nbar\nfoo");
+	const result = await call(tool, args);
+	assert.equal(await readFile(file, "utf8"), "\uFEFFbar\r\nbaz\nbar");
+	assert.match(result.content[0].text, /3 matches/);
+	assert.match(result.details.diff, /^\+2 baz/m);
+	await call(makeEditOverride(dir), { path: file, edits: [{ op: "replace", anchor: anchorLine(result.content[0].text, 2), body: ["chained"] }] });
+	assert.equal(await readFile(file, "utf8"), "\uFEFFbar\r\nchained\nbar");
+	assert.match(tool.renderCall(args, stubTheme, {}).text, /2 rules/);
+}));
+
+test("invalid batches reject every change and skip the fused command", async () => withDir(async (dir) => {
+	const file = join(dir, "batch.txt");
+	const before = "foo bar foo";
+	await writeFile(file, before);
+	let commands = 0;
+	const tool = makeReplaceTool(dir, createActionFusionExecutor(async () => { commands++; return "done"; }));
+	const first = { find: "bar", replace: "changed" };
+	const cases = [
+		{ replacements: [first, { find: "missing", replace: "x" }] },
+		{ replacements: [first, { find: "foo", replace: "x", maxMatches: 1 }] },
+		{ replacements: [first, { find: "(", replace: "x", regex: true }] },
+		{ replacements: [first, { find: "bar foo", replace: "x" }] },
+		{ replacements: [first, { find: "bar", replace: "x" }] },
+		{ replacements: [first, { find: "foo", replace: "\0" }] },
+		{ replacements: [first, { find: "foo", replace: "\ud800" }] },
+		{ replacements: [first, { find: "foo", replace: "x", maxMatches: NaN }] },
+		{ replacements: [first, { find: "foo", replace: "x", maxMatches: Infinity }] },
+		{ replacements: [first, { find: "", replace: "x" }] },
+		{ replacements: [first, { find: "foo" }] },
+		{ replacements: [] },
+		{ replacements: [first], find: "foo", replace: "x" },
+		{ replacements: [first], flags: "i" },
+		{},
+	];
+	for (const args of cases) {
+		await assert.rejects(tool.execute("0", { path: file, ...args, then_run: { command: "check" } }, undefined, undefined, { cwd: dir }), /then_run:skipped/);
+		assert.equal(await readFile(file, "utf8"), before);
+	}
+	assert.equal(commands, 0);
+}));
+
+test("adjacent matches and zero-width boundaries have deterministic batch semantics", async () => withDir(async (dir) => {
+	const file = join(dir, "batch.txt");
+	const tool = makeReplaceTool(dir);
+	for (const rules of [
+		[{ find: "a", replace: "b" }, { find: "b", replace: "a" }],
+		[{ find: "b", replace: "a" }, { find: "a", replace: "b" }],
+	]) {
+		await writeFile(file, "ab");
+		await call(tool, { path: file, replacements: rules });
+		assert.equal(await readFile(file, "utf8"), "ba");
+	}
+	for (const find of ["^", "(?=b)", "$"]) {
+		await writeFile(file, "ab");
+		const args = { path: file, replacements: [{ find: "ab", replace: "X" }, { find, replace: "!", regex: true }] };
+		if (find === "$") {
+			await call(tool, args);
+			assert.equal(await readFile(file, "utf8"), "X!");
+		} else {
+			await assert.rejects(call(tool, args), /overlap/);
+			assert.equal(await readFile(file, "utf8"), "ab");
+		}
+	}
+	await writeFile(file, "ab");
+	await assert.rejects(call(tool, { path: file, replacements: [{ find: "^", replace: "x", regex: true }, { find: "(?=a)", replace: "y", regex: true }] }), /overlap/);
+}));
+
+test("regex templates agree with native replacement in single and snapshot batch modes", async () => withDir(async (dir) => {
+	const file = join(dir, "regex.txt");
+	const tool = makeReplaceTool(dir);
+	const template = "$$|$&|$`|$'|$0|$00|$01|$1|$2|$10|$12|$99|$<x>|$<missing>|$<>|$<$&>|$<unclosed$1|$";
+	for (const [source, find, flags] of [
+		["ab b#", "(?<x>a)?b", "g"],
+		["ab b#", "(a)?b", "g"],
+		["ab#", "ab", "g"],
+		["abcdefghijkl#", "(a)(b)(c)(d)(e)(f)(g)(h)(i)(j)(k)(l)", "g"],
+		["ab ab#", "(?<=a)(b)", "g"],
+		["ab#", "(?=b)", "g"],
+		["😀#", "(?=[^#])", "gu"],
+		["aab#", "(a)", "gy"],
+	]) {
+		const rule = { find, replace: template, regex: true, flags };
+		const expected = source.replace(new RegExp(find, flags), template);
+		for (const batch of [false, true]) {
+			await writeFile(file, source);
+			// The second rule changes only the original final sentinel, not copies inserted by $' or $`.
+			const args = batch ? { replacements: [rule, { find: "#$", replace: "!", regex: true }] } : rule;
+			await call(tool, { path: file, ...args });
+			assert.equal(await readFile(file, "utf8"), batch ? expected.slice(0, -1) + "!" : expected, `${find}/${flags}; batch=${batch}`);
+		}
+	}
+}));
+
+test("successful batches run one command against the complete result", async () => withDir(async (dir) => {
+	const file = join(dir, "batch.txt");
+	await writeFile(file, "foo bar");
+	let commands = 0;
+	const tool = makeReplaceTool(dir, createActionFusionExecutor(async () => {
+		commands++;
+		assert.equal(await readFile(file, "utf8"), "bar baz");
+		return "checked";
+	}));
+	const result = await tool.execute("0", { path: file, replacements: [{ find: "foo", replace: "bar", maxMatches: 1 }, { find: "bar", replace: "baz", maxMatches: 1 }], then_run: { command: "check" } }, undefined, undefined, { cwd: dir });
+	assert.equal(commands, 1);
+	assert.equal(result.details.actionFusion.command, "succeeded");
+	assert.match(result.content[0].text, /Updated anchors/);
+}));

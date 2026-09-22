@@ -99,6 +99,20 @@ Literal mode inserts replacement text verbatim. Set `regex: true` for JavaScript
 { "path": "src/foo.ts", "find": "get([A-Z]\\w*)", "replace": "fetch$1", "regex": true }
 ```
 
+To apply several rules against the same original content:
+
+```json
+{
+  "path": "src/foo.ts",
+  "replacements": [
+    { "find": "foo", "replace": "bar" },
+    { "find": "bar", "replace": "baz" }
+  ]
+}
+```
+
+Original `foo bar` becomes `bar baz`; inserted text is not searched again. All rules must succeed before one file commit. `then_run`, when supplied, runs once after the entire batch succeeds.
+
 <details>
 <summary><strong>Full read, grep, replace, and write parameter reference</strong></summary>
 
@@ -132,13 +146,15 @@ All inclusion/exclusion matching uses bundled ripgrep, independent of system `rg
 
 ### Replace
 
-Required: `path`, `find`, `replace`. Optional:
+Required: `path` and either top-level `find` / `replace`, or a non-empty `replacements` array. These forms are mutually exclusive: batch calls cannot include top-level `find`, `replace`, `regex`, `flags`, or `maxMatches`. Each rule requires `find` and `replace`, with these optional fields:
 
 - `regex`: defaults to `false`; regex mode supports capture groups, the full match, and prefix/suffix substitutions.
 - `flags`: applies in both modes; `g` is always added. Supported flags: `g i m s u y d`.
-- `maxMatches`: defaults to 2000; rejects excess matches before writing. Raise it for intentional bulk changes. It does not bound regex execution time or result size.
+- `maxMatches`: defaults to 2000 per rule and must be finite and positive; rejects excess matches before writing. Raise it for intentional bulk changes. It does not bound regex execution time or result size.
 
-Zero matches is an error. Identical output reports no net change.
+Zero matches in any rule, an invalid rule, or overlapping match ranges rejects the whole call without writing. Adjacent ranges are allowed. Zero-length matches conflict at the same position or at the start/interior of another match; a zero-length match at another match's end is allowed unless it conflicts with a following match. Error rule indices and string offsets are zero-based (offsets count UTF-16 code units).
+
+Regex captures and prefix/suffix substitutions always refer to the original snapshot. Identical final output reports no net change and does not rewrite the file; a requested `then_run` can still run after freshness checks.
 
 ### Write
 
