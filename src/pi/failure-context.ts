@@ -1,6 +1,7 @@
 import type { AnchorFormatter } from "./anchor-format.ts";
 import { splitLines } from "../core/lines.ts";
 import type { AnchorFailure } from "../core/types.ts";
+import { mergeRanges } from "../core/ranges.ts";
 
 const CONTEXT_RADIUS = 3;
 const MAX_CONTEXT_ROWS = 40;
@@ -10,16 +11,6 @@ export const MAX_RECOVERY_CANDIDATE_BYTES = 4 * 1024;
 type Interval = { lo: number; hi: number };
 type ContextRow = { line: number; text: string };
 
-function mergeIntervals(intervals: Interval[]): Interval[] {
-	const sorted = intervals.sort((a, b) => a.lo - b.lo || a.hi - b.hi);
-	const merged: Interval[] = [];
-	for (const interval of sorted) {
-		const previous = merged.at(-1);
-		if (previous && interval.lo <= previous.hi + 1) previous.hi = Math.max(previous.hi, interval.hi);
-		else merged.push({ ...interval });
-	}
-	return merged;
-}
 
 function shownIntervals(rows: readonly ContextRow[]): Interval[] {
 	const intervals: Interval[] = [];
@@ -37,17 +28,17 @@ function collectContextRows(
 	anchors: AnchorFormatter,
 	candidateLines?: ReadonlySet<number>,
 ) {
-	const windows = mergeIntervals(centers.map((center) => {
+	const windows = mergeRanges(centers.map((center) => {
 		const line = Math.min(lines.length, Math.max(1, center));
-		return { lo: Math.max(1, line - CONTEXT_RADIUS), hi: Math.min(lines.length, line + CONTEXT_RADIUS) };
+		return [Math.max(1, line - CONTEXT_RADIUS), Math.min(lines.length, line + CONTEXT_RADIUS) + 1];
 	}));
-	const total = windows.reduce((sum, window) => sum + window.hi - window.lo + 1, 0);
+	const total = windows.reduce((sum, [start, end]) => sum + end - start, 0);
 	const rows: ContextRow[] = [];
 	let bytes = 0;
 	let truncatedBy: "row limit" | "byte limit" | "candidate row limit" | undefined;
 
-	outer: for (const window of windows) {
-		for (let line = window.lo; line <= window.hi; line++) {
+	outer: for (const [start, end] of windows) {
+		for (let line = start; line < end; line++) {
 			if (rows.length >= MAX_CONTEXT_ROWS) {
 				truncatedBy = "row limit";
 				break outer;

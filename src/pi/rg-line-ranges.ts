@@ -1,4 +1,6 @@
-export type LineRange = readonly [start: number, endExclusive: number];
+import { mergeRanges, type HalfOpenRange } from "../core/ranges.ts";
+
+export type LineRange = HalfOpenRange;
 
 export interface RgSubmatch {
   start: number;
@@ -12,17 +14,8 @@ function assertRange(range: LineRange): void {
 }
 
 export function normalizeRanges(ranges: readonly LineRange[]): LineRange[] {
-  const sorted = ranges.map((range) => {
-    assertRange(range);
-    return range;
-  }).sort((a, b) => a[0] - b[0] || a[1] - b[1]);
-  const result: LineRange[] = [];
-  for (const range of sorted) {
-    const previous = result[result.length - 1];
-    if (!previous || range[0] > previous[1]) result.push([range[0], range[1]]);
-    else if (range[1] > previous[1]) result[result.length - 1] = [previous[0], range[1]];
-  }
-  return result;
+  for (const range of ranges) assertRange(range);
+  return mergeRanges(ranges);
 }
 
 export function unionRanges(left: readonly LineRange[], right: readonly LineRange[]): LineRange[] {

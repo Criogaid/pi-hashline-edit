@@ -31,6 +31,7 @@ import {
 import { Type, type Static } from "typebox";
 import { Text } from "@earendil-works/pi-tui";
 import { splitLines } from "../core/index.ts";
+import { findSortedRangeConflict } from "../core/ranges.ts";
 import { ACTION_FUSION_GUIDELINES, createActionFusionExecutor, createThenRunSchema, type ThenRunInput } from "./action-fusion.ts";
 import { readEditableSnapshot, commitReplacement, type MutationVersions, type PublicationStatus } from "./file-commit.ts";
 import { createAnchorFormatter, type AnchorFormatter } from "./anchor-format.ts";
@@ -145,13 +146,11 @@ function applyReplacements(source: string, rules: readonly Replacement[]): { tex
 		}
 	}
 	changes.sort((a, b) => a.start - b.start || a.end - b.end);
-	for (let i = 1; i < changes.length; i++) {
-		const previous = changes[i - 1];
-		const current = changes[i];
-		// Empty matches at the same start are ambiguous too; an insertion at an end is adjacent.
-		if (current.start < previous.end || current.start === previous.start) {
-			throw new Error(`rules ${previous.rule} and ${current.rule} overlap at offset ${current.start}; no replacements applied`);
-		}
+	const conflict = findSortedRangeConflict(changes.map((change) => [change.start, change.end]));
+	if (conflict !== undefined) {
+		const previous = changes[conflict - 1];
+		const current = changes[conflict];
+		throw new Error(`rules ${previous.rule} and ${current.rule} overlap at offset ${current.start}; no replacements applied`);
 	}
 	const parts: string[] = [];
 	let cursor = 0;

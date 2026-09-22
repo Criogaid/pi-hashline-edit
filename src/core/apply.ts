@@ -32,6 +32,7 @@
 import { computeLineHash } from "./hash.ts";
 import { detectLineEnding, hasFinalNewline, splitLines } from "./lines.ts";
 import type { Anchor, AnchorCheck, AnchorFailure, AnchorRecovery, ApplyResult, Edit } from "./types.ts";
+import { findSortedRangeConflict } from "./ranges.ts";
 
 /** Line-level operation: replace the raw lines in the `[lo, hi)` range (0-based, hi exclusive) with newLines. */
 interface SpanOp {
@@ -166,10 +167,6 @@ function translateEdit(
 	}
 }
 
-/** The "last affected position" of a zero-width range (insertion point) is lo; otherwise hi-1. */
-function maxAffected(op: SpanOp): number {
-	return op.lo === op.hi ? op.lo : op.hi - 1;
-}
 
 function hasInvalidBodyLine(edits: readonly Edit[]): boolean {
 	return edits.some((edit) => "body" in edit && edit.body.some((line) => /[\r\n]/.test(line)));
@@ -221,19 +218,17 @@ export function applyEdits(text: string, edits: Edit[], hashLen = 4, shiftRadius
 		return { ok: false, failure: { kind: "range", message: rangeError, checks: anchorChecks } };
 	}
 
-	// Overlap check: sort ascending by lo; the next op's start must not fall inside the previous op's affected range
 	const sorted = [...ops].sort((a, b) => a.lo - b.lo || a.hi - b.hi);
-	for (let k = 1; k < sorted.length; k++) {
-		if (sorted[k].lo <= maxAffected(sorted[k - 1])) {
-			return {
-				ok: false,
-				failure: {
-					kind: "range",
-					message: `overlapping edits near line ${sorted[k].lo + 1}; issue one edit per range`,
-					checks: anchorChecks,
-				},
-			};
-		}
+	const conflict = findSortedRangeConflict(sorted.map((op) => [op.lo, op.hi]));
+	if (conflict !== undefined) {
+		return {
+			ok: false,
+			failure: {
+				kind: "range",
+				message: `overlapping edits near line ${sorted[conflict].lo + 1}; issue one edit per range`,
+				checks: anchorChecks,
+			},
+		};
 	}
 
 	// Mixed line endings: each line carries the separator that FOLLOWED it in
