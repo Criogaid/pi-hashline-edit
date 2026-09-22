@@ -221,12 +221,12 @@ function toCoreEdits(ops: readonly EditOpInput[]): { ok: true; edits: Edit[] } |
 }
 
 /**
- * Return compact tokens for caller-supplied rows, retaining content for deletion successors.
+ * Return compact tokens for changed caller-supplied rows, retaining content for deletion successors.
  * Uses the applicator's final indices so mixed batches do not need a second position calculation.
  */
-function formatUpdatedAnchors(newText: string, touched: readonly number[], contextLines: readonly number[], anchors: AnchorFormatter): string {
+function formatUpdatedAnchors(before: string, newText: string, touched: readonly number[], contextLines: readonly number[], anchors: AnchorFormatter): string {
 	const idxs = [...new Set(touched)].sort((a, b) => a - b);
-	return formatMutationAnchors(splitLines(newText), idxs, anchors, "Updated anchors:", new Set(contextLines));
+	return formatMutationAnchors(splitLines(before), splitLines(newText), idxs, anchors, "Updated anchors:", new Set(contextLines));
 }
 
 /** Call-header line: `edit path — N ops: op`, plus `+N -N` once the result's diff counts are known. */
@@ -250,7 +250,7 @@ export function makeEditOverride(cwd: string, fusion?: ReturnType<typeof createA
 		promptSnippet: "Edit file lines using verified anchors",
 		promptGuidelines: [
 			"Batch changes to the same file in one edit call.",
-			"Use the latest returned anchors for subsequent edits; read again only for lines not covered by those results.",
+			"Reuse prior anchors when their line number and content are unchanged. Re-read changed or shifted lines when no fresh anchor is available.",
 			...(fusion ? ACTION_FUSION_GUIDELINES : []),
 		],
 		parameters,
@@ -329,7 +329,7 @@ async function runHashline(
 	const versions = await commitReplacement(absPath, displayPath, result.text, baseRevision, signal);
 	return postProcessMutation("edit", versions.publication, () => {
 		const details = generateMutationDetails(displayPath, currentText, result.text, versions, versions.publication);
-		onAnchors(formatUpdatedAnchors(result.text, result.touchedLines, result.contextLines, anchorFormatter));
+		onAnchors(formatUpdatedAnchors(currentText, result.text, result.touchedLines, result.contextLines, anchorFormatter));
 		return {
 			content: [{ type: "text" as const, text: `Edited ${displayPath} (${translated.edits.length} op(s)${result.changed ? "" : ", no net change"}).` }],
 			details,

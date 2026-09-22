@@ -13,7 +13,7 @@ import { makeEditOverride } from "./edit-tool.ts";
 import { byteRevision, FileMutationError } from "./file-commit.ts";
 import { appendMutationAnchors, finalizeMutationResult, postProcessMutation } from "./mutation-result.ts";
 
-const text = (result: any) => result.content.map((block: any) => block.text ?? "").join("\n");
+const text = (result: any): string => result.content.map((block: any) => block.text ?? "").join("\n");
 
 test("replace withholds anchors in progress and after commands change or remove the file", async () => {
 	const dir = await mkdtemp(join(tmpdir(), "hashline-result-"));
@@ -267,6 +267,57 @@ test("no-op Fusion still detects external changes and reports command failures",
 				assert.equal(commands, scenario === "before" ? 0 : 1);
 				assert.equal(result.details.actionFusion.command, scenario === "before" ? "skipped" : scenario === "failed" ? "failed" : "succeeded");
 				assert.equal(result.details.actionFusion.freshness, scenario === "failed" ? "unchanged" : "changed");
+			}
+		}
+	} finally { await rm(dir, { recursive: true, force: true }); }
+});
+
+test("mutation anchors skip unchanged positions before applying the row budget", async () => {
+	const dir = await mkdtemp(join(tmpdir(), "hashline-anchor-delta-"));
+	try {
+		const before = Array.from({ length: 100 }, (_, index) => `row ${index + 1}`);
+		const after = [...before];
+		after[0] = "changed first";
+		after[99] = "changed last";
+		for (const name of ["edit", "replace"]) {
+			const path = join(dir, `${name}.txt`);
+			await writeFile(path, before.join("\r\n") + "\r\n");
+			const tool = name === "edit" ? makeEditOverride(dir) : makeReplaceTool(dir);
+			const params = name === "edit"
+				? { edits: [{ op: "replace", anchor: `1#${computeLineHash(1, before[0])}`, end: `100#${computeLineHash(100, before[99])}`, body: after }] }
+				: { replacements: [{ find: before[0] + "\r\n", replace: after[0] + "\r\n" }, { find: before[99], replace: after[99] }] };
+			const result = await tool.execute(name, { path, ...params }, undefined, undefined, { cwd: dir });
+			const returned = [...text(result).matchAll(/^(\d+#[0-9A-Z]+)/gm)].map((match) => match[1]);
+			assert.deepEqual(returned, [`1#${computeLineHash(1, after[0])}`, `100#${computeLineHash(100, after[99])}`]);
+			assert.doesNotMatch(text(result), /omitted/);
+			// An omitted stable row keeps its old anchor; a changed row uses the returned anchor.
+			await makeEditOverride(dir).execute("chain", { path, edits: [
+				{ op: "replace", anchor: `50#${computeLineHash(50, before[49])}`, body: ["stable anchor reused"] },
+				{ op: "replace", anchor: returned[1], body: ["fresh anchor reused"] },
+			] }, undefined, undefined, { cwd: dir });
+			const final = (await readFile(path, "utf8")).split("\r\n");
+			assert.equal(final[49], "stable anchor reused");
+			assert.equal(final[99], "fresh anchor reused");
+		}
+	} finally { await rm(dir, { recursive: true, force: true }); }
+});
+
+test("mutation anchors retain a deletion successor but omit stable rows and deleted EOF", async () => {
+	const dir = await mkdtemp(join(tmpdir(), "hashline-anchor-delete-"));
+	try {
+		for (const name of ["edit", "replace"]) {
+			for (const atEnd of [false, true]) {
+				const path = join(dir, `${name}.txt`);
+				const lines = atEnd ? ["a", "c", "remove"] : ["a", "remove", "c", "d"];
+				await writeFile(path, lines.join("\n") + "\n");
+				const tool = name === "edit" ? makeEditOverride(dir) : makeReplaceTool(dir);
+				const line = atEnd ? 3 : 2;
+				const params = name === "edit"
+					? { edits: [{ op: "delete", anchor: `${line}#${computeLineHash(line, "remove")}` }] }
+					: { find: "remove\n", replace: "" };
+				const result = await tool.execute(name, { path, ...params }, undefined, undefined, { cwd: dir });
+				const rows = text(result).split("\n").filter((row) => /^\d+#/.test(row));
+				assert.deepEqual(rows, atEnd ? [] : [`2#${computeLineHash(2, "c")}│c`]);
 			}
 		}
 	} finally { await rm(dir, { recursive: true, force: true }); }

@@ -57,9 +57,9 @@ export function finalizeMutationResult<T>(
 	}
 }
 
-/** Bound anchor entries; an optional set selects which indices retain full content. */
+/** Omit unchanged positions before budgeting anchors; contentIndices selects rows needing full content. */
 export function formatMutationAnchors(
-	lines: readonly string[], indices: Iterable<number>, anchors: AnchorFormatter, heading: string,
+	beforeLines: readonly string[], lines: readonly string[], indices: Iterable<number>, anchors: AnchorFormatter, heading: string,
 	contentIndices?: ReadonlySet<number>,
 ): string {
 	const notice = "\n… (additional anchors omitted: 40-row/16 KiB limit; use read for full content)";
@@ -68,6 +68,8 @@ export function formatMutationAnchors(
 	let omitted = false;
 	for (const index of indices) {
 		const content = lines[index];
+		// Compare source content, not short hashes: a collision must not suppress a changed row.
+		if (beforeLines[index] === content) continue;
 		const includeContent = contentIndices === undefined || contentIndices.has(index);
 		const row = includeContent ? anchors.row(index + 1, content) : anchors.token(index + 1, content);
 		const rowBytes = Buffer.byteLength(row) + 1;

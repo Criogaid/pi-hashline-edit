@@ -158,12 +158,11 @@ function applyReplacements(source: string, rules: readonly Replacement[]): { tex
 }
 
 /**
- * First-to-last differing line span (0-based, inclusive) in the NEW line array —
- * a contiguous superset that contains every changed line. Computed by stripping
- * the common prefix and suffix, so it is O(n) regardless of file size (no LCS
- * DP). `null` when the text is unchanged. Used only to bound the anchor report.
+ * Bound candidate anchors by stripping common prefix/suffix lines in O(n).
+ * For a pure deletion, retain its first surviving successor. Shifted suffixes
+ * are otherwise omitted; the shared formatter removes unchanged positions.
  */
-function changedSpan(oldLines: readonly string[], newLines: readonly string[]): { start: number; end: number } | null {
+function anchorSpan(oldLines: readonly string[], newLines: readonly string[]): { start: number; end: number } | null {
 	const n = Math.min(oldLines.length, newLines.length);
 	let prefix = 0;
 	while (prefix < n && oldLines[prefix] === newLines[prefix]) prefix++;
@@ -181,15 +180,15 @@ function changedSpan(oldLines: readonly string[], newLines: readonly string[]): 
 	}
 	const start = prefix;
 	const end = newLines.length - 1 - newSuffix; // inclusive, 0-based, in new
-	return end < start ? null : { start, end };
+	return start >= newLines.length ? null : { start, end: Math.max(start, end) };
 }
 
-/** Format fresh `LINE#HASH│content` anchors for a contiguous span of the new file, capped. */
-function formatSpanAnchors(newLines: readonly string[], span: { start: number; end: number }, anchors: AnchorFormatter): string {
+/** Format changed positions within the candidate span, subject to the shared output budget. */
+function formatSpanAnchors(oldLines: readonly string[], newLines: readonly string[], span: { start: number; end: number }, anchors: AnchorFormatter): string {
 	function* indices() {
 		for (let i = span.start; i <= span.end; i++) yield i;
 	}
-	return formatMutationAnchors(newLines, indices(), anchors, "Updated anchors (changed region):");
+	return formatMutationAnchors(oldLines, newLines, indices(), anchors, "Updated anchors:");
 }
 
 /** Truncate a string for one-line display, folding newlines into a marker. */
@@ -284,9 +283,10 @@ async function runReplace(
 
 	return postProcessMutation("replace", publication, () => {
 		const details = generateMutationDetails(displayPath, currentText, newText, versions, publication);
+		const oldLines = splitLines(currentText);
 		const newLines = splitLines(newText);
-		const span = changed ? changedSpan(splitLines(currentText), newLines) : null;
-		onAnchors(span ? formatSpanAnchors(newLines, span, anchorFormatter) : "");
+		const span = changed ? anchorSpan(oldLines, newLines) : null;
+		onAnchors(span ? formatSpanAnchors(oldLines, newLines, span, anchorFormatter) : "");
 		const matchWord = `match${count !== 1 ? "es" : ""}`;
 		const note = changed ? `${count} ${matchWord}` : `${count} ${matchWord}, no net change`;
 		return {
