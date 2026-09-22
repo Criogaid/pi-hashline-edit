@@ -172,3 +172,26 @@ test("ambiguous recovery bounds candidate lists and never claims content identit
 		await rm(dir, { recursive: true, force: true });
 	}
 });
+
+test("all mutation tools report NUL rejection through the shared Fusion lifecycle", async () => {
+	const dir = await mkdtemp(join(tmpdir(), "hashline-nul-"));
+	try {
+		const path = join(dir, "file.txt");
+		await writeFile(path, "original\n");
+		let commands = 0;
+		for (const makeTool of [makeEditOverride, makeReplaceTool, makeWriteOverride]) {
+			const events: string[] = [];
+			const fusion = createActionFusionExecutor(async () => { commands++; return "unexpected"; }, (event) => events.push(event.command));
+			const tool = makeTool(dir, fusion);
+			const args = tool.name === "edit" ? { edits: [{ op: "append", body: ["\0"] }] }
+				: tool.name === "replace" ? { find: "original", replace: "\0" } : { content: "\0" };
+			await assert.rejects(tool.execute("nul", { path, ...args, then_run: { command: "check" } }, undefined, undefined, { cwd: dir }),
+				(error: any) => error.publication === "NOT_PUBLISHED" && error.command === "skipped" && /NUL/.test(error.message));
+			assert.deepEqual(events, ["waiting", "skipped"]);
+			assert.equal(await readFile(path, "utf8"), "original\n");
+		}
+		assert.equal(commands, 0);
+	} finally {
+		await rm(dir, { recursive: true, force: true });
+	}
+});
