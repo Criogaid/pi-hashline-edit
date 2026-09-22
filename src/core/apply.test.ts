@@ -157,11 +157,14 @@ test("conflict at the same insertion point rejected", () => {
 	if (!r.ok) assert.equal(r.failure.kind, "range");
 });
 
-test("noop (byte-identical body) rejected", () => {
-	const text = "a\nb\n";
-	const r = applyEdits(text, [{ op: "replace", start: at(text, 1), body: ["a"] }]);
-	assert.equal(r.ok, false);
-	if (!r.ok) assert.equal(r.failure.kind, "noop");
+test("byte-identical edits succeed without updated anchors after validation", () => {
+	for (const text of ["a\nb\n", "\uFEFFa\r\nb\n"]) {
+		const body = text.startsWith("\uFEFF") ? "\uFEFFa" : "a";
+		const r = applyEdits(text, [{ op: "replace", start: at(text, 1), body: [body] }]);
+		assert.deepEqual(r, { ok: true, text, changed: false, touchedLines: [], contextLines: [] });
+		const invalid = applyEdits(text, [{ op: "replace", start: at("wrong\nb\n", 1), body: [body] }]);
+		assert.ok(!invalid.ok && invalid.failure.kind === "anchor");
+	}
 });
 
 test("unrelated change elsewhere does NOT block the edit (no global stale check)", () => {
@@ -230,8 +233,7 @@ test("appending to a file without a final newline keeps it absent", () => {
 test("noop is still detected when the file lacks a final newline", () => {
 	const text = "a\nb";
 	const r = applyEdits(text, [{ op: "replace", start: at(text, 1), body: ["a"] }]);
-	assert.equal(r.ok, false);
-	if (!r.ok) assert.equal(r.failure.kind, "noop");
+	assert.deepEqual(r, { ok: true, text, changed: false, touchedLines: [], contextLines: [] });
 });
 
 // --- shifted-anchor recovery ---
@@ -391,12 +393,11 @@ test("failed batches report every supplied anchor in input order from one snapsh
 	assert.deepEqual(invalid.failure.checks, result.failure.checks.map((check) => ({ ...check, status: "not_checked" })));
 });
 
-test("matched anchor checks do not imply valid ranges or a changed result", () => {
+test("matched anchor checks do not imply valid ranges", () => {
 	const text = "a\nb\nc\n";
-	const cases: { edits: Edit[]; kind: "range" | "noop"; checks: number }[] = [
+	const cases: { edits: Edit[]; kind: "range"; checks: number }[] = [
 		{ edits: [{ op: "delete", start: at(text, 3), end: at(text, 1) }], kind: "range", checks: 2 },
 		{ edits: [{ op: "replace", start: at(text, 1), end: at(text, 3), body: ["x"] }, { op: "delete", start: at(text, 2) }], kind: "range", checks: 3 },
-		{ edits: [{ op: "replace", start: at(text, 1), body: ["a"] }], kind: "noop", checks: 1 },
 	];
 	for (const { edits, kind, checks } of cases) {
 		const result = applyEdits(text, edits);

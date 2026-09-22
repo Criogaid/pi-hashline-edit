@@ -46,7 +46,9 @@ export function makeWriteOverride(cwd: string, fusion?: ReturnType<typeof create
 					signal,
 				});
 				return postProcessMutation("write", result.publication, () => ({
-					content: [{ type: "text" as const, text: `${result.created ? "Created" : "Wrote"} ${mutationParams.path}.` }],
+					content: [{ type: "text" as const, text: result.publication === "NOT_PUBLISHED"
+						? `Wrote ${mutationParams.path} (no net change).`
+						: `${result.created ? "Created" : "Wrote"} ${mutationParams.path}.` }],
 					details: { path: mutationParams.path, ...result },
 				}));
 			});

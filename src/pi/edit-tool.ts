@@ -331,7 +331,7 @@ async function runHashline(
 		const details = generateMutationDetails(displayPath, currentText, result.text, versions, versions.publication);
 		onAnchors(formatUpdatedAnchors(result.text, result.touchedLines, result.contextLines, anchorFormatter));
 		return {
-			content: [{ type: "text" as const, text: `Edited ${displayPath} (${translated.edits.length} op(s)).` }],
+			content: [{ type: "text" as const, text: `Edited ${displayPath} (${translated.edits.length} op(s)${result.changed ? "" : ", no net change"}).` }],
 			details,
 		};
 	});

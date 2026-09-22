@@ -79,14 +79,15 @@ export interface AnchorCheck {
 /** Batch-level failure. Anchor checks describe only checksum validation in this snapshot. */
 export type ApplyFailure =
 	| { readonly kind: "anchor"; readonly failures: readonly AnchorFailure[]; readonly checks: readonly AnchorCheck[] }
-	| { readonly kind: "input" | "range" | "noop"; readonly message: string; readonly checks: readonly AnchorCheck[] };
+	| { readonly kind: "input" | "range"; readonly message: string; readonly checks: readonly AnchorCheck[] };
 
 /**
  * Apply result. On success, `touchedLines` lists 0-based NEW-file indices to
  * re-anchor. `contextLines` identifies deletion successors among those lines;
  * callers retain their content while compacting anchors for caller-supplied rows.
+ * Byte-identical output succeeds with changed=false and empty anchor lists.
  * On failure, `failure` is either the collected set of anchor failures
- * (each with recovery) or an input/range/noop error, plus per-input anchor checks.
+ * (each with recovery) or an input/range error, plus per-input anchor checks.
  * Nothing is written on failure.
  */
 export type ApplyResult =

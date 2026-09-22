@@ -226,3 +226,24 @@ test("commit rejects lossy UTF-8 output before modifying or creating files", asy
 	assert.deepEqual(await readFile(existing), Buffer.from(content));
 	assert.equal(result.publishedRevision, byteRevision(Buffer.from(content)));
 }));
+
+test("identical commits preserve the file and still enforce mode, revision, and cancellation", async () => withTemp(async (dir) => {
+	const target = join(dir, "same.txt");
+	const content = "\uFEFFsame\r\nbytes\n";
+	await writeFile(target, content);
+	const before = await stat(target);
+	const revision = await fileRevision(target);
+	for (const mode of [undefined, "overwrite"] as const) {
+		const result = await commitFile(target, content, { mode, expectedRevision: revision });
+		assert.deepEqual(result, { created: false, baseRevision: revision, publishedRevision: revision, observedRevision: revision, revision, publication: "NOT_PUBLISHED" });
+	}
+	const after = await stat(target);
+	assert.deepEqual([after.ino, after.mtimeMs, after.ctimeMs], [before.ino, before.mtimeMs, before.ctimeMs]);
+	await assert.rejects(commitFile(target, content, { mode: "create" }), /already exists/);
+	await assert.rejects(commitFile(target, content, { expectedRevision: "stale" }), /expectedRevision/);
+	await assert.rejects(commitFile(target, content, { signal: AbortSignal.abort() }), (error: unknown) => error instanceof FileMutationError && error.publication === "NOT_PUBLISHED");
+	await assert.rejects(commitFile(join(dir, "missing"), "", { mode: "overwrite" }), /does not exist/);
+	const created = await commitFile(join(dir, "empty"), "");
+	assert.equal(created.created, true);
+	assert.equal(created.publication, "PUBLISHED");
+}));

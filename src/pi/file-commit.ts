@@ -22,7 +22,7 @@ export interface CommitResult extends MutationVersions {
 	created: boolean;
 	/** Backward-compatible alias for publishedRevision. */
 	revision: string;
-	publication: "PUBLISHED";
+	publication: "NOT_PUBLISHED" | "PUBLISHED";
 }
 
 export class FileMutationError extends Error {
@@ -166,7 +166,7 @@ async function syncDirectory(path: string): Promise<void> {
 	}
 }
 
-/** Prepare and sync exact UTF-8 bytes before publication; callers own the outer file queue. */
+/** Validate the target, skip identical content, otherwise sync and publish. Callers own the file queue. */
 export async function commitFile(path: string, content: string, options: CommitOptions = {}): Promise<CommitResult> {
 	if (content.includes("\0")) throw prepareError("UNSUPPORTED_TEXT: NUL bytes are not editable.");
 	const bytes = Buffer.from(content, "utf8");
@@ -180,6 +180,18 @@ export async function commitFile(path: string, content: string, options: CommitO
 		throw prepareError("expectedRevision does not match the current file");
 	}
 	try { options.signal?.throwIfAborted(); } catch (error) { throw prepareError("mutation was cancelled before publication", error); }
+	const publishedRevision = byteRevision(bytes);
+	// Mode, revision, target safety, and cancellation checks still apply to no-ops.
+	if (target.beforeRevision === publishedRevision) {
+		return {
+			created: false,
+			baseRevision: target.beforeRevision,
+			publishedRevision,
+			observedRevision: target.beforeRevision,
+			revision: publishedRevision,
+			publication: "NOT_PUBLISHED",
+		};
+	}
 
 	const publishPath = target.publishPath;
 	const publishDirectory = dirname(publishPath);
@@ -209,7 +221,6 @@ export async function commitFile(path: string, content: string, options: CommitO
 		published = true;
 		await syncDirectory(publishDirectory);
 		try {
-			const publishedRevision = byteRevision(bytes);
 			const observedRevision = await fileRevision(publishPath);
 			return {
 				created: mode === "create",

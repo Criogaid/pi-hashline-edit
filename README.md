@@ -154,7 +154,7 @@ Required: `path` and either top-level `find` / `replace`, or a non-empty `replac
 
 Zero matches in any rule, an invalid rule, or overlapping match ranges rejects the whole call without writing. Adjacent ranges are allowed. Zero-length matches conflict at the same position or at the start/interior of another match; a zero-length match at another match's end is allowed unless it conflicts with a following match. Error rule indices and string offsets are zero-based (offsets count UTF-16 code units).
 
-Regex captures and prefix/suffix substitutions always refer to the original snapshot. Identical final output reports no net change and does not rewrite the file; a requested `then_run` can still run after freshness checks.
+Regex captures and prefix/suffix substitutions always refer to the original snapshot.
 
 ### Write
 
@@ -169,6 +169,8 @@ Write results report the write outcome without returning line anchors. Use `read
 Normal write result text omits the revision. Programmatic callers can read `details.publishedRevision`; text-only callers needing `expectedRevision` must obtain a SHA-256 of the file bytes separately. Revision checks and structured revision fields remain active.
 
 With Action Fusion enabled, `edit`, `replace`, and `write` also accept `then_run`.
+
+All three mutation tools treat identical final content as a successful no-op: report `no net change`, leave the existing file untouched, and return `publication: "NOT_PUBLISHED"`. A requested `then_run` still runs after freshness checks. Input, anchor, match, target-type, mode, revision, and cancellation checks still apply; zero matches, stale anchors/revisions, and an existing target in create mode remain errors. Creating a missing empty file is a publication, not a no-op.
 
 </details>
 
@@ -253,10 +255,11 @@ The diagnostic blocks have independent budgets; their combined output can exceed
 
 ### Publication
 
-The shared commit layer prepares and syncs complete content in a sibling temporary directory. `edit`/`replace` bind publication to the revision of the bytes they read.
+The shared commit layer validates the target and skips publication when the requested UTF-8 bytes have the current file's SHA-256. Otherwise, it prepares and syncs complete content in a sibling temporary directory. `edit`/`replace` bind this check and publication to the revision of the bytes they read.
 
 | Case | Behavior |
 | --- | --- |
+| No-op | After validation, return existing revisions without creating a temporary file or replacing the target. |
 | Create | Same-filesystem `link(temp, target)` refuses a target created by another writer during publication. |
 | Overwrite | `rename(temp, target)` publishes the replacement; never delete the old target first. |
 | Symlinks | Resolve the regular-file target for overwrite and preserve the link; reject dangling/unresolvable links. |
@@ -272,7 +275,7 @@ The shared commit layer prepares and syncs complete content in a sibling tempora
 | `publication` | `NOT_PUBLISHED`, `PUBLISHED`, or `UNKNOWN`. Fusion also reports it in `actionFusion.publication`. |
 | `baseRevision` | SHA-256 of bytes read before mutation, when available. |
 | `publishedRevision` | SHA-256 of intended published bytes; `revision` is its compatibility alias. |
-| `observedRevision` | SHA-256 observed by the commit layer after publication. |
+| `observedRevision` | SHA-256 observed by the commit layer after publication, or at the no-op check. |
 | `actionFusion.command` | `not_requested`, `skipped`, `succeeded`, `failed`, `timeout`, or `cancelled`. |
 | `actionFusion.freshness` | `unchanged`, `changed`, `missing`, or `unknown`, relative to the published revision. |
 | `actionFusion.mutationCompleted` | Progress flag set after mutation execution and result generation succeed; publication alone is not mutation success. |

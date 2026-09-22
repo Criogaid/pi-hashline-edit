@@ -1,7 +1,8 @@
 import { computeLineHash } from "../core/hash.ts";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -9,7 +10,7 @@ import { createActionFusionExecutor } from "./action-fusion.ts";
 import { makeReplaceTool } from "./replace-tool.ts";
 import { makeWriteOverride } from "./write-tool.ts";
 import { makeEditOverride } from "./edit-tool.ts";
-import { FileMutationError } from "./file-commit.ts";
+import { byteRevision, FileMutationError } from "./file-commit.ts";
 import { appendMutationAnchors, finalizeMutationResult, postProcessMutation } from "./mutation-result.ts";
 
 const text = (result: any) => result.content.map((block: any) => block.text ?? "").join("\n");
@@ -206,4 +207,67 @@ test("shared result building preserves publication and appends anchors only to t
 	assert.deepEqual(appendMutationAnchors(result, " ANCHOR", true).content.map((block: any) => block.text), ["summary ANCHOR", "command"]);
 	assert.deepEqual(appendMutationAnchors(result, " ANCHOR", false), result);
 	assert.equal(result.content[0].text, "summary");
+});
+
+const noOpCases = [
+	{ makeTool: makeEditOverride, params: { edits: [{ op: "replace", anchor: `1#${computeLineHash(1, "same")}`, body: ["same"] }] } },
+	{ makeTool: makeReplaceTool, params: { find: "same", replace: "same" } },
+	{ makeTool: makeWriteOverride, params: { content: "same\n" } },
+];
+
+test("all mutation tools succeed without rewriting on no-op, with and without Fusion", async () => {
+	const dir = await mkdtemp(join(tmpdir(), "hashline-noop-"));
+	try {
+		for (const { makeTool, params } of noOpCases) {
+			for (const mode of ["standalone", "fusion", "command"]) {
+				const path = join(dir, "same.txt");
+				await writeFile(path, "same\n");
+				const before = await stat(path);
+				let commands = 0;
+				const fusion = createActionFusionExecutor(async () => { commands++; return "checked"; });
+				const tool: any = makeTool(dir, mode === "standalone" ? undefined : fusion);
+				const result = await tool.execute(tool.name, { path, ...params, ...(mode === "command" ? { then_run: { command: "check" } } : {}) }, undefined, undefined, { cwd: dir });
+				assert.match(text(result), /no net change/);
+				assert.equal(result.details.publication, "NOT_PUBLISHED");
+				const revision = byteRevision(Buffer.from("same\n"));
+				for (const key of ["baseRevision", "publishedRevision", "observedRevision", "revision"]) assert.equal(result.details[key], revision);
+				assert.doesNotMatch(text(result), /Updated anchors|\d+#[0-9A-Z]+│/);
+				assert.equal(commands, mode === "command" ? 1 : 0);
+				if (mode !== "standalone") {
+					assert.equal(result.details.actionFusion.command, mode === "command" ? "succeeded" : "not_requested");
+					assert.equal(result.details.actionFusion.freshness, "unchanged");
+				}
+				const after = await stat(path);
+				assert.deepEqual([after.ino, after.mtimeMs, after.ctimeMs], [before.ino, before.mtimeMs, before.ctimeMs]);
+				assert.equal(await readFile(path, "utf8"), "same\n");
+			}
+		}
+	} finally { await rm(dir, { recursive: true, force: true }); }
+});
+
+test("no-op Fusion still detects external changes and reports command failures", async () => {
+	const dir = await mkdtemp(join(tmpdir(), "hashline-noop-fusion-"));
+	try {
+		for (const { makeTool, params } of noOpCases) {
+			for (const scenario of ["before", "during", "failed"]) {
+				const path = join(dir, "same.txt");
+				await writeFile(path, "same\n");
+				let commands = 0;
+				const fusion = createActionFusionExecutor(async () => {
+					commands++;
+					if (scenario === "failed") throw new Error("check failed");
+					await writeFile(path, "external\n");
+					return "done";
+				}, (progress) => {
+					if (scenario === "before" && progress.mutationCompleted && progress.command === "waiting") writeFileSync(path, "external\n");
+				});
+				const tool: any = makeTool(dir, fusion);
+				const result = await tool.execute(tool.name, { path, ...params, then_run: { command: "check" } }, undefined, undefined, { cwd: dir });
+				assert.equal(result.details.publication, "NOT_PUBLISHED");
+				assert.equal(commands, scenario === "before" ? 0 : 1);
+				assert.equal(result.details.actionFusion.command, scenario === "before" ? "skipped" : scenario === "failed" ? "failed" : "succeeded");
+				assert.equal(result.details.actionFusion.freshness, scenario === "failed" ? "unchanged" : "changed");
+			}
+		}
+	} finally { await rm(dir, { recursive: true, force: true }); }
 });

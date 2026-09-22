@@ -23,8 +23,7 @@
  *
  * Other strict semantics:
  * - Operation ranges must not overlap (including the same insertion point).
- * - body byte-identical to the whole-file result → `noop` error (guides the
- *   model to investigate rather than blindly retry).
+ * - Byte-identical output succeeds with changed=false and no updated anchors.
  *
  * @module pi-hashline-edit/core
  */
@@ -257,14 +256,7 @@ export function applyEdits(text: string, edits: Edit[], hashLen = 4, shiftRadius
 		content + (i < result.length - 1 || finalNewline ? current || separator : ""),
 	).join("");
 	if (newText === text) {
-		return {
-			ok: false,
-			failure: {
-				kind: "noop",
-				message: "edit parsed and applied cleanly but produced no change; body is byte-identical — the bug is elsewhere, re-read first",
-				checks: anchorChecks,
-			},
-		};
+		return { ok: true, text, changed: false, touchedLines: [], contextLines: [] };
 	}
 
 	// touchedLines: new-file indices worth re-anchoring — each produced line,

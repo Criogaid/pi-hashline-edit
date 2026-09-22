@@ -33,7 +33,7 @@ import { escapeRegex } from "../core/text.ts";
 import { splitLines } from "../core/index.ts";
 import { findSortedRangeConflict } from "../core/ranges.ts";
 import { ACTION_FUSION_GUIDELINES, createActionFusionExecutor, createThenRunSchema, type ThenRunInput } from "./action-fusion.ts";
-import { readEditableSnapshot, commitReplacement, type MutationVersions, type PublicationStatus } from "./file-commit.ts";
+import { readEditableSnapshot, commitReplacement } from "./file-commit.ts";
 import { createAnchorFormatter, type AnchorFormatter } from "./anchor-format.ts";
 import { canonicalPath } from "./read-tool.ts";
 import { formatDiffCounts, renderMutationCall, renderMutationResult, type DiffCounts } from "./render.ts";
@@ -279,13 +279,8 @@ async function runReplace(
 	// honor cancel before write: if aborted, don't touch the disk
 	if (signal?.aborted) throw new Error(`Replace ${displayPath} aborted before write.`);
 
-	let publication: PublicationStatus = "NOT_PUBLISHED";
-	let versions: MutationVersions = { baseRevision, publishedRevision: baseRevision, observedRevision: baseRevision };
-	if (changed) {
-		const commit = await commitReplacement(absPath, displayPath, newText, baseRevision, signal);
-		publication = commit.publication;
-		versions = commit;
-	}
+	const versions = await commitReplacement(absPath, displayPath, newText, baseRevision, signal);
+	const { publication } = versions;
 
 	return postProcessMutation("replace", publication, () => {
 		const details = generateMutationDetails(displayPath, currentText, newText, versions, publication);
