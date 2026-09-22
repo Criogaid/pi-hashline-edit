@@ -70,17 +70,23 @@ function zeroWidthLine(bytes: Buffer, offset: number, eventStartLine: number, fi
   return Math.min(candidate, fileLineCount);
 }
 
-/** Convert rg UTF-8 byte offsets into normalized 1-based physical line ranges. */
+/** Convert rg byte offsets to physical line ranges; optionally record a match's UTF-16 column on its starting line. */
 export function submatchesToLineRanges(
   bytes: Buffer,
   eventStartLine: number,
   submatches: readonly RgSubmatch[],
   fileLineCount: number,
+  columns?: Map<number, number>,
 ): LineRange[] {
   if (!Number.isSafeInteger(eventStartLine) || eventStartLine < 1 || !Number.isSafeInteger(fileLineCount) || fileLineCount < 0) {
     throw new Error("Invalid rg physical line metadata");
   }
   const ranges: LineRange[] = [];
+  const recordColumn = (line: number, offset: number) => {
+    if (!columns || columns.has(line)) return;
+    const lineStart = offset === 0 ? 0 : bytes.lastIndexOf(10, offset - 1) + 1;
+    columns.set(line, bytes.subarray(lineStart, offset).toString("utf8").length);
+  };
   for (const submatch of submatches) {
     const { start, end } = submatch;
     if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start < 0 || end < start || end > bytes.length) {
@@ -88,12 +94,19 @@ export function submatchesToLineRanges(
     }
     if (start === end) {
       const line = zeroWidthLine(bytes, start, eventStartLine, fileLineCount);
-      if (line !== undefined) ranges.push([line, line + 1]);
+      if (line !== undefined) {
+        ranges.push([line, line + 1]);
+        const offset = eventStartLine + countLfBefore(bytes, start) > fileLineCount ? Math.max(0, start - 1) : start;
+        recordColumn(line, offset);
+      }
       continue;
     }
     const first = eventStartLine + countLfBefore(bytes, start);
     const last = eventStartLine + countLfBefore(bytes, end - 1);
-    if (first <= fileLineCount) ranges.push([first, Math.min(last, fileLineCount) + 1]);
+    if (first <= fileLineCount) {
+      ranges.push([first, Math.min(last, fileLineCount) + 1]);
+      recordColumn(first, start);
+    }
   }
   return normalizeRanges(ranges);
 }

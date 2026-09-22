@@ -14,6 +14,7 @@ import { makeReadOverride } from "../pi/read-tool.ts";
 import { makeWriteOverride } from "../pi/write-tool.ts";
 import { makeReplaceTool } from "../pi/replace-tool.ts";
 import { COMMON_RG_ARGS, createLinePredicate, resolveIgnoreCase, runRg } from "../pi/rg-line-filter.ts";
+import { computeLineHash } from "../core/hash.ts";
 
 const REGEX_MODE = { engine: "default", multiline: false, literal: false } as const;
 
@@ -154,7 +155,7 @@ test("real rg validates its own regex syntax and limits automatic literal fallba
     for (const pattern of ["queueTool(", "foo(?=bar)"]) {
       const result: any = await tool.execute("0", { pattern }, undefined, undefined);
       assert.ok(result.content[0].text.includes(`│${pattern}`));
-      assert.match(result.content[0].text, /Invalid regex; searched all patterns as literal text/);
+      assert.match(result.content[0].text, /Invalid regex; searched the pattern as literal text/);
       await assert.rejects(
         tool.execute("0", { pattern, literal: false }, undefined, undefined),
         /regex parse error/,
@@ -165,6 +166,12 @@ test("real rg validates its own regex syntax and limits automatic literal fallba
     const explicit: any = await tool.execute("0", { pattern: "queueTool(", literal: true }, undefined, undefined);
     assert.match(explicit.content[0].text, /│queueTool\(/);
     assert.doesNotMatch(explicit.content[0].text, /Invalid regex/);
+    for (const params of [
+      { pattern: ["queueTool(", "\\bfoo\\b"] },
+      { pattern: "queueTool(", excludePattern: "^\\s*//" },
+    ]) {
+      await assert.rejects(tool.execute("0", params, undefined, undefined), /Invalid regex in compound query/);
+    }
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
@@ -477,4 +484,29 @@ test("tools share physical lines and anchors across text representations", async
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
+});
+
+test("long-line previews expose real rg hits across engines and preserve full-line anchors", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "hl-grep-preview-"));
+  try {
+    const long = "😀界".repeat(220) + "NEEDLE" + "tail".repeat(200);
+    const context = "x" + "😀".repeat(400);
+    await writeFile(join(directory, "long.txt"), `${long}\r\nfollow\r\n${context}\r\n`);
+    const tool = makeGrepOverrideWithBackend(directory, {});
+    for (const params of [
+      { pattern: "NEEDLE" },
+      { pattern: ["NEEDLE", "tail"], matchMode: "all", excludePattern: "absent" },
+      { pattern: "NEEDLE(?=tail)", pcre2: true },
+      { pattern: "NEEDLE(?:tail)+\\r?\\nfollow", multiline: true },
+    ]) {
+      const result: any = await tool.execute("preview", { ...params, context: 2 }, undefined, undefined);
+      const output = result.content[0].text;
+      const row = output.split("\n").find((line: string) => line.startsWith("1#"));
+      assert.ok(row.startsWith(`1#${computeLineHash(1, long)}│[partial, columns `));
+      assert.ok(row.includes("NEEDLE"));
+      assert.equal(Buffer.from(row).toString("utf8"), row);
+      assert.ok(output.includes(`3#${computeLineHash(3, context)}│[partial, columns 1-499]`));
+      assert.match(output, /anchors hash full lines/);
+    }
+  } finally { await rm(directory, { recursive: true, force: true }); }
 });

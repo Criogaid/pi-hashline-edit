@@ -136,7 +136,7 @@ Required: `path`. Optional: 1-based `offset` (default 1) and `limit` (default 20
 | `path` | Current directory | One path or an array of search roots. |
 | `matchMode` | `"any"` | OR across patterns; `"all"` requires every pattern on the same physical line, at most 16 patterns. |
 | `excludePattern` | None | String or array; remove lines matching any exclusion. |
-| `literal` | Automatic | `true`: literal strings. `false`: strict regex. Automatic mode detects regex metacharacters and falls back to literal text for all patterns on regex parse failure. |
+| `literal` | Automatic | `true`: literal strings. `false`: strict regex. Automatic mode detects regex metacharacters; parse failures fall back to literal text only for one inclusion pattern without exclusions. Invalid compound queries fail with guidance to fix the regex or explicitly set `literal: true`. |
 | `ignoreCase` | Smart-case | Explicit `true`/`false` overrides case handling; the query-level decision also applies to exclusions. |
 | `wordMatch` | `false` | Whole-word matches. |
 | `glob` | None | One glob or an ordered array; prefix exclusions with `!`. |
@@ -151,6 +151,10 @@ Required: `path`. Optional: 1-based `offset` (default 1) and `limit` (default 20
 Context is rebuilt from surviving matches. Multiline filtering, counting, and limits remain line-based. Wildcard-only regexes such as `.*` and `^.+$` are accepted; use `literal: true` to search those characters verbatim.
 
 All inclusion/exclusion matching uses bundled ripgrep, independent of system `rg` or `PATH`. Searches are CRLF-aware, include hidden files while respecting ignore rules, and pass `--no-config`. The default engine is Rust regex; PCRE2 never silently falls back to another engine or literal matching.
+
+Search diagnostics are preserved even when a result limit stops ripgrep. Readable, confirmed matches remain available with a `Search incomplete` notice and `details.incomplete: true`; counts then cover only confirmed matches. If no results can be returned, the tool reports an error rather than claiming there are no matches. Exclusion-scan failures still reject the query, because incomplete exclusions could admit incorrect results. Search diagnostics have a separate 4 KiB display budget.
+
+Long lines show a labeled partial preview of up to 500 UTF-16 units around a ripgrep match; context-only lines show their beginning. Labels report 1-based UTF-16 column ranges, and slicing preserves surrogate pairs. The anchor hashes the entire current line, not the preview; use `read` before reconstructing a line from its content.
 
 ### Replace
 
@@ -252,7 +256,7 @@ These limits bound model context, not file size. Omission notices direct the cal
 | Output | Limit |
 | --- | --- |
 | `read` | Default 2000 rows, overridable with `limit`; 256 KiB of anchored text. No partial anchor rows. |
-| `grep` | Default 100 matching lines, overridable; 500 characters per displayed line, plus Pi's total output limits. Hashes use full content; read truncated lines before reconstructing them. |
+| `grep` | Default 100 matching lines, overridable; up to 500 UTF-16 units per partial line preview, plus labels and Pi's total output limits. Match previews use rg byte offsets; hashes use full content. Search error notices have a separate 4 KiB budget. |
 | `edit` / `replace` anchors | 16 KiB including heading/omission notice, with no fixed entry-count limit. Compact tokens for changed positions; selected deletion successors retain complete content. No partial anchor rows. |
 | Anchor failure details | 16 KiB, with no fixed failure-count limit; unique candidates include complete rows up to 4 KiB, and ambiguous failures list up to eight candidates each. Unresolved anchors request a fresh read without context rows. |
 | Input-anchor checks | Independent 16 KiB block, with no fixed entry-count limit. Truncation is reported explicitly; omitted entries are not implied matched. |

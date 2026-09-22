@@ -28,3 +28,13 @@ test("rejects malformed ranges and rg byte offsets", () => {
   assert.throws(() => normalizeRanges([[0, 1]]), /Invalid physical line range/);
   assert.throws(() => submatchesToLineRanges(Buffer.from("a"), 1, [{ start: 0, end: 2 }], 1), /Invalid rg submatch/);
 });
+
+test("match columns translate UTF-8 bytes to UTF-16 positions and retain EOF previews", () => {
+  const columns = new Map<number, number>();
+  const bytes = Buffer.from("😀界needle\ntail\n");
+  submatchesToLineRanges(bytes, 1, [{ start: 7, end: 13 }, { start: bytes.length, end: bytes.length }], 2, columns);
+  assert.deepEqual([...columns], [[1, 3], [2, 4]]);
+  const first = new Map<number, number>();
+  submatchesToLineRanges(bytes, 1, [{ start: 0, end: 13 }], 2, first);
+  assert.equal(first.get(1), 0);
+});

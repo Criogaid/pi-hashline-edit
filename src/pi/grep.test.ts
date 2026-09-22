@@ -338,8 +338,14 @@ test("auto-detects modes with rg validation while preserving explicit overrides"
     const fallback = makeGrepOverrideWithBackend(dir, invalid.backend);
 
     const result = await call(fallback, { pattern: "queueTool(" });
-    assert.match(text(result), /Invalid regex; searched all patterns as literal text/);
-    await call(fallback, { pattern: ["plain", "broken("] });
+    assert.match(text(result), /Invalid regex; searched the pattern as literal text/);
+    for (const params of [
+      { pattern: ["plain", "broken("] },
+      { pattern: "broken(", excludePattern: "^\\s*//" },
+      { pattern: "plain", excludePattern: "broken(" },
+    ]) {
+      await assert.rejects(call(fallback, params), /Invalid regex in compound query; automatic literal fallback is disabled/);
+    }
     await call(tool, { pattern: "value.*" });
     await call(tool, { pattern: "plain", literal: false });
     await call(tool, { pattern: "value.*", literal: true });
@@ -347,7 +353,7 @@ test("auto-detects modes with rg validation while preserving explicit overrides"
     assert.deepEqual(
       [...invalid.calls, ...valid.calls].filter(({ args }) => !args.includes("--quiet"))
         .map(({ args }) => args.includes("--fixed-strings")),
-      [true, true, false, false, true],
+      [true, false, false, true],
     );
     assert.equal(valid.calls.filter(({ args }) => args.includes("--quiet")).length, 2);
     assert.deepEqual(invalid.calls[0].args, [
@@ -557,4 +563,62 @@ test("grep rejects malformed UTF-8 and NUL bytes instead of hashing binary text"
       }
     }),
   );
+});
+
+test("partial searches retain matches and surface stderr across output modes", async () => {
+  await withDir(async dir => {
+    const file = join(dir, "found.txt");
+    await writeFile(file, "needle\n");
+    for (const outputMode of ["content", "files", "count"]) {
+      for (const limit of [1, 10]) {
+        const fake = fakeBackend({ lines: [rgMatch(file, 1, "needle\n")], code: 2, stderr: "unreadable.txt: Permission denied" });
+        const result = await call(makeGrepOverrideWithBackend(dir, fake.backend), { pattern: "needle", outputMode, limit });
+        assert.match(text(result), /found\.txt/);
+        assert.match(text(result), /Search incomplete; results and counts cover only confirmed matches/);
+        assert.match(text(result), /unreadable\.txt: Permission denied/);
+        assert.equal(result.details.incomplete, true);
+      }
+    }
+    const fake = fakeBackend({ code: 2, stderr: "Permission denied" });
+    await assert.rejects(call(makeGrepOverrideWithBackend(dir, fake.backend), { pattern: "needle" }), /No matches confirmed.*Search incomplete/s);
+  });
+});
+
+test("failed result reads report incomplete coverage while retaining readable files", async () => {
+  await withDir(async dir => {
+    const good = join(dir, "good.txt");
+    const gone = join(dir, "gone.txt");
+    await writeFile(good, "needle\n");
+    await writeFile(gone, "needle\n");
+    const fake = fakeBackend({ lines: [rgMatch(gone, 1, "needle\n"), rgMatch(good, 1, "needle\n")] });
+    const result = await call(makeGrepOverrideWithBackend(dir, { ...fake.backend, runRg: async (...args) => {
+      const result = await fake.backend.runRg(...args);
+      await rm(gone);
+      return result;
+    } }), { pattern: "needle" });
+    assert.match(text(result), /good\.txt · 1 match/);
+    assert.doesNotMatch(text(result), /gone\.txt · 1 match/);
+    assert.match(text(result), /Search incomplete/);
+    assert.match(text(result), /Could not read.*gone\.txt/);
+  });
+});
+
+test("complex searches report listing errors but reject incomplete exclusion scans", async () => {
+  await withDir(async dir => {
+    const file = join(dir, "fixture.txt");
+    await writeFile(file, "needle\n");
+    const event = JSON.stringify({ type: "match", data: { path: { text: file }, line_number: 1, lines: { text: "needle\n" }, submatches: [{ start: 0, end: 6 }] } });
+    const fake = fakeBackend({ paths: [file], lines: [event] });
+    const listing = await call(makeGrepOverrideWithBackend(dir, { ...fake.backend, runRgPaths: async (...args) => {
+      const result = await fake.backend.runRgPaths(...args);
+      return { ...result, code: 2, stderr: "directory: Permission denied" };
+    } }), { pattern: "needle", multiline: true });
+    assert.match(text(listing), /1#[0-9A-Z]+│needle/);
+    assert.match(text(listing), /Search incomplete/);
+    const tool = makeGrepOverrideWithBackend(dir, { ...fake.backend, runRg: async (...args) => {
+      const result = await fake.backend.runRg(...args);
+      return args[1].includes("exclude") ? { ...result, code: 2, stderr: "exclusion scan failed" } : result;
+    } });
+    await assert.rejects(call(tool, { pattern: "needle", excludePattern: "exclude", multiline: true }), /exclusion scan failed/);
+  });
 });
