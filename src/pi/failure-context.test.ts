@@ -72,14 +72,21 @@ test("ambiguous context preserves complete rows at the byte budget", () => {
 	assert.match(byteLimited, /truncated: byte limit/);
 	assert.doesNotMatch(byteLimited, /^2#[0-9A-Z]+│/m);
 	const oversizedFirst = ["界".repeat(6000), "target", "last"];
-	const empty = format(oversizedFirst.join("\n"), [ambiguous(oversizedFirst, [2, 3])]).text;
-	assert.match(empty, /No complete neighborhood row fits the limits/);
-	assert.match(empty, /Candidate-neighborhood rows: 0\/3; 3 omitted/);
-	assert.doesNotMatch(empty, /^\d+#[0-9A-Z]+│/m);
+	const skippedFirst = format(oversizedFirst.join("\n"), [ambiguous(oversizedFirst, [2, 3])]).text;
+	assert.match(skippedFirst, /Candidate-neighborhood rows: 2\/3; 1 omitted/);
+	assert.doesNotMatch(skippedFirst, /^1#[0-9A-Z]+│/m);
+	assert.match(skippedFirst, /^2#[0-9A-Z]+│target$/m);
+	assert.match(skippedFirst, /^3#[0-9A-Z]+│last$/m);
 	const oversizedMiddle = ["short", "界".repeat(6000), "target", "last"];
 	const partial = format(oversizedMiddle.join("\n"), [ambiguous(oversizedMiddle, [3, 4])]).text;
-	assert.match(partial, /Candidate-neighborhood rows: 1\/4; 3 omitted/);
-	assert.doesNotMatch(partial, /^[234]#[0-9A-Z]+│/m);
+	assert.match(partial, /Candidate-neighborhood rows: 3\/4; 1 omitted/);
+	assert.doesNotMatch(partial, /^2#[0-9A-Z]+│/m);
+	assert.match(partial, /@@ candidate-neighborhood lines 1-1 @@/);
+	assert.match(partial, /@@ candidate-neighborhood lines 3-4 @@/);
+	const allOversized = ["x".repeat(4096), "y".repeat(4096)];
+	const empty = format(allOversized.join("\n"), [ambiguous(allOversized, [1, 2])]).text;
+	assert.match(empty, /No complete neighborhood row fits the limits/);
+	assert.match(empty, /Candidate-neighborhood rows: 0\/2; 2 omitted/);
 });
 
 test("ambiguous context enforces the complete candidate row byte limit", () => {
@@ -93,6 +100,7 @@ test("ambiguous context enforces the complete candidate row byte limit", () => {
 		} else {
 			assert.match(output, /truncated: candidate row limit/);
 			assert.doesNotMatch(output, /^2#[0-9A-Z]+│/m);
+			assert.match(output, /^4#[0-9A-Z]+│other$/m);
 		}
 	}
 });
@@ -105,4 +113,13 @@ test("unique candidates inside ambiguous neighborhoods retain the candidate row 
 	]).text;
 	assert.match(output, /truncated: candidate row limit/);
 	assert.doesNotMatch(output, /^2#[0-9A-Z]+│/m);
+});
+
+test("neighborhoods keep shorter later rows when the remaining budget cannot fit a row", () => {
+	const lines = ["x".repeat(16 * 1024 - 100), "y".repeat(200), "target", "other"];
+	const output = format(lines.join("\n"), [ambiguous(lines, [3, 4])]);
+	assert.deepEqual([...output.shownLines], [1, 3, 4]);
+	assert.match(output.text, /Candidate-neighborhood rows: 3\/4; 1 omitted/);
+	const rows = output.text.match(/^\d+#[0-9A-Z]+│.*$/gm) ?? [];
+	assert.ok(Buffer.byteLength(rows.join("\n") + "\n") <= 16 * 1024);
 });

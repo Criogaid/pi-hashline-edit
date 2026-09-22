@@ -434,6 +434,8 @@ test("read reports an oversized first row without suggesting an ineffective retr
 	assert.equal(result.details.truncation.outputLines, 0);
 	assert.match(result.content[0].text, /cannot return a complete anchor row/);
 	assert.doesNotMatch(result.content[0].text, /use offset\/limit/);
+	assert.match(result.content[0].text, /Reducing limit cannot split a physical line/);
+	assert.match(result.content[0].text, /use bash to inspect it in chunks, or replace/);
 }));
 
 test("read preserves empty files and explicit limits above the native default", async () => withDir(async (dir) => {

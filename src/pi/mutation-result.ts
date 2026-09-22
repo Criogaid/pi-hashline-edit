@@ -74,7 +74,7 @@ export function formatMutationAnchors(
 		const rowBytes = Buffer.byteLength(row) + 1;
 		if (bytes + rowBytes > 16 * 1024) {
 			omitted = true;
-			break;
+			continue;
 		}
 		rows.push(row);
 		bytes += rowBytes;

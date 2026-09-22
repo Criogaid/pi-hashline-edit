@@ -346,7 +346,7 @@ test("mutation anchors retain a deletion successor but omit stable rows and dele
 	} finally { await rm(dir, { recursive: true, force: true }); }
 });
 
-test("compact mutation anchors exceed forty rows and stop only at the byte budget", async () => {
+test("compact mutation anchors exceed forty rows while respecting the byte budget", async () => {
 	const dir = await mkdtemp(join(tmpdir(), "hashline-compact-budget-"));
 	try {
 		for (const name of ["edit", "replace"]) {
@@ -376,5 +376,27 @@ test("compact mutation anchors exceed forty rows and stop only at the byte budge
 				for (const [, line, hash] of rows) assert.equal(hash, computeLineHash(Number(line), finalLines[Number(line) - 1]));
 			}
 		}
+	} finally { await rm(dir, { recursive: true, force: true }); }
+});
+
+test("oversized deletion successors do not suppress later editable anchors", async () => {
+	const dir = await mkdtemp(join(tmpdir(), "hashline-skip-long-anchor-"));
+	try {
+		const path = join(dir, "fixture.txt");
+		const long = "x".repeat(17000);
+		await writeFile(path, `remove\n${long}\nold\n`);
+		const tool = makeEditOverride(dir);
+		const result = await tool.execute("skip", { path, edits: [
+			{ op: "delete", anchor: `1#${computeLineHash(1, "remove")}` },
+			{ op: "replace", anchor: `3#${computeLineHash(3, "old")}`, body: ["new"] },
+		] }, undefined, undefined);
+		const output = text(result);
+		assert.doesNotMatch(output, /^1#[0-9A-Z]+/m);
+		const anchor = output.match(/^2#[0-9A-Z]+$/m)?.[0];
+		assert.equal(anchor, `2#${computeLineHash(2, "new")}`);
+		assert.match(output, /additional anchors omitted: 16 KiB limit/);
+		assert.ok(Buffer.byteLength(output.slice(output.indexOf("\nUpdated anchors:"))) <= 16 * 1024);
+		await tool.execute("retry", { path, edits: [{ op: "replace", anchor, body: ["verified"] }] }, undefined, undefined);
+		assert.equal(await readFile(path, "utf8"), `${long}\nverified\n`);
 	} finally { await rm(dir, { recursive: true, force: true }); }
 });

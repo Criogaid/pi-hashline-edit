@@ -161,7 +161,7 @@ export function makeReadOverride(cwd: string) {
 			// never copies into an edit `body`.
 			const noFinalNewline = hasFinalNewline(text) ? "" : " · no trailing newline";
 			const tail = truncation.firstLineExceedsLimit
-				? `\n… (line ${offset} exceeds ${MAX_BYTES >> 10}KB; cannot return a complete anchor row)`
+				? `\n… (line ${offset} exceeds ${MAX_BYTES >> 10}KB; cannot return a complete anchor row. Reducing limit cannot split a physical line; use bash to inspect it in chunks, or replace for a known literal/regex change)`
 				: truncation.truncated ? `\n… (truncated at ${MAX_BYTES >> 10}KB; use offset/limit to read more)` : "";
 			const header = `${params.path} · ${totalLines} lines${shownFrom}${noFinalNewline}\n`;
 			const body = truncation.content;

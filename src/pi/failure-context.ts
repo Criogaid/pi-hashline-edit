@@ -35,27 +35,27 @@ function collectContextRows(
 	const total = windows.reduce((sum, [start, end]) => sum + end - start, 0);
 	const rows: ContextRow[] = [];
 	let bytes = 0;
-	let truncatedBy: "byte limit" | "candidate row limit" | undefined;
+	const omissions = new Set<"byte limit" | "candidate row limit">();
 
-	outer: for (const [start, end] of windows) {
+	for (const [start, end] of windows) {
 		for (let line = start; line < end; line++) {
 			const content = lines[line - 1];
 			const text = anchors.row(line, content);
 			const rowBytes = Buffer.byteLength(text, "utf8");
 			// Neighborhoods must not bypass the standalone candidate's complete-row limit.
 			if (candidateLines.has(line) && rowBytes > MAX_RECOVERY_CANDIDATE_BYTES) {
-				truncatedBy = "candidate row limit";
-				break outer;
+				omissions.add("candidate row limit");
+				continue;
 			}
 			if (bytes + rowBytes + 1 > MAX_CONTEXT_BYTES) {
-				truncatedBy = "byte limit";
-				break outer;
+				omissions.add("byte limit");
+				continue;
 			}
 			rows.push({ line, text });
 			bytes += rowBytes + 1;
 		}
 	}
-	return { rows, total, truncatedBy };
+	return { rows, total, truncatedBy: [...omissions].join(" and ") || undefined };
 }
 
 function formatContextRows(rows: readonly ContextRow[]): string[] {
