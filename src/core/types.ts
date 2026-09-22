@@ -27,17 +27,17 @@ export type LineEnding = "lf" | "crlf";
 
 /**
  * Outcome of shifted-anchor recovery. When a cited anchor's hash no longer
- * matches the live content, the applicator rescans ±radius lines for the
- * original content — holding the ORIGINAL line number fixed and re-hashing each
- * candidate's content (`computeLineHash(citedLine, candidateContent) === citedHash`
- * iff the candidate is the original content). A ready-to-resend anchor (with the
- * freshly computed hash) is returned so the model can retry without a re-read.
+ * matches the live content, the applicator rescans ±radius lines for content
+ * whose checksum matches the cited anchor while holding the ORIGINAL line
+ * number fixed. Because checksums can collide, a match is a candidate rather
+ * than proof of identity. A ready-to-resend anchor is returned with the
+ * candidate's freshly computed hash.
  *
- * - `found` — exactly one nearby line holds the original content; resend the op
- *   with the provided anchor.
- * - `ambiguous` — several nearby lines match (e.g. duplicate content); the model
- *   picks the right one from the candidates (each carries its own new hash).
- * - `none` — the content genuinely changed; re-read.
+ * - `found` — exactly one nearby line has the cited checksum; the caller checks
+ *   its content before resending with the provided anchor.
+ * - `ambiguous` — several nearby lines match; the caller inspects the candidates
+ *   and chooses the intended target.
+ * - `none` — no nearby line matches; re-read.
  */
 export type AnchorRecovery =
 	| { readonly kind: "found"; readonly newLine: number; readonly newHash: string }
@@ -64,17 +64,29 @@ export interface AnchorFailure {
 	readonly current: { readonly hash: string; readonly content: string } | null;
 }
 
-/** Batch-level failure. `anchor` carries every per-anchor failure collected across the batch. */
+/**
+ * Record for one supplied anchor in the immutable apply snapshot.
+ * not_checked means input validation rejected the batch before hashing.
+ */
+export interface AnchorCheck {
+	readonly opIndex: number;
+	readonly which: "anchor" | "end";
+	readonly op: Edit["op"];
+	readonly cited: Anchor;
+	readonly status: "matched" | "mismatched" | "not_checked";
+}
+
+/** Batch-level failure. Anchor checks describe only checksum validation in this snapshot. */
 export type ApplyFailure =
-	| { readonly kind: "anchor"; readonly failures: readonly AnchorFailure[] }
-	| { readonly kind: "input" | "range" | "noop"; readonly message: string };
+	| { readonly kind: "anchor"; readonly failures: readonly AnchorFailure[]; readonly checks: readonly AnchorCheck[] }
+	| { readonly kind: "input" | "range" | "noop"; readonly message: string; readonly checks: readonly AnchorCheck[] };
 
 /**
- * Apply result. On success, `touchedLines` lists the 0-based line indices in
- * the NEW file that this edit produced (inserted or replaced) — callers use it
- * to surface fresh `LINE#HASH` anchors so the model can chain edits without a
- * re-read. On failure, `failure` is either the collected set of anchor failures
- * (each with recovery) or a single range/noop error; nothing is written.
+ * Apply result. On success, `touchedLines` lists 0-based NEW-file indices to
+ * re-anchor, including the line exposed by a deletion.
+ * On failure, `failure` is either the collected set of anchor failures
+ * (each with recovery) or an input/range/noop error, plus per-input anchor checks.
+ * Nothing is written on failure.
  */
 export type ApplyResult =
 	| {

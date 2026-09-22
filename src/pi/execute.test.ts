@@ -39,7 +39,7 @@ function h(text: string, line: number) {
 
 /** Extract a `LINE#HASH` anchor from a read/edit result text block. */
 function anchorLine(block: string, line: number) {
-	const m = new RegExp(`^${line}#([0-9A-Z]+)│`, "m").exec(block);
+	const m = new RegExp(`^${line}#([0-9A-Z]+)(?:│|$)`, "m").exec(block);
 	if (!m) throw new Error(`line ${line} anchor not found in block`);
 	return `${line}#${m[1]}`;
 }
@@ -492,11 +492,25 @@ test("shifted-anchor recovery returns a token that can be copied into the retry"
 	const edit = makeEditOverride(dir);
 	let replacement = "";
 	await assert.rejects(call(edit, { path: "shift.txt", edits: [{ op: "replace", anchor: h(original, 2), body: ["B"] }] }), (error: Error) => {
-		replacement = /"(3#[0-9A-Z]+)"/.exec(error.message)?.[1] ?? "";
+		replacement = /^(3#[0-9A-Z]+)│b$/m.exec(error.message)?.[1] ?? "";
+		assert.match(error.message, /Check the intended target/);
 		return replacement !== "";
 	});
 	await call(edit, { path: "shift.txt", edits: [{ op: "replace", anchor: replacement, body: ["B"] }] });
 	assert.equal(await readFile(join(dir, "shift.txt"), "utf8"), "prefix\na\nB\n");
+}));
+
+test("shifted-anchor recovery keeps the read fallback for oversized candidates", async () => withDir(async (dir) => {
+	const oversized = "x".repeat(4 * 1024);
+	const original = `a\n${oversized}\n`;
+	await writeFile(join(dir, "shift-large.txt"), `prefix\n${original}`);
+	const edit = makeEditOverride(dir);
+	await assert.rejects(call(edit, { path: "shift-large.txt", edits: [{ op: "replace", anchor: h(original, 2), body: ["B"] }] }), (error: Error) => {
+		assert.match(error.message, /Candidate content exceeds 4096 bytes/);
+		assert.match(error.message, /use read or grep/);
+		assert.doesNotMatch(error.message, new RegExp(`│x{${oversized.length}}`));
+		return true;
+	});
 }));
 
 test("failed commands preserve mutation results and stay out of all main card renderers", async () => withDir(async (dir) => {
@@ -567,4 +581,121 @@ test("edit and replace reject NUL output without rewriting source bytes", async 
 	assert.deepEqual(await readFile(target), original);
 	await assert.rejects(call(makeReplaceTool(dir), { path: "output.txt", find: "before", replace: "bad\0text" }), /UNSUPPORTED_TEXT/);
 	assert.deepEqual(await readFile(target), original);
+}));
+
+test("failed edits expose input status and candidate code for a verified fused retry", async () => withDir(async (dir) => {
+	const original = Array.from({ length: 14 }, (_, index) => `line-${index + 1}`);
+	original[4] = "if (!fusion) throw new Error();";
+	original[5] = "const absolutePath = canonicalPath(cwd, path);";
+	const before = `prefix\n${original.join("\n")}\n`;
+	const file = join(dir, "candidate.txt");
+	await writeFile(file, before);
+	let commands = 0;
+	const fusion = createActionFusionExecutor(async () => { commands++; return "checked"; });
+	const edit = makeEditOverride(dir, fusion);
+	const stale = h(original.join("\n"), 5);
+	const stable = h(before, 12);
+	const candidate = h(before, 6);
+	let message = "";
+	await assert.rejects(edit.execute("failed", {
+		path: file,
+		edits: [
+			{ op: "insert_after", anchor: stale, body: ["const hashLen = 4;"] },
+			{ op: "replace", anchor: stable, body: ["changed"] },
+		],
+		then_run: { command: "check" },
+	}, undefined, undefined, { cwd: dir }), (error: Error) => { message = error.message; return true; });
+	assert.match(message, /then_run:skipped/);
+	assert.ok(message.includes(`op 0 / anchor / ${stale} / mismatched`));
+	assert.ok(message.includes(`op 1 / anchor / ${stable} / matched`));
+	assert.ok(message.includes(`checksum-matching candidate ${candidate}.`));
+	assert.equal(message.split(`${candidate}│${original[4]}`).length - 1, 1);
+	assert.doesNotMatch(message, /0 omitted|Limits:/);
+	const context = message.split("Unique-candidate neighborhoods")[1];
+	assert.ok(context);
+	for (let line = 3; line <= 9; line++) assert.equal(anchorLine(context, line), h(before, line));
+	assert.ok(context.includes(`${h(before, 7)}│${original[5]}`));
+	assert.doesNotMatch(context, /^12#[0-9A-Z]+│/m);
+	assert.equal(await readFile(file, "utf8"), before);
+	assert.equal(commands, 0);
+	await edit.execute("retry", {
+		path: file,
+		edits: [
+			{ op: "insert_after", anchor: anchorLine(context, 6), body: ["const hashLen = 4;"] },
+			{ op: "replace", anchor: stable, body: ["changed"] },
+		],
+		then_run: { command: "check" },
+	}, undefined, undefined, { cwd: dir });
+	const expected = splitLines(before);
+	expected[11] = "changed";
+	expected.splice(6, 0, "const hashLen = 4;");
+	assert.equal(await readFile(file, "utf8"), `${expected.join("\n")}\n`);
+	assert.equal(commands, 1);
+}));
+
+test("input status distinguishes skipped checks and expires before the next retry", async () => withDir(async (dir) => {
+	const before = "a\nb\nc\n";
+	const file = join(dir, "checks.txt");
+	await writeFile(file, before);
+	const edit = makeEditOverride(dir);
+	const stable = h(before, 1);
+	await assert.rejects(call(edit, { path: file, edits: [{ op: "replace", anchor: stable, body: ["bad\nline"] }] }), (error: Error) => {
+		assert.ok(error.message.includes(`op 0 / anchor / ${stable} / not_checked`));
+		assert.doesNotMatch(error.message, /\/ matched/);
+		return true;
+	});
+	await assert.rejects(call(edit, { path: file, edits: [
+		{ op: "replace", anchor: stable, body: ["A"] },
+		{ op: "delete", anchor: h(before, 2), end: "3#ZZ" },
+	] }), (error: Error) => {
+		assert.ok(error.message.includes(`op 0 / anchor / ${stable} / matched`));
+		assert.match(error.message, /op 1 \/ end \/ 3#ZZ \/ mismatched/);
+		assert.match(error.message, /Anchor checks only; retries revalidate/);
+		return true;
+	});
+	assert.equal(await readFile(file, "utf8"), before);
+	await writeFile(file, "changed\nb\nc\n");
+	await assert.rejects(call(edit, { path: file, edits: [{ op: "replace", anchor: stable, body: ["A"] }] }), (error: Error) => {
+		assert.ok(error.message.includes(`op 0 / anchor / ${stable} / mismatched`));
+		return true;
+	});
+	assert.equal(await readFile(file, "utf8"), "changed\nb\nc\n");
+}));
+
+test("large failed batches bound status and candidate mappings without implying omitted checks matched", async () => withDir(async (dir) => {
+	const original = "a\ntarget\nz\n";
+	const before = `prefix\n${original}`;
+	const file = join(dir, "many-checks.txt");
+	await writeFile(file, before);
+	const edits = Array.from({ length: 45 }, () => ({ op: "replace", anchor: h(original, 2), body: ["changed"] }));
+	await assert.rejects(call(makeEditOverride(dir), { path: file, edits }), (error: Error) => {
+		assert.match(error.message, /Anchor checks: 40\/45; 5 omitted/);
+		assert.match(error.message, /5 failure details omitted/);
+		assert.equal((error.message.match(/^op \d+ \/ anchor \/ .* \/ mismatched$/gm) ?? []).length, 40);
+		assert.equal((error.message.match(/checksum-matching candidate/g) ?? []).length, 40);
+		assert.equal((error.message.match(/^3#[0-9A-Z]+│target$/gm) ?? []).length, 1);
+		assert.doesNotMatch(error.message, /\/ matched/);
+		return true;
+	});
+	assert.equal(await readFile(file, "utf8"), before);
+}));
+
+test("candidate content falls back to one complete row when its neighborhood is truncated", async () => withDir(async (dir) => {
+	const original = "header\ntarget\ntail\n";
+	const before = `header\n${"x".repeat(17000)}\ntarget\ntail\n`;
+	const file = join(dir, "fallback.txt");
+	await writeFile(file, before);
+	let candidate = "";
+	await assert.rejects(call(makeEditOverride(dir), { path: file, edits: [
+		{ op: "replace", anchor: h(original, 2), body: ["updated"] },
+	] }), (error: Error) => {
+		candidate = anchorLine(error.message, 3);
+		assert.equal((error.message.match(/^3#[0-9A-Z]+│target$/gm) ?? []).length, 1);
+		assert.match(error.message, /neighborhoods truncated: byte limit/);
+		assert.doesNotMatch(error.message.split("Unique-candidate neighborhoods")[1], /^3#/m);
+		return true;
+	});
+	assert.equal(await readFile(file, "utf8"), before);
+	await call(makeEditOverride(dir), { path: file, edits: [{ op: "replace", anchor: candidate, body: ["updated"] }] });
+	assert.equal(await readFile(file, "utf8"), before.replace("target", "updated"));
 }));

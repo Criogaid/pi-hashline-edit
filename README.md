@@ -8,7 +8,7 @@ Overrides `read`, `grep`, `edit`, and `write`, and adds `replace` for bulk trans
 
 - **Search → edit:** `read` and `grep` return the same `LINE#HASH` anchors, so search results can feed directly into edits.
 - **Batch and chain edits:** submit structured JSON operations together, then use the returned fresh anchors for the next change.
-- **Recover from stale anchors:** rejected edits offer checksum-matching candidates or nearby current-file context for a verified retry. Recovery never applies automatically.
+- **Recover from stale anchors:** rejected edits show bounded content for a unique checksum-matching candidate, or nearby current-file context when no candidate is found, so the model can verify the target before retrying. Recovery never applies automatically.
 - **Edit → test:** Action Fusion lets a mutation include an optional follow-up command, with separate file and command outcomes and separate TUI cards.
 
 [Quick start](#quick-start) · [Tools](#tools) · [Configuration](#configuration) · [Action Fusion](#action-fusion) · [Safety and design](#safety-and-design)
@@ -78,6 +78,10 @@ All tools accept relative or absolute paths and expand a leading `~`. Mutation t
 | `prepend` / `append` | `body` | — | Insert at the start/end; no anchors. |
 
 All operations in a batch use the same snapshot. Validation failure rejects the whole batch. Conflicting fields and overlapping operations are rejected; some touching operations also conflict and need separate calls with fresh anchors. For insertion, **do not repeat the anchor line in `body`**. `edit` uses structured operations, not `oldText`/`newText` pairs.
+
+Rejected batches report each supplied anchor's status from that validation snapshot: `matched`, `mismatched`, or `not_checked` when body validation stopped the batch before hashing. Entries identify the zero-based operation index, `anchor` or `end`, and the cited token. The bounded list reports omitted entries explicitly. These statuses do not establish range/overlap validity, semantic intent, publication, command success, or validity on a later retry.
+
+A unique recovery candidate includes a bounded ±3-line neighborhood from the same snapshot. Candidate content is shown once in that neighborhood; if the neighborhood omits it, a complete candidate row can appear in the failure details within their output limits. Overlapping neighborhoods are merged; neighboring rows are observations, not recommended replacement targets. Inspect the code to choose the correct anchor and operation, then resubmit. No edit or retry is performed automatically, and every submitted anchor is verified again.
 
 ### Bulk replacement
 
@@ -193,7 +197,7 @@ Fusion serializes each mutation/command sequence for its target and checks the p
 
 - **Anchors are checksums, not identities.** Each hash combines the 1-based line number and content. Short hashes can collide and do not prove the model observed a line.
 - **Validation is local to supplied anchors.** Unrelated in-place changes leave stable anchors usable. A range verifies its supplied start/end anchors, not every interior line.
-- **Line shifts change anchors.** Insertions/deletions can invalidate later references. Recovery searches within `shiftRadius` and offers fresh candidates; retries verify again, without fuzzy matching or automatic relocation.
+- **Line shifts change anchors.** Insertions/deletions can invalidate later references. Recovery searches within `shiftRadius`; a unique candidate includes bounded line content and neighboring code for inspection. Use `read` when the target or needed context is omitted or ambiguous. Retries verify again, without fuzzy matching or automatic relocation.
 - **Edits preserve text representation.** `edit` preserves existing line endings, untouched separators, and the absence of a final newline. `edit`/`replace` reject invalid UTF-8 source text; all mutations reject NUL and output that cannot be encoded losslessly as UTF-8.
 - **Fresh anchors depend on the final observation.** After `then_run`, anchors are shown only for `unchanged` freshness. Without a command, observed and published revisions must agree. Later edits still verify anchors.
 - **Local queues are not cross-process transactions.** Revision checks bind mutations to the bytes read, but an external writer can still race a check and publication. There is no strict workspace jail or multi-file transaction.
@@ -217,7 +221,11 @@ These limits bound model context, not file size. Omission notices direct the cal
 | `grep` | Default 100 matching lines, overridable; 500 characters per displayed line, plus Pi's total output limits. Hashes use full content; read truncated lines before reconstructing them. |
 | `edit` / `replace` anchors | Up to 40 complete rows and 16 KiB including heading/omission notice. |
 | `write` anchors | Up to 40 compact tokens, without repeating supplied content. |
-| Anchor failures | 16 KiB total, up to 40 detailed failures and eight candidates per ambiguous failure. Unresolved anchors include nearby current-file context, itself capped at 40 rows/16 KiB. |
+| Anchor failure details | 16 KiB, up to 40 detailed failures and eight candidates per ambiguous failure. Unresolved anchors include nearby current-file context, itself capped at 40 rows/16 KiB. |
+| Input-anchor checks | Independent 16 KiB block, up to 40 entries in input order. Shown/omitted counts appear only when entries are omitted; omitted entries are not implied matched. |
+| Unique-candidate neighborhoods | Up to 40 complete anchored rows/16 KiB of row text, lowest-line first, plus headings. Candidate mappings stay in failure details. Each candidate row is limited to 4 KiB. Truncated rows are omitted in full. |
+
+The diagnostic blocks have independent budgets; their combined output can exceed 16 KiB. Window budgets and omission counts are reported when truncation occurs. Limits apply to rendered diagnostics; core failure results retain all input-anchor checks.
 
 ### Publication
 

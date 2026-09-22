@@ -31,7 +31,7 @@
 
 import { computeLineHash } from "./hash.ts";
 import { detectLineEnding, hasFinalNewline, splitLines } from "./lines.ts";
-import type { Anchor, AnchorFailure, AnchorRecovery, ApplyResult, Edit } from "./types.ts";
+import type { Anchor, AnchorCheck, AnchorFailure, AnchorRecovery, ApplyResult, Edit } from "./types.ts";
 
 /** Line-level operation: replace the raw lines in the `[lo, hi)` range (0-based, hi exclusive) with newLines. */
 interface SpanOp {
@@ -50,8 +50,8 @@ const DEFAULT_SHIFT_RADIUS = 15;
  * current snapshot.
  *
  * Recovery holds the ORIGINAL line number fixed and re-hashes each candidate's
- * content: `computeLineHash(citedLine, candidateContent) === citedHash` holds
- * iff the candidate IS the original content (modulo negligible hash collision).
+ * content. A matching checksum identifies a candidate, not proof of the
+ * original line's identity: short checksums can collide.
  * A returned candidate's anchor uses the candidate's real line number with a
  * hash computed for that line, so it verifies on retry.
  */
@@ -98,9 +98,27 @@ function verifyAnchor(
 }
 
 type TranslateResult =
-	| { readonly ok: true; readonly op: SpanOp }
-	| { readonly ok: false; readonly anchorFailures: AnchorFailure[] }
-	| { readonly ok: false; readonly rangeError: string };
+	| { readonly ok: true; readonly op: SpanOp; readonly checks: AnchorCheck[] }
+	| { readonly ok: false; readonly anchorFailures: AnchorFailure[]; readonly checks: AnchorCheck[] }
+	| { readonly ok: false; readonly rangeError: string; readonly checks: AnchorCheck[] };
+
+function checkedAnchor(edit: Edit, opIndex: number, which: "anchor" | "end", cited: Anchor, failure: AnchorFailure | null): AnchorCheck {
+	return { opIndex, which, op: edit.op, cited, status: failure ? "mismatched" : "matched" };
+}
+
+function inputAnchorChecks(edits: readonly Edit[], status: AnchorCheck["status"]): AnchorCheck[] {
+	const checks: AnchorCheck[] = [];
+	for (let opIndex = 0; opIndex < edits.length; opIndex++) {
+		const edit = edits[opIndex];
+		if (edit.op === "replace" || edit.op === "delete") {
+			checks.push({ opIndex, which: "anchor", op: edit.op, cited: edit.start, status });
+			if (edit.end) checks.push({ opIndex, which: "end", op: edit.op, cited: edit.end, status });
+		} else if (edit.op === "insert_after" || edit.op === "insert_before") {
+			checks.push({ opIndex, which: "anchor", op: edit.op, cited: edit.anchor, status });
+		}
+	}
+	return checks;
+}
 
 /** Translate an Edit into a SpanOp, verifying anchors and ranges against the current lines. */
 function translateEdit(
@@ -114,43 +132,37 @@ function translateEdit(
 		case "replace":
 		case "delete": {
 			const failures: AnchorFailure[] = [];
+			const checks: AnchorCheck[] = [];
 			const startF = verifyAnchor(lines, edit.start, "anchor", opIndex, edit.op, hashLen, radius);
+			checks.push(checkedAnchor(edit, opIndex, "anchor", edit.start, startF));
 			if (startF) failures.push(startF);
 			let endLine = edit.start.line;
 			if (edit.end) {
 				const endF = verifyAnchor(lines, edit.end, "end", opIndex, edit.op, hashLen, radius);
+				checks.push(checkedAnchor(edit, opIndex, "end", edit.end, endF));
 				if (endF) failures.push(endF);
 				endLine = edit.end.line;
 			}
-			if (failures.length > 0) return { ok: false, anchorFailures: failures };
-			if (endLine < edit.start.line) {
-				return { ok: false, rangeError: `range ${edit.start.line}..${endLine} ends before it starts` };
-			}
+			if (failures.length > 0) return { ok: false, anchorFailures: failures, checks };
+			if (endLine < edit.start.line) return { ok: false, rangeError: `range ${edit.start.line}..${endLine} ends before it starts`, checks };
 			return {
 				ok: true,
-				op: {
-					lo: edit.start.line - 1,
-					hi: endLine,
-					newLines: edit.op === "delete" ? [] : edit.body,
-				},
+				checks,
+				op: { lo: edit.start.line - 1, hi: endLine, newLines: edit.op === "delete" ? [] : edit.body },
 			};
 		}
-		case "insert_after": {
-			const f = verifyAnchor(lines, edit.anchor, "anchor", opIndex, edit.op, hashLen, radius);
-			if (f) return { ok: false, anchorFailures: [f] };
-			return { ok: true, op: { lo: edit.anchor.line, hi: edit.anchor.line, newLines: edit.body } };
-		}
+		case "insert_after":
 		case "insert_before": {
-			const f = verifyAnchor(lines, edit.anchor, "anchor", opIndex, edit.op, hashLen, radius);
-			if (f) return { ok: false, anchorFailures: [f] };
-			return { ok: true, op: { lo: edit.anchor.line - 1, hi: edit.anchor.line - 1, newLines: edit.body } };
+			const failure = verifyAnchor(lines, edit.anchor, "anchor", opIndex, edit.op, hashLen, radius);
+			const checks = [checkedAnchor(edit, opIndex, "anchor", edit.anchor, failure)];
+			if (failure) return { ok: false, anchorFailures: [failure], checks };
+			const line = edit.anchor.line - (edit.op === "insert_before" ? 1 : 0);
+			return { ok: true, checks, op: { lo: line, hi: line, newLines: edit.body } };
 		}
-		case "append": {
-			return { ok: true, op: { lo: lines.length, hi: lines.length, newLines: edit.body } };
-		}
-		case "prepend": {
-			return { ok: true, op: { lo: 0, hi: 0, newLines: edit.body } };
-		}
+		case "append":
+			return { ok: true, checks: [], op: { lo: lines.length, hi: lines.length, newLines: edit.body } };
+		case "prepend":
+			return { ok: true, checks: [], op: { lo: 0, hi: 0, newLines: edit.body } };
 	}
 }
 
@@ -159,24 +171,25 @@ function maxAffected(op: SpanOp): number {
 	return op.lo === op.hi ? op.lo : op.hi - 1;
 }
 
+function hasInvalidBodyLine(edits: readonly Edit[]): boolean {
+	return edits.some((edit) => "body" in edit && edit.body.some((line) => /[\r\n]/.test(line)));
+}
+
 /**
  * Apply edits to `text`. Anchors are verified against the current content; on
  * success `touchedLines` gives the 0-based indices of the new-file lines this
  * edit produced. On any anchor mismatch, all failures (with shifted recovery)
- * are collected and returned together — nothing is written.
+ * are collected and returned together — nothing is written. Every failure includes
+ * per-input anchor checks; input rejection before hashing marks them not_checked.
  *
  * @param text        current full file text
  * @param edits       parsed edit operations
  * @param hashLen     hash length used to verify anchors (default 4)
  * @param shiftRadius ±line radius for shifted-anchor recovery (default 15; 0 disables rescue)
  */
-function hasInvalidBodyLine(edits: readonly Edit[]): boolean {
-	return edits.some((edit) => "body" in edit && edit.body.some((line) => /[\r\n]/.test(line)));
-}
-
 export function applyEdits(text: string, edits: Edit[], hashLen = 4, shiftRadius = DEFAULT_SHIFT_RADIUS): ApplyResult {
 	if (hasInvalidBodyLine(edits)) {
-		return { ok: false, failure: { kind: "input", message: "INVALID_BODY: each body element must contain exactly one logical line." } };
+		return { ok: false, failure: { kind: "input", message: "INVALID_BODY: each body element must contain exactly one logical line.", checks: inputAnchorChecks(edits, "not_checked") } };
 	}
 	const lines = splitLines(text);
 	const bom = text.startsWith("\uFEFF") ? "\uFEFF" : "";
@@ -184,10 +197,12 @@ export function applyEdits(text: string, edits: Edit[], hashLen = 4, shiftRadius
 
 	const ops: SpanOp[] = [];
 	const anchorFailures: AnchorFailure[] = [];
+	const anchorChecks: AnchorCheck[] = [];
 	let rangeError: string | null = null;
 
 	for (let i = 0; i < edits.length; i++) {
 		const t = translateEdit(edits[i], i, lines, hashLen, shiftRadius);
+		anchorChecks.push(...t.checks);
 		if (t.ok) {
 			ops.push(t.op);
 		} else if ("anchorFailures" in t) {
@@ -200,10 +215,10 @@ export function applyEdits(text: string, edits: Edit[], hashLen = 4, shiftRadius
 	// Anchor failures take priority: the model must fix anchors first; range
 	// issues among surviving ops are premature until anchors are corrected.
 	if (anchorFailures.length > 0) {
-		return { ok: false, failure: { kind: "anchor", failures: anchorFailures } };
+		return { ok: false, failure: { kind: "anchor", failures: anchorFailures, checks: anchorChecks } };
 	}
 	if (rangeError !== null) {
-		return { ok: false, failure: { kind: "range", message: rangeError } };
+		return { ok: false, failure: { kind: "range", message: rangeError, checks: anchorChecks } };
 	}
 
 	// Overlap check: sort ascending by lo; the next op's start must not fall inside the previous op's affected range
@@ -215,6 +230,7 @@ export function applyEdits(text: string, edits: Edit[], hashLen = 4, shiftRadius
 				failure: {
 					kind: "range",
 					message: `overlapping edits near line ${sorted[k].lo + 1}; issue one edit per range`,
+					checks: anchorChecks,
 				},
 			};
 		}
@@ -251,6 +267,7 @@ export function applyEdits(text: string, edits: Edit[], hashLen = 4, shiftRadius
 			failure: {
 				kind: "noop",
 				message: "edit parsed and applied cleanly but produced no change; body is byte-identical — the bug is elsewhere, re-read first",
+				checks: anchorChecks,
 			},
 		};
 	}

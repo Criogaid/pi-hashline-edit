@@ -331,7 +331,7 @@ test("rejects CR or LF embedded in body elements", () => {
 		const result = applyEdits("a\n", [{ op: "append", body }]);
 		assert.deepEqual(result, {
 			ok: false,
-			failure: { kind: "input", message: "INVALID_BODY: each body element must contain exactly one logical line." },
+			failure: { kind: "input", message: "INVALID_BODY: each body element must contain exactly one logical line.", checks: [] },
 		});
 	}
 });
@@ -363,4 +363,46 @@ test("BOM stays at byte zero through first-line edits while anchors retain their
 	const result = applyEdits(embedded, [{ op: "replace", start: at(embedded, 1), body: ["changed"] }]);
 	assert.ok(result.ok);
 	assert.equal(result.text, "\uFEFFchanged\ninside\uFEFFcontent\n");
+});
+
+test("failed batches report every supplied anchor in input order from one snapshot", () => {
+	const text = "a\nb\nc\nd\ne\nf\n";
+	const stale = { line: 2, hash: "ZZ" };
+	const edits: Edit[] = [
+		{ op: "replace", start: at(text, 1), end: stale, body: ["A"] },
+		{ op: "delete", start: stale, end: at(text, 4) },
+		{ op: "insert_after", anchor: at(text, 5), body: ["E"] },
+		{ op: "insert_before", anchor: stale, body: ["B"] },
+		{ op: "append", body: ["last"] },
+		{ op: "prepend", body: ["first"] },
+	];
+	const result = applyEdits(text, edits);
+	assert.ok(!result.ok && result.failure.kind === "anchor");
+	assert.deepEqual(result.failure.checks, [
+		{ opIndex: 0, op: "replace", which: "anchor", cited: at(text, 1), status: "matched" },
+		{ opIndex: 0, op: "replace", which: "end", cited: stale, status: "mismatched" },
+		{ opIndex: 1, op: "delete", which: "anchor", cited: stale, status: "mismatched" },
+		{ opIndex: 1, op: "delete", which: "end", cited: at(text, 4), status: "matched" },
+		{ opIndex: 2, op: "insert_after", which: "anchor", cited: at(text, 5), status: "matched" },
+		{ opIndex: 3, op: "insert_before", which: "anchor", cited: stale, status: "mismatched" },
+	]);
+	const invalid = applyEdits(text, [...edits, { op: "append", body: ["bad\nline"] }]);
+	assert.ok(!invalid.ok && invalid.failure.kind === "input");
+	assert.deepEqual(invalid.failure.checks, result.failure.checks.map((check) => ({ ...check, status: "not_checked" })));
+});
+
+test("matched anchor checks do not imply valid ranges or a changed result", () => {
+	const text = "a\nb\nc\n";
+	const cases: { edits: Edit[]; kind: "range" | "noop"; checks: number }[] = [
+		{ edits: [{ op: "delete", start: at(text, 3), end: at(text, 1) }], kind: "range", checks: 2 },
+		{ edits: [{ op: "replace", start: at(text, 1), end: at(text, 3), body: ["x"] }, { op: "delete", start: at(text, 2) }], kind: "range", checks: 3 },
+		{ edits: [{ op: "replace", start: at(text, 1), body: ["a"] }], kind: "noop", checks: 1 },
+	];
+	for (const { edits, kind, checks } of cases) {
+		const result = applyEdits(text, edits);
+		assert.ok(!result.ok);
+		assert.equal(result.failure.kind, kind);
+		assert.equal(result.failure.checks.length, checks);
+		assert.ok(result.failure.checks.every((check) => check.status === "matched"));
+	}
 });

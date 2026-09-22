@@ -31,10 +31,10 @@ import type { ApplyFailure, Edit } from "../core/types.ts";
 import { canonicalPath } from "./read-tool.ts";
 import { getState } from "./state.ts";
 import { formatDiffCounts, renderMutationResult, type DiffCounts } from "./render.ts";
-import { formatFailureContext } from "./failure-context.ts";
+import { formatFailureContext, formatUniqueCandidateNeighborhoods, MAX_RECOVERY_CANDIDATE_BYTES } from "./failure-context.ts";
 import { finalizeMutationResult, formatMutationAnchors } from "./mutation-result.ts";
 
-/** Bound detailed failures before constructing diagnostics; the final message also has a byte cap. */
+/** Cap failure details and status rows independently; each text block also has a byte cap. */
 const MAX_FAILURE_DETAILS = 40;
 
 const ANCHOR_PATTERN = "^([1-9][0-9]*)#([0-9A-Z]{2,8})$";
@@ -92,13 +92,16 @@ type EditParams = Omit<Static<typeof editSchema>, "then_run"> & { then_run?: The
 type EditOpInput = Static<typeof editOpSchema>;
 
 /** Format a failed batch with retryable shifted anchors and bounded live context. */
-function formatFailure(
+function formatFailureDetails(
 	failure: ApplyFailure,
 	snapshot: Readonly<{ currentText: string; hashLen: number }>,
+	candidateLines: ReadonlySet<number>,
 ): string {
 	if (failure.kind !== "anchor") return failure.message;
 
 	const lines: string[] = [];
+	const currentLines = splitLines(snapshot.currentText);
+	const shownCandidates = new Set(candidateLines);
 	let found = 0;
 	let ambiguous = 0;
 	let none = 0;
@@ -109,13 +112,25 @@ function formatFailure(
 		if (lines.length >= MAX_FAILURE_DETAILS) continue;
 		const where = `op #${f.opIndex} ${f.op} ${f.which} (line ${f.cited.line})`;
 		switch (f.recovery.kind) {
-			case "found":
-				lines.push(`• ${where}: checksum-matching candidate. Resend with ${f.which} "${f.recovery.newLine}#${f.recovery.newHash}" after checking the target.`);
+			case "found": {
+				const content = currentLines[f.recovery.newLine - 1];
+				const row = `${f.recovery.newLine}#${f.recovery.newHash}│${content}`;
+				let detail = `• ${where}: checksum-matching candidate ${f.recovery.newLine}#${f.recovery.newHash}.`;
+				if (!shownCandidates.has(f.recovery.newLine)) {
+					if (content !== undefined && Buffer.byteLength(row, "utf8") <= MAX_RECOVERY_CANDIDATE_BYTES) {
+						detail += `\n${row}`;
+						shownCandidates.add(f.recovery.newLine);
+					} else {
+						detail += ` Candidate content exceeds ${MAX_RECOVERY_CANDIDATE_BYTES} bytes.`;
+					}
+				}
+				lines.push(detail);
 				break;
+			}
 			case "ambiguous": {
 				const list = f.recovery.candidates.slice(0, 8).map((candidate) => `"${candidate.line}#${candidate.hash}"`).join(" / ");
-				const more = f.recovery.candidates.length > 8 ? ` (${f.recovery.candidates.length - 8} more candidates omitted; use read)` : "";
-				lines.push(`• ${where}: ambiguous checksum matches. Inspect the target and resend ${f.which} ${list}${more}.`);
+				const more = f.recovery.candidates.length > 8 ? ` (${f.recovery.candidates.length - 8} more candidates omitted)` : "";
+				lines.push(`• ${where}: ambiguous checksum matches: ${list}${more}.`);
 				break;
 			}
 			case "none":
@@ -134,11 +149,40 @@ function formatFailure(
 		`Anchor mismatch: ${parts.join(", ")}.`,
 		"No changes written by this edit batch.",
 		...lines,
-		...(failure.failures.length > lines.length ? [`${failure.failures.length - lines.length} failure details omitted; use read to inspect remaining targets.`] : []),
+		...(failure.failures.length > lines.length ? [`${failure.failures.length - lines.length} failure details omitted.`] : []),
 	].join("\n") + formatFailureContext(snapshot.currentText, failure.failures, snapshot.hashLen);
-	const notice = "\nDiagnostic output truncated at 16 KiB. Use read to inspect omitted targets.";
+	const notice = "\nDiagnostic output truncated at 16 KiB.";
 	const bounded = truncateHead(message, { maxBytes: 16 * 1024 - Buffer.byteLength(notice) });
 	return bounded.content + (bounded.truncated ? notice : "");
+}
+
+function formatAnchorChecks(failure: ApplyFailure): string {
+	const rows = failure.checks.slice(0, MAX_FAILURE_DETAILS).map((check) =>
+		`op ${check.opIndex} / ${check.which} / ${check.cited.line}#${check.cited.hash} / ${check.status}`,
+	);
+	const omitted = failure.checks.length - rows.length;
+	const message = [
+		"Input-anchor checks (this snapshot):",
+		...rows,
+		...(omitted ? [`Anchor checks: ${rows.length}/${failure.checks.length}; ${omitted} omitted.`] : []),
+		"Anchor checks only; retries revalidate.",
+	].join("\n");
+	const notice = "\nAnchor-check output truncated at 16 KiB; omitted entries are not implied matched.";
+	const bounded = truncateHead(message, { maxBytes: 16 * 1024 - Buffer.byteLength(notice) });
+	return bounded.content + (bounded.truncated ? notice : "");
+}
+
+/** Keep validation status and observation context visible even when failure details are truncated. */
+function formatFailure(
+	failure: ApplyFailure,
+	snapshot: Readonly<{ currentText: string; hashLen: number }>,
+): string {
+	const candidateNeighborhoods = failure.kind === "anchor"
+		? formatUniqueCandidateNeighborhoods(snapshot.currentText, failure.failures, snapshot.hashLen)
+		: { text: "", shownLines: new Set<number>() };
+	const guidance = failure.kind === "anchor"
+		? "\nCheck the intended target before retrying; use read or grep for omitted or additional context." : "";
+	return `${formatFailureDetails(failure, snapshot, candidateNeighborhoods.shownLines)}\n${formatAnchorChecks(failure)}${candidateNeighborhoods.text}${guidance}`;
 }
 
 /** Translate JSON edit ops into core Edit[]. Validates conditional required fields (anchor/body per op). */
@@ -202,7 +246,7 @@ export function makeEditOverride(cwd: string, fusion?: ReturnType<typeof createA
 		name: "edit" as const,
 		label: "edit",
 		description:
-			"Edit file lines using content-verified anchors. Returns fresh anchors for subsequent edits. Unrecoverable anchor errors may include bounded current-file anchors; retries are always verified again and never run automatically.",
+			"Edit file lines using content-verified anchors. Returns fresh anchors for subsequent edits. Anchor failures report input-anchor status and bounded current-file context. Inspect recovery candidates before retrying; retries always revalidate anchors and never run automatically.",
 		promptSnippet: "Edit file lines using verified anchors",
 		promptGuidelines: [
 			"Batch changes to the same file in one edit call.",
