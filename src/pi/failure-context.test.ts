@@ -2,7 +2,16 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { computeLineHash } from "../core/hash.ts";
 import type { AnchorFailure } from "../core/types.ts";
-import { formatFailureContext, formatUniqueCandidateNeighborhoods } from "./failure-context.ts";
+import { createAnchorFormatter } from "./anchor-format.ts";
+import { formatFailureContext as formatFailureContextWith, formatUniqueCandidateNeighborhoods as formatUniqueCandidateNeighborhoodsWith } from "./failure-context.ts";
+
+function formatFailureContext(text: string, failures: readonly AnchorFailure[], hashLen: number) {
+	return formatFailureContextWith(text, failures, createAnchorFormatter(hashLen));
+}
+
+function formatUniqueCandidateNeighborhoods(text: string, failures: readonly AnchorFailure[], hashLen: number) {
+	return formatUniqueCandidateNeighborhoodsWith(text, failures, createAnchorFormatter(hashLen));
+}
 
 function unresolved(line: number): AnchorFailure {
 	return {

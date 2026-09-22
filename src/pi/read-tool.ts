@@ -14,9 +14,9 @@ import { Text } from "@earendil-works/pi-tui";
 import { readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { homedir } from "node:os";
-import { decodeUtf8, computeLineHash } from "../core/index.ts";
+import { decodeUtf8 } from "../core/index.ts";
 import { hasFinalNewline, splitLines } from "../core/lines.ts";
-import { getState } from "./state.ts";
+import { createAnchorFormatter } from "./anchor-format.ts";
 import { parseHashline } from "./render.ts";
 
 const MAX_LINES = 2000;
@@ -131,6 +131,7 @@ export function makeReadOverride(cwd: string) {
 		async execute(toolCallId: string, params: any, signal: AbortSignal | undefined, onUpdate: any, ctx?: any) {
 			// User cancelled → delegate to the built-in (builtin handles abort itself)
 			if (signal?.aborted) return builtin.execute(toolCallId, params, signal, onUpdate, ctx);
+			const anchors = createAnchorFormatter();
 
 			const absPath = canonicalPath(cwd, params.path as string);
 			let buf: Buffer;
@@ -147,7 +148,6 @@ export function makeReadOverride(cwd: string) {
 			const text = decodeUtf8(buf);
 			const allLines = splitLines(text);
 			const totalLines = allLines.length;
-			const hashLen = getState().config.hashLen;
 
 			// offset/limit
 			const offset = (params.offset as number | undefined) ?? 1;
@@ -155,7 +155,7 @@ export function makeReadOverride(cwd: string) {
 			const startIdx = Math.max(0, offset - 1);
 			const endIdx = Math.min(totalLines, startIdx + limit);
 
-			const rows = allLines.slice(startIdx, endIdx).map((line, index) => `${startIdx + index + 1}#${computeLineHash(startIdx + index + 1, line, hashLen)}│${line}`);
+			const rows = allLines.slice(startIdx, endIdx).map((line, index) => anchors.row(startIdx + index + 1, line));
 			const truncation = truncateHead(rows.join("\n"), { maxBytes: MAX_BYTES, maxLines: rows.length });
 
 			const shownFrom = offset > 1 ? ` (from line ${offset})` : "";

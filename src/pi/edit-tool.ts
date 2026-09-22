@@ -30,6 +30,7 @@ import { splitLines } from "../core/lines.ts";
 import type { ApplyFailure, Edit } from "../core/types.ts";
 import { canonicalPath } from "./read-tool.ts";
 import { getState } from "./state.ts";
+import { ANCHOR_PATTERN, createAnchorFormatter, type AnchorFormatter } from "./anchor-format.ts";
 import { formatDiffCounts, renderMutationResult, type DiffCounts } from "./render.ts";
 import { formatFailureContext, formatUniqueCandidateNeighborhoods, MAX_RECOVERY_CANDIDATE_BYTES } from "./failure-context.ts";
 import { finalizeMutationResult, formatMutationAnchors } from "./mutation-result.ts";
@@ -37,7 +38,6 @@ import { finalizeMutationResult, formatMutationAnchors } from "./mutation-result
 /** Cap failure details and status rows independently; each text block also has a byte cap. */
 const MAX_FAILURE_DETAILS = 40;
 
-const ANCHOR_PATTERN = "^([1-9][0-9]*)#([0-9A-Z]{2,8})$";
 
 function anchorRef(description: string) {
 	return Type.Optional(Type.String({ pattern: ANCHOR_PATTERN, description }));
@@ -94,7 +94,7 @@ type EditOpInput = Static<typeof editOpSchema>;
 /** Format a failed batch with retryable shifted anchors and bounded live context. */
 function formatFailureDetails(
 	failure: ApplyFailure,
-	snapshot: Readonly<{ currentText: string; hashLen: number }>,
+	snapshot: Readonly<{ currentText: string; anchors: AnchorFormatter }>,
 	candidateLines: ReadonlySet<number>,
 ): string {
 	if (failure.kind !== "anchor") return failure.message;
@@ -114,8 +114,9 @@ function formatFailureDetails(
 		switch (f.recovery.kind) {
 			case "found": {
 				const content = currentLines[f.recovery.newLine - 1];
-				const row = `${f.recovery.newLine}#${f.recovery.newHash}│${content}`;
-				let detail = `• ${where}: checksum-matching candidate ${f.recovery.newLine}#${f.recovery.newHash}.`;
+				const candidate = snapshot.anchors.reference(f.recovery.newLine, f.recovery.newHash);
+				const row = content === undefined ? candidate : snapshot.anchors.row(f.recovery.newLine, content);
+				let detail = `• ${where}: checksum-matching candidate ${candidate}.`;
 				if (!shownCandidates.has(f.recovery.newLine)) {
 					if (content !== undefined && Buffer.byteLength(row, "utf8") <= MAX_RECOVERY_CANDIDATE_BYTES) {
 						detail += `\n${row}`;
@@ -128,7 +129,7 @@ function formatFailureDetails(
 				break;
 			}
 			case "ambiguous": {
-				const list = f.recovery.candidates.slice(0, 8).map((candidate) => `"${candidate.line}#${candidate.hash}"`).join(" / ");
+				const list = f.recovery.candidates.slice(0, 8).map((candidate) => `"${snapshot.anchors.reference(candidate.line, candidate.hash)}"`).join(" / ");
 				const more = f.recovery.candidates.length > 8 ? ` (${f.recovery.candidates.length - 8} more candidates omitted)` : "";
 				lines.push(`• ${where}: ambiguous checksum matches: ${list}${more}.`);
 				break;
@@ -150,15 +151,15 @@ function formatFailureDetails(
 		"No changes written by this edit batch.",
 		...lines,
 		...(failure.failures.length > lines.length ? [`${failure.failures.length - lines.length} failure details omitted.`] : []),
-	].join("\n") + formatFailureContext(snapshot.currentText, failure.failures, snapshot.hashLen);
+	].join("\n") + formatFailureContext(snapshot.currentText, failure.failures, snapshot.anchors);
 	const notice = "\nDiagnostic output truncated at 16 KiB.";
 	const bounded = truncateHead(message, { maxBytes: 16 * 1024 - Buffer.byteLength(notice) });
 	return bounded.content + (bounded.truncated ? notice : "");
 }
 
-function formatAnchorChecks(failure: ApplyFailure): string {
+function formatAnchorChecks(failure: ApplyFailure, anchors: AnchorFormatter): string {
 	const rows = failure.checks.slice(0, MAX_FAILURE_DETAILS).map((check) =>
-		`op ${check.opIndex} / ${check.which} / ${check.cited.line}#${check.cited.hash} / ${check.status}`,
+		`op ${check.opIndex} / ${check.which} / ${anchors.reference(check.cited.line, check.cited.hash)} / ${check.status}`,
 	);
 	const omitted = failure.checks.length - rows.length;
 	const message = [
@@ -175,14 +176,14 @@ function formatAnchorChecks(failure: ApplyFailure): string {
 /** Keep validation status and observation context visible even when failure details are truncated. */
 function formatFailure(
 	failure: ApplyFailure,
-	snapshot: Readonly<{ currentText: string; hashLen: number }>,
+	snapshot: Readonly<{ currentText: string; anchors: AnchorFormatter }>,
 ): string {
 	const candidateNeighborhoods = failure.kind === "anchor"
-		? formatUniqueCandidateNeighborhoods(snapshot.currentText, failure.failures, snapshot.hashLen)
+		? formatUniqueCandidateNeighborhoods(snapshot.currentText, failure.failures, snapshot.anchors)
 		: { text: "", shownLines: new Set<number>() };
 	const guidance = failure.kind === "anchor"
 		? "\nCheck the intended target before retrying; use read or grep for omitted or additional context." : "";
-	return `${formatFailureDetails(failure, snapshot, candidateNeighborhoods.shownLines)}\n${formatAnchorChecks(failure)}${candidateNeighborhoods.text}${guidance}`;
+	return `${formatFailureDetails(failure, snapshot, candidateNeighborhoods.shownLines)}\n${formatAnchorChecks(failure, snapshot.anchors)}${candidateNeighborhoods.text}${guidance}`;
 }
 
 /** Translate JSON edit ops into core Edit[]. Validates conditional required fields (anchor/body per op). */
@@ -224,9 +225,9 @@ function toCoreEdits(ops: readonly EditOpInput[]): { ok: true; edits: Edit[] } |
  * Return compact tokens for caller-supplied rows, retaining content for deletion successors.
  * Uses the applicator's final indices so mixed batches do not need a second position calculation.
  */
-function formatUpdatedAnchors(newText: string, touched: readonly number[], contextLines: readonly number[], hashLen: number): string {
+function formatUpdatedAnchors(newText: string, touched: readonly number[], contextLines: readonly number[], anchors: AnchorFormatter): string {
 	const idxs = [...new Set(touched)].sort((a, b) => a - b);
-	return formatMutationAnchors(splitLines(newText), idxs, hashLen, "Updated anchors:", new Set(contextLines));
+	return formatMutationAnchors(splitLines(newText), idxs, anchors, "Updated anchors:", new Set(contextLines));
 }
 
 /** Call-header line: `edit path — N ops: op`, plus `+N -N` once the result's diff counts are known. */
@@ -316,7 +317,8 @@ async function runHashline(
 	signal: AbortSignal | undefined,
 	onAnchors: (anchors: string) => void,
 ) {
-	const { hashLen, shiftRadius } = getState().config;
+	const anchorFormatter = createAnchorFormatter();
+	const { shiftRadius } = getState().config;
 
 	let currentText: string;
 	let baseRevision: string;
@@ -339,9 +341,9 @@ async function runHashline(
 	// shifted recovery: if the content merely moved within ±shiftRadius, a fresh
 	// anchor is returned so the model can retry without a re-read. All failures in
 	// the batch are collected (nothing written on any failure).
-	const result = applyEdits(currentText, translated.edits, hashLen, shiftRadius);
+	const result = applyEdits(currentText, translated.edits, anchorFormatter.hashLen, shiftRadius);
 	if (!result.ok) {
-		throw new Error(formatFailure(result.failure, { currentText, hashLen }));
+		throw new Error(formatFailure(result.failure, { currentText, anchors: anchorFormatter }));
 	}
 
 	// Check for cancel before write: if aborted, don't touch the disk; the file stays untouched
@@ -373,7 +375,7 @@ async function runHashline(
 			...versions,
 			revision: versions.publishedRevision,
 		};
-		anchors = formatUpdatedAnchors(result.text, result.touchedLines, result.contextLines, hashLen);
+		anchors = formatUpdatedAnchors(result.text, result.touchedLines, result.contextLines, anchorFormatter);
 		onAnchors(anchors);
 	} catch (error) {
 		throw new FileMutationError("post_process", publication, `file was published but edit result generation failed: ${error instanceof Error ? error.message : String(error)}`, { cause: error });

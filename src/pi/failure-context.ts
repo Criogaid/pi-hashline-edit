@@ -1,4 +1,4 @@
-import { computeLineHash } from "../core/hash.ts";
+import type { AnchorFormatter } from "./anchor-format.ts";
 import { splitLines } from "../core/lines.ts";
 import type { AnchorFailure } from "../core/types.ts";
 
@@ -34,7 +34,7 @@ function shownIntervals(rows: readonly ContextRow[]): Interval[] {
 function collectContextRows(
 	lines: readonly string[],
 	centers: readonly number[],
-	hashLen: number,
+	anchors: AnchorFormatter,
 	candidateLines?: ReadonlySet<number>,
 ) {
 	const windows = mergeIntervals(centers.map((center) => {
@@ -53,7 +53,7 @@ function collectContextRows(
 				break outer;
 			}
 			const content = lines[line - 1];
-			const text = `${line}#${computeLineHash(line, content, hashLen)}│${content}`;
+			const text = anchors.row(line, content);
 			const rowBytes = Buffer.byteLength(text, "utf8");
 			// Neighborhoods must not bypass the standalone candidate's complete-row limit.
 			if (candidateLines?.has(line) && rowBytes > MAX_RECOVERY_CANDIDATE_BYTES) {
@@ -88,7 +88,7 @@ function formatContextRows(rows: readonly ContextRow[], label: string): string[]
 export function formatFailureContext(
 	currentText: string,
 	failures: readonly AnchorFailure[],
-	hashLen: number,
+	anchors: AnchorFormatter,
 ): string {
 	const unresolved = failures.filter((failure) => failure.recovery.kind === "none");
 	if (unresolved.length === 0) return "";
@@ -98,7 +98,7 @@ export function formatFailureContext(
 	if (lines.length === 0) {
 		return `\n${heading.join("\n")}\nThe file is empty in the validation snapshot; no context anchors are available.`;
 	}
-	const { rows, total, truncatedBy } = collectContextRows(lines, unresolved.map((failure) => failure.cited.line), hashLen);
+	const { rows, total, truncatedBy } = collectContextRows(lines, unresolved.map((failure) => failure.cited.line), anchors);
 	const body: string[] = [...heading];
 	if (rows.length === 0) {
 		body.push("No context row fits the byte budget.");
@@ -119,13 +119,13 @@ export function formatFailureContext(
 export function formatUniqueCandidateNeighborhoods(
 	currentText: string,
 	failures: readonly AnchorFailure[],
-	hashLen: number,
+	anchors: AnchorFormatter,
 ): { text: string; shownLines: ReadonlySet<number> } {
 	const centers = failures.flatMap((failure) => failure.recovery.kind === "found" ? [failure.recovery.newLine] : []);
 	if (centers.length === 0) return { text: "", shownLines: new Set() };
 
 	const lines = splitLines(currentText);
-	const { rows, total, truncatedBy } = collectContextRows(lines, centers, hashLen, new Set(centers));
+	const { rows, total, truncatedBy } = collectContextRows(lines, centers, anchors, new Set(centers));
 	const body = ["Unique-candidate neighborhoods (+/-3; observation only):"];
 	if (rows.length === 0) {
 		body.push("No complete neighborhood row fits the limits.");

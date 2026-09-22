@@ -35,10 +35,9 @@ import { Type } from "typebox";
 import { Text } from "@earendil-works/pi-tui";
 import { readFile, realpath, stat } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
-import { computeLineHash } from "../core/hash.ts";
 import { splitLines } from "../core/lines.ts";
 import { decodeEditableText } from "../core/text.ts";
-import { getState } from "./state.ts";
+import { createAnchorFormatter } from "./anchor-format.ts";
 import { canonicalPath } from "./read-tool.ts";
 import { parseHashline } from "./render.ts";
 import {
@@ -579,8 +578,8 @@ export function makeGrepOverrideWithBackend(cwd: string, overrides: Partial<Grep
       signal: AbortSignal | undefined,
       _onUpdate: any,
     ): Promise<any> {
-      const state = getState();
       if (signal?.aborted) throw new Error("Operation aborted");
+      const anchors = createAnchorFormatter();
 
       const patterns = toArray(params.pattern);
       if (patterns.length === 0) throw new Error("pattern is required (got an empty array)");
@@ -620,7 +619,6 @@ export function makeGrepOverrideWithBackend(cwd: string, overrides: Partial<Grep
         follow: params.follow === true,
         searchPaths,
       };
-      const hashLen = state.config.hashLen;
 
       const pathInfo: SearchPathInfo[] = [];
       for (const searchPath of searchPaths) {
@@ -790,10 +788,9 @@ export function makeGrepOverrideWithBackend(cwd: string, overrides: Partial<Grep
           const rows: string[] = [];
           for (const n of [...windowSet].sort((a, b) => a - b)) {
             const content = lines[n - 1] ?? "";
-            const hash = n <= lines.length ? computeLineHash(n, content, hashLen) : "";
             const { text: display, wasTruncated } = truncateLine(content.replace(/\r/g, ""));
             if (wasTruncated) linesTruncated = true;
-            rows.push(`${n}#${hash}│${display}`);
+            rows.push(anchors.row(n, content, display));
           }
           blocks.push(`${header}${rows.join("\n")}`);
         }

@@ -35,7 +35,7 @@ import { readFile } from "node:fs/promises";
 import { decodeEditableText, splitLines } from "../core/index.ts";
 import { ACTION_FUSION_GUIDELINES, createActionFusionExecutor, createThenRunSchema, type ThenRunInput } from "./action-fusion.ts";
 import { byteRevision, commitFile, FileMutationError, type MutationVersions, type PublicationStatus } from "./file-commit.ts";
-import { getState } from "./state.ts";
+import { createAnchorFormatter, type AnchorFormatter } from "./anchor-format.ts";
 import { canonicalPath } from "./read-tool.ts";
 import { formatDiffCounts, renderMutationResult, type DiffCounts } from "./render.ts";
 import { finalizeMutationResult, formatMutationAnchors } from "./mutation-result.ts";
@@ -116,11 +116,11 @@ function changedSpan(oldLines: readonly string[], newLines: readonly string[]): 
 }
 
 /** Format fresh `LINE#HASH│content` anchors for a contiguous span of the new file, capped. */
-function formatSpanAnchors(newLines: readonly string[], span: { start: number; end: number }, hashLen: number): string {
+function formatSpanAnchors(newLines: readonly string[], span: { start: number; end: number }, anchors: AnchorFormatter): string {
 	function* indices() {
 		for (let i = span.start; i <= span.end; i++) yield i;
 	}
-	return formatMutationAnchors(newLines, indices(), hashLen, "Updated anchors (changed region):");
+	return formatMutationAnchors(newLines, indices(), anchors, "Updated anchors (changed region):");
 }
 
 /** Truncate a string for one-line display, folding newlines into a marker. */
@@ -172,11 +172,10 @@ export function makeReplaceTool(cwd: string, fusion?: ReturnType<typeof createAc
 		async execute(toolCallId: string, params: ReplaceParams & { then_run?: ThenRunInput }, signal: AbortSignal | undefined, onUpdate: any, ctx: any) {
 			const { then_run, ...mutationParams } = params;
 			if (!fusion && then_run !== undefined) throw new Error("then_run is unavailable because hashlineEdit.actionFusion is disabled");
-			const state = getState();
 			const path = mutationParams.path;
 			const absolutePath = canonicalPath(cwd, path);
 			let mutationAnchors = "";
-			const mutate = () => withFileMutationQueue(absolutePath, () => runReplace(absolutePath, path, mutationParams, state.config.hashLen, signal, (anchors) => { mutationAnchors = anchors; }));
+			const mutate = () => withFileMutationQueue(absolutePath, () => runReplace(absolutePath, path, mutationParams, signal, (value) => { mutationAnchors = value; }));
 			const finalizeMutation = (result: any, publishAnchors: boolean) => ({
 				...result,
 				content: result.content.map((block: any, index: number) => index === 0 && block.type === "text"
@@ -192,10 +191,10 @@ async function runReplace(
 	absPath: string,
 	displayPath: string,
 	params: ReplaceParams,
-	hashLen: number,
 	signal: AbortSignal | undefined,
 	onAnchors: (anchors: string) => void,
 ) {
+	const anchorFormatter = createAnchorFormatter();
 	const { find, replace } = params;
 	const isRegex = params.regex === true;
 	const maxMatches = params.maxMatches ?? DEFAULT_MAX_MATCHES;
@@ -279,7 +278,7 @@ async function runReplace(
 		const oldLines = splitLines(currentText);
 		const newLines = splitLines(newText);
 		const span = changed ? changedSpan(oldLines, newLines) : null;
-		anchors = span ? formatSpanAnchors(newLines, span, hashLen) : "";
+		anchors = span ? formatSpanAnchors(newLines, span, anchorFormatter) : "";
 		const matchWord = `match${count !== 1 ? "es" : ""}`;
 		note = changed ? `${count} ${matchWord}` : `${count} ${matchWord}, no net change`;
 		onAnchors(anchors);
