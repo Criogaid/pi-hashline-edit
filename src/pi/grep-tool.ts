@@ -39,9 +39,10 @@ import { splitLines } from "../core/lines.ts";
 import { decodeEditableText } from "../core/text.ts";
 import { createAnchorFormatter, displayCarriageReturns } from "./anchor-format.ts";
 import { canonicalPath } from "./read-tool.ts";
-import { parseHashline } from "./render.ts";
+import { parseHashline, renderToolError } from "./render.ts";
 import {
   COMMON_RG_ARGS,
+  assertRgSucceeded,
   createLinePredicate,
   matcherArgs,
   resolveIgnoreCase,
@@ -254,9 +255,7 @@ async function filterExplicitFilesByGlob(
     allowed.add(fileKey(path));
     return true;
   });
-  if (!listed.stopped && listed.code !== 0 && listed.code !== 1) {
-    throw new Error(listed.stderr.trim() || `ripgrep exited with code ${listed.code}`);
-  }
+  if (!listed.stopped) assertRgSucceeded(listed);
   return paths
     .filter(({ path, isFile }) => !isFile || allowed.has(fileKey(path)))
     .map(({ path }) => path);
@@ -343,9 +342,7 @@ async function scanPatternRanges(
     if (rangeCount(result) > MAX_PENDING_RANGES) throw new Error("Search produced too many pending line ranges; refine the query");
     return true;
   });
-  if (!run.stopped && run.code !== 0 && run.code !== 1) {
-    throw new Error(run.stderr.trim() || `ripgrep exited with code ${run.code}`);
-  }
+  if (!run.stopped) assertRgSucceeded(run);
   return result;
 }
 
@@ -433,9 +430,7 @@ async function complexSearch(options: ComplexSearchOptions): Promise<{ raw: RgMa
     batchBytes += Buffer.byteLength(filePath) + 1;
     return batch.length >= FILE_BATCH_SIZE || batchBytes >= FILE_BATCH_ARG_BYTES ? processBatch() : true;
   });
-  if (!listed.stopped && listed.code !== 0 && listed.code !== 1) {
-    throw new Error(listed.stderr.trim() || `ripgrep exited with code ${listed.code}`);
-  }
+  if (!listed.stopped) assertRgSucceeded(listed);
   if (!matchLimitReached && batch.length) await processBatch();
   return { raw, matchLimitReached, identities };
 }
@@ -556,11 +551,7 @@ export function makeGrepOverrideWithBackend(cwd: string, overrides: Partial<Grep
 
     renderResult(result: any, { isPartial, expanded }: any, theme: any, context: any) {
       if (isPartial) return new Text(theme.fg("warning", "Searching…"), 0, 0);
-      if (context?.isError) {
-        const t =
-          result.content?.[0]?.type === "text" ? result.content[0].text.split("\n")[0] : "Error";
-        return new Text(theme.fg("error", t), 0, 0);
-      }
+      if (context?.isError) return renderToolError(result, theme);
       const out = result.content?.[0]?.type === "text" ? result.content[0].text : "";
       const styled = toDisplayLines(out, theme);
       const maxLines = expanded ? styled.length : 15;
@@ -720,9 +711,7 @@ export function makeGrepOverrideWithBackend(cwd: string, overrides: Partial<Grep
           return true;
         });
         if (signal?.aborted) throw new Error("Operation aborted");
-        if (!run.stopped && run.code !== 0 && run.code !== 1) {
-          throw new Error(run.stderr.trim() || `ripgrep exited with code ${run.code}`);
-        }
+        if (!run.stopped) assertRgSucceeded(run);
         if (batch.length && matchCount < effectiveLimit) await flushBatch();
       }
 

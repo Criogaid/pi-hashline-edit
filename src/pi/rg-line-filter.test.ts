@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { resolveIgnoreCase, type RunText } from "./rg-line-filter.ts";
+import { assertRgSucceeded, resolveIgnoreCase, type RunText } from "./rg-line-filter.ts";
 
 const regexMode = { engine: "default", multiline: false, literal: false } as const;
 const literalMode = { ...regexMode, literal: true } as const;
@@ -76,4 +76,10 @@ test("smart-case probe normalizes cancellation without fallback", async () => {
     return { code: 1, stdout: "", stderr: "" };
   };
   await assert.rejects(resolveIgnoreCase("rg", ["foo"], regexMode, undefined, controller.signal, run), /Operation aborted/);
+});
+
+test("search exit status accepts no matches and preserves failure diagnostics", () => {
+  for (const code of [0, 1]) assert.doesNotThrow(() => assertRgSucceeded({ code, stderr: "" }));
+  assert.throws(() => assertRgSucceeded({ code: 2, stderr: "  regex parse error\n" }), /^Error: regex parse error$/);
+  assert.throws(() => assertRgSucceeded({ code: null, stderr: "" }), /ripgrep exited with code null/);
 });

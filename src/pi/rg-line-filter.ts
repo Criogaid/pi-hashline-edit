@@ -1,5 +1,6 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import type { Readable } from "node:stream";
+import { escapeRegex } from "../core/text.ts";
 
 export const COMMON_RG_ARGS = ["--no-config", "--color=never", "--crlf"];
 export const MAX_RG_RECORD_BYTES = 16 * 1024 * 1024;
@@ -154,8 +155,11 @@ export function runRgPaths(
   });
 }
 
-function escapeRegex(text: string): string {
-  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+/** Accept both matches and no matches; callers handle intentional early stops separately. */
+export function assertRgSucceeded(result: Pick<RgRunResult, "code" | "stderr">): void {
+  if (result.code !== 0 && result.code !== 1) {
+    throw new Error(result.stderr.trim() || `ripgrep exited with code ${result.code}`);
+  }
 }
 
 interface TextRunResult {
@@ -267,9 +271,7 @@ export async function resolveIgnoreCase(
     signal,
   );
   checkAbort(signal);
-  if (result.code !== 0 && result.code !== 1) {
-    throw new Error(result.stderr.trim() || `ripgrep exited with code ${result.code}`);
-  }
+  assertRgSucceeded(result);
   const lines = result.stdout.replace(/\r\n/g, "\n").split("\n");
   if (lines.some((line) => line !== "" && line !== "a")) throw new Error("Unexpected smart-case probe output");
   return lines.includes("a");
@@ -292,9 +294,7 @@ export async function validatePatterns(
       signal,
     );
     checkAbort(signal);
-    if (result.code !== 0 && result.code !== 1) {
-      throw new Error(result.stderr.trim() || `ripgrep exited with code ${result.code}`);
-    }
+    assertRgSucceeded(result);
   }
 }
 
@@ -349,9 +349,7 @@ export function createLinePredicate(
       matches.push(event.type === "match");
       return true;
     });
-    if (result.code !== 0 && result.code !== 1) {
-      throw new Error(result.stderr.trim() || `ripgrep exited with code ${result.code}`);
-    }
+    assertRgSucceeded(result);
     if (matches.length !== lines.length) throw new Error("rg predicate ended before all responses");
     return matches;
   };

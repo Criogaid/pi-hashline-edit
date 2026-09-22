@@ -21,7 +21,6 @@
 
 import { truncateHead, withFileMutationQueue } from "@earendil-works/pi-coding-agent";
 import { Type, type Static } from "typebox";
-import { Text } from "@earendil-works/pi-tui";
 import { ACTION_FUSION_GUIDELINES, createActionFusionExecutor, createThenRunSchema, type ThenRunInput } from "./action-fusion.ts";
 import { readEditableSnapshot, commitReplacement } from "./file-commit.ts";
 import { applyEdits } from "../core/index.ts";
@@ -30,12 +29,17 @@ import type { ApplyFailure, Edit } from "../core/types.ts";
 import { canonicalPath } from "./read-tool.ts";
 import { getState } from "./state.ts";
 import { ANCHOR_PATTERN, createAnchorFormatter, type AnchorFormatter } from "./anchor-format.ts";
-import { formatDiffCounts, renderMutationResult, type DiffCounts } from "./render.ts";
+import { formatDiffCounts, renderMutationCall, renderMutationResult, type DiffCounts } from "./render.ts";
 import { formatFailureContext, formatUniqueCandidateNeighborhoods, MAX_RECOVERY_CANDIDATE_BYTES } from "./failure-context.ts";
 import { appendMutationAnchors, finalizeMutationResult, formatMutationAnchors, generateMutationDetails, postProcessMutation } from "./mutation-result.ts";
 
 /** Cap failure details and status rows independently; each text block also has a byte cap. */
 const MAX_FAILURE_DETAILS = 40;
+
+function boundDiagnostic(message: string, notice: string): string {
+	const bounded = truncateHead(message, { maxBytes: 16 * 1024 - Buffer.byteLength(notice) });
+	return bounded.content + (bounded.truncated ? notice : "");
+}
 
 
 function anchorRef(description: string) {
@@ -151,9 +155,7 @@ function formatFailureDetails(
 		...lines,
 		...(failure.failures.length > lines.length ? [`${failure.failures.length - lines.length} failure details omitted.`] : []),
 	].join("\n") + formatFailureContext(snapshot.currentText, failure.failures, snapshot.anchors);
-	const notice = "\nDiagnostic output truncated at 16 KiB.";
-	const bounded = truncateHead(message, { maxBytes: 16 * 1024 - Buffer.byteLength(notice) });
-	return bounded.content + (bounded.truncated ? notice : "");
+	return boundDiagnostic(message, "\nDiagnostic output truncated at 16 KiB.");
 }
 
 function formatAnchorChecks(failure: ApplyFailure, anchors: AnchorFormatter): string {
@@ -167,9 +169,7 @@ function formatAnchorChecks(failure: ApplyFailure, anchors: AnchorFormatter): st
 		...(omitted ? [`Anchor checks: ${rows.length}/${failure.checks.length}; ${omitted} omitted.`] : []),
 		"Anchor checks only; retries revalidate.",
 	].join("\n");
-	const notice = "\nAnchor-check output truncated at 16 KiB; omitted entries are not implied matched.";
-	const bounded = truncateHead(message, { maxBytes: 16 * 1024 - Buffer.byteLength(notice) });
-	return bounded.content + (bounded.truncated ? notice : "");
+	return boundDiagnostic(message, "\nAnchor-check output truncated at 16 KiB; omitted entries are not implied matched.");
 }
 
 /** Keep validation status and observation context visible even when failure details are truncated. */
@@ -257,13 +257,7 @@ export function makeEditOverride(cwd: string, fusion?: ReturnType<typeof createA
 		renderShell: "default" as const,
 
 		renderCall(args: EditParams, theme: any, context: any) {
-			const text = (context?.lastComponent as Text | undefined) ?? new Text("", 0, 0);
-			// Stash the header for renderResult: the diff counts land after
-			// execution and are refreshed in place (renderResult's lastComponent
-			// is the result component, not this header)
-			if (context?.state) context.state.callText = text;
-			text.setText(editHeader(args, theme, context?.state?.diffCounts));
-			return text;
+			return renderMutationCall(args, theme, context, editHeader);
 		},
 
 		renderResult(result: any, options: any, theme: any, context: any) {

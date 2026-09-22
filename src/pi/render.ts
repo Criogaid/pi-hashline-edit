@@ -103,6 +103,23 @@ export function publishDiffCounts(
 	if (!prev || prev.added !== counts.added || prev.removed !== counts.removed) refreshHeader(counts);
 }
 
+/** Reuse the call component and retain it for the result's in-place count refresh. */
+export function renderMutationCall(
+	args: any, theme: any, context: any, header: (args: any, theme: any, counts?: DiffCounts) => string,
+): Text {
+	const text = (context?.lastComponent as Text | undefined) ?? new Text("", 0, 0);
+	if (context?.state) context.state.callText = text;
+	text.setText(header(args, theme, context?.state?.diffCounts));
+	return text;
+}
+
+/** Keep model-facing diagnostic details out of the compact error row. */
+export function renderToolError(result: any, theme: any): Text {
+	const content = result.content?.[0];
+	const text = content?.type === "text" ? content.text.split("\n")[0] : "Error";
+	return new Text(theme.fg("error", text), 0, 0);
+}
+
 /** Render mutation status or a diff, refreshing the call header's counts in place. */
 export function renderMutationResult(
 	result: any, { isPartial, expanded }: any, theme: any, context: any,
@@ -110,10 +127,7 @@ export function renderMutationResult(
 ): Text {
 	if (isPartial && result.details?.actionFusion?.publication !== "PUBLISHED") return new Text(theme.fg("warning", pending), 0, 0);
 	const content = result.content?.[0];
-	if (context.isError) {
-		const text = content?.type === "text" ? content.text.split("\n")[0] : "Error";
-		return new Text(theme.fg("error", text), 0, 0);
-	}
+	if (context.isError) return renderToolError(result, theme);
 	const diff: string | undefined = result.details?.diff;
 	// Refresh in place: invalidation inside a renderer re-enters updateDisplay.
 	publishDiffCounts(diff, context, (counts) => {

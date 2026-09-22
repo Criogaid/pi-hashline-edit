@@ -16,3 +16,8 @@ export function decodeEditableText(bytes: Uint8Array): string {
 	if (bytes.includes(0)) throw new Error("UNSUPPORTED_TEXT: NUL bytes are not editable.");
 	return decodeUtf8(bytes);
 }
+
+/** Escape regex metacharacters for a standalone literal pattern in JS or ripgrep. */
+export function escapeRegex(text: string): string {
+	return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}

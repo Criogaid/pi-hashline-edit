@@ -29,14 +29,14 @@ import {
 	withFileMutationQueue,
 } from "@earendil-works/pi-coding-agent";
 import { Type, type Static } from "typebox";
-import { Text } from "@earendil-works/pi-tui";
+import { escapeRegex } from "../core/text.ts";
 import { splitLines } from "../core/index.ts";
 import { findSortedRangeConflict } from "../core/ranges.ts";
 import { ACTION_FUSION_GUIDELINES, createActionFusionExecutor, createThenRunSchema, type ThenRunInput } from "./action-fusion.ts";
 import { readEditableSnapshot, commitReplacement, type MutationVersions, type PublicationStatus } from "./file-commit.ts";
 import { createAnchorFormatter, type AnchorFormatter } from "./anchor-format.ts";
 import { canonicalPath } from "./read-tool.ts";
-import { formatDiffCounts, renderMutationResult, type DiffCounts } from "./render.ts";
+import { formatDiffCounts, renderMutationCall, renderMutationResult, type DiffCounts } from "./render.ts";
 import { appendMutationAnchors, finalizeMutationResult, formatMutationAnchors, generateMutationDetails, postProcessMutation } from "./mutation-result.ts";
 
 /** Default safety cap on match count (errors before writing if exceeded). */
@@ -79,11 +79,6 @@ function replacementRules(params: ReplaceParams): Replacement[] {
 		if (rule.maxMatches !== undefined && (!Number.isFinite(rule.maxMatches) || rule.maxMatches <= 0)) throw new Error(`rule ${index}: maxMatches must be finite and positive`);
 	}
 	return rules as Replacement[];
-}
-
-/** Escape regex metacharacters so a literal string is matched verbatim. */
-function escapeRegex(s: string): string {
-	return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 /**
@@ -234,13 +229,7 @@ export function makeReplaceTool(cwd: string, fusion?: ReturnType<typeof createAc
 		renderShell: "default" as const,
 
 		renderCall(args: ReplaceParams & { then_run?: ThenRunInput }, theme: any, context: any) {
-			const text = (context?.lastComponent as Text | undefined) ?? new Text("", 0, 0);
-			// Stash the header for renderResult: the diff counts land after
-			// execution and are refreshed in place (renderResult's lastComponent
-			// is the result component, not this header)
-			if (context?.state) context.state.callText = text;
-			text.setText(replaceHeader(args, theme, context?.state?.diffCounts));
-			return text;
+			return renderMutationCall(args, theme, context, replaceHeader);
 		},
 
 		renderResult(result: any, options: any, theme: any, context: any) {

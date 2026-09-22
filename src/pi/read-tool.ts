@@ -17,7 +17,7 @@ import { homedir } from "node:os";
 import { decodeUtf8 } from "../core/index.ts";
 import { hasFinalNewline, splitLines } from "../core/lines.ts";
 import { createAnchorFormatter } from "./anchor-format.ts";
-import { parseHashline } from "./render.ts";
+import { parseHashline, renderToolError } from "./render.ts";
 
 const MAX_LINES = 2000;
 const MAX_BYTES = 256 * 1024;
@@ -117,10 +117,7 @@ export function makeReadOverride(cwd: string) {
 		renderResult(result: any, { isPartial, expanded }: any, theme: any, context: any) {
 			if (isPartial) return new Text(theme.fg("warning", "Reading…"), 0, 0);
 			const content = result.content?.[0];
-			if (context?.isError) {
-				const t = content?.type === "text" ? content.text.split("\n")[0] : "Error";
-				return new Text(theme.fg("error", t), 0, 0);
-			}
+			if (context?.isError) return renderToolError(result, theme);
 			// Collapsed (not expanded): show nothing — the call line carries the
 			// title, matching the built-in read's fold behavior.
 			if (!expanded) return new Text("", 0, 0);
