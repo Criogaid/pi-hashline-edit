@@ -8,7 +8,7 @@ Overrides `read`, `grep`, `edit`, and `write`, and adds `replace` for bulk trans
 
 - **Search → edit:** `read` and `grep` return the same `LINE#HASH` anchors, so search results can feed directly into edits.
 - **Batch and chain edits:** submit structured JSON operations together, then use the returned fresh anchors for the next change.
-- **Recover from stale anchors:** rejected edits show bounded content for a unique checksum-matching candidate, or nearby current-file context when no candidate is found, so the model can verify the target before retrying. Recovery never applies automatically.
+- **Recover from stale anchors:** rejected edits show a unique checksum-matching candidate's line, or neighborhoods around ambiguous candidates for comparison. With no candidate, they ask the model to re-read the file. Recovery never applies automatically.
 - **Edit → test:** Action Fusion lets a mutation include an optional follow-up command, with separate file and command outcomes and separate TUI cards.
 
 [Quick start](#quick-start) · [Tools](#tools) · [Configuration](#configuration) · [Action Fusion](#action-fusion) · [Safety and design](#safety-and-design)
@@ -85,9 +85,11 @@ Rejected batches report each supplied anchor's status from that validation snaps
 
 Recovery first searches within `shiftRadius` of the cited line. If that search finds no candidates, it searches the rest of the file and collects all checksum matches before deciding whether the result is unique or ambiguous. Existing local candidates take priority; distant matches are not added when local candidates exist. `shiftRadius: 0` disables both searches. Candidate matching holds the original line number fixed when hashing current content; returned anchors use each candidate's actual line number.
 
-A unique recovery candidate includes a bounded ±3-line neighborhood from the same snapshot. Candidate content is shown once in that neighborhood; if the neighborhood omits it, a complete candidate row can appear in the failure details within their output limits. Overlapping neighborhoods are merged; neighboring rows are observations, not recommended replacement targets. Inspect the code to choose the correct anchor and operation, then resubmit. No edit or retry is performed automatically, and every submitted anchor is verified again.
+A unique recovery candidate returns its new anchor and complete line content, without a neighborhood. Content is shown once per line and is limited to 4 KiB per candidate row; oversized content is omitted in full with a prompt to use `read` or `grep`.
 
-When no candidate is found, context is centered on the cited line in the current validation snapshot, clamped to the file's first or last line if out of range. For a nonempty file with `N` lines, let `C = min(N, max(1, citedLine))`; show lines `max(1, C - 3)` through `min(N, C + 3)`, inclusive. Windows from multiple unresolved anchors are merged and emitted in ascending line order within byte budgets. Empty files have no context anchors. This fixed ±3 display radius is separate from `shiftRadius`, the first-pass candidate search radius (default ±15); full-file fallback does not expand displayed neighborhoods.
+Ambiguous failures list up to eight candidate anchors and include a bounded ±3-line neighborhood around each listed candidate from the same snapshot. Windows are clipped to file boundaries, merged, and emitted in ascending line order within byte budgets. Neighboring rows are observations, not recommended replacement targets. Candidate content already present in a neighborhood is not repeated in failure details. Inspect the code to choose the correct anchor and operation, then resubmit. No edit or retry is performed automatically, and every submitted anchor is verified again.
+
+When no candidate is found, diagnostics ask the caller to use `read` to inspect the current file before retrying and include no context rows for that failure. Input-anchor checks still report the cited tokens and their validation status.
 
 ### Bulk replacement
 
@@ -225,7 +227,7 @@ Fusion serializes each mutation/command sequence for its target and checks the p
 
 - **Anchors are checksums, not identities.** Each hash combines the 1-based line number and content. Short hashes can collide and do not prove the model observed a line.
 - **Validation is local to supplied anchors.** Unrelated in-place changes leave stable anchors usable. A range verifies its supplied start/end anchors, not every interior line.
-- **Line shifts change anchors.** Insertions/deletions can invalidate later references. Recovery searches within `shiftRadius`, then the rest of the file if no local candidates match; a unique candidate includes bounded line content and neighboring code for inspection. Use `read` when the target or needed context is omitted or ambiguous. Retries verify again, without fuzzy matching or automatic relocation.
+- **Line shifts change anchors.** Insertions/deletions can invalidate later references. Recovery searches within `shiftRadius`, then the rest of the file if no local candidates match. Unique candidates include bounded line content; ambiguous candidates include neighborhoods for comparison. Use `read` when no candidate is found or needed content is omitted. Retries verify again, without fuzzy matching or automatic relocation.
 - **Edits preserve text representation.** `edit` preserves existing line endings, untouched separators, and the absence of a final newline. `edit`/`replace` reject invalid UTF-8 source text; all mutations reject NUL and output that cannot be encoded losslessly as UTF-8.
 - **Fresh anchors depend on the final observation.** After `then_run`, anchors are shown only for `unchanged` freshness. Without a command, observed and published revisions must agree. Later edits still verify anchors.
 - **Local queues are not cross-process transactions.** Revision checks bind mutations to the bytes read, but an external writer can still race a check and publication. There is no strict workspace jail or multi-file transaction.
@@ -250,9 +252,9 @@ These limits bound model context, not file size. Omission notices direct the cal
 | `read` | Default 2000 rows, overridable with `limit`; 256 KiB of anchored text. No partial anchor rows. |
 | `grep` | Default 100 matching lines, overridable; 500 characters per displayed line, plus Pi's total output limits. Hashes use full content; read truncated lines before reconstructing them. |
 | `edit` / `replace` anchors | 16 KiB including heading/omission notice, with no fixed entry-count limit. Compact tokens for changed positions; selected deletion successors retain complete content. No partial anchor rows. |
-| Anchor failure details | 16 KiB, with no fixed failure-count limit; up to eight candidates per ambiguous failure. Unresolved-anchor context has its own 16 KiB row-text budget and shares this details block's final limit. |
+| Anchor failure details | 16 KiB, with no fixed failure-count limit; unique candidates include complete rows up to 4 KiB, and ambiguous failures list up to eight candidates each. Unresolved anchors request a fresh read without context rows. |
 | Input-anchor checks | Independent 16 KiB block, with no fixed entry-count limit. Truncation is reported explicitly; omitted entries are not implied matched. |
-| Unique-candidate neighborhoods | 16 KiB of complete anchored row text, lowest-line first, plus headings; no fixed row-count limit. Candidate mappings stay in failure details. Each candidate row is limited to 4 KiB. Truncated rows are omitted in full. |
+| Ambiguous-candidate neighborhoods | 16 KiB of complete anchored row text, lowest-line first, plus headings; no fixed row-count limit. Uses the same first eight candidates per failure as the detail lists. Each listed candidate row is limited to 4 KiB. Truncated rows are omitted in full. |
 
 The diagnostic blocks have independent budgets; their combined output can exceed 16 KiB. Truncation notices identify exhausted budgets; context windows also report shown/omitted row counts. Limits apply to rendered diagnostics; core failure results retain all input-anchor checks.
 

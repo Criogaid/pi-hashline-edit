@@ -30,7 +30,7 @@ import { canonicalPath } from "./read-tool.ts";
 import { getState } from "./state.ts";
 import { ANCHOR_PATTERN, createAnchorFormatter, type AnchorFormatter } from "./anchor-format.ts";
 import { formatDiffCounts, renderMutationCall, renderMutationResult, type DiffCounts } from "./render.ts";
-import { formatFailureContext, formatUniqueCandidateNeighborhoods, MAX_RECOVERY_CANDIDATE_BYTES } from "./failure-context.ts";
+import { formatAmbiguousCandidateNeighborhoods, MAX_AMBIGUOUS_CANDIDATES, MAX_RECOVERY_CANDIDATE_BYTES } from "./failure-context.ts";
 import { appendMutationAnchors, finalizeMutationResult, formatMutationAnchors, generateMutationDetails, postProcessMutation } from "./mutation-result.ts";
 
 /** Keep independent byte budgets for failure details and input-anchor checks. */
@@ -92,7 +92,7 @@ type EditParams = Omit<Static<typeof editSchema>, "then_run"> & { then_run?: The
 
 type EditOpInput = Static<typeof editOpSchema>;
 
-/** Format a failed batch with retryable shifted anchors and bounded live context. */
+/** Format failure mappings and complete unique-candidate rows within the detail budget. */
 function formatFailureDetails(
 	failure: ApplyFailure,
 	snapshot: Readonly<{ currentText: string; anchors: AnchorFormatter }>,
@@ -129,14 +129,14 @@ function formatFailureDetails(
 				break;
 			}
 			case "ambiguous": {
-				const list = f.recovery.candidates.slice(0, 8).map((candidate) => `"${snapshot.anchors.reference(candidate.line, candidate.hash)}"`).join(" / ");
-				const more = f.recovery.candidates.length > 8 ? ` (${f.recovery.candidates.length - 8} more candidates omitted)` : "";
+				const list = f.recovery.candidates.slice(0, MAX_AMBIGUOUS_CANDIDATES).map((candidate) => `"${snapshot.anchors.reference(candidate.line, candidate.hash)}"`).join(" / ");
+				const more = f.recovery.candidates.length > MAX_AMBIGUOUS_CANDIDATES ? ` (${f.recovery.candidates.length - MAX_AMBIGUOUS_CANDIDATES} more candidates omitted)` : "";
 				lines.push(`• ${where}: ambiguous checksum matches: ${list}${more}.`);
 				break;
 			}
 			case "none":
 				lines.push(
-					`• ${where}: no checksum-matching candidate found.` +
+					`• ${where}: no checksum-matching candidate found. Use read to inspect the current file before retrying.` +
 						(f.current === null ? " Cited line is out of range." : ""),
 				);
 				break;
@@ -150,7 +150,7 @@ function formatFailureDetails(
 		`Anchor mismatch: ${parts.join(", ")}.`,
 		"No changes written by this edit batch.",
 		...lines,
-	].join("\n") + formatFailureContext(snapshot.currentText, failure.failures, snapshot.anchors);
+	].join("\n");
 	return boundDiagnostic(message, "\nDiagnostic output truncated at 16 KiB.");
 }
 
@@ -172,7 +172,7 @@ function formatFailure(
 	snapshot: Readonly<{ currentText: string; anchors: AnchorFormatter }>,
 ): string {
 	const candidateNeighborhoods = failure.kind === "anchor"
-		? formatUniqueCandidateNeighborhoods(snapshot.currentText, failure.failures, snapshot.anchors)
+		? formatAmbiguousCandidateNeighborhoods(snapshot.currentText, failure.failures, snapshot.anchors)
 		: { text: "", shownLines: new Set<number>() };
 	const guidance = failure.kind === "anchor"
 		? "\nCheck the intended target before retrying; use read or grep for omitted or additional context." : "";

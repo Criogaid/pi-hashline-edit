@@ -18,9 +18,15 @@ const text = (result: any): string => result.content.map((block: any) => block.t
 function assertFailureByteBudgets(message: string): void {
 	const checksAt = message.indexOf("\nInput-anchor checks (this snapshot):\n");
 	const guidanceAt = message.indexOf("\nCheck the intended target before retrying;", checksAt);
+	const neighborhoodsAt = message.indexOf("\nAmbiguous-candidate neighborhoods", checksAt);
 	assert.ok(checksAt > 0 && guidanceAt > checksAt);
 	assert.ok(Buffer.byteLength(message.slice(0, checksAt)) <= 16 * 1024);
-	assert.ok(Buffer.byteLength(message.slice(checksAt + 1, guidanceAt)) <= 16 * 1024);
+	assert.ok(Buffer.byteLength(message.slice(checksAt + 1, neighborhoodsAt < 0 ? guidanceAt : neighborhoodsAt)) <= 16 * 1024);
+	if (neighborhoodsAt >= 0) {
+		const rows = message.slice(neighborhoodsAt, guidanceAt).match(/^\d+#[0-9A-Z]+│.*$/gm) ?? [];
+		assert.ok(rows.length > 0);
+		assert.ok(Buffer.byteLength(rows.join("\n")) + 1 <= 16 * 1024);
+	}
 	assert.match(message, /Diagnostic output truncated at 16 KiB/);
 	assert.match(message, /Anchor-check output truncated at 16 KiB; omitted entries are not implied matched/);
 	const checks = message.match(/^op \d+ \/ anchor \/ .* \/ mismatched$/gm) ?? [];

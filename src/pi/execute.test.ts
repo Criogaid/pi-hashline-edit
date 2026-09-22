@@ -199,23 +199,24 @@ test("edit on a line that changed externally → anchor mismatch", async () => {
 	});
 });
 
-test("unresolved anchor context supplies a fresh nearby token for a verified retry", async () => {
+test("unresolved anchors require a fresh read and return no context rows", async () => {
 	await withDir(async (dir) => {
 		const file = join(dir, "recover.txt");
 		const observed = ["one", "two", "three", "four", "old marker", "six", "seven", "eight"].join("\n") + "\n";
 		await writeFile(file, ["one", "two", "three", "four", "changed", "six", "new marker", "eight"].join("\n") + "\n");
 		const edit = makeEditOverride(dir);
-		let retryAnchor = "";
 		await assert.rejects(call(edit, {
 			path: "recover.txt",
 			edits: [{ op: "replace", anchor: h(observed, 5), body: ["updated"] }],
 		}), (error: Error) => {
 			assert.match(error.message, /Anchor mismatch: 1 unresolved/);
 			assert.match(error.message, /No changes written by this edit batch/);
-			assert.match(error.message, /@@ lines 2-8 @@/);
-			retryAnchor = /^(7#[0-9A-Z]+)│new marker$/m.exec(error.message)?.[1] ?? "";
-			return retryAnchor !== "";
+			assert.match(error.message, /Use read to inspect the current file before retrying/);
+			assert.doesNotMatch(error.message, /^\d+#[0-9A-Z]+│|neighborhoods|Current-file context/m);
+			return true;
 		});
+		const read = await call(makeReadOverride(dir), { path: "recover.txt" });
+		const retryAnchor = anchorLine(read.content[0].text, 7);
 		await call(edit, { path: "recover.txt", edits: [{ op: "replace", anchor: retryAnchor, body: ["updated"] }] });
 		assert.equal(await readFile(file, "utf8"), "one\ntwo\nthree\nfour\nchanged\nsix\nupdated\neight\n");
 	});
@@ -616,17 +617,14 @@ test("failed edits expose input status and candidate code for a verified fused r
 	assert.ok(message.includes(`checksum-matching candidate ${candidate}.`));
 	assert.equal(message.split(`${candidate}│${original[4]}`).length - 1, 1);
 	assert.doesNotMatch(message, /0 omitted|Limits:/);
-	const context = message.split("Unique-candidate neighborhoods")[1];
-	assert.ok(context);
-	for (let line = 3; line <= 9; line++) assert.equal(anchorLine(context, line), h(before, line));
-	assert.ok(context.includes(`${h(before, 7)}│${original[5]}`));
-	assert.doesNotMatch(context, /^12#[0-9A-Z]+│/m);
+	assert.doesNotMatch(message, /neighborhoods|Current-file context/);
+	assert.equal((message.match(/^\d+#[0-9A-Z]+│/gm) ?? []).length, 1);
 	assert.equal(await readFile(file, "utf8"), before);
 	assert.equal(commands, 0);
 	await edit.execute("retry", {
 		path: file,
 		edits: [
-			{ op: "insert_after", anchor: anchorLine(context, 6), body: ["const hashLen = 4;"] },
+			{ op: "insert_after", anchor: anchorLine(message, 6), body: ["const hashLen = 4;"] },
 			{ op: "replace", anchor: stable, body: ["changed"] },
 		],
 		then_run: { command: "check" },
@@ -636,6 +634,37 @@ test("failed edits expose input status and candidate code for a verified fused r
 	expected.splice(6, 0, "const hashLen = 4;");
 	assert.equal(await readFile(file, "utf8"), `${expected.join("\n")}\n`);
 	assert.equal(commands, 1);
+}));
+
+test("ambiguous candidates include distinguishing neighborhoods for a verified retry", async () => withDir(async (dir) => {
+	const lines = Array.from({ length: 20 }, (_, index) => `line-${index + 1}`);
+	lines[3] = "function primary() {";
+	lines[4] = "  return value;";
+	lines[13] = "function secondary() {";
+	lines[14] = "  return value;";
+	const before = lines.join("\n") + "\n";
+	const file = join(dir, "ambiguous.txt");
+	await writeFile(file, before);
+	const edit = makeEditOverride(dir);
+	let context = "";
+	await assert.rejects(call(edit, { path: file, edits: [
+		{ op: "replace", anchor: h("header\n  return value;\n", 2), body: ["  return updated;"] },
+	] }), (error: Error) => {
+		assert.match(error.message, /ambiguous checksum matches/);
+		assert.ok(error.message.includes(`"${h(before, 5)}" / "${h(before, 15)}"`));
+		context = error.message.split("Ambiguous-candidate neighborhoods")[1];
+		assert.ok(context);
+		assert.match(context, /@@ candidate-neighborhood lines 2-8 @@/);
+		assert.match(context, /@@ candidate-neighborhood lines 12-18 @@/);
+		assert.ok(context.includes(`${h(before, 4)}│function primary() {`));
+		assert.ok(context.includes(`${h(before, 14)}│function secondary() {`));
+		assert.equal(anchorLine(context, 5), h(before, 5));
+		return true;
+	});
+	assert.equal(await readFile(file, "utf8"), before);
+	await call(edit, { path: file, edits: [{ op: "replace", anchor: anchorLine(context, 15), body: ["  return updated;"] }] });
+	lines[14] = "  return updated;";
+	assert.equal(await readFile(file, "utf8"), lines.join("\n") + "\n");
 }));
 
 test("input status distinguishes skipped checks and expires before the next retry", async () => withDir(async (dir) => {
@@ -705,7 +734,7 @@ test("compact edit anchors retain only untouched deletion successors in mixed ba
 	assert.equal(await readFile(file, "utf8"), "A\nX\nb\nD\ne\nG\n");
 }));
 
-test("candidate content falls back to one complete row when its neighborhood is truncated", async () => withDir(async (dir) => {
+test("unique candidate content is independent of oversized neighboring rows", async () => withDir(async (dir) => {
 	const original = "header\ntarget\ntail\n";
 	const before = `header\n${"x".repeat(17000)}\ntarget\ntail\n`;
 	const file = join(dir, "fallback.txt");
@@ -716,8 +745,8 @@ test("candidate content falls back to one complete row when its neighborhood is 
 	] }), (error: Error) => {
 		candidate = anchorLine(error.message, 3);
 		assert.equal((error.message.match(/^3#[0-9A-Z]+│target$/gm) ?? []).length, 1);
-		assert.match(error.message, /neighborhoods truncated: byte limit/);
-		assert.doesNotMatch(error.message.split("Unique-candidate neighborhoods")[1], /^3#/m);
+		assert.doesNotMatch(error.message, /neighborhoods|truncated/);
+		assert.equal((error.message.match(/^\d+#[0-9A-Z]+│/gm) ?? []).length, 1);
 		return true;
 	});
 	assert.equal(await readFile(file, "utf8"), before);
@@ -744,14 +773,14 @@ test("CR replacements remain visible in diffs and exact in patches", async () =>
 	}
 }));
 
-test("deletion successors and failure contexts display CR without altering anchors", async () => withDir(async (dir) => {
+test("deletion successors and unique candidate rows display CR without altering anchors", async () => withDir(async (dir) => {
 	const file = join(dir, "cr.txt");
 	const before = "remove\na\rb\n";
 	await writeFile(file, before);
 	const result = await call(makeEditOverride(dir), { path: file, edits: [{ op: "delete", anchor: h(before, 1) }] });
 	assert.ok(result.content[0].text.includes(`${h("a\rb\n", 1)}│a␍b`));
 	assert.equal(await readFile(file, "utf8"), "a\rb\n");
-	await assert.rejects(call(makeEditOverride(dir), { path: file, edits: [{ op: "delete", anchor: h(before, 1) }] }), (error: Error) => {
+	await assert.rejects(call(makeEditOverride(dir), { path: file, edits: [{ op: "delete", anchor: h(before, 2) }] }), (error: Error) => {
 		assert.ok(error.message.includes(`${h("a\rb\n", 1)}│a␍b`));
 		assert.ok(!error.message.includes("\r"));
 		return true;

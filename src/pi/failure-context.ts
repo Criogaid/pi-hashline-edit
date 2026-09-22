@@ -6,6 +6,7 @@ import { mergeRanges } from "../core/ranges.ts";
 const CONTEXT_RADIUS = 3;
 const MAX_CONTEXT_BYTES = 16 * 1024;
 export const MAX_RECOVERY_CANDIDATE_BYTES = 4 * 1024;
+export const MAX_AMBIGUOUS_CANDIDATES = 8;
 
 type Interval = { lo: number; hi: number };
 type ContextRow = { line: number; text: string };
@@ -25,7 +26,7 @@ function collectContextRows(
 	lines: readonly string[],
 	centers: readonly number[],
 	anchors: AnchorFormatter,
-	candidateLines?: ReadonlySet<number>,
+	candidateLines: ReadonlySet<number>,
 ) {
 	const windows = mergeRanges(centers.map((center) => {
 		const line = Math.min(lines.length, Math.max(1, center));
@@ -42,7 +43,7 @@ function collectContextRows(
 			const text = anchors.row(line, content);
 			const rowBytes = Buffer.byteLength(text, "utf8");
 			// Neighborhoods must not bypass the standalone candidate's complete-row limit.
-			if (candidateLines?.has(line) && rowBytes > MAX_RECOVERY_CANDIDATE_BYTES) {
+			if (candidateLines.has(line) && rowBytes > MAX_RECOVERY_CANDIDATE_BYTES) {
 				truncatedBy = "candidate row limit";
 				break outer;
 			}
@@ -57,66 +58,40 @@ function collectContextRows(
 	return { rows, total, truncatedBy };
 }
 
-function formatContextRows(rows: readonly ContextRow[], label: string): string[] {
+function formatContextRows(rows: readonly ContextRow[]): string[] {
 	const body: string[] = [];
 	let index = 0;
 	for (const interval of shownIntervals(rows)) {
-		body.push(`@@ ${label}lines ${interval.lo}-${interval.hi} @@`);
+		body.push(`@@ candidate-neighborhood lines ${interval.lo}-${interval.hi} @@`);
 		while (index < rows.length && rows[index].line <= interval.hi) body.push(rows[index++].text);
 	}
 	return body;
 }
 
 /**
- * Format bounded current-file anchors for unrecoverable anchor failures.
- * @internal Used by the edit tool and focused tests; performs no I/O.
- */
-export function formatFailureContext(
-	currentText: string,
-	failures: readonly AnchorFailure[],
-	anchors: AnchorFormatter,
-): string {
-	const unresolved = failures.filter((failure) => failure.recovery.kind === "none");
-	if (unresolved.length === 0) return "";
-
-	const lines = splitLines(currentText);
-	const heading = ["Current-file context (+/-3; validation snapshot):"];
-	if (lines.length === 0) {
-		return `\n${heading.join("\n")}\nThe file is empty in the validation snapshot; no context anchors are available.`;
-	}
-	const { rows, total, truncatedBy } = collectContextRows(lines, unresolved.map((failure) => failure.cited.line), anchors);
-	const body: string[] = [...heading];
-	if (rows.length === 0) {
-		body.push("No context row fits the byte budget.");
-	} else {
-		body.push(...formatContextRows(rows, ""));
-	}
-	if (truncatedBy) {
-		body.push(`Context rows: ${rows.length}/${total}; ${total - rows.length} omitted.`);
-		body.push(`Context truncated: ${truncatedBy} (16384 bytes; lowest lines first).`);
-	}
-	return `\n${body.join("\n")}`;
-}
-
-/**
- * Format observation rows around unique candidates and report the rows actually shown.
+ * Format observation rows around listed ambiguous candidates and report rows actually shown.
  * @internal Performs no I/O; the edit diagnostic uses shownLines to avoid repeating content.
  */
-export function formatUniqueCandidateNeighborhoods(
+export function formatAmbiguousCandidateNeighborhoods(
 	currentText: string,
 	failures: readonly AnchorFailure[],
 	anchors: AnchorFormatter,
 ): { text: string; shownLines: ReadonlySet<number> } {
-	const centers = failures.flatMap((failure) => failure.recovery.kind === "found" ? [failure.recovery.newLine] : []);
+	const centers = failures.flatMap((failure) => failure.recovery.kind === "ambiguous"
+		? failure.recovery.candidates.slice(0, MAX_AMBIGUOUS_CANDIDATES).map(candidate => candidate.line) : []);
 	if (centers.length === 0) return { text: "", shownLines: new Set() };
 
 	const lines = splitLines(currentText);
-	const { rows, total, truncatedBy } = collectContextRows(lines, centers, anchors, new Set(centers));
-	const body = ["Unique-candidate neighborhoods (+/-3; observation only):"];
+	const candidateLines = new Set(centers);
+	for (const failure of failures) {
+		if (failure.recovery.kind === "found") candidateLines.add(failure.recovery.newLine);
+	}
+	const { rows, total, truncatedBy } = collectContextRows(lines, centers, anchors, candidateLines);
+	const body = ["Ambiguous-candidate neighborhoods (+/-3; observation only):"];
 	if (rows.length === 0) {
 		body.push("No complete neighborhood row fits the limits.");
 	} else {
-		body.push(...formatContextRows(rows, "candidate-neighborhood "));
+		body.push(...formatContextRows(rows));
 	}
 	if (truncatedBy) {
 		body.push(`Candidate-neighborhood rows: ${rows.length}/${total}; ${total - rows.length} omitted.`);
