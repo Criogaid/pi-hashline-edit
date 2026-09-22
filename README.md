@@ -48,11 +48,13 @@ To change the return value, copy the second line's anchor into `edit` and supply
 The result includes a diff and the updated anchor:
 
 ```text
-Updated anchors (use these for the next edit):
-2#V8AT│  return "hello, hashline";
+Updated anchors:
+2#V8AT
 ```
 
 Use returned anchors for subsequent edits. Content-mode `grep` provides the same references, grouped by file. Always copy actual tool output; the examples use the default four-character hash.
+
+Successful `edit` results return compact tokens for inserted or replaced lines. A line exposed by deletion retains its content as `LINE#HASH│content`, unless the same batch also supplies that line. `replace` results retain anchored content for the changed region.
 
 ## Tools
 
@@ -146,6 +148,8 @@ Required: `path`, `content`. By default, create missing files and overwrite exis
 - `mode: "overwrite"`: require an existing target.
 - `expectedRevision`: strictly check the current file's SHA-256; cannot be combined with create mode.
 
+Normal write result text omits the revision. Programmatic callers can read `details.publishedRevision`; text-only callers needing `expectedRevision` must obtain a SHA-256 of the file bytes separately. Revision checks and structured revision fields remain active.
+
 With Action Fusion enabled, `edit`, `replace`, and `write` also accept `then_run`.
 
 </details>
@@ -219,7 +223,8 @@ These limits bound model context, not file size. Omission notices direct the cal
 | --- | --- |
 | `read` | Default 2000 rows, overridable with `limit`; 256 KiB of anchored text. No partial anchor rows. |
 | `grep` | Default 100 matching lines, overridable; 500 characters per displayed line, plus Pi's total output limits. Hashes use full content; read truncated lines before reconstructing them. |
-| `edit` / `replace` anchors | Up to 40 complete rows and 16 KiB including heading/omission notice. |
+| `edit` anchors | Up to 40 entries and 16 KiB including heading/omission notice: compact tokens for supplied lines, complete anchored content for deletion successors. |
+| `replace` anchors | Up to 40 complete rows and 16 KiB including heading/omission notice. |
 | `write` anchors | Up to 40 compact tokens, without repeating supplied content. |
 | Anchor failure details | 16 KiB, up to 40 detailed failures and eight candidates per ambiguous failure. Unresolved anchors include nearby current-file context, itself capped at 40 rows/16 KiB. |
 | Input-anchor checks | Independent 16 KiB block, up to 40 entries in input order. Shown/omitted counts appear only when entries are omitted; omitted entries are not implied matched. |

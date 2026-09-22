@@ -38,7 +38,8 @@ test("replace withholds anchors in progress and after commands change or remove 
 				assert.equal(result.details.actionFusion.freshness, state);
 				assert.equal(result.details.publication, "PUBLISHED");
 				assert.doesNotMatch(text(result), /Updated anchors|\d+#[0-9A-Z]+│/);
-				assert.match(text(result), /Re-read/);
+				assert.equal((text(result).match(/Re-read/g) ?? []).length, 1);
+				assert.equal((text(result).match(/\[then_run:stale\]/g) ?? []).length, 1);
 				for (const update of updates) assert.doesNotMatch(text(update), /Updated anchors|\d+#[0-9A-Z]+│/);
 			}
 		}
@@ -108,7 +109,11 @@ test("mutation anchor output and aggregate anchor diagnostics have byte budgets"
 			const result = await tool.execute(name, { path, ...args }, undefined, undefined, { cwd: dir });
 			const output = text(result);
 			assert.ok(Buffer.byteLength(output) < 17 * 1024);
-			assert.match(output, /omitted|truncated/i);
+			if (name === "replace") assert.match(output, /omitted|truncated/i);
+			else {
+				assert.match(output, /^2#[0-9A-Z]+$/m);
+				assert.doesNotMatch(output, /omitted|truncated/i);
+			}
 			assert.doesNotMatch(output, /\d+#[0-9A-Z]+│界/);
 			assert.ok((await readFile(path, "utf8")).includes(long));
 		}

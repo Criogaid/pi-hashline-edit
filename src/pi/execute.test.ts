@@ -133,6 +133,7 @@ test("edit result returns Updated anchors that chain the next edit without a re-
 		assert.equal(r1.isError, undefined);
 		const out: string = r1.content[0].text;
 		assert.match(out, /Updated anchors/);
+		assert.doesNotMatch(out, /│/);
 		// second edit chains on the anchor returned by the first edit — no read in between
 		const r2: any = await call(edit, {
 			path: "f.txt",
@@ -678,6 +679,27 @@ test("large failed batches bound status and candidate mappings without implying 
 		return true;
 	});
 	assert.equal(await readFile(file, "utf8"), before);
+}));
+
+test("compact edit anchors retain only untouched deletion successors in mixed batches", async () => withDir(async (dir) => {
+	const before = "a\nb\nc\nd\ne\nf\ng\n";
+	const file = join(dir, "mixed.txt");
+	await writeFile(file, before);
+	const edit = makeEditOverride(dir);
+	const result = await call(edit, { path: file, edits: [
+		{ op: "delete", anchor: h(before, 6) },
+		{ op: "replace", anchor: h(before, 4), body: ["D"] },
+		{ op: "delete", anchor: h(before, 3) },
+		{ op: "replace", anchor: h(before, 1), body: ["A", "X"] },
+	] });
+	const after = "A\nX\nb\nD\ne\ng\n";
+	assert.equal(await readFile(file, "utf8"), after);
+	const output = result.content[0].text;
+	assert.deepEqual(output.split("\n").filter((line: string) => /^\d+#/.test(line)), [
+		h(after, 1), h(after, 2), h(after, 4), `${h(after, 6)}│g`,
+	]);
+	await call(edit, { path: file, edits: [{ op: "replace", anchor: anchorLine(output, 6), body: ["G"] }] });
+	assert.equal(await readFile(file, "utf8"), "A\nX\nb\nD\ne\nG\n");
 }));
 
 test("candidate content falls back to one complete row when its neighborhood is truncated", async () => withDir(async (dir) => {

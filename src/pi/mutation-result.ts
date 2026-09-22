@@ -13,12 +13,13 @@ export function finalizeMutationResult<T>(
 	result: AgentToolResult<T>,
 	finalize: (result: AgentToolResult<T>, publishAnchors: boolean) => AgentToolResult<T>,
 	publishAnchors = observedFreshness(result) === "unchanged",
+	staleNotice = "Anchors omitted: target revision was not confirmed unchanged. Re-read before further edits.",
 ): AgentToolResult<T> {
 	try {
 		const finalized = finalize(result, publishAnchors);
 		return publishAnchors ? finalized : {
 			...finalized,
-			content: [...finalized.content, { type: "text", text: "Anchors omitted: target revision was not confirmed unchanged. Re-read before further edits." }],
+			content: [...finalized.content, { type: "text", text: staleNotice }],
 		};
 	} catch (error) {
 		const publication = (result.details as { publication?: PublicationStatus } | undefined)?.publication ?? "UNKNOWN";
@@ -26,20 +27,25 @@ export function finalizeMutationResult<T>(
 	}
 }
 
-/** Bound complete anchor rows before hashing or constructing their output strings. */
-export function formatMutationAnchors(lines: readonly string[], indices: Iterable<number>, hashLen: number, heading: string): string {
+/** Bound anchor entries; an optional set selects which indices retain full content. */
+export function formatMutationAnchors(
+	lines: readonly string[], indices: Iterable<number>, hashLen: number, heading: string,
+	contentIndices?: ReadonlySet<number>,
+): string {
 	const notice = "\n… (additional anchors omitted: 40-row/16 KiB limit; use read for full content)";
 	const rows: string[] = [];
 	let bytes = Buffer.byteLength(`\n${heading}\n`) + Buffer.byteLength(notice);
 	let omitted = false;
 	for (const index of indices) {
 		const content = lines[index];
-		const rowBytes = Buffer.byteLength(`${index + 1}#${"X".repeat(hashLen)}│`) + Buffer.byteLength(content) + 1;
+		const includeContent = contentIndices === undefined || contentIndices.has(index);
+		const rowBytes = Buffer.byteLength(`${index + 1}#${"X".repeat(hashLen)}`)
+			+ (includeContent ? Buffer.byteLength("│") + Buffer.byteLength(content) : 0) + 1;
 		if (rows.length >= 40 || bytes + rowBytes > 16 * 1024) {
 			omitted = true;
 			break;
 		}
-		rows.push(`${index + 1}#${computeLineHash(index + 1, content, hashLen)}│${content}`);
+		rows.push(`${index + 1}#${computeLineHash(index + 1, content, hashLen)}${includeContent ? `│${content}` : ""}`);
 		bytes += rowBytes;
 	}
 	return rows.length || omitted ? `\n${heading}\n${rows.join("\n")}${omitted ? notice : ""}` : "";

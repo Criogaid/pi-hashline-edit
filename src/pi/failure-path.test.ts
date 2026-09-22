@@ -22,7 +22,7 @@ test("published post-processing failure skips command and preserves publication 
 	const fusion = createActionFusionExecutor(async () => { commanded = true; return "never"; });
 	await assert.rejects(
 		fusion({ toolCallId: "published", absolutePath: target, thenRun: { command: "check" }, mutate: async () => { throw new FileMutationError("post_process", "PUBLISHED", "file was published but result generation failed"); }, signal: undefined, ctx: context(dir), onUpdate: (update) => updates.push(update) }),
-		(error: unknown) => error instanceof ActionFusionError && error.publication === "PUBLISHED" && error.command === "skipped" && !commanded,
+		(error: unknown) => error instanceof ActionFusionError && error.publication === "PUBLISHED" && error.command === "skipped" && !commanded && /Re-read before retrying/.test(error.message),
 	);
 	assert.ok(updates.every((update) => update.details.actionFusion.mutationCompleted === false));
 	assert.equal(updates.at(-1).details.actionFusion.publication, "PUBLISHED");
@@ -34,7 +34,8 @@ test("command failure still reports final changed freshness", async () => withTe
 	const fusion = createActionFusionExecutor(async () => { await writeFile(target, "command changed\n"); throw new Error("command failed"); });
 	const outcome: any = await fusion({ toolCallId: "failed", absolutePath: target, thenRun: { command: "check" }, mutate: async () => { await writeFile(target, "mutation\n"); return result("mutation\n"); }, signal: undefined, ctx: context(dir) });
 	assert.deepEqual(outcome.details.actionFusion, { publication: "PUBLISHED", command: "failed", freshness: "changed" });
-	assert.match(outcome.content[1].text, /Re-read the file/);
+	assert.equal((outcome.content[1].text.match(/Re-read/g) ?? []).length, 1);
+	assert.match(outcome.content[1].text, /then_run:stale/);
 }));
 
 test("timeout and cancellation do not rerun mutation and still inspect freshness", async () => withTemp(async (dir) => {

@@ -60,7 +60,7 @@ export function makeWriteOverride(cwd: string, fusion?: ReturnType<typeof create
 				try {
 					mutationAnchors = formatAnchors(mutationParams.content, hashLen);
 					return {
-						content: [{ type: "text" as const, text: `${result.created ? "Created" : "Wrote"} ${mutationParams.path}.\nRevision: ${result.revision}` }],
+						content: [{ type: "text" as const, text: `${result.created ? "Created" : "Wrote"} ${mutationParams.path}.` }],
 						details: {
 							path: mutationParams.path,
 							revision: result.publishedRevision,
@@ -76,13 +76,12 @@ export function makeWriteOverride(cwd: string, fusion?: ReturnType<typeof create
 				}
 			});
 			const finalizeMutation = (result: any, publishAnchors: boolean) => {
-				const details = result.details as { path: string; revision: string; created: boolean };
-				const revisionLabel = publishAnchors ? "Revision" : "Mutation revision";
+				const details = result.details as { path: string; created: boolean };
 				return {
 					...result,
 					content: [{
 						type: "text" as const,
-						text: `${details.created ? "Created" : "Wrote"} ${details.path}.\n${revisionLabel}: ${details.revision}${publishAnchors ? mutationAnchors : ""}`,
+						text: `${details.created ? "Created" : "Wrote"} ${details.path}.${publishAnchors ? mutationAnchors : ""}`,
 					}],
 				};
 			};

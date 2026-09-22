@@ -221,12 +221,12 @@ function toCoreEdits(ops: readonly EditOpInput[]): { ok: true; edits: Edit[] } |
 }
 
 /**
- * Format the updated anchors (fresh LINE#HASH│content) for the touched new-file
- * lines, so the model can chain edits without a re-read. Capped to bound tokens.
+ * Return compact tokens for caller-supplied rows, retaining content for deletion successors.
+ * Uses the applicator's final indices so mixed batches do not need a second position calculation.
  */
-function formatUpdatedAnchors(newText: string, touched: readonly number[], hashLen: number): string {
+function formatUpdatedAnchors(newText: string, touched: readonly number[], contextLines: readonly number[], hashLen: number): string {
 	const idxs = [...new Set(touched)].sort((a, b) => a - b);
-	return formatMutationAnchors(splitLines(newText), idxs, hashLen, "Updated anchors (use these for the next edit):");
+	return formatMutationAnchors(splitLines(newText), idxs, hashLen, "Updated anchors:", new Set(contextLines));
 }
 
 /** Call-header line: `edit path — N ops: op`, plus `+N -N` once the result's diff counts are known. */
@@ -373,7 +373,7 @@ async function runHashline(
 			...versions,
 			revision: versions.publishedRevision,
 		};
-		anchors = formatUpdatedAnchors(result.text, result.touchedLines, hashLen);
+		anchors = formatUpdatedAnchors(result.text, result.touchedLines, result.contextLines, hashLen);
 		onAnchors(anchors);
 	} catch (error) {
 		throw new FileMutationError("post_process", publication, `file was published but edit result generation failed: ${error instanceof Error ? error.message : String(error)}`, { cause: error });

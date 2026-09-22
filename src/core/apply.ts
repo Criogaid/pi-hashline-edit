@@ -276,16 +276,22 @@ export function applyEdits(text: string, edits: Edit[], hashLen = 4, shiftRadius
 	// and for a pure delete the line that shifted into the gap (so the model
 	// gets a fresh anchor for the shifted region).
 	const touched: number[] = [];
+	const contextLines = new Set<number>();
 	let delta = 0;
 	for (const op of sorted) {
 		const newLo = op.lo + delta;
 		if (op.newLines.length > 0) {
-			for (let i = 0; i < op.newLines.length; i++) touched.push(newLo + i);
+			for (let i = 0; i < op.newLines.length; i++) {
+				touched.push(newLo + i);
+				// An adjacent replacement may supply the deletion successor itself.
+				contextLines.delete(newLo + i);
+			}
 		} else if (newLo < result.length) {
 			touched.push(newLo);
+			contextLines.add(newLo);
 		}
 		delta += op.newLines.length - (op.hi - op.lo);
 	}
 
-	return { ok: true, text: newText, changed: true, touchedLines: touched };
+	return { ok: true, text: newText, changed: true, touchedLines: touched, contextLines: [...contextLines] };
 }
