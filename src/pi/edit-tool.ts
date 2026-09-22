@@ -19,13 +19,12 @@
  * @module pi-hashline-edit/pi
  */
 
-import { truncateHead, withFileMutationQueue, type EditToolDetails } from "@earendil-works/pi-coding-agent";
+import { truncateHead, withFileMutationQueue } from "@earendil-works/pi-coding-agent";
 import { Type, type Static } from "typebox";
 import { Text } from "@earendil-works/pi-tui";
-import { readFile } from "node:fs/promises";
 import { ACTION_FUSION_GUIDELINES, createActionFusionExecutor, createThenRunSchema, type ThenRunInput } from "./action-fusion.ts";
-import { byteRevision, commitFile, FileMutationError, type MutationVersions, type PublicationStatus } from "./file-commit.ts";
-import { applyEdits, decodeEditableText } from "../core/index.ts";
+import { readEditableSnapshot, commitReplacement } from "./file-commit.ts";
+import { applyEdits } from "../core/index.ts";
 import { splitLines } from "../core/lines.ts";
 import type { ApplyFailure, Edit } from "../core/types.ts";
 import { canonicalPath } from "./read-tool.ts";
@@ -33,7 +32,7 @@ import { getState } from "./state.ts";
 import { ANCHOR_PATTERN, createAnchorFormatter, type AnchorFormatter } from "./anchor-format.ts";
 import { formatDiffCounts, renderMutationResult, type DiffCounts } from "./render.ts";
 import { formatFailureContext, formatUniqueCandidateNeighborhoods, MAX_RECOVERY_CANDIDATE_BYTES } from "./failure-context.ts";
-import { finalizeMutationResult, formatMutationAnchors, generateMutationDiff } from "./mutation-result.ts";
+import { appendMutationAnchors, finalizeMutationResult, formatMutationAnchors, generateMutationDetails, postProcessMutation } from "./mutation-result.ts";
 
 /** Cap failure details and status rows independently; each text block also has a byte cap. */
 const MAX_FAILURE_DETAILS = 40;
@@ -287,14 +286,7 @@ export function makeEditOverride(cwd: string, fusion?: ReturnType<typeof createA
 					(anchors) => { mutationAnchors = anchors; },
 				));
 			};
-			const finalizeMutation = (result: any, publishAnchors: boolean) => ({
-				...result,
-				content: result.content.map((block: any, index: number) =>
-					index === 0 && block.type === "text"
-						? { ...block, text: `${block.text}${publishAnchors ? mutationAnchors : ""}` }
-						: block,
-				),
-			});
+			const finalizeMutation = (result: any, publishAnchors: boolean) => appendMutationAnchors(result, mutationAnchors, publishAnchors);
 			if (!fusion) return finalizeMutationResult(await mutate(), finalizeMutation);
 			return fusion({
 				toolCallId,
@@ -320,16 +312,7 @@ async function runHashline(
 	const anchorFormatter = createAnchorFormatter();
 	const { shiftRadius } = getState().config;
 
-	let currentText: string;
-	let baseRevision: string;
-	try {
-		const currentBytes = await readFile(absPath);
-		baseRevision = byteRevision(currentBytes);
-		currentText = decodeEditableText(currentBytes);
-	} catch (e) {
-		const msg = e instanceof Error ? e.message : String(e);
-		throw new Error(`Error reading ${displayPath}: ${msg}`);
-	}
+	const { text: currentText, baseRevision } = await readEditableSnapshot(absPath, displayPath);
 	// Check for cancel after read: if the user aborted, don't proceed to parse/apply; the file stays untouched
 	if (signal?.aborted) throw new Error(`Edit ${displayPath} aborted before apply.`);
 
@@ -349,34 +332,13 @@ async function runHashline(
 	// Check for cancel before write: if aborted, don't touch the disk; the file stays untouched
 	if (signal?.aborted) throw new Error(`Edit ${displayPath} aborted before write.`);
 
-	let publication: PublicationStatus = "NOT_PUBLISHED";
-	let versions: MutationVersions;
-	try {
-		const commit = await commitFile(absPath, result.text, { mode: "overwrite", expectedRevision: baseRevision, signal });
-		publication = commit.publication;
-		versions = commit;
-	} catch (e) {
-		if (e instanceof FileMutationError) throw e;
-		throw new FileMutationError("commit", "UNKNOWN", `Error writing ${displayPath}: ${e instanceof Error ? e.message : String(e)}`, { cause: e });
-	}
-
-	let details: EditToolDetails & MutationVersions & { publication: PublicationStatus; revision: string };
-	let anchors: string;
-	try {
-		// Diff and anchor generation happens after publication; preserve that state on failure.
-		details = {
-			...generateMutationDiff(displayPath, currentText, result.text),
-			publication,
-			...versions,
-			revision: versions.publishedRevision,
+	const versions = await commitReplacement(absPath, displayPath, result.text, baseRevision, signal);
+	return postProcessMutation("edit", versions.publication, () => {
+		const details = generateMutationDetails(displayPath, currentText, result.text, versions, versions.publication);
+		onAnchors(formatUpdatedAnchors(result.text, result.touchedLines, result.contextLines, anchorFormatter));
+		return {
+			content: [{ type: "text" as const, text: `Edited ${displayPath} (${translated.edits.length} op(s)).` }],
+			details,
 		};
-		anchors = formatUpdatedAnchors(result.text, result.touchedLines, result.contextLines, anchorFormatter);
-		onAnchors(anchors);
-	} catch (error) {
-		throw new FileMutationError("post_process", publication, `file was published but edit result generation failed: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
-	}
-	return {
-		content: [{ type: "text" as const, text: `Edited ${displayPath} (${translated.edits.length} op(s)).` }],
-		details,
-	};
+	});
 }

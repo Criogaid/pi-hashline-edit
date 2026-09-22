@@ -10,7 +10,7 @@ import { makeReplaceTool } from "./replace-tool.ts";
 import { makeWriteOverride } from "./write-tool.ts";
 import { makeEditOverride } from "./edit-tool.ts";
 import { FileMutationError } from "./file-commit.ts";
-import { finalizeMutationResult } from "./mutation-result.ts";
+import { appendMutationAnchors, finalizeMutationResult, postProcessMutation } from "./mutation-result.ts";
 
 const text = (result: any) => result.content.map((block: any) => block.text ?? "").join("\n");
 
@@ -194,4 +194,16 @@ test("all mutation tools report NUL rejection through the shared Fusion lifecycl
 	} finally {
 		await rm(dir, { recursive: true, force: true });
 	}
+});
+
+test("shared result building preserves publication and appends anchors only to the summary", () => {
+	for (const publication of ["NOT_PUBLISHED", "PUBLISHED", "UNKNOWN"] as const) {
+		const cause = new Error("render failed");
+		assert.throws(() => postProcessMutation("replace", publication, () => { throw cause; }),
+			(error: any) => error instanceof FileMutationError && error.stage === "post_process" && error.publication === publication && error.cause === cause);
+	}
+	const result = { content: [{ type: "text" as const, text: "summary" }, { type: "text" as const, text: "command" }], details: {} };
+	assert.deepEqual(appendMutationAnchors(result, " ANCHOR", true).content.map((block: any) => block.text), ["summary ANCHOR", "command"]);
+	assert.deepEqual(appendMutationAnchors(result, " ANCHOR", false), result);
+	assert.equal(result.content[0].text, "summary");
 });

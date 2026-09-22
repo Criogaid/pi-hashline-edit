@@ -27,18 +27,16 @@
 
 import {
 	withFileMutationQueue,
-	type EditToolDetails,
 } from "@earendil-works/pi-coding-agent";
 import { Type, type Static } from "typebox";
 import { Text } from "@earendil-works/pi-tui";
-import { readFile } from "node:fs/promises";
-import { decodeEditableText, splitLines } from "../core/index.ts";
+import { splitLines } from "../core/index.ts";
 import { ACTION_FUSION_GUIDELINES, createActionFusionExecutor, createThenRunSchema, type ThenRunInput } from "./action-fusion.ts";
-import { byteRevision, commitFile, FileMutationError, type MutationVersions, type PublicationStatus } from "./file-commit.ts";
+import { readEditableSnapshot, commitReplacement, type MutationVersions, type PublicationStatus } from "./file-commit.ts";
 import { createAnchorFormatter, type AnchorFormatter } from "./anchor-format.ts";
 import { canonicalPath } from "./read-tool.ts";
 import { formatDiffCounts, renderMutationResult, type DiffCounts } from "./render.ts";
-import { finalizeMutationResult, formatMutationAnchors, generateMutationDiff } from "./mutation-result.ts";
+import { appendMutationAnchors, finalizeMutationResult, formatMutationAnchors, generateMutationDetails, postProcessMutation } from "./mutation-result.ts";
 
 /** Default safety cap on match count (errors before writing if exceeded). */
 const DEFAULT_MAX_MATCHES = 2000;
@@ -257,11 +255,7 @@ export function makeReplaceTool(cwd: string, fusion?: ReturnType<typeof createAc
 			const absolutePath = canonicalPath(cwd, path);
 			let mutationAnchors = "";
 			const mutate = () => withFileMutationQueue(absolutePath, () => runReplace(absolutePath, path, mutationParams, signal, (value) => { mutationAnchors = value; }));
-			const finalizeMutation = (result: any, publishAnchors: boolean) => ({
-				...result,
-				content: result.content.map((block: any, index: number) => index === 0 && block.type === "text"
-					? { ...block, text: `${block.text}${publishAnchors ? mutationAnchors : ""}` } : block),
-			});
+			const finalizeMutation = (result: any, publishAnchors: boolean) => appendMutationAnchors(result, mutationAnchors, publishAnchors);
 			if (!fusion) return finalizeMutationResult(await mutate(), finalizeMutation);
 			return fusion({ toolCallId, absolutePath, thenRun: then_run, mutate, finalizeMutation, signal, ctx, onUpdate });
 		},
@@ -281,16 +275,7 @@ async function runReplace(
 		throw new Error(`Replace ${displayPath}: ${error instanceof Error ? error.message : String(error)}`);
 	}
 
-	let currentText: string;
-	let baseRevision: string;
-	try {
-		const currentBytes = await readFile(absPath);
-		baseRevision = byteRevision(currentBytes);
-		currentText = decodeEditableText(currentBytes);
-	} catch (e) {
-		const msg = e instanceof Error ? e.message : String(e);
-		throw new Error(`Error reading ${displayPath}: ${msg}`);
-	}
+	const { text: currentText, baseRevision } = await readEditableSnapshot(absPath, displayPath);
 	// honor cancel after read: if aborted, don't proceed to match/replace; the file stays untouched
 	if (signal?.aborted) throw new Error(`Replace ${displayPath} aborted before apply.`);
 
@@ -309,39 +294,21 @@ async function runReplace(
 	let publication: PublicationStatus = "NOT_PUBLISHED";
 	let versions: MutationVersions = { baseRevision, publishedRevision: baseRevision, observedRevision: baseRevision };
 	if (changed) {
-		try {
-			const commit = await commitFile(absPath, newText, { mode: "overwrite", expectedRevision: baseRevision, signal });
-			publication = commit.publication;
-			versions = commit;
-		} catch (e) {
-			if (e instanceof FileMutationError) throw e;
-			throw new FileMutationError("commit", "UNKNOWN", `Error writing ${displayPath}: ${e instanceof Error ? e.message : String(e)}`, { cause: e });
-		}
+		const commit = await commitReplacement(absPath, displayPath, newText, baseRevision, signal);
+		publication = commit.publication;
+		versions = commit;
 	}
 
-	let details: EditToolDetails & MutationVersions & { publication: PublicationStatus; revision: string };
-	let anchors: string;
-	let note: string;
-	try {
-		// Diff, anchors, and summary generation happens after publication; preserve its state on failure.
-		details = {
-			...generateMutationDiff(displayPath, currentText, newText),
-			publication,
-			...versions,
-			revision: versions.publishedRevision,
-		};
-		const oldLines = splitLines(currentText);
+	return postProcessMutation("replace", publication, () => {
+		const details = generateMutationDetails(displayPath, currentText, newText, versions, publication);
 		const newLines = splitLines(newText);
-		const span = changed ? changedSpan(oldLines, newLines) : null;
-		anchors = span ? formatSpanAnchors(newLines, span, anchorFormatter) : "";
+		const span = changed ? changedSpan(splitLines(currentText), newLines) : null;
+		onAnchors(span ? formatSpanAnchors(newLines, span, anchorFormatter) : "");
 		const matchWord = `match${count !== 1 ? "es" : ""}`;
-		note = changed ? `${count} ${matchWord}` : `${count} ${matchWord}, no net change`;
-		onAnchors(anchors);
-	} catch (error) {
-		throw new FileMutationError("post_process", publication, `file was published but replace result generation failed: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
-	}
-	return {
-		content: [{ type: "text" as const, text: `Replaced ${displayPath} (${note}).` }],
-		details,
-	};
+		const note = changed ? `${count} ${matchWord}` : `${count} ${matchWord}, no net change`;
+		return {
+			content: [{ type: "text" as const, text: `Replaced ${displayPath} (${note}).` }],
+			details,
+		};
+	});
 }

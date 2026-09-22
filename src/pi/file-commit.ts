@@ -1,6 +1,7 @@
 import { chmod, lstat, mkdir, mkdtemp, open, readFile, realpath, rename, rm, stat, link } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { createHash } from "node:crypto";
+import { decodeEditableText } from "../core/text.ts";
 
 export type PublicationStatus = "NOT_PUBLISHED" | "PUBLISHED" | "UNKNOWN";
 export type CommitMode = "create" | "overwrite";
@@ -42,6 +43,26 @@ export function byteRevision(content: string | Uint8Array): string {
 
 export async function fileRevision(path: string): Promise<string> {
 	return byteRevision(await readFile(path));
+}
+
+/** Decode and bind a mutation snapshot to the exact bytes read. */
+export async function readEditableSnapshot(path: string, displayPath: string) {
+	try {
+		const bytes = await readFile(path);
+		return { text: decodeEditableText(bytes), baseRevision: byteRevision(bytes) };
+	} catch (error) {
+		throw new Error(`Error reading ${displayPath}: ${error instanceof Error ? error.message : String(error)}`);
+	}
+}
+
+/** Publish a read-modify-write result against its source revision. Callers own the queue. */
+export async function commitReplacement(path: string, displayPath: string, text: string, baseRevision: string, signal?: AbortSignal) {
+	try {
+		return await commitFile(path, text, { mode: "overwrite", expectedRevision: baseRevision, signal });
+	} catch (error) {
+		if (error instanceof FileMutationError) throw error;
+		throw new FileMutationError("commit", "UNKNOWN", `Error writing ${displayPath}: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
+	}
 }
 
 function prepareError(message: string, cause?: unknown): FileMutationError {

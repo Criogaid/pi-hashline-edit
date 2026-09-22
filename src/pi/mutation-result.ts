@@ -4,12 +4,31 @@ import { generateDiffString, generateUnifiedPatch } from "@earendil-works/pi-cod
 import { displayCarriageReturns, type AnchorFormatter } from "./anchor-format.ts";
 
 /** Diff raw text so line numbers and patches retain LF boundaries and all source bytes. */
-export function generateMutationDiff(path: string, before: string, after: string) {
+export function generateMutationDetails(path: string, before: string, after: string, versions: MutationVersions, publication: PublicationStatus) {
 	const { diff, firstChangedLine } = generateDiffString(before, after);
 	return {
 		diff: displayCarriageReturns(diff),
 		firstChangedLine,
 		patch: generateUnifiedPatch(path, before, after),
+		publication,
+		...versions,
+		revision: versions.publishedRevision,
+	};
+}
+
+/** Keep result-building failures distinct from file publication failures. */
+export function postProcessMutation<T>(tool: string, publication: PublicationStatus, build: () => T): T {
+	try { return build(); } catch (error) {
+		throw new FileMutationError("post_process", publication, `${tool} result generation failed; publication=${publication}: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
+	}
+}
+
+/** Append only to the summary block after the caller confirms anchor freshness. */
+export function appendMutationAnchors<T>(result: AgentToolResult<T>, anchors: string, publish: boolean): AgentToolResult<T> {
+	return {
+		...result,
+		content: result.content.map((block, index) => index === 0 && block.type === "text"
+			? { ...block, text: `${block.text}${publish ? anchors : ""}` } : block),
 	};
 }
 

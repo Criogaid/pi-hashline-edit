@@ -1,7 +1,8 @@
 import { Type, type Static } from "typebox";
 import { createWriteToolDefinition, withFileMutationQueue } from "@earendil-works/pi-coding-agent";
 import { ACTION_FUSION_GUIDELINES, createActionFusionExecutor, createThenRunSchema, type ThenRunInput } from "./action-fusion.ts";
-import { commitFile, FileMutationError, type CommitMode } from "./file-commit.ts";
+import { commitFile, type CommitMode } from "./file-commit.ts";
+import { postProcessMutation } from "./mutation-result.ts";
 import { canonicalPath } from "./read-tool.ts";
 
 function createWriteSchema(actionFusion: boolean) {
@@ -44,22 +45,10 @@ export function makeWriteOverride(cwd: string, fusion?: ReturnType<typeof create
 					expectedRevision: mutationParams.expectedRevision,
 					signal,
 				});
-				try {
-					return {
-						content: [{ type: "text" as const, text: `${result.created ? "Created" : "Wrote"} ${mutationParams.path}.` }],
-						details: {
-							path: mutationParams.path,
-							revision: result.publishedRevision,
-							baseRevision: result.baseRevision,
-							publishedRevision: result.publishedRevision,
-							observedRevision: result.observedRevision,
-							created: result.created,
-							publication: result.publication,
-						},
-					};
-				} catch (error) {
-					throw new FileMutationError("post_process", "PUBLISHED", `file was published but write result generation failed: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
-				}
+				return postProcessMutation("write", result.publication, () => ({
+					content: [{ type: "text" as const, text: `${result.created ? "Created" : "Wrote"} ${mutationParams.path}.` }],
+					details: { path: mutationParams.path, ...result },
+				}));
 			});
 			if (!fusion) return mutate();
 			return fusion({ toolCallId, absolutePath, thenRun: then_run, mutate, signal, ctx, onUpdate });
