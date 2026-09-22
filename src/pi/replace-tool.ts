@@ -162,7 +162,7 @@ function applyReplacements(source: string, rules: readonly Replacement[]): { tex
  * For a pure deletion, retain its first surviving successor. Shifted suffixes
  * are otherwise omitted; the shared formatter removes unchanged positions.
  */
-function anchorSpan(oldLines: readonly string[], newLines: readonly string[]): { start: number; end: number } | null {
+function anchorSpan(oldLines: readonly string[], newLines: readonly string[]): { start: number; end: number; contextLines: number[] } | null {
 	const n = Math.min(oldLines.length, newLines.length);
 	let prefix = 0;
 	while (prefix < n && oldLines[prefix] === newLines[prefix]) prefix++;
@@ -180,15 +180,15 @@ function anchorSpan(oldLines: readonly string[], newLines: readonly string[]): {
 	}
 	const start = prefix;
 	const end = newLines.length - 1 - newSuffix; // inclusive, 0-based, in new
-	return start >= newLines.length ? null : { start, end: Math.max(start, end) };
+	return start >= newLines.length ? null : { start, end: Math.max(start, end), contextLines: end < start ? [start] : [] };
 }
 
 /** Format changed positions within the candidate span, subject to the shared output budget. */
-function formatSpanAnchors(oldLines: readonly string[], newLines: readonly string[], span: { start: number; end: number }, anchors: AnchorFormatter): string {
+function formatSpanAnchors(oldLines: readonly string[], newLines: readonly string[], span: NonNullable<ReturnType<typeof anchorSpan>>, anchors: AnchorFormatter): string {
 	function* indices() {
 		for (let i = span.start; i <= span.end; i++) yield i;
 	}
-	return formatMutationAnchors(oldLines, newLines, indices(), anchors, "Updated anchors:");
+	return formatMutationAnchors(oldLines, newLines, indices(), anchors, "Updated anchors:", new Set(span.contextLines));
 }
 
 /** Truncate a string for one-line display, folding newlines into a marker. */

@@ -54,7 +54,7 @@ Updated anchors:
 
 Use returned anchors for changed lines in subsequent edits. Previously observed anchors remain usable when their line number, full content, and hash-length configuration are unchanged. Content-mode `grep` provides the same references, grouped by file. Always copy actual tool output; the examples use the default four-character hash.
 
-Successful `edit` and `replace` results omit candidate rows whose full content at the same line number is unchanged, before applying output limits. `edit` returns compact tokens for changed caller-supplied rows; a deletion successor retains its content unless the batch also supplies that row. `replace` returns anchored content for changed positions within the replacement region, or the first surviving line after a pure deletion. Neither reports every shifted line in the remaining file; read shifted positions when needed and no fresh anchor was returned. `write` returns no anchors. Explicit `read`/`grep` results and edit failure context continue to include the requested or diagnostic rows.
+Successful `edit` and `replace` results omit candidate rows whose full content at the same line number is unchanged, then return compact `LINE#HASH` tokens by default. `edit` retains complete content for a deletion successor unless the batch also supplies that row; `replace` retains it for the first surviving line after a pure deletion. Anchor reports have a 16 KiB byte limit, including heading/omission notice, with no fixed entry-count limit. Neither tool reports every shifted line in the remaining file; read shifted positions when needed and no fresh anchor was returned. `write` returns no anchors. Explicit `read`/`grep` results and edit failure context continue to include the requested or diagnostic rows.
 
 ## Tools
 
@@ -245,8 +245,7 @@ These limits bound model context, not file size. Omission notices direct the cal
 | --- | --- |
 | `read` | Default 2000 rows, overridable with `limit`; 256 KiB of anchored text. No partial anchor rows. |
 | `grep` | Default 100 matching lines, overridable; 500 characters per displayed line, plus Pi's total output limits. Hashes use full content; read truncated lines before reconstructing them. |
-| `edit` anchors | Up to 40 entries and 16 KiB including heading/omission notice, after omitting unchanged positions: compact tokens for supplied rows, complete anchored content for deletion successors. |
-| `replace` anchors | Up to 40 complete rows and 16 KiB including heading/omission notice, after omitting unchanged positions. |
+| `edit` / `replace` anchors | 16 KiB including heading/omission notice, with no fixed entry-count limit. Compact tokens for changed positions; selected deletion successors retain complete content. No partial anchor rows. |
 | Anchor failure details | 16 KiB, up to 40 detailed failures and eight candidates per ambiguous failure. Unresolved anchors include nearby current-file context, itself capped at 40 rows/16 KiB. |
 | Input-anchor checks | Independent 16 KiB block, up to 40 entries in input order. Shown/omitted counts appear only when entries are omitted; omitted entries are not implied matched. |
 | Unique-candidate neighborhoods | Up to 40 complete anchored rows/16 KiB of row text, lowest-line first, plus headings. Candidate mappings stay in failure details. Each candidate row is limited to 4 KiB. Truncated rows are omitted in full. |

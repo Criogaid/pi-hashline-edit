@@ -110,13 +110,18 @@ test("mutation anchor output and aggregate anchor diagnostics have byte budgets"
 			const result = await tool.execute(name, { path, ...args }, undefined, undefined, { cwd: dir });
 			const output = text(result);
 			assert.ok(Buffer.byteLength(output) < 17 * 1024);
-			if (name === "replace") assert.match(output, /omitted|truncated/i);
-			else {
-				assert.match(output, /^2#[0-9A-Z]+$/m);
-				assert.doesNotMatch(output, /omitted|truncated/i);
-			}
+			assert.match(output, new RegExp(`^${name === "edit" ? 2 : 1}#[0-9A-Z]+$`, "m"));
+			assert.doesNotMatch(output, /omitted|truncated/i);
 			assert.doesNotMatch(output, /\d+#[0-9A-Z]+│界/);
 			assert.ok((await readFile(path, "utf8")).includes(long));
+			await writeFile(path, `remove\n${long}\n`);
+			const deletion = name === "edit"
+				? { edits: [{ op: "delete", anchor: `1#${computeLineHash(1, "remove")}` }] }
+				: { find: "remove\n", replace: "" };
+			const deleted = await tool.execute(name, { path, ...deletion }, undefined, undefined, { cwd: dir });
+			assert.ok(Buffer.byteLength(text(deleted)) < 17 * 1024);
+			assert.match(text(deleted), /additional anchors omitted: 16 KiB limit/);
+			assert.doesNotMatch(text(deleted), /^\d+#[0-9A-Z]+/m);
 		}
 		await writeFile(path, "current\n");
 		await assert.rejects(makeEditOverride(dir).execute("errors", {
@@ -272,7 +277,7 @@ test("no-op Fusion still detects external changes and reports command failures",
 	} finally { await rm(dir, { recursive: true, force: true }); }
 });
 
-test("mutation anchors skip unchanged positions before applying the row budget", async () => {
+test("mutation anchors omit unchanged positions across distant changes", async () => {
 	const dir = await mkdtemp(join(tmpdir(), "hashline-anchor-delta-"));
 	try {
 		const before = Array.from({ length: 100 }, (_, index) => `row ${index + 1}`);
@@ -318,6 +323,39 @@ test("mutation anchors retain a deletion successor but omit stable rows and dele
 				const result = await tool.execute(name, { path, ...params }, undefined, undefined, { cwd: dir });
 				const rows = text(result).split("\n").filter((row) => /^\d+#/.test(row));
 				assert.deepEqual(rows, atEnd ? [] : [`2#${computeLineHash(2, "c")}│c`]);
+			}
+		}
+	} finally { await rm(dir, { recursive: true, force: true }); }
+});
+
+test("compact mutation anchors exceed forty rows and stop only at the byte budget", async () => {
+	const dir = await mkdtemp(join(tmpdir(), "hashline-compact-budget-"));
+	try {
+		for (const name of ["edit", "replace"]) {
+			for (const count of [80, 3000]) {
+				const path = join(dir, `${name}.txt`);
+				await writeFile(path, "before\n");
+				const inserted = Array.from({ length: count }, (_, i) => `changed ${i}`);
+				const tool = name === "edit" ? makeEditOverride(dir) : makeReplaceTool(dir);
+				const params = name === "edit"
+					? { edits: [{ op: "append", body: inserted }] }
+					: { find: "before", replace: inserted.join("\n") };
+				const result = await tool.execute(name, { path, ...params }, undefined, undefined, { cwd: dir });
+				const output = text(result);
+				const rows = [...output.matchAll(/^(\d+)#([0-9A-Z]+)$/gm)];
+				assert.ok(rows.length > 40);
+				assert.doesNotMatch(output, /│/);
+				const anchorBlock = output.slice(output.indexOf("\nUpdated anchors:"));
+				assert.ok(Buffer.byteLength(anchorBlock) <= 16 * 1024);
+				if (count === 80) {
+					assert.equal(rows.length, count);
+					assert.doesNotMatch(output, /omitted/);
+				} else {
+					assert.ok(rows.length < count);
+					assert.match(output, /additional anchors omitted: 16 KiB limit/);
+				}
+				const finalLines = (await readFile(path, "utf8")).trimEnd().split("\n");
+				for (const [, line, hash] of rows) assert.equal(hash, computeLineHash(Number(line), finalLines[Number(line) - 1]));
 			}
 		}
 	} finally { await rm(dir, { recursive: true, force: true }); }

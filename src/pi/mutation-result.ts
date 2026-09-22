@@ -57,12 +57,12 @@ export function finalizeMutationResult<T>(
 	}
 }
 
-/** Omit unchanged positions before budgeting anchors; contentIndices selects rows needing full content. */
+/** Return compact changed-position anchors; selected context rows retain full content within the byte budget. */
 export function formatMutationAnchors(
 	beforeLines: readonly string[], lines: readonly string[], indices: Iterable<number>, anchors: AnchorFormatter, heading: string,
 	contentIndices?: ReadonlySet<number>,
 ): string {
-	const notice = "\n… (additional anchors omitted: 40-row/16 KiB limit; use read for full content)";
+	const notice = "\n… (additional anchors omitted: 16 KiB limit; use read for omitted positions)";
 	const rows: string[] = [];
 	let bytes = Buffer.byteLength(`\n${heading}\n`) + Buffer.byteLength(notice);
 	let omitted = false;
@@ -70,10 +70,9 @@ export function formatMutationAnchors(
 		const content = lines[index];
 		// Compare source content, not short hashes: a collision must not suppress a changed row.
 		if (beforeLines[index] === content) continue;
-		const includeContent = contentIndices === undefined || contentIndices.has(index);
-		const row = includeContent ? anchors.row(index + 1, content) : anchors.token(index + 1, content);
+		const row = contentIndices?.has(index) ? anchors.row(index + 1, content) : anchors.token(index + 1, content);
 		const rowBytes = Buffer.byteLength(row) + 1;
-		if (rows.length >= 40 || bytes + rowBytes > 16 * 1024) {
+		if (bytes + rowBytes > 16 * 1024) {
 			omitted = true;
 			break;
 		}
