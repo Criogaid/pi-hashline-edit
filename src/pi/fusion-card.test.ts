@@ -49,7 +49,8 @@ test("one independent card updates live and only persists its endpoints", () => 
 	assert.equal(h.entries.length, 2);
 	assert.equal(h.entries[0].data.command, "waiting");
 	const collapsed = card.render(100).join("\n");
-	assert.match(collapsed, /succeeded[\s\S]*Anchors are stale/);
+	assert.match(collapsed, /succeeded/);
+	assert.doesNotMatch(collapsed, /publication=|freshness=|Anchors are stale|file\.ts/);
 	assert.equal(h.backgrounds.at(-1), "toolSuccessBg");
 	assert.match(collapsed, /output line 19/);
 	assert.doesNotMatch(collapsed, /output line 0\b/);
@@ -66,4 +67,39 @@ test("session restore uses final snapshots and marks unfinished calls unknown", 
 	assert.equal(resumed.backgrounds.at(-1), "toolErrorBg");
 	resumed.restore("session_tree", [h.entries[0]]);
 	assert.match(resumed.card(h.entries[0]).render(100).join("\n"), /interrupted \(final status unknown\)/);
+});
+
+test("skips and cancellations stay neutral and restore their own reason", () => {
+	for (const command of ["skipped", "cancelled"] as const) {
+		const h = harness();
+		h.report(waiting);
+		h.report({ ...waiting, command, reason: "Not run because the mutation did not complete." });
+		for (const restored of [false, true]) {
+			const view = restored ? harness(h.entries) : h;
+			if (restored) view.restore();
+			const output = view.card(h.entries[0], true).render(160).join("\n");
+			assert.match(output, /Not run because the mutation did not complete/);
+			assert.doesNotMatch(output, /publication=|freshness=|\(no output\)/);
+			assert.ok(!view.backgrounds.includes("toolErrorBg"));
+			assert.ok(!view.backgrounds.includes("toolSuccessBg"));
+		}
+	}
+});
+
+test("legacy snapshots separate known command failures and suppress mutation diagnostics", () => {
+	for (const command of ["skipped", "failed", "cancelled"] as const) {
+		const output = command === "skipped"
+			? "mutation failed; the command was not run [then_run:skipped]\nNo file changes were published. Command skipped.\nAnchor mismatch: 1 shifted.\nInput-anchor checks"
+			: `mutation completed; then_run did not complete successfully [then_run:${command === "cancelled" ? "skipped" : "failed"}]\nFile changes are saved. Command ${command}.\nactual command diagnostic`;
+		const entries = [
+			{ type: "custom", customType: "hashline-then-run", data: waiting },
+			{ type: "custom", customType: "hashline-then-run-result", data: { ...waiting, command, publication: "PUBLISHED", output } },
+		];
+		const h = harness(entries);
+		h.restore();
+		const text = h.card(entries[0], true).render(160).join("\n");
+		assert.doesNotMatch(text, /Anchor mismatch|Input-anchor|publication=|freshness=|File changes are saved|mutation completed/);
+		assert.match(text, command === "skipped" ? /Command was not run/ : /actual command diagnostic/);
+		assert.equal(entries[1].data.output, output, "restoring must not rewrite persisted evidence");
+	}
 });

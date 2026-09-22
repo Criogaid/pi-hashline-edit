@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import assert from "node:assert/strict";
@@ -8,6 +8,7 @@ import { getState } from "./state.ts";
 import { initTheme } from "@earendil-works/pi-coding-agent";
 import { ToolExecutionComponent } from "../../node_modules/@earendil-works/pi-coding-agent/dist/modes/interactive/components/tool-execution.js";
 import { theme } from "../../node_modules/@earendil-works/pi-coding-agent/dist/modes/interactive/theme/theme.js";
+import { computeLineHash } from "../core/hash.ts";
 
 test("mutation cards use Fusion by default and explicit false removes command support", async () => {
 	const dir = await mkdtemp(join(tmpdir(), "hashline-registration-"));
@@ -65,6 +66,9 @@ test("mutation cards use Fusion by default and explicit false removes command su
 			card.updateResult({ ...result, isError: false });
 			assert.ok(card.render(100).join("\n").includes(theme.getBgAnsi("toolSuccessBg")));
 			card.setExpanded(true);
+			assert.match(card.render(100).join("\n"), /publication=.*freshness=unchanged/);
+			assert.doesNotMatch(card.render(100).join("\n"), /Command exited|then_run:failed/);
+			assert.doesNotMatch(frames.at(-1)!.commandOutput, /publication=|freshness=|File changes are saved|No file changes were published|mutation completed/);
 			assert.ok(card.render(100).join("\n").includes(theme.getBgAnsi("toolSuccessBg")));
 
 			const invalid = { ...params, path: "missing.txt", ...(name === "write" ? { mode: "overwrite" } : {}) };
@@ -76,10 +80,33 @@ test("mutation cards use Fusion by default and explicit false removes command su
 				const output = failedCard.render(100).join("\n");
 				assert.ok(output.includes(theme.getBgAnsi("toolErrorBg")), `${name} mutation failure should turn red`);
 				assert.ok(!output.includes(theme.getBgAnsi("toolPendingBg")));
+				assert.doesNotMatch(output, /the command was not run|then_run:skipped/);
+				assert.match(output, name === "write" ? /does not exist/ : /Error reading/);
+				const entry = entries.find((entry) => entry.customType === "hashline-then-run" && entry.data.toolCallId === `${name}-bad`);
+				const commandOutput = renderers.get(entry.customType)(entry, { expanded: true }, theme).render(160).join("\n");
+				assert.match(commandOutput, /skipped[\s\S]*Not run because the mutation did not complete/);
+				assert.doesNotMatch(commandOutput, /Error reading|does not exist|publication=|freshness=/);
+				assert.ok(!commandOutput.includes(theme.getBgAnsi("toolErrorBg")));
 				return true;
 			});
 		}
 		assert.deepEqual(entries.map((entry) => entry.data.command), cases.flatMap(() => ["waiting", "failed", "waiting", "skipped"]));
+		assert.ok(entries.every((entry) => !("publication" in entry.data) && !("freshness" in entry.data) && !("path" in entry.data)));
+		await writeFile(join(dir, "stale.txt"), "header\ntarget\n");
+		const edit = tools.find((tool) => tool.name === "edit");
+		const stale = { path: "stale.txt", edits: [{ op: "replace", anchor: `1#${computeLineHash(1, "target")}`, body: ["changed"] }], then_run: { command: "exit 99" } };
+		const staleCard = new ToolExecutionComponent("edit", "stale", stale, {}, edit, { requestRender() {} } as any, dir);
+		await assert.rejects(edit.execute("stale", stale, undefined, (update: any) => staleCard.updateResult({ ...update, isError: false }, true), { cwd: dir }), (error: Error) => {
+			assert.match(error.message, /checksum-matching candidate[\s\S]*Input-anchor checks/);
+			staleCard.updateResult({ content: [{ type: "text", text: error.message }], isError: true });
+			assert.match(staleCard.render(160).join("\n"), /Anchor mismatch/);
+			const entry = entries.find((entry) => entry.customType === "hashline-then-run" && entry.data.toolCallId === "stale");
+			const commandOutput = renderers.get(entry.customType)(entry, { expanded: true }, theme).render(160).join("\n");
+			assert.match(commandOutput, /skipped/);
+			assert.doesNotMatch(commandOutput, /Anchor mismatch|candidate|Input-anchor|publication=|freshness=/);
+			return true;
+		});
+		assert.equal(await readFile(join(dir, "stale.txt"), "utf8"), "header\ntarget\n");
 		await writeFile(join(dir, ".pi", "settings.json"), JSON.stringify({ hashlineEdit: { actionFusion: false } }));
 		const disabledTools: any[] = [];
 		registerHashline({

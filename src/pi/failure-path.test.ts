@@ -62,3 +62,20 @@ test("queue is released after a failed command", async () => withTemp(async (dir
 	assert.equal(calls, 2);
 	assert.match(second.content[1].type === "text" ? second.content[1].text : "", /then_run:succeeded/);
 }));
+
+test("result generation failure cannot overwrite an already successful command", async () => withTemp(async (dir) => {
+	const target = join(dir, "finalize.txt");
+	const progress: any[] = [];
+	const fusion = createActionFusionExecutor(async () => "command finished", (event) => progress.push(event));
+	await assert.rejects(fusion({
+		toolCallId: "finalize", absolutePath: target, thenRun: { command: "check" }, signal: undefined, ctx: context(dir),
+		mutate: async () => { await writeFile(target, "saved\n"); return result("saved\n"); },
+		finalizeMutation: () => { throw new Error("mutation result failure"); },
+	}), /mutation result failure/);
+	assert.equal(progress.filter((event) => event.command === "succeeded").length, 1);
+	assert.equal(progress.at(-1).publication, "PUBLISHED");
+	assert.equal(progress.at(-1).freshness, "unchanged");
+	assert.equal(progress.at(-1).command, "succeeded");
+	assert.equal(progress.at(-1).output, "command finished");
+	assert.equal(progress.at(-1).reason, undefined);
+}));

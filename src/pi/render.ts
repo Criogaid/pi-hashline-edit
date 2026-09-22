@@ -157,9 +157,19 @@ export function withMutationStatus(tool: ToolDefinition<any, any, any>): ToolDef
 		renderResult(result, options, theme, context) {
 			const shell = context.state.mutationShell;
 			const isPartial = options.isPartial && result.details?.actionFusion?.mutationCompleted !== true;
-			shell.result = tool.renderResult!(result, { ...options, isPartial }, theme, { ...context, isPartial, lastComponent: shell.result });
+			// Fused errors retain combined details for the model; show the mutation's summary here.
+			const fusedError = context.isError && (context.args as { then_run?: unknown })?.then_run;
+			shell.result = fusedError ? renderToolError(result, theme)
+				: tool.renderResult!(result, { ...options, isPartial }, theme, { ...context, isPartial, lastComponent: shell.result });
 			// Pi runs renderCall first; update its box in place without invalidating the tool row.
 			shell.box.addChild(shell.result);
+			const file = result.details?.actionFusion ?? shell.fileState;
+			if (file) {
+				shell.fileState = { publication: file.publication, freshness: file.freshness };
+				const stale = file.freshness === "changed" || file.freshness === "missing";
+				const notice = stale ? `\nAnchors are stale: target ${file.freshness}.` : "";
+				shell.box.addChild(new Text(theme.fg(stale ? "warning" : "dim", `publication=${file.publication} freshness=${file.freshness}${notice}`), 0, 0));
+			}
 			shell.box.setBgFn((line: string) => theme.bg(isPartial ? "toolPendingBg" : context.isError ? "toolErrorBg" : "toolSuccessBg", line));
 			return new Container();
 		},

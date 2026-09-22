@@ -228,6 +228,8 @@ test("progress reports skipped mutations and failed commands without rolling bac
 		await assert.rejects(makeEditOverride(dir, fusion).execute("skip", { path: "missing.txt", edits: [{ op: "append", body: ["after"] }], then_run: { command: "check" } }, undefined, undefined, ctx(dir)));
 		assert.equal(commands, 0);
 		assert.deepEqual(events.map((event) => event.command), ["waiting", "skipped"]);
+		assert.equal(events.at(-1)!.output, "");
+		assert.equal(events.at(-1)!.reason, "Not run because the mutation did not complete.");
 		events.length = 0;
 		await writeFile(join(dir, "replace.txt"), "original\n");
 		await assert.rejects(makeReplaceTool(dir, fusion).execute("replace-skip", { path: "replace.txt", find: "missing", replace: "changed", then_run: { command: "check" } }, undefined, undefined, ctx(dir)), /no matches/);
@@ -238,7 +240,7 @@ test("progress reports skipped mutations and failed commands without rolling bac
 		const failed = await makeWriteOverride(dir, fusion).execute("fail", { path: "failed.txt", content: "published\n", then_run: { command: "check" } }, undefined, undefined, ctx(dir));
 		assert.equal(failed.details.actionFusion.command, "failed");
 		assert.deepEqual(events.map((event) => event.command), ["waiting", "waiting", "running", "failed"]);
-		assert.match(events.at(-1)!.output, /diagnostic[\s\S]*code 7/);
+		assert.equal(events.at(-1)!.output, "diagnostic\nCommand exited with code 7");
 		assert.equal(await readFile(join(dir, "failed.txt"), "utf8"), "published\n");
 	} finally {
 		await rm(dir, { recursive: true, force: true });

@@ -225,7 +225,7 @@ Action Fusion is enabled by default. Set `"actionFusion": false` in `hashlineEdi
 
 `command` is required; `timeout` is optional, in positive seconds, with no default. Mutation failure skips the command. Command failure after mutation success **does not roll back the file**: it is returned separately in result text and `details.actionFusion`, rather than thrown as failure of the whole mutation.
 
-In the TUI, the mutation card turns successful when execution and result generation finish. The command gets its own waiting/running/success/failure card with expandable output. Command failure leaves the successful mutation card intact. RPC hosts receive the same progress and choose their own rendering.
+In the TUI, the mutation card owns the mutation's result or error summary, publication status, and freshness warnings. It turns successful when mutation execution and result generation finish. The command card owns command output and execution status; skipped or cancelled commands are neutral and show a short reason when execution never started. Mutation diagnostics never become command output, and command failure leaves a successful mutation card intact. RPC hosts receive the same progress and choose their own rendering.
 
 Fusion serializes each mutation/command sequence for its target and checks the published revision before running the command. Commands invoke Pi's built-in Bash definition directly, without a separate Bash tool call; Bash-only approval/sandbox extensions must explicitly cover these tools' `then_run` inputs.
 
@@ -291,6 +291,6 @@ The shared commit layer validates the target and skips publication when the requ
 | `actionFusion.freshness` | `unchanged`, `changed`, `missing`, or `unknown`, relative to the published revision. |
 | `actionFusion.mutationCompleted` | Progress flag set after mutation execution and result generation succeed; publication alone is not mutation success. |
 
-Streaming mutation summaries omit anchors. Result-generation failures preserve publication status; progress callback failures are reported separately from mutation/command outcomes. Command output appears on its own card with native Bash rendering. Final cards survive reloads without adding model-context messages; unfinished saved commands show an interrupted/unknown outcome.
+Streaming mutation summaries omit anchors. Result-generation failures preserve publication status and any completed command outcome; progress callback failures are reported separately from mutation/command outcomes. Command progress `output` contains only command output or execution errors, with an optional `reason` for commands that never started. Command cards persist only their own state and use native Bash output rendering. Final cards survive reloads without adding model-context messages; unfinished saved commands show an interrupted/unknown outcome. Older mixed failure snapshots expose only recognized command diagnostics, leaving other details in the original tool result.
 
 </details>
