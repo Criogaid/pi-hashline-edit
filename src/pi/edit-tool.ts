@@ -136,7 +136,7 @@ function formatFailureDetails(
 			}
 			case "none":
 				lines.push(
-					`• ${where}: original content not found within the configured shift-recovery window.` +
+					`• ${where}: no checksum-matching candidate found.` +
 						(f.current === null ? " Cited line is out of range." : ""),
 				);
 				break;
@@ -307,11 +307,9 @@ async function runHashline(
 	const translated = toCoreEdits(editOps);
 	if (!translated.ok) throw new Error(translated.error);
 
-	// Anchors are verified against the current content. A line that changed (or a
-	// hash the model didn't actually read) fails its own anchor — but first we try
-	// shifted recovery: if the content merely moved within ±shiftRadius, a fresh
-	// anchor is returned so the model can retry without a re-read. All failures in
-	// the batch are collected (nothing written on any failure).
+	// Recovery reports checksum candidates from nearby lines, then the whole file
+	// if needed. Every failed anchor still rejects the batch; callers inspect
+	// candidates and resubmit with fresh anchors.
 	const result = applyEdits(currentText, translated.edits, anchorFormatter.hashLen, shiftRadius);
 	if (!result.ok) {
 		throw new Error(formatFailure(result.failure, { currentText, anchors: anchorFormatter }));

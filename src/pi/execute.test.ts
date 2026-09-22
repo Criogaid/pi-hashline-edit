@@ -487,18 +487,22 @@ test("invalid anchors and conflicting fields fail before changing the file", asy
 	assert.throws(() => validateToolArguments(edit as any, { type: "toolCall", id: "invalid", name: "edit", arguments: { path: "invalid.txt", edits: [invalid[0]] } as any }));
 }));
 
-test("shifted-anchor recovery returns a token that can be copied into the retry", async () => withDir(async (dir) => {
+test("local and full-file recovery return copyable anchors without changing the rejected batch", async () => withDir(async (dir) => {
 	const original = "a\nb\n";
-	await writeFile(join(dir, "shift.txt"), "prefix\n" + original);
 	const edit = makeEditOverride(dir);
-	let replacement = "";
-	await assert.rejects(call(edit, { path: "shift.txt", edits: [{ op: "replace", anchor: h(original, 2), body: ["B"] }] }), (error: Error) => {
-		replacement = /^(3#[0-9A-Z]+)│b$/m.exec(error.message)?.[1] ?? "";
-		assert.match(error.message, /Check the intended target/);
-		return replacement !== "";
-	});
-	await call(edit, { path: "shift.txt", edits: [{ op: "replace", anchor: replacement, body: ["B"] }] });
-	assert.equal(await readFile(join(dir, "shift.txt"), "utf8"), "prefix\na\nB\n");
+	for (const prefixLines of [1, 40]) {
+		const prefix = "prefix\n".repeat(prefixLines);
+		await writeFile(join(dir, "shift.txt"), prefix + original);
+		let replacement = "";
+		await assert.rejects(call(edit, { path: "shift.txt", edits: [{ op: "replace", anchor: h(original, 2), body: ["B"] }] }), (error: Error) => {
+			replacement = new RegExp(`^(${prefixLines + 2}#[0-9A-Z]+)│b$`, "m").exec(error.message)?.[1] ?? "";
+			assert.match(error.message, /Check the intended target/);
+			return replacement !== "";
+		});
+		assert.equal(await readFile(join(dir, "shift.txt"), "utf8"), prefix + original);
+		await call(edit, { path: "shift.txt", edits: [{ op: "replace", anchor: replacement, body: ["B"] }] });
+		assert.equal(await readFile(join(dir, "shift.txt"), "utf8"), prefix + "a\nB\n");
+	}
 }));
 
 test("shifted-anchor recovery keeps the read fallback for oversized candidates", async () => withDir(async (dir) => {

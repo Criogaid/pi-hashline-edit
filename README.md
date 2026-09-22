@@ -83,9 +83,11 @@ All operations in a batch use the same snapshot. Validation failure rejects the 
 
 Rejected batches report each supplied anchor's status from that validation snapshot: `matched`, `mismatched`, or `not_checked` when body validation stopped the batch before hashing. Entries identify the zero-based operation index, `anchor` or `end`, and the cited token. The bounded list reports omitted entries explicitly. These statuses do not establish range/overlap validity, semantic intent, publication, command success, or validity on a later retry.
 
+Recovery first searches within `shiftRadius` of the cited line. If that search finds no candidates, it searches the rest of the file and collects all checksum matches before deciding whether the result is unique or ambiguous. Existing local candidates take priority; distant matches are not added when local candidates exist. `shiftRadius: 0` disables both searches. Candidate matching holds the original line number fixed when hashing current content; returned anchors use each candidate's actual line number.
+
 A unique recovery candidate includes a bounded ±3-line neighborhood from the same snapshot. Candidate content is shown once in that neighborhood; if the neighborhood omits it, a complete candidate row can appear in the failure details within their output limits. Overlapping neighborhoods are merged; neighboring rows are observations, not recommended replacement targets. Inspect the code to choose the correct anchor and operation, then resubmit. No edit or retry is performed automatically, and every submitted anchor is verified again.
 
-When no candidate is found, context is centered on the cited line in the current validation snapshot, clamped to the file's first or last line if out of range. For a nonempty file with `N` lines, let `C = min(N, max(1, citedLine))`; show lines `max(1, C - 3)` through `min(N, C + 3)`, inclusive. Windows from multiple unresolved anchors are merged and emitted in ascending line order within byte budgets. Empty files have no context anchors. This fixed ±3 display radius is separate from `shiftRadius`, the candidate search radius (default ±15).
+When no candidate is found, context is centered on the cited line in the current validation snapshot, clamped to the file's first or last line if out of range. For a nonempty file with `N` lines, let `C = min(N, max(1, citedLine))`; show lines `max(1, C - 3)` through `min(N, C + 3)`, inclusive. Windows from multiple unresolved anchors are merged and emitted in ascending line order within byte budgets. Empty files have no context anchors. This fixed ±3 display radius is separate from `shiftRadius`, the first-pass candidate search radius (default ±15); full-file fallback does not expand displayed neighborhoods.
 
 ### Bulk replacement
 
@@ -196,7 +198,7 @@ Add `hashlineEdit` to Pi's global settings (`~/.pi/agent/settings.json` by defau
 | `enabled` | `true` | Enable all five tools as one unit. Set `false` to restore built-in tools. |
 | `actionFusion` | `true` | Expose `then_run` on mutation tools. Set `false` to disable command support. |
 | `hashLen` | `4` | Integer checksum length, 2–8 characters. |
-| `shiftRadius` | `15` | Integer recovery-search radius, 0–100 lines; `0` disables recovery. |
+| `shiftRadius` | `15` | Integer first-pass recovery-search radius, 0–100 lines. With no local candidates, recovery searches the rest of the file; `0` disables both searches. |
 
 The project's `hashlineEdit` object replaces the global object as a whole; missing or invalid fields use defaults. Reload Pi after changes.
 
@@ -223,7 +225,7 @@ Fusion serializes each mutation/command sequence for its target and checks the p
 
 - **Anchors are checksums, not identities.** Each hash combines the 1-based line number and content. Short hashes can collide and do not prove the model observed a line.
 - **Validation is local to supplied anchors.** Unrelated in-place changes leave stable anchors usable. A range verifies its supplied start/end anchors, not every interior line.
-- **Line shifts change anchors.** Insertions/deletions can invalidate later references. Recovery searches within `shiftRadius`; a unique candidate includes bounded line content and neighboring code for inspection. Use `read` when the target or needed context is omitted or ambiguous. Retries verify again, without fuzzy matching or automatic relocation.
+- **Line shifts change anchors.** Insertions/deletions can invalidate later references. Recovery searches within `shiftRadius`, then the rest of the file if no local candidates match; a unique candidate includes bounded line content and neighboring code for inspection. Use `read` when the target or needed context is omitted or ambiguous. Retries verify again, without fuzzy matching or automatic relocation.
 - **Edits preserve text representation.** `edit` preserves existing line endings, untouched separators, and the absence of a final newline. `edit`/`replace` reject invalid UTF-8 source text; all mutations reject NUL and output that cannot be encoded losslessly as UTF-8.
 - **Fresh anchors depend on the final observation.** After `then_run`, anchors are shown only for `unchanged` freshness. Without a command, observed and published revisions must agree. Later edits still verify anchors.
 - **Local queues are not cross-process transactions.** Revision checks bind mutations to the bytes read, but an external writer can still race a check and publication. There is no strict workspace jail or multi-file transaction.

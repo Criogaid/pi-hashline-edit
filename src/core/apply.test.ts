@@ -302,6 +302,38 @@ test("shifted recovery: content genuinely changed → none, with live content", 
 	}
 });
 
+test("full-file recovery finds distant content and anchors beyond the current EOF", () => {
+	for (const [oldLine, newLine] of [[2, 90], [90, 2], [190, 2]]) {
+		const lines = Array.from({ length: 100 }, () => "filler");
+		lines[newLine - 1] = "target";
+		const result = applyEdits(lines.join("\n"), [
+			{ op: "delete", start: { line: oldLine, hash: computeLineHash(oldLine, "target") } },
+		]);
+		assert.ok(!result.ok && result.failure.kind === "anchor");
+		assert.deepEqual(result.failure.failures[0].recovery, {
+			kind: "found", newLine, newHash: computeLineHash(newLine, "target"),
+		});
+	}
+});
+
+test("full-file recovery collects both sides while preserving local candidate priority", () => {
+	for (const [positions, selected] of [
+		[[3, 95], [3, 95]],
+		[[3, 49, 95], [49]],
+		[[3, 49, 51, 95], [49, 51]],
+	]) {
+		const lines = Array.from({ length: 100 }, () => "filler");
+		for (const line of positions) lines[line - 1] = "target";
+		const result = applyEdits(lines.join("\n"), [
+			{ op: "delete", start: { line: 50, hash: computeLineHash(50, "target") } },
+		]);
+		assert.ok(!result.ok && result.failure.kind === "anchor");
+		assert.deepEqual(result.failure.failures[0].recovery, selected.length === 1
+			? { kind: "found", newLine: selected[0], newHash: computeLineHash(selected[0], "target") }
+			: { kind: "ambiguous", candidates: selected.map(line => ({ line, hash: computeLineHash(line, "target") })) });
+	}
+});
+
 test("collect-all: two stale anchors in one batch → both failures returned", () => {
 	const readText = "a\nb\nc\nd\n";
 	const currentText = "X\na\nb\nc\nd\n"; // inserted X at top → all shifted +1

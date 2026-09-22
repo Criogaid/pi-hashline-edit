@@ -26,18 +26,17 @@ export type Edit =
 export type LineEnding = "lf" | "crlf";
 
 /**
- * Outcome of shifted-anchor recovery. When a cited anchor's hash no longer
- * matches the live content, the applicator rescans ±radius lines for content
- * whose checksum matches the cited anchor while holding the ORIGINAL line
- * number fixed. Because checksums can collide, a match is a candidate rather
- * than proof of identity. A ready-to-resend anchor is returned with the
- * candidate's freshly computed hash.
+ * Outcome of shifted-anchor recovery. Search ±radius first; only if there are
+ * no candidates, search the rest of the file. Radius 0 disables recovery.
+ * Candidate checksums hold the ORIGINAL line number fixed. Because checksums
+ * can collide, a match is a candidate rather than proof of identity. Returned
+ * anchors use each candidate's actual line number and freshly computed hash.
  *
- * - `found` — exactly one nearby line has the cited checksum; the caller checks
- *   its content before resending with the provided anchor.
- * - `ambiguous` — several nearby lines match; the caller inspects the candidates
+ * - `found` — exactly one line matches in the selected search scope; the caller
+ *   checks its content before resending with the provided anchor.
+ * - `ambiguous` — several lines match; the caller inspects the candidates
  *   and chooses the intended target.
- * - `none` — no nearby line matches; re-read.
+ * - `none` — no candidate found, or recovery disabled; re-read.
  */
 export type AnchorRecovery =
 	| { readonly kind: "found"; readonly newLine: number; readonly newHash: string }

@@ -17,7 +17,7 @@ export interface HashlineEditConfig {
 	actionFusion: boolean;
 	/** Line hash length (default 4). */
 	hashLen: number;
-	/** ±line radius for shifted-anchor recovery (default 15; 0 disables rescue). */
+	/** First-pass ±line radius before full-file recovery (default 15; 0 disables recovery). */
 	shiftRadius: number;
 }
 

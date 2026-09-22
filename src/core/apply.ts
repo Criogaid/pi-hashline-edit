@@ -7,12 +7,11 @@
  * misremembered) fails its own anchor; unchanged lines elsewhere never block
  * the edit.
  *
- * Shifted-anchor recovery: when a cited anchor no longer matches, we rescan
- * ±radius lines for the original content, holding the ORIGINAL line number fixed
- * and re-hashing each candidate's content. On a unique hit the new anchor (with
- * its freshly computed hash) is returned so the caller can retry without a
- * re-read; on several hits they are reported as ambiguous; on none the live
- * content at the cited line is returned to steer a re-read.
+ * Shifted-anchor recovery: on mismatch, scan ±radius first, then the rest of the
+ * file only if no nearby candidates match. Hold the ORIGINAL line number fixed
+ * when hashing candidate content; matches are candidates, not proof of identity.
+ * Return anchors hashed at their real positions for the caller to inspect and
+ * retry. Several hits are ambiguous; radius 0 disables recovery.
  *
  * Batch semantics: all ops are verified against the same current snapshot. If
  * ANY anchor fails, EVERY failure (with recovery) is collected and returned
@@ -40,7 +39,7 @@ interface SpanOp {
 	newLines: string[];
 }
 
-/** Default ±line radius for shifted-anchor recovery. */
+/** Default first-pass ±line radius before full-file recovery. */
 const DEFAULT_SHIFT_RADIUS = 15;
 
 /**
@@ -69,14 +68,23 @@ function verifyAnchor(
 		return null;
 	}
 
-	// Shifted recovery: scan ±radius (excluding the already-failed cited line).
 	const candidates: { line: number; hash: string }[] = [];
-	const lo = Math.max(1, line - radius);
-	const hi = Math.min(lines.length, line + radius);
-	for (let c = lo; c <= hi; c++) {
-		if (c === line) continue;
-		if (computeLineHash(line, lines[c - 1], hashLen) === hash) {
-			candidates.push({ line: c, hash: computeLineHash(c, lines[c - 1], hashLen) });
+	const scan = (start: number, end: number) => {
+		for (let c = start; c <= end; c++) {
+			if (c === line) continue;
+			if (computeLineHash(line, lines[c - 1], hashLen) === hash) {
+				candidates.push({ line: c, hash: computeLineHash(c, lines[c - 1], hashLen) });
+			}
+		}
+	};
+	if (radius > 0) {
+		const lo = Math.max(1, line - radius);
+		const hi = Math.min(lines.length, line + radius);
+		scan(lo, hi);
+		// Preserve local candidates; scan both remaining regions before deciding uniqueness.
+		if (candidates.length === 0) {
+			scan(1, Math.min(lines.length, lo - 1));
+			scan(Math.max(1, hi + 1), lines.length);
 		}
 	}
 
@@ -181,7 +189,7 @@ function hasInvalidBodyLine(edits: readonly Edit[]): boolean {
  * @param text        current full file text
  * @param edits       parsed edit operations
  * @param hashLen     hash length used to verify anchors (default 4)
- * @param shiftRadius ±line radius for shifted-anchor recovery (default 15; 0 disables rescue)
+ * @param shiftRadius first-pass ±line radius before full-file recovery (default 15; 0 disables recovery)
  */
 export function applyEdits(text: string, edits: Edit[], hashLen = 4, shiftRadius = DEFAULT_SHIFT_RADIUS): ApplyResult {
 	if (hasInvalidBodyLine(edits)) {
