@@ -148,6 +148,8 @@ Required: `path`, `content`. By default, create missing files and overwrite exis
 - `mode: "overwrite"`: require an existing target.
 - `expectedRevision`: strictly check the current file's SHA-256; cannot be combined with create mode.
 
+Write results report the write outcome without returning line anchors. Use `read` or content-mode `grep` to obtain anchors for a later `edit`.
+
 Normal write result text omits the revision. Programmatic callers can read `details.publishedRevision`; text-only callers needing `expectedRevision` must obtain a SHA-256 of the file bytes separately. Revision checks and structured revision fields remain active.
 
 With Action Fusion enabled, `edit`, `replace`, and `write` also accept `then_run`.
@@ -225,7 +227,6 @@ These limits bound model context, not file size. Omission notices direct the cal
 | `grep` | Default 100 matching lines, overridable; 500 characters per displayed line, plus Pi's total output limits. Hashes use full content; read truncated lines before reconstructing them. |
 | `edit` anchors | Up to 40 entries and 16 KiB including heading/omission notice: compact tokens for supplied lines, complete anchored content for deletion successors. |
 | `replace` anchors | Up to 40 complete rows and 16 KiB including heading/omission notice. |
-| `write` anchors | Up to 40 compact tokens, without repeating supplied content. |
 | Anchor failure details | 16 KiB, up to 40 detailed failures and eight candidates per ambiguous failure. Unresolved anchors include nearby current-file context, itself capped at 40 rows/16 KiB. |
 | Input-anchor checks | Independent 16 KiB block, up to 40 entries in input order. Shown/omitted counts appear only when entries are omitted; omitted entries are not implied matched. |
 | Unique-candidate neighborhoods | Up to 40 complete anchored rows/16 KiB of row text, lowest-line first, plus headings. Candidate mappings stay in failure details. Each candidate row is limited to 4 KiB. Truncated rows are omitted in full. |

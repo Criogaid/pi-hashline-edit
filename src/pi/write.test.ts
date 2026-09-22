@@ -6,8 +6,6 @@ import { test } from "node:test";
 import { makeWriteOverride } from "./write-tool.ts";
 import { createActionFusionExecutor } from "./action-fusion.ts";
 import { fileRevision } from "./file-commit.ts";
-import { makeEditOverride } from "./edit-tool.ts";
-import { getState } from "./state.ts";
 
 const context = (cwd: string) => ({ cwd }) as any;
 
@@ -59,38 +57,24 @@ test("concurrent writes cannot both consume the same expectedRevision", async ()
 	assert.match(rejected.reason.message, /expectedRevision/);
 }));
 
-test("write anchors chain into edit with a non-default hash length", async () => withTemp(async (dir) => {
-	const state = getState();
-	const previousConfig = state.config;
-	try {
-		state.config = { ...previousConfig, hashLen: 6 };
-		const result = await makeWriteOverride(dir).execute("write", { path: "anchors.txt", content: "before\n" }, undefined, undefined, context(dir));
-		const anchor = result.content[0].text.match(/1#([0-9A-Z]+)/);
-		assert.ok(anchor);
-		assert.equal(anchor[1].length, 6);
-		assert.doesNotMatch(result.content[0].text, /before|│/);
-		await makeEditOverride(dir).execute("edit", { path: "anchors.txt", edits: [{ op: "replace", anchor: anchor[0], body: ["after"] }] }, undefined, undefined, context(dir));
-		assert.equal(await readFile(join(dir, "anchors.txt"), "utf8"), "after\n");
-	} finally {
-		state.config = previousConfig;
+test("write returns only a summary for empty, short, and long content", async () => withTemp(async (dir) => {
+	const contents = ["", "before\n", Array.from({ length: 500 }, (_, index) => `line ${index + 1}`).join("\n")];
+	for (const [index, content] of contents.entries()) {
+		const path = `file-${index}.txt`;
+		const result = await makeWriteOverride(dir).execute("write", { path, content }, undefined, undefined, context(dir));
+		assert.deepEqual(result.content, [{ type: "text", text: `Created ${path}.` }]);
+		assert.equal(await readFile(join(dir, path), "utf8"), content);
 	}
-}));
-
-test("write returns at most 40 default anchors", async () => withTemp(async (dir) => {
-	const content = Array.from({ length: 500 }, (_, index) => `line ${index + 1}`).join("\n");
-	const result = await makeWriteOverride(dir).execute("write", { path: "large.txt", content }, undefined, undefined, context(dir));
-	assert.equal(result.content[0].text.match(/\b\d+#[0-9A-Z]+\b/g)?.length, 40);
-	assert.match(result.content[0].text, /… \(460 more/);
 }));
 
 test("write returns its summary and command output after an unchanged then_run", async () => withTemp(async (dir) => {
 	const fusion = createActionFusionExecutor(async () => "checked");
 	const write = makeWriteOverride(dir, fusion) as any;
 	const result = await write.execute("unchanged", { path: "unchanged.txt", content: "mutation\n", then_run: { command: "check" } }, undefined, undefined, context(dir));
-	const text = result.content.map((block: any) => block.text).join("\n");
-	assert.match(text, /Fresh anchors: 1#[0-9A-Z]+/);
-	assert.match(text, /then_run:succeeded/);
-	assert.doesNotMatch(text, /Revision:|[0-9a-f]{64}/);
+	assert.deepEqual(result.content, [
+		{ type: "text", text: "Created unchanged.txt." },
+		{ type: "text", text: "[then_run:succeeded]\nchecked" },
+	]);
 	assert.equal(result.details.actionFusion.freshness, "unchanged");
 }));
 
@@ -101,7 +85,7 @@ test("write reports changed freshness when then_run changes the target", async (
 	const result = await write.execute("changed", { path: "changed.txt", content: "mutation\n", then_run: { command: "check" } }, undefined, undefined, context(dir));
 	const text = result.content.map((block: any) => block.text).join("\n");
 	assert.doesNotMatch(text, /revision:|[0-9a-f]{64}/i);
-	assert.match(text, /Pre-command anchors are omitted/);
+	assert.doesNotMatch(text, /anchors are omitted/);
 	assert.equal((text.match(/Re-read/g) ?? []).length, 1);
 	assert.equal((text.match(/\[then_run:stale\]/g) ?? []).length, 1);
 	assert.doesNotMatch(text, /Fresh anchors:|\b1#[0-9A-Z]+\b/);

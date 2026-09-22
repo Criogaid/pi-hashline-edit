@@ -1,11 +1,8 @@
 import { Type, type Static } from "typebox";
 import { createWriteToolDefinition, withFileMutationQueue } from "@earendil-works/pi-coding-agent";
-import { getState } from "./state.ts";
 import { ACTION_FUSION_GUIDELINES, createActionFusionExecutor, createThenRunSchema, type ThenRunInput } from "./action-fusion.ts";
 import { commitFile, FileMutationError, type CommitMode } from "./file-commit.ts";
 import { canonicalPath } from "./read-tool.ts";
-import { computeLineHash, splitLines } from "../core/index.ts";
-import { finalizeMutationResult } from "./mutation-result.ts";
 
 function createWriteSchema(actionFusion: boolean) {
 	return Type.Object({
@@ -22,13 +19,6 @@ function createWriteSchema(actionFusion: boolean) {
 
 const writeSchema = createWriteSchema(false);
 type WriteParams = Omit<Static<typeof writeSchema>, "then_run"> & { then_run?: ThenRunInput };
-
-function formatAnchors(content: string, hashLen: number): string {
-	const lines = splitLines(content);
-	const shown = lines.slice(0, 40).map((line, index) => `${index + 1}#${computeLineHash(index + 1, line, hashLen)}`);
-	const suffix = lines.length > shown.length ? `\n… (${lines.length - shown.length} more; read again for full anchors)` : "";
-	return shown.length ? `\nFresh anchors: ${shown.join(", ")}${suffix}` : "";
-}
 
 export function makeWriteOverride(cwd: string, fusion?: ReturnType<typeof createActionFusionExecutor>): any {
 	const parameters = createWriteSchema(fusion !== undefined);
@@ -48,8 +38,6 @@ export function makeWriteOverride(cwd: string, fusion?: ReturnType<typeof create
 			if (!fusion && then_run !== undefined) throw new Error("then_run is unavailable because hashlineEdit.actionFusion is disabled");
 			if (mutationParams.content.includes("\0")) throw new Error("UNSUPPORTED_TEXT: NUL bytes are not editable.");
 			const absolutePath = canonicalPath(cwd, mutationParams.path);
-			const hashLen = getState().config.hashLen;
-			let mutationAnchors = "";
 			const mutate = () => withFileMutationQueue(absolutePath, async () => {
 				signal?.throwIfAborted();
 				const result = await commitFile(absolutePath, mutationParams.content, {
@@ -58,7 +46,6 @@ export function makeWriteOverride(cwd: string, fusion?: ReturnType<typeof create
 					signal,
 				});
 				try {
-					mutationAnchors = formatAnchors(mutationParams.content, hashLen);
 					return {
 						content: [{ type: "text" as const, text: `${result.created ? "Created" : "Wrote"} ${mutationParams.path}.` }],
 						details: {
@@ -75,18 +62,8 @@ export function makeWriteOverride(cwd: string, fusion?: ReturnType<typeof create
 					throw new FileMutationError("post_process", "PUBLISHED", `file was published but write result generation failed: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
 				}
 			});
-			const finalizeMutation = (result: any, publishAnchors: boolean) => {
-				const details = result.details as { path: string; created: boolean };
-				return {
-					...result,
-					content: [{
-						type: "text" as const,
-						text: `${details.created ? "Created" : "Wrote"} ${details.path}.${publishAnchors ? mutationAnchors : ""}`,
-					}],
-				};
-			};
-			if (!fusion) return finalizeMutationResult(await mutate(), finalizeMutation);
-			return fusion({ toolCallId, absolutePath, thenRun: then_run, mutate, finalizeMutation, signal, ctx, onUpdate });
+			if (!fusion) return mutate();
+			return fusion({ toolCallId, absolutePath, thenRun: then_run, mutate, signal, ctx, onUpdate });
 		},
 	};
 }
