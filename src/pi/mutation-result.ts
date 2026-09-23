@@ -2,12 +2,14 @@ import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import { FileMutationError, type MutationVersions, type PublicationStatus } from "./file-commit.ts";
 import { generateDiffString, generateUnifiedPatch } from "@earendil-works/pi-coding-agent";
 import { displayCarriageReturns, type AnchorFormatter } from "./anchor-format.ts";
+import { normalizeLineEndings } from "../core/lines.ts";
 
-/** Diff raw text so line numbers and patches retain LF boundaries and all source bytes. */
+/** Keep byte-faithful diff/patch data and a separate preview of the shared logical text. */
 export function generateMutationDetails(path: string, before: string, after: string, versions: MutationVersions, publication: PublicationStatus) {
 	const { diff, firstChangedLine } = generateDiffString(before, after);
 	return {
 		diff: displayCarriageReturns(diff),
+		displayDiff: displayCarriageReturns(generateDiffString(normalizeLineEndings(before), normalizeLineEndings(after)).diff),
 		firstChangedLine,
 		patch: generateUnifiedPatch(path, before, after),
 		publication,

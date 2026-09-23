@@ -148,7 +148,7 @@ test("formats parsed rg matches with full-line hash anchors", async () => {
       assert.match(output, /3#[0-9A-Z]+│alpha only/);
       assert.deepEqual(fake.calls[0], {
         path: rgPath,
-        args: ["--no-config", "--color=never", "--crlf", "--engine=default", "--no-multiline", "--ignore-case", "--fixed-strings", "--json", "--line-number", "--hidden", "-e", "alpha", "--", dir],
+        args: ["--no-config", "--color=never", "--no-crlf", "--engine=default", "--no-multiline", "--ignore-case", "--fixed-strings", "--json", "--line-number", "--hidden", "-e", "alpha", "--", dir],
       });
     }),
   );
@@ -252,7 +252,7 @@ test("passes output flags and formats files and counts", async () => {
       assert.deepEqual(fake.calls[0].args, [
         "--no-config",
         "--color=never",
-        "--crlf",
+        "--no-crlf",
         "--engine=default",
         "--no-multiline",
         "--ignore-case",
@@ -357,7 +357,7 @@ test("auto-detects modes with rg validation while preserving explicit overrides"
     );
     assert.equal(valid.calls.filter(({ args }) => args.includes("--quiet")).length, 2);
     assert.deepEqual(invalid.calls[0].args, [
-      "--no-config", "--color=never", "--crlf", "--engine=default", "--no-multiline",
+      "--no-config", "--color=never", "--no-crlf", "--engine=default", "--no-multiline",
       "--quiet", "-e", "queueTool(", "--", "-",
     ]);
 

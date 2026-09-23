@@ -68,6 +68,10 @@ Successful `edit` and `replace` results omit candidate rows whose full content a
 
 All tools accept relative and absolute paths, `file://` URLs, a leading `@` prefix, and a leading `~` (including `~\` on Windows). As in Pi's built-in file tools, supported Unicode spaces in paths become regular spaces, and Windows shell drive paths such as `/c/file`, `/mnt/c/file`, and `/cygdrive/c/file` resolve to native drive paths. Mutation tools share the file-mutation queue and commit layer.
 
+All text inspection and matching uses one logical representation: CRLF boundaries become LF; standalone CR and source-code escape sequences such as the four characters `\r\n` remain content. `read` and `grep` hash the same logical lines that `edit` verifies; literal and regex `replace` both match this LF view. Mutation offsets map back to the original text. `edit` and `replace` share separator restoration: reuse internal separators positionally, repeat the last for extra gaps, or use the file style (CRLF if present, otherwise LF) when none exist. Boundaries outside the replacement stay unchanged.
+
+`write` is the full-content boundary: its supplied bytes are authoritative, so it preserves their explicit LF/CRLF choices. Use it for intentional whole-file line-ending conversion. To inspect actual line-ending bytes, use a raw byte reader; anchored line displays intentionally do not distinguish LF from CRLF.
+
 ### Edit operations
 
 `edit` takes `path` and an `edits` array. Anchors are `"LINE#HASH"` strings; each `body` element is one logical line without CR or LF.
@@ -101,7 +105,11 @@ For a rename across a file:
 { "path": "src/foo.ts", "find": "oldName", "replace": "newName" }
 ```
 
-Literal mode inserts replacement text verbatim. Set `regex: true` for JavaScript capture groups and replacement templates:
+Literal mode keeps `$` text verbatim. Both literal and regex modes match the shared LF view: actual CRLF in the file and `find` normalizes to LF; standalone CR remains content. Match ranges map back to the original text before replacement, preserving bytes and separators outside each match, including an unmatched BOM or final newline.
+
+Replacement text also normalizes CRLF to LF, then reuses matched separators in order. Additional lines use the last matched separator, or the file style when the match contains no separator (CRLF if present anywhere, otherwise LF).
+
+Regex patterns run on LF text, so use `\n` for a line boundary. Captures and replacement templates also use the LF snapshot; the result then restores original separators. Use `write` for explicit line-ending conversion. Source-code escapes are ordinary text: JSON `"find": "\\r\\n"` finds the visible four-character sequence in literal mode, while `"find": "\r\n"` contains an actual CRLF boundary. Set `regex: true` for JavaScript capture groups and replacement templates:
 
 ```json
 { "path": "src/foo.ts", "find": "get([A-Z]\\w*)", "replace": "fetch$1", "regex": true }
@@ -150,7 +158,7 @@ Required: `path`. Optional: 1-based `offset` (default 1) and `limit` (default 20
 
 Context is rebuilt from surviving matches. Multiline filtering, counting, and limits remain line-based. Wildcard-only regexes such as `.*` and `^.+$` are accepted; use `literal: true` to search those characters verbatim.
 
-All inclusion/exclusion matching uses bundled ripgrep, independent of system `rg` or `PATH`. Searches are CRLF-aware, include hidden files while respecting ignore rules, and pass `--no-config`. The default engine is Rust regex; PCRE2 never silently falls back to another engine or literal matching.
+All inclusion/exclusion matching uses bundled ripgrep on the shared LF view, independent of system `rg` or `PATH`. File selection uses original paths, ignore rules, globs, and link settings. Search batches stage up to 64 normalized temporary files or 8 MiB of text (one large file can exceed that threshold); snapshots are removed after each batch and on failure/cancellation. This adds temporary disk I/O. Match paths refer to original files; line and column positions refer to logical text. Searches include hidden files and pass `--no-config`, `--no-crlf`, and `--encoding=none` for snapshot matching so standalone CR and BOM remain content. The default engine is Rust regex; PCRE2 never silently falls back to another engine or literal matching.
 
 Search diagnostics are preserved even when a result limit stops ripgrep. Readable, confirmed matches remain available with a `Search incomplete` notice and `details.incomplete: true`; counts then cover only confirmed matches. If no results can be returned, the tool reports an error rather than claiming there are no matches. Exclusion-scan failures still reject the query, because incomplete exclusions could admit incorrect results. Search diagnostics have a separate 4 KiB display budget.
 
@@ -160,13 +168,13 @@ Long lines show a labeled partial preview of up to 500 UTF-16 units around a rip
 
 Required: `path` and either top-level `find` / `replace`, or a non-empty `replacements` array. These forms are mutually exclusive: batch calls cannot include top-level `find`, `replace`, `regex`, `flags`, or `maxMatches`. Each rule requires `find` and `replace`, with these optional fields:
 
-- `regex`: defaults to `false`; regex mode supports capture groups, the full match, and prefix/suffix substitutions.
+- `regex`: defaults to `false`; both modes match the shared LF view. Regex mode supports capture groups, the full match, and prefix/suffix substitutions.
 - `flags`: applies in both modes; `g` is always added. Supported flags: `g i m s u y d`.
 - `maxMatches`: defaults to 2000 per rule and must be finite and positive; rejects excess matches before writing. Raise it for intentional bulk changes. It does not bound regex execution time or result size.
 
-Zero matches in any rule, an invalid rule, or overlapping match ranges rejects the whole call without writing. Adjacent ranges are allowed. Zero-length matches conflict at the same position or at the start/interior of another match; a zero-length match at another match's end is allowed unless it conflicts with a following match. Error rule indices and string offsets are zero-based (offsets count UTF-16 code units).
+Zero matches in any rule, an invalid rule, or overlapping match ranges rejects the whole call without writing. Adjacent ranges are allowed. Zero-length matches conflict at the same position or at the start/interior of another match; a zero-length match at another match's end is allowed unless it conflicts with a following match. Error rule indices and string offsets are zero-based (offsets count UTF-16 code units in the original text). Literal and regex rules share the same original ranges for conflict detection.
 
-Regex captures and prefix/suffix substitutions always refer to the original snapshot.
+Regex captures and prefix/suffix substitutions always refer to the original LF-normalized snapshot.
 
 ### Write
 
@@ -245,7 +253,7 @@ Fusion serializes each mutation/command sequence for its target and checks the p
 
 `read` computes line hashes only for its requested window; `grep` hashes selected matches/context. Both still read and decode whole files. Mutation revision checks cover actual bytes.
 
-Line boundaries are LF or CRLF; a standalone CR remains line content. Anchored rows display standalone CR as `␍` (U+240D), while hashes use the original content. Edit/replace diff previews also show CR as `␍`, including CR in CRLF endings; their unified patches retain the original characters and line endings. The marker is a display aid, not replacement text.
+Line boundaries are LF or CRLF; a standalone CR remains line content. Anchored rows display standalone CR as `␍` (U+240D), while hashes use the original content. Edit/replace `details.diff` marks raw CR as `␍`; `details.displayDiff` renders the shared LF view for the TUI, so CRLF boundary markers stay hidden even in mixed-ending files or beside an unterminated last line. Standalone CR and literal `␍` characters remain visible. Unified patches retain the original characters and line endings. The marker is a display aid, not replacement text.
 
 An existing UTF-8 BOM stays at byte zero through first-line replacement/deletion or insertion; deleting all content leaves the BOM. First-line hashes include it. A copied leading BOM in the first replacement/insertion line denotes the existing header; interior `U+FEFF` remains content. BOM-only files retain one anchored line. `replace` can explicitly match the BOM; `write` uses supplied content.
 

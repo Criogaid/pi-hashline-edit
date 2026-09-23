@@ -43,12 +43,7 @@ const MAX_COLLAPSED_DIFF_LINES = 24;
  * keeps `-`/`+` pairs intact so the intra-line highlight never dangles.
  */
 export function renderDiffPreview(diff: string, expanded: boolean, theme: any): string {
-	const rows = diff.split("\n");
-	const contentRows = rows.filter((row) => /^[+\- ]\s*\d+ /.test(row));
-	// Uniform CRLF endings carry no change information; retain markers for mixed endings.
-	const display = contentRows.length > 0 && contentRows.every((row) => row.endsWith("␍"))
-		? rows.map((row) => /^[+\- ]\s*\d+ /.test(row) ? row.slice(0, -1) : row).join("\n") : diff;
-	const rendered = renderDiff(display);
+	const rendered = renderDiff(diff);
 	if (expanded) return rendered;
 	const allLines = rendered.split("\n");
 	const more =
@@ -133,7 +128,7 @@ export function renderMutationResult(
 	if (isPartial && result.details?.actionFusion?.publication !== "PUBLISHED") return new Text(theme.fg("warning", pending), 0, 0);
 	const content = result.content?.[0];
 	if (context.isError) return renderToolError(result, theme);
-	const diff: string | undefined = result.details?.diff;
+	const diff: string | undefined = result.details?.displayDiff ?? result.details?.diff;
 	// Refresh in place: invalidation inside a renderer re-enters updateDisplay.
 	publishDiffCounts(diff, context, (counts) => {
 		context.state?.callText?.setText(header(context.args, theme, counts));

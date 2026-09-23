@@ -1,5 +1,5 @@
 /**
- * `replace`: powerful bulk text replacement — literal substring (replaceAll) or
+ * `replace`: bulk literal text replacement or
  * full JavaScript regex with capture-group substitution.
  *
  * Distinct from the anchor-verified `edit`. `replace` is **location-blind**:
@@ -8,10 +8,8 @@
  * otherwise need many individual edits. For a single surgical, verified change,
  * prefer `edit`.
  *
- * - Literal mode (`regex` false): `find` is a substring, matched verbatim;
- *   `replace` is inserted as-is (no `$` expansion).
- * - Regex mode (`regex` true): `find` is a JS pattern source; `replace` supports
- *   `$1`, `$2`, `$&`, etc.
+ * - Both modes match the shared LF view and restore original line separators.
+ * - Literal mode keeps `$` verbatim; regex mode expands JavaScript replacement tokens.
  * - `flags` adds regex flags in either mode; `g` is always forced so every
  *   occurrence is replaced. `i` (case-insensitive), `m` (per-line ^/$),
  *   `s` (dotall), `u` (unicode) all work.
@@ -30,7 +28,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { Type, type Static } from "typebox";
 import { escapeRegex } from "../core/text.ts";
-import { splitLines } from "../core/index.ts";
+import { createLfTextView, detectLineEnding, normalizeLineEndings, restoreLineEndings, splitLines } from "../core/lines.ts";
 import { findSortedRangeConflict } from "../core/ranges.ts";
 import { ACTION_FUSION_GUIDELINES, createActionFusionExecutor, createThenRunSchema, type ThenRunInput } from "./action-fusion.ts";
 import { readEditableSnapshot, commitReplacement } from "./file-commit.ts";
@@ -45,8 +43,8 @@ const DEFAULT_MAX_MATCHES = 2000;
 const VALID_FLAGS = new Set(["g", "i", "m", "s", "u", "y", "d"]);
 
 const replacementSchema = Type.Object({
-	find: Type.String({ description: "Text to find. Literal substring by default; a JavaScript regex source when regex is true." }),
-	replace: Type.String({ description: "Replacement text. Literal mode inserts verbatim; regex mode supports JavaScript $ substitutions." }),
+	find: Type.String({ description: "Text or JavaScript regex to find in the shared LF view. Actual CRLF in the file and query normalizes to LF; standalone CR stays content. Use \\n to match a line boundary." }),
+	replace: Type.String({ description: "Replacement text in the shared LF view. Restores original line endings; extra lines use the last matched ending or the file style. Literal mode keeps $ verbatim; regex mode expands JavaScript $ substitutions against the LF snapshot. Use write for explicit whole-file line-ending conversion." }),
 	regex: Type.Optional(Type.Boolean({ description: "Interpret find as a JavaScript regex (default false)." })),
 	flags: Type.Optional(Type.String({ description: "Regex flags in either mode; g is always added." })),
 	maxMatches: Type.Optional(Type.Number({ exclusiveMinimum: 0, description: `Per-rule match cap (default ${DEFAULT_MAX_MATCHES}); exceeding it rejects the entire call.` })),
@@ -81,11 +79,7 @@ function replacementRules(params: ReplaceParams): Replacement[] {
 	return rules as Replacement[];
 }
 
-/**
- * Build the matcher. `find` is escaped in literal mode; `flags` (validated) get
- * `g` forced so all occurrences replace. Invalid patterns or unsupported flags
- * surface as a friendly message rather than a raw `SyntaxError`.
- */
+/** Both matcher modes operate on the shared LF view. */
 function buildRegex(find: string, isRegex: boolean, flagsRaw: string | undefined): RegExp {
 	for (const c of flagsRaw ?? "") {
 		if (!VALID_FLAGS.has(c)) throw new Error(`invalid regex flag '${c}' (valid: g i m s u y d)`);
@@ -93,7 +87,8 @@ function buildRegex(find: string, isRegex: boolean, flagsRaw: string | undefined
 	const set = new Set((flagsRaw ?? "").split(""));
 	set.add("g");
 	const flagStr = [...set].join("");
-	const source = isRegex ? find : escapeRegex(find);
+	const logical = normalizeLineEndings(find);
+	const source = isRegex ? logical : escapeRegex(logical);
 	try {
 		return new RegExp(source, flagStr);
 	} catch (e) {
@@ -123,16 +118,21 @@ function expandReplacement(template: string, match: RegExpMatchArray, source: st
 
 function applyReplacements(source: string, rules: readonly Replacement[]): { text: string; count: number } {
 	const changes: { start: number; end: number; text: string; rule: number }[] = [];
+	const view = createLfTextView(source);
+	const fallbackEnding = detectLineEnding(source) === "crlf" ? "\r\n" : "\n";
 	for (const [index, rule] of rules.entries()) {
 		try {
 			const regex = buildRegex(rule.find, rule.regex === true, rule.flags);
 			const maxMatches = rule.maxMatches ?? DEFAULT_MAX_MATCHES;
 			let count = 0;
-			for (const match of source.matchAll(regex)) {
+			const replacement = normalizeLineEndings(rule.replace);
+			for (const match of view.text.matchAll(regex)) {
 				if (++count > maxMatches) throw new Error(`${count}+ matches exceed \`maxMatches\` (${maxMatches}). Raise \`maxMatches\` if intentional, or narrow \`find\`.`);
+				const start = view.sourceOffset(match.index!);
+				const end = view.sourceOffset(match.index! + match[0].length);
 				changes.push({
-					start: match.index!, end: match.index! + match[0].length, rule: index,
-					text: rule.regex ? expandReplacement(rule.replace, match, source) : rule.replace,
+					start, end, rule: index,
+					text: restoreLineEndings(rule.regex ? expandReplacement(replacement, match, view.text) : replacement, source.slice(start, end), fallbackEnding),
 				});
 			}
 			if (count === 0) throw new Error(`no matches for ${rule.regex ? `/${rule.find}/` : JSON.stringify(rule.find)}.`);

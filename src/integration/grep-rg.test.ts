@@ -510,3 +510,98 @@ test("long-line previews expose real rg hits across engines and preserve full-li
     }
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
+
+test("all text tools share logical CRLF matching, anchors, and mutation separators", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "hl-shared-text-"));
+  try {
+    const path = join(directory, "mixed.txt");
+    const before = "\uFEFFhead\r\nalpha\r\nbeta\nstand\rCR\r\r\nlast";
+    const write = makeWriteOverride(directory);
+    const read = makeReadOverride(directory);
+    const grep = makeGrepOverrideWithBackend(directory, {});
+    await write.execute("write", { path, content: before }, undefined, undefined);
+    assert.equal(await readFile(path, "utf8"), before);
+    const observed = await read.execute("read", { path }, undefined, undefined);
+    assert.ok(observed.content[0].type === "text");
+    const rows = observed.content[0].text.split("\n").filter((line: string) => /^\d+#[0-9A-Z]+│/.test(line));
+    for (const query of [
+      { pattern: "alpha\r\nbeta", literal: true },
+      { pattern: "alpha\\nbeta", literal: false },
+      { pattern: "alpha\\nbeta", literal: false, pcre2: true },
+      { pattern: ["alpha\\nbeta", "alpha|beta"], matchMode: "all", literal: false },
+    ]) {
+      const found = await grep.execute("grep", { path, multiline: true, ignoreCase: false, ...query }, undefined, undefined);
+      assert.ok(found.content[0].text.includes(rows[1]), JSON.stringify(query));
+      assert.ok(found.content[0].text.includes(rows[2]), JSON.stringify(query));
+    }
+    const excluded = await grep.execute("grep", { path, pattern: "alpha\\nbeta", excludePattern: "alpha", multiline: true, literal: false }, undefined, undefined);
+    assert.ok(!excluded.content[0].text.includes(rows[1]));
+    assert.ok(excluded.content[0].text.includes(rows[2]));
+    const carriage = await grep.execute("grep", { path, pattern: "\\r", literal: false }, undefined, undefined);
+    assert.ok(carriage.content[0].text.includes(rows[3]));
+    assert.ok(!carriage.content[0].text.includes(rows[1]));
+    const standaloneEnd = await grep.execute("grep", { path, pattern: "CR\\r$", literal: false }, undefined, undefined);
+    assert.ok(standaloneEnd.content[0].text.includes(rows[3]));
+
+    const expected = "\uFEFFhead\r\nA\r\nB\r\nC\nstand\rCR\r\r\nlast";
+    for (const mode of ["edit", "literal", "regex"]) {
+      await write.execute("reset", { path, content: before }, undefined, undefined);
+      if (mode === "edit") {
+        await makeEditOverride(directory).execute("edit", { path, edits: [{ op: "replace", anchor: rows[1].split("│")[0], end: rows[2].split("│")[0], body: ["A", "B", "C"] }] }, undefined, undefined);
+      } else {
+        await makeReplaceTool(directory).execute("replace", { path, find: mode === "regex" ? "alpha\\nbeta" : "alpha\r\nbeta", replace: "A\nB\nC", regex: mode === "regex" }, undefined, undefined);
+      }
+      assert.equal(await readFile(path, "utf8"), expected, mode);
+    }
+    // Whole-file write remains the explicit representation boundary, including EOL conversion.
+    await write.execute("convert", { path, content: "alpha\nbeta\n" }, undefined, undefined);
+    assert.equal(await readFile(path, "utf8"), "alpha\nbeta\n");
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("visible source escapes remain readable and searchable while real CRLF stays preserved", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "hl-source-escapes-"));
+  try {
+    const path = join(directory, "escapes.ts");
+    const code = 'const eol = "\\r\\n";\r\n';
+    await makeWriteOverride(directory).execute("write", { path, content: code }, undefined, undefined);
+    const read = await makeReadOverride(directory).execute("read", { path }, undefined, undefined);
+    assert.ok(read.content[0].type === "text");
+    assert.ok(read.content[0].text.includes(String.raw`const eol = "\r\n";`));
+    const grep = makeGrepOverrideWithBackend(directory, {});
+    for (const query of [
+      { pattern: String.raw`\r\n`, literal: true },
+      { pattern: String.raw`\\r\\n`, literal: false },
+      { pattern: String.raw`\\r\\n`, literal: false, pcre2: true },
+    ]) {
+      const result = await grep.execute("grep", { path, ...query, ignoreCase: false }, undefined, undefined);
+      assert.ok(result.content[0].text.includes(String.raw`const eol = "\r\n";`));
+    }
+    const replace = makeReplaceTool(directory);
+    await replace.execute("literal", { path, find: String.raw`\r\n`, replace: String.raw`\n` }, undefined, undefined);
+    assert.equal(await readFile(path, "utf8"), 'const eol = "\\n";\r\n');
+    await replace.execute("regex", { path, find: String.raw`\\n`, replace: String.raw`\r\n`, regex: true }, undefined, undefined);
+    assert.equal(await readFile(path, "utf8"), code);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("normalized grep batches retain original paths, literal option markers, and decode diagnostics", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "hl-grep-snapshots-"));
+  try {
+    await Promise.all(Array.from({ length: 70 }, (_, i) => writeFile(join(directory, `file ${i}.txt`), "--\r\n")));
+    await writeFile(join(directory, "invalid.txt"), Buffer.from([0xc3, 0x28]));
+    const grep = makeGrepOverrideWithBackend(directory, {});
+    const result = await grep.execute("grep", { path: directory, pattern: "--", literal: true, outputMode: "count", limit: 100 }, undefined, undefined);
+    assert.equal((result.content[0].text.match(/file \d+\.txt: 1/g) ?? []).length, 70);
+    assert.match(result.content[0].text, /Search incomplete/);
+    assert.match(result.content[0].text, /invalid\.txt/);
+    assert.match(result.content[0].text, /UNSUPPORTED_ENCODING/);
+    assert.doesNotMatch(result.content[0].text, /hashline-grep-/);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});

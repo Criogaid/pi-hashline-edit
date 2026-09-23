@@ -762,15 +762,14 @@ test("unique candidate content is independent of oversized neighboring rows", as
 	assert.equal(await readFile(file, "utf8"), before.replace("target", "updated"));
 }));
 
-test("CR replacements remain visible in diffs and exact in patches", async () => withDir(async (dir) => {
+test("standalone CR replacements remain visible in diffs and exact in patches", async () => withDir(async (dir) => {
 	const file = join(dir, "cr.txt");
 	for (const [before, find, replacement] of [
 		["a\rb\n", "\r", "\n"],
 		["a\rb\n", "\r", "␍"],
-		["a\r\nb\r\n", "\r\n", "\n"],
 	]) {
 		await writeFile(file, before);
-		const result = await call(makeReplaceTool(dir), { path: file, find, replace: replacement });
+		const result = await call(makeReplaceTool(dir), { path: file, find, replace: replacement, regex: true });
 		assert.equal(await readFile(file, "utf8"), before.replaceAll(find, replacement));
 		assert.equal(result.details.firstChangedLine, 1);
 		assert.match(result.details.diff, /^-1 a␍/m);

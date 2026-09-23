@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { splitLines, detectLineEnding, hasFinalNewline } from "./lines.ts";
+import { createLfTextView, normalizeLineEndings, splitLines, detectLineEnding, hasFinalNewline } from "./lines.ts";
 
 test("splitLines edge cases", () => {
 	assert.deepEqual(splitLines(""), []);
@@ -30,4 +30,15 @@ test("detectLineEnding", () => {
 	assert.equal(detectLineEnding("a\nb\n"), "lf");
 	assert.equal(detectLineEnding("a\r\nb\r\n"), "crlf");
 	assert.equal(detectLineEnding("a\nb\r\nc\n"), "crlf");
+});
+
+test("LF views map every UTF-16 boundary back to original CRLF bytes", () => {
+	for (const source of ["", "a\nb", "\uFEFF😀\r\nb\nc\r\n", "\r\n\r\n", "a\rb\r\r\nc"]) {
+		const view = createLfTextView(source);
+		assert.equal(view.text, normalizeLineEndings(source));
+		assert.equal(view.sourceOffset(view.text.length), source.length);
+		for (let offset = 0; offset <= view.text.length; offset++) {
+			assert.equal(normalizeLineEndings(source.slice(0, view.sourceOffset(offset))), view.text.slice(0, offset));
+		}
+	}
 });

@@ -2,7 +2,7 @@ import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import type { Readable } from "node:stream";
 import { escapeRegex } from "../core/text.ts";
 
-export const COMMON_RG_ARGS = ["--no-config", "--color=never", "--crlf"];
+export const COMMON_RG_ARGS = ["--no-config", "--color=never", "--no-crlf"];
 export const MAX_RG_RECORD_BYTES = 16 * 1024 * 1024;
 
 export interface SearchModes {

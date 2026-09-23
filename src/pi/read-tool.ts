@@ -86,7 +86,7 @@ export function makeReadOverride(cwd: string) {
 		name: "read" as const,
 		label: "read",
 		description:
-			"Read file contents. Text files display per-line content hashes (LINE#HASH│content) for hashline-verified editing.",
+			"Read file contents. Text files display per-line content hashes (LINE#HASH│content) in the shared LF view for hashline-verified editing. CRLF line boundaries display as LF; source-code escape sequences remain literal text.",
 		promptSnippet: "Read files with editable line anchors",
 		promptGuidelines: [
 			"Prefer read over shell output for files you intend to edit.",

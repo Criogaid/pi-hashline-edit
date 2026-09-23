@@ -205,8 +205,8 @@ test("replacing one line with several keeps the block's trailing gap", () => {
 	const result = applyEdits(before, [{ op: "replace", start: at(before, 2), body: ["X", "Y", "Z"] }]);
 	assert.equal(result.ok, true);
 	// b's gap (\n) moves to the last new line, so the boundary to c is unchanged;
-	// the two new interior gaps borrow positionally, then fall back to crlf.
-	if (result.ok) assert.equal(result.text, "a\r\nX\nY\r\nZ\nc\r\nd");
+	// b has no internal gap; both new internal gaps use the file style, like replace("b", "X\nY\nZ").
+	if (result.ok) assert.equal(result.text, "a\r\nX\r\nY\r\nZ\nc\r\nd");
 });
 
 test("a file without a final newline keeps not having one", () => {

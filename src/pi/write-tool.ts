@@ -8,7 +8,7 @@ import { canonicalPath } from "./path.ts";
 function createWriteSchema(actionFusion: boolean) {
 	return Type.Object({
 		path: Type.String({ description: "Path to the file to write" }),
-		content: Type.String({ description: "Complete file content" }),
+		content: Type.String({ description: "Complete file content, including the exact desired line endings. Source-code escape sequences remain literal text." }),
 		mode: Type.Optional(Type.Union([
 			Type.Literal("create", { description: "Fail if the target already exists" }),
 			Type.Literal("overwrite", { description: "Fail if the target does not exist" }),
@@ -27,7 +27,7 @@ export function makeWriteOverride(cwd: string, fusion?: ReturnType<typeof create
 	return {
 		name: "write" as const,
 		label: "write",
-		description: "Write complete file content. By default, creates missing files and overwrites existing files.",
+		description: "Write complete file content exactly as supplied, including LF/CRLF choices. Use for intentional whole-file line-ending conversion. By default, creates missing files and overwrites existing files.",
 		promptSnippet: "Write complete file content to a path",
 		promptGuidelines: fusion ? ACTION_FUSION_GUIDELINES : [],
 		parameters,

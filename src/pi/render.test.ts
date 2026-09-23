@@ -7,6 +7,7 @@ import { makeEditOverride } from "./edit-tool.ts";
 import { makeReplaceTool } from "./replace-tool.ts";
 import { renderDiffPreview, withMutationStatus } from "./render.ts";
 import { makeWriteOverride } from "./write-tool.ts";
+import { generateMutationDetails } from "./mutation-result.ts";
 
 test("mutation headers refresh in place and retain isolated per-call counts", () => {
 	initTheme("dark");
@@ -78,13 +79,33 @@ test("unfused write errors retain the native full diagnostic", () => {
 	assert.match(card.render(160).join("\n"), /write failed[\s\S]*important detail/);
 });
 
-test("CRLF diff preview hides uniform line-end markers without altering the diff", () => {
+test("mutation previews hide CRLF boundaries even with mixed endings or an unterminated last line", () => {
 	initTheme("dark");
-	const diff = displayCarriageReturns(generateDiffString("old\r\ncontext\r\n", "new\r\ncontext\r\n").diff);
-	assert.match(diff, /␍/);
-	const output = renderDiffPreview(diff, true, theme);
-	assert.doesNotMatch(output, /␍/);
-	assert.match(output, /old[\s\S]*new[\s\S]*context/);
-	assert.match(renderDiffPreview("-1 old␍\n+1 new", true, theme), /␍/);
-	assert.match(renderDiffPreview("-1 a␍b␍\n+1 a␍c␍", true, theme), /␍/);
+	for (const before of ["old\r\ncontext\r\n", "old\r\ncontext\nlast", "old\r\ncontext\r\nlast"]) {
+		const after = before.replace("old", "new");
+		const details = generateMutationDetails("a.txt", before, after, { publishedRevision: "r", observedRevision: "r" }, "PUBLISHED");
+		assert.equal(details.diff, displayCarriageReturns(generateDiffString(before, after).diff));
+		assert.match(details.diff, /␍/);
+		assert.ok(details.patch.includes("-old\r\n"));
+		for (const tool of [makeEditOverride(process.cwd()), makeReplaceTool(process.cwd())]) {
+			for (const expanded of [false, true]) {
+				const context: any = { args: { path: "a.txt" }, state: {}, isError: false };
+				const rendered = tool.renderResult({ content: [{ type: "text", text: "Done" }], details }, { isPartial: false, expanded }, theme, context);
+				const output = rendered.render(160).join("\n");
+				assert.doesNotMatch(output, /␍/);
+				assert.match(output, /old[\s\S]*new[\s\S]*context/);
+			}
+		}
+	}
+});
+
+test("diff previews retain standalone CR and literal control-picture characters", () => {
+	initTheme("dark");
+	for (const before of ["old\r", "old␍", "old\rcontent\r\n"]) {
+		const details = generateMutationDetails("a.txt", before, before.replace("old", "new"), { publishedRevision: "r", observedRevision: "r" }, "PUBLISHED");
+		const tool = makeEditOverride(process.cwd());
+		const result = tool.renderResult({ content: [], details }, { expanded: true }, theme, { args: { path: "a.txt" }, state: {}, isError: false });
+		assert.match(result.render(160).join("\n"), /␍/);
+	}
+	assert.match(renderDiffPreview("-1 old␍\n+1 new␍", true, theme), /␍/);
 });

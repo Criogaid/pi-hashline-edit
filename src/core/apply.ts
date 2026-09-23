@@ -28,7 +28,7 @@
  */
 
 import { computeLineHash } from "./hash.ts";
-import { detectLineEnding, hasFinalNewline, splitLines } from "./lines.ts";
+import { detectLineEnding, hasFinalNewline, lineSeparators, replacementSeparator, splitLines } from "./lines.ts";
 import type { Anchor, AnchorCheck, AnchorFailure, AnchorRecovery, ApplyResult, Edit } from "./types.ts";
 import { findSortedRangeConflict } from "./ranges.ts";
 
@@ -244,20 +244,22 @@ export function applyEdits(text: string, edits: Edit[], hashLen = 4, shiftRadius
 	// the original (its gap), so surviving lines keep theirs byte for byte. New
 	// gaps borrow the removed block's separators positionally — the last new
 	// line inherits the block's trailing gap, leaving the boundary to the next
-	// surviving line unchanged; gaps past the removed block's length (or in a
-	// pure insertion) fall back to the file's customary ending.
-	const separators = text.match(/\r?\n/g) ?? [];
+	// surviving line unchanged. Internal gaps use the same positional/last-gap
+	// rule as substring replacements, falling back to the file style for insertions.
+	const separators = lineSeparators(text);
 	const separator = ending === "crlf" ? "\r\n" : "\n";
 	// Verify legacy anchors above before separating the file BOM from movable line content.
 	let result = lines.map((content, i) => ({ content: bom && i === 0 ? content.slice(1) : content, separator: separators[i] ?? "" }));
 	for (const op of [...sorted].sort((a, b) => b.lo - a.lo)) {
 		const removed = result.slice(op.lo, op.hi);
+		// The trailing gap is outside the logical replacement, just as in substring replacement.
+		const removedSeparators = removed.slice(0, -1).map((line) => line.separator);
 		const inserted = op.newLines.map((content, i) => ({
 			// A copied first-line BOM denotes the existing file header, not a second BOM.
 			content: bom && op.lo === 0 && i === 0 && content.startsWith(bom) ? content.slice(1) : content,
 			separator: i === op.newLines.length - 1 && removed.length > 0
 				? removed[removed.length - 1].separator
-				: removed[i]?.separator || separator,
+				: replacementSeparator(removedSeparators, i, separator),
 		}));
 		result.splice(op.lo, op.hi - op.lo, ...inserted);
 	}

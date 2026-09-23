@@ -52,6 +52,63 @@ test("replace literal: replaces all occurrences", async () => {
 	});
 });
 
+test("literal multiline replace matches LF and CRLF while retaining local separators", async () => withDir(async (dir) => {
+	const file = join(dir, "mixed.txt");
+	await writeFile(file, "\uFEFFhead\r\nold\r\none\r\nmid\nold\none\nend\r\n");
+	const result: any = await call(makeReplaceTool(dir), { path: "mixed.txt", find: "old\none", replace: "NEW\nX" });
+	assert.match(result.content[0].text, /2 matches/);
+	assert.equal(await readFile(file, "utf8"), "\uFEFFhead\r\nNEW\r\nX\r\nmid\nNEW\nX\nend\r\n");
+	await call(makeReplaceTool(dir), { path: "mixed.txt", find: "NEW\r\nX", replace: "done" });
+	assert.equal(await readFile(file, "utf8"), "\uFEFFhead\r\ndone\r\nmid\ndone\nend\r\n");
+}));
+
+test("both replacement modes preserve each matched separator", async () => withDir(async (dir) => {
+	const file = join(dir, "mixed.txt");
+	for (const regex of [false, true]) {
+		await writeFile(file, "a\r\nb\nc\r\ntail\n");
+		await call(makeReplaceTool(dir), { path: "mixed.txt", find: "a\nb\nc", replace: "x\ny\nz\nextra", regex });
+		assert.equal(await readFile(file, "utf8"), "x\r\ny\nz\nextra\r\ntail\n");
+	}
+}));
+
+test("literal replacement uses one LF view and preserves raw bytes across query styles", async () => withDir(async (dir) => {
+	const file = join(dir, "f.txt");
+	for (const find of ["a\nb\nc", "a\r\nb\r\nc", "a\r\nb\nc"]) {
+		const before = "\uFEFFhead\r\na\r\nb\nc\rtail";
+		await writeFile(file, before);
+		const result = await call(makeReplaceTool(dir), { path: file, find, replace: find });
+		assert.equal(await readFile(file, "utf8"), before);
+		assert.match(result.content[0].text, /no net change/);
+	}
+	for (const [before, find, replacement, expected] of [
+		["a\r\nb", "a", "A\nextra", "A\r\nextra\r\nb"],
+		["a\nb", "a\r\nb", "A\r\nB", "A\nB"],
+		["a\r\nb", "\n", "", "ab"],
+		["a\r\nb", "\n", "\n", "a\r\nb"],
+		["a\rb\r\r\nc", "a\rb\r\r\nc", "x\ry\r\r\nz", "x\ry\r\r\nz"],
+	]) {
+		await writeFile(file, before);
+		await call(makeReplaceTool(dir), { path: file, find, replace: replacement });
+		assert.equal(await readFile(file, "utf8"), expected);
+	}
+}));
+
+test("mixed literal and regex batches share raw offsets after CRLF normalization", async () => withDir(async (dir) => {
+	const file = join(dir, "f.txt");
+	await writeFile(file, "😀\r\na\r\nb\r\nc");
+	await call(makeReplaceTool(dir), { path: file, replacements: [
+		{ find: "a\nb", replace: "A\nB" },
+		{ find: "(c)$", replace: "$1!", regex: true },
+	] });
+	assert.equal(await readFile(file, "utf8"), "😀\r\nA\r\nB\r\nc!");
+	const before = await readFile(file, "utf8");
+	await assert.rejects(call(makeReplaceTool(dir), { path: file, replacements: [
+		{ find: "A\nB", replace: "x" },
+		{ find: "\\nB", replace: "y", regex: true },
+	] }), /overlap/);
+	assert.equal(await readFile(file, "utf8"), before);
+}));
+
 test("replace literal: $ in replacement stays literal (no expansion)", async () => {
 	await withDir(async (dir) => {
 		const f = join(dir, "f.txt");
@@ -401,4 +458,14 @@ test("successful batches run one command against the complete result", async () 
 	assert.equal(commands, 1);
 	assert.equal(result.details.actionFusion.command, "succeeded");
 	assert.match(result.content[0].text, /Updated anchors/);
+}));
+
+test("regex captures and zero-width insertions use logical offsets without consuming CRLF bytes", async () => withDir(async (dir) => {
+	const path = join(dir, "f.txt");
+	const before = "a\r\nb\rc\r\r\n";
+	await writeFile(path, before);
+	await call(makeReplaceTool(dir), { path, find: "(b\rc\r)\\n", replace: "$1\n", regex: true });
+	assert.equal(await readFile(path, "utf8"), before);
+	await call(makeReplaceTool(dir), { path, find: "(?=\\n)", replace: "!", regex: true });
+	assert.equal(await readFile(path, "utf8"), "a!\r\nb\rc\r!\r\n");
 }));

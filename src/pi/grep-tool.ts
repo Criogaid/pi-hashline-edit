@@ -34,7 +34,7 @@ import { Type } from "typebox";
 import { Text } from "@earendil-works/pi-tui";
 import { readFile, realpath, stat } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
-import { splitLines } from "../core/lines.ts";
+import { normalizeLineEndings, splitLines } from "../core/lines.ts";
 import { decodeEditableText } from "../core/text.ts";
 import { createAnchorFormatter, displayCarriageReturns } from "./anchor-format.ts";
 import { canonicalPath } from "./path.ts";
@@ -53,6 +53,7 @@ import {
   type LinePredicate,
   type SearchModes,
 } from "./rg-line-filter.ts";
+import { runRgTextView } from "./rg-text-view.ts";
 import { intersectRanges, normalizeRanges, subtractRanges, unionRanges, submatchesToLineRanges, type LineRange, type RgSubmatch } from "./rg-line-ranges.ts";
 
 const DEFAULT_LIMIT = 100;
@@ -530,7 +531,7 @@ export function makeGrepOverride(cwd: string) {
 /** @internal — build a grep override with deterministic process backends for tests. */
 export function makeGrepOverrideWithBackend(cwd: string, overrides: Partial<GrepBackend>) {
   const backend: GrepBackend = {
-    runRg,
+    runRg: runRgTextView,
     runRgPaths,
     resolveIgnoreCase,
     validatePatterns,
@@ -542,7 +543,7 @@ export function makeGrepOverrideWithBackend(cwd: string, overrides: Partial<Grep
     name: "grep" as const,
     label: "grep",
     description:
-      "Search file contents with ripgrep and return LINE#HASH anchors for physical lines. Supports standard or PCRE2 regexes, multiline matching, ignore overrides, and linked directories.",
+      "Search LF-normalized file contents with ripgrep and return LINE#HASH anchors for logical lines. CRLF queries normalize to LF; standalone CR stays content. Supports standard or PCRE2 regexes, multiline matching, ignore overrides, and linked directories.",
     promptSnippet: "Search file contents with ripgrep",
     promptGuidelines: [
       "Prefer the grep tool for file-content searches.",
@@ -607,14 +608,14 @@ export function makeGrepOverrideWithBackend(cwd: string, overrides: Partial<Grep
       const anchors = createAnchorFormatter();
       const warnings: string[] = [];
 
-      const patterns = toArray(params.pattern);
+      const patterns = toArray(params.pattern).map(normalizeLineEndings);
       if (patterns.length === 0) throw new Error("pattern is required (got an empty array)");
       if (patterns.some((pattern) => pattern.trim() === "")) {
         throw new Error("pattern must not be empty");
       }
 
       const rgPath = bundledRgPath;
-      const excludes = toArray(params.excludePattern);
+      const excludes = toArray(params.excludePattern).map(normalizeLineEndings);
       const matchMode: "any" | "all" = params.matchMode ?? "any";
       const outputMode: "content" | "files" | "count" = params.outputMode ?? "content";
       const globs = toArray(params.glob);

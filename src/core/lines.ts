@@ -18,6 +18,48 @@
 
 import type { LineEnding } from "./types.ts";
 
+/** Normalize CRLF boundaries to LF; standalone CR remains content. */
+export function normalizeLineEndings(text: string): string {
+	return text.replace(/\r\n/g, "\n");
+}
+
+/** Raw separators in logical-line order, shared by both mutation applicators. */
+export function lineSeparators(text: string): string[] {
+	return text.match(/\r?\n/g) ?? [];
+}
+
+/** New internal gaps reuse the corresponding old gap, then the last gap or file style. */
+export function replacementSeparator(separators: readonly string[], index: number, fallback: string): string {
+	return separators[index] || separators[separators.length - 1] || fallback;
+}
+
+/** Restore a logical replacement without normalizing it a second time. */
+export function restoreLineEndings(logical: string, original: string, fallback: string): string {
+	const separators = lineSeparators(original);
+	let index = 0;
+	return logical.replace(/\n/g, () => replacementSeparator(separators, index++, fallback));
+}
+
+/** Build an LF matching view with UTF-16 boundary offsets back into the original text. */
+export function createLfTextView(source: string) {
+	const removed: number[] = [];
+	for (const match of source.matchAll(/\r\n/g)) removed.push(match.index! - removed.length);
+	return {
+		text: normalizeLineEndings(source),
+		sourceOffset(offset: number): number {
+			// Count removed CRs strictly before this boundary: a newline starts at its original CR.
+			let lo = 0;
+			let hi = removed.length;
+			while (lo < hi) {
+				const mid = Math.floor((lo + hi) / 2);
+				if (removed[mid] < offset) lo = mid + 1;
+				else hi = mid;
+			}
+			return offset + lo;
+		},
+	};
+}
+
 /**
  * Split text into lines, normalizing CRLF boundaries and preserving standalone `\r`.
  *
@@ -30,7 +72,7 @@ import type { LineEnding } from "./types.ts";
  */
 export function splitLines(text: string): string[] {
 	if (text === "") return [];
-	const normalized = text.replace(/\r\n/g, "\n");
+	const normalized = normalizeLineEndings(text);
 	return (normalized.endsWith("\n") ? normalized.slice(0, -1) : normalized).split("\n");
 }
 
