@@ -144,7 +144,7 @@ Required: `path`. Optional: 1-based `offset` (default 1) and `limit` (default 20
 | `path` | Current directory | One path or an array of search roots. |
 | `matchMode` | `"any"` | OR across patterns; `"all"` requires every pattern on the same physical line, at most 16 patterns. |
 | `excludePattern` | None | String or array; remove lines matching any exclusion. |
-| `literal` | Automatic | `true`: literal strings. `false`: strict regex. Automatic mode detects regex metacharacters; parse failures fall back to literal text only for one inclusion pattern without exclusions. Invalid compound queries fail with guidance to fix the regex or explicitly set `literal: true`. |
+| `literal` | Automatic | Set `true` for code text containing regex punctuation, such as `pi.on(`, `compact(`, or a visible `\0`; use a `pattern` array for literal alternatives. Set `false` only for intentional valid regex. The setting also applies to exclusions. Automatic mode tries regex when it sees metacharacters; an invalid single pattern without exclusions falls back to searching the **entire string** literally, not interpreting `|` as alternatives. Invalid compound queries fail rather than changing their meaning. |
 | `ignoreCase` | Smart-case | Explicit `true`/`false` overrides case handling; the query-level decision also applies to exclusions. |
 | `wordMatch` | `false` | Whole-word matches. |
 | `glob` | None | One glob or an ordered array; prefix exclusions with `!`. |

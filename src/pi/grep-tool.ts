@@ -147,7 +147,7 @@ function clampContext(context: number | undefined): number {
 const grepOverrideSchema = Type.Object({
   pattern: Type.Union([Type.String(), Type.Array(Type.String())], {
     description:
-      "Non-empty pattern(s). Arrays use matchMode.",
+      "Non-empty string or array (OR by default). For code snippets with regex punctuation, set literal:true; use an array for alternatives instead of joining literals with |.",
   }),
   matchMode: Type.Optional(
     Type.Union([Type.Literal("any"), Type.Literal("all")], {
@@ -182,7 +182,7 @@ const grepOverrideSchema = Type.Object({
   ),
   literal: Type.Optional(
     Type.Boolean({
-      description: "true: literal; false: regex, no fallback. Shared by pattern/excludePattern. Default: literal unless any pattern has regex syntax; invalid regex falls back only for one inclusion pattern without exclusions.",
+      description: "Set true for literal code text, especially calls, brackets, pipes, and backslashes. Set false only for intentional valid regex. Applies to pattern and excludePattern. Automatic mode tries regex for metacharacters; only one pattern without exclusions can fall back, searching the entire input literally.",
     }),
   ),
   noIgnore: Type.Optional(Type.Boolean({
@@ -547,6 +547,7 @@ export function makeGrepOverrideWithBackend(cwd: string, overrides: Partial<Grep
     promptSnippet: "Search file contents with ripgrep",
     promptGuidelines: [
       "Prefer the grep tool for file-content searches.",
+      "Set literal:true when searching code text containing regex punctuation (for example pi.on(, compact(, or \\0); use a pattern array for literal alternatives. Use literal:false only for intentional valid regex.",
       "Use returned grep anchors directly for edits; no re-read needed.",
       "Use files/count when only paths or counts are needed; use matchMode all and excludePattern instead of shell pipelines.",
     ],

@@ -105,6 +105,13 @@ const text = (result: any): string => result.content[0].text;
 const call = (tool: any, params: any, signal?: AbortSignal) =>
   tool.execute("0", params, signal, undefined);
 
+test("grep guidance distinguishes literal code searches from regex and array alternatives", () => {
+  const tool = makeGrepOverrideWithBackend(process.cwd(), {});
+  assert.match(tool.promptGuidelines.join("\n"), /literal:true.*pi\.on\(.*pattern array.*literal alternatives/);
+  assert.match(JSON.stringify(tool.parameters.properties.pattern), /use an array for alternatives/);
+  assert.match(JSON.stringify(tool.parameters.properties.literal), /entire input literally/);
+});
+
 async function withEnabled<T>(enabled: boolean, fn: () => Promise<T>): Promise<T> {
   const state = getState();
   const previous = state.config.enabled;
