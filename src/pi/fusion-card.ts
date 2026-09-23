@@ -63,8 +63,8 @@ export function registerFusionCards(pi: ExtensionAPI) {
 				const status = interrupted ? "interrupted (final status unknown)" : current.command;
 				const failed = current.command === "failed" || current.command === "timeout";
 				const color = pending || current.command === "cancelled" ? "warning" : failed ? "error" : current.command === "succeeded" ? "success" : "dim";
-				const background = pending && !interrupted ? "toolPendingBg" : failed ? "toolErrorBg" : current.command === "succeeded" ? "toolSuccessBg" : undefined;
-				box.setBgFn((line) => background ? theme.bg(background, line) : line);
+				const background = pending && !interrupted ? "toolPendingBg" : failed ? "toolErrorBg" : current.command === "succeeded" ? "toolSuccessBg" : "customMessageBg";
+				box.setBgFn((line) => theme.bg(background, line));
 				statusText.setText(`${theme.fg("toolTitle", theme.bold("then_run"))} · ${theme.fg(color, status)}`);
 				const context = {
 					args: { command: current.commandText }, toolCallId: current.toolCallId, cwd: process.cwd(),

@@ -82,6 +82,7 @@ test("skips and cancellations stay neutral and restore their own reason", () => 
 			assert.doesNotMatch(output, /publication=|freshness=|\(no output\)/);
 			assert.ok(!view.backgrounds.includes("toolErrorBg"));
 			assert.ok(!view.backgrounds.includes("toolSuccessBg"));
+			assert.equal(view.backgrounds.at(-1), "customMessageBg");
 		}
 	}
 });
