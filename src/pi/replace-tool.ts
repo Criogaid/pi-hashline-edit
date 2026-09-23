@@ -43,7 +43,7 @@ const DEFAULT_MAX_MATCHES = 2000;
 const VALID_FLAGS = new Set(["g", "i", "m", "s", "u", "y", "d"]);
 
 const replacementSchema = Type.Object({
-	find: Type.String({ description: "Text or JavaScript regex to find in the shared LF view. Actual CRLF in the file and query normalizes to LF; standalone CR stays content. Use \\n to match a line boundary." }),
+	find: Type.String({ description: "Text or JavaScript regex to find in the shared LF view. Actual CRLF in the file and query normalizes to LF; standalone CR stays content. In literal mode (default), an actual LF matches a line boundary, while backslash followed by n matches those two source characters. In regex mode, \\n in the pattern matches LF." }),
 	replace: Type.String({ description: "Replacement text in the shared LF view. Restores original line endings; extra lines use the last matched ending or the file style. Literal mode keeps $ verbatim; regex mode expands JavaScript $ substitutions against the LF snapshot. Use write for explicit whole-file line-ending conversion." }),
 	regex: Type.Optional(Type.Boolean({ description: "Interpret find as a JavaScript regex (default false)." })),
 	flags: Type.Optional(Type.String({ description: "Regex flags in either mode; g is always added." })),

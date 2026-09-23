@@ -41,6 +41,14 @@ const stubTheme = { fg: (_k: string, s: string) => s, bold: (s: string) => s };
 // singleton — initialize it once for this test process (watcher off by default).
 initTheme();
 
+test("replace guidance distinguishes literal LF from a visible escape", () => {
+	const tool = makeReplaceTool(process.cwd());
+	const description = JSON.stringify(tool.parameters.properties.find);
+	assert.match(description, /In literal mode \(default\), an actual LF matches a line boundary/);
+	assert.match(description, /backslash followed by n matches those two source characters/);
+	assert.match(description, /In regex mode/);
+});
+
 test("replace literal: replaces all occurrences", async () => {
 	await withDir(async (dir) => {
 		const f = join(dir, "f.txt");
