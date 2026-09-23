@@ -66,7 +66,7 @@ test("mutation cards use Fusion by default and explicit false removes command su
 			card.updateResult({ ...result, isError: false });
 			assert.ok(card.render(100).join("\n").includes(theme.getBgAnsi("toolSuccessBg")));
 			card.setExpanded(true);
-			assert.match(card.render(100).join("\n"), /publication=.*freshness=unchanged/);
+			assert.doesNotMatch(card.render(100).join("\n"), /publication=|freshness=/);
 			assert.doesNotMatch(card.render(100).join("\n"), /Command exited|then_run:failed/);
 			assert.doesNotMatch(frames.at(-1)!.commandOutput, /publication=|freshness=|File changes are saved|No file changes were published|mutation completed/);
 			assert.ok(card.render(100).join("\n").includes(theme.getBgAnsi("toolSuccessBg")));

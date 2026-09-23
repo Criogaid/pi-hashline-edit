@@ -43,7 +43,12 @@ const MAX_COLLAPSED_DIFF_LINES = 24;
  * keeps `-`/`+` pairs intact so the intra-line highlight never dangles.
  */
 export function renderDiffPreview(diff: string, expanded: boolean, theme: any): string {
-	const rendered = renderDiff(diff);
+	const rows = diff.split("\n");
+	const contentRows = rows.filter((row) => /^[+\- ]\s*\d+ /.test(row));
+	// Uniform CRLF endings carry no change information; retain markers for mixed endings.
+	const display = contentRows.length > 0 && contentRows.every((row) => row.endsWith("␍"))
+		? rows.map((row) => /^[+\- ]\s*\d+ /.test(row) ? row.slice(0, -1) : row).join("\n") : diff;
+	const rendered = renderDiff(display);
 	if (expanded) return rendered;
 	const allLines = rendered.split("\n");
 	const more =
@@ -165,10 +170,10 @@ export function withMutationStatus(tool: ToolDefinition<any, any, any>): ToolDef
 			shell.box.addChild(shell.result);
 			const file = result.details?.actionFusion ?? shell.fileState;
 			if (file) {
-				shell.fileState = { publication: file.publication, freshness: file.freshness };
-				const stale = file.freshness === "changed" || file.freshness === "missing";
-				const notice = stale ? `\nAnchors are stale: target ${file.freshness}.` : "";
-				shell.box.addChild(new Text(theme.fg(stale ? "warning" : "dim", `publication=${file.publication} freshness=${file.freshness}${notice}`), 0, 0));
+				shell.fileState = { freshness: file.freshness };
+				if (file.freshness === "changed" || file.freshness === "missing") {
+					shell.box.addChild(new Text(theme.fg("warning", `Anchors are stale: target ${file.freshness}.`), 0, 0));
+				}
 			}
 			shell.box.setBgFn((line: string) => theme.bg(isPartial ? "toolPendingBg" : context.isError ? "toolErrorBg" : "toolSuccessBg", line));
 			return new Container();
