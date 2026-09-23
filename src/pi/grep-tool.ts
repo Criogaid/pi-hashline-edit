@@ -37,7 +37,7 @@ import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { splitLines } from "../core/lines.ts";
 import { decodeEditableText } from "../core/text.ts";
 import { createAnchorFormatter, displayCarriageReturns } from "./anchor-format.ts";
-import { canonicalPath } from "./read-tool.ts";
+import { canonicalPath } from "./path.ts";
 import { parseHashline, renderToolError } from "./render.ts";
 import {
   COMMON_RG_ARGS,

@@ -12,32 +12,14 @@
 import { createReadToolDefinition, getLanguageFromPath, highlightCode, truncateHead } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { readFile } from "node:fs/promises";
-import { join, resolve } from "node:path";
-import { homedir } from "node:os";
 import { decodeUtf8 } from "../core/index.ts";
 import { hasFinalNewline, splitLines } from "../core/lines.ts";
 import { createAnchorFormatter } from "./anchor-format.ts";
+import { canonicalPath } from "./path.ts";
 import { parseHashline, renderToolError } from "./render.ts";
 
 const MAX_LINES = 2000;
 const MAX_BYTES = 256 * 1024;
-
-/**
- * Canonical absolute path: shared by read/edit/grep to resolve a file consistently.
- * Expands a leading `~` / `~/` to the user's home directory. (`~user` is not supported.)
- */
-export function canonicalPath(cwd: string, p: string): string {
-	return resolve(cwd, expandTilde(p));
-}
-
-/** Mirrors pi core's `normalizePath` tilde handling: expands `~` / `~/` (and `~\` on Windows), leaves `~user` untouched. */
-function expandTilde(p: string): string {
-	if (p === "~") return homedir();
-	if (p.startsWith("~/") || (process.platform === "win32" && p.startsWith("~\\"))) {
-		return join(homedir(), p.slice(2));
-	}
-	return p;
-}
 
 /**
  * Render the expanded read body for the TUI: color the header, strip the

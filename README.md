@@ -66,7 +66,7 @@ Successful `edit` and `replace` results omit candidate rows whose full content a
 | `replace` | Replace every occurrence of a literal string or JavaScript regex across one file. |
 | `write` | Create a file or replace its complete contents. |
 
-All tools accept relative or absolute paths and expand a leading `~`. Mutation tools share the file-mutation queue and commit layer.
+All tools accept relative and absolute paths, `file://` URLs, a leading `@` prefix, and a leading `~` (including `~\` on Windows). As in Pi's built-in file tools, supported Unicode spaces in paths become regular spaces, and Windows shell drive paths such as `/c/file`, `/mnt/c/file`, and `/cygdrive/c/file` resolve to native drive paths. Mutation tools share the file-mutation queue and commit layer.
 
 ### Edit operations
 

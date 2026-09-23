@@ -3,7 +3,7 @@ import { createWriteToolDefinition, withFileMutationQueue } from "@earendil-work
 import { ACTION_FUSION_GUIDELINES, createActionFusionExecutor, createThenRunSchema, type ThenRunInput } from "./action-fusion.ts";
 import { commitFile, type CommitMode } from "./file-commit.ts";
 import { postProcessMutation } from "./mutation-result.ts";
-import { canonicalPath } from "./read-tool.ts";
+import { canonicalPath } from "./path.ts";
 
 function createWriteSchema(actionFusion: boolean) {
 	return Type.Object({

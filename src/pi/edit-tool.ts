@@ -26,7 +26,7 @@ import { readEditableSnapshot, commitReplacement } from "./file-commit.ts";
 import { applyEdits } from "../core/index.ts";
 import { splitLines } from "../core/lines.ts";
 import type { ApplyFailure, Edit } from "../core/types.ts";
-import { canonicalPath } from "./read-tool.ts";
+import { canonicalPath } from "./path.ts";
 import { getState } from "./state.ts";
 import { ANCHOR_PATTERN, createAnchorFormatter, type AnchorFormatter } from "./anchor-format.ts";
 import { formatDiffCounts, renderMutationCall, renderMutationResult, type DiffCounts } from "./render.ts";

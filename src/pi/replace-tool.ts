@@ -35,7 +35,7 @@ import { findSortedRangeConflict } from "../core/ranges.ts";
 import { ACTION_FUSION_GUIDELINES, createActionFusionExecutor, createThenRunSchema, type ThenRunInput } from "./action-fusion.ts";
 import { readEditableSnapshot, commitReplacement } from "./file-commit.ts";
 import { createAnchorFormatter, type AnchorFormatter } from "./anchor-format.ts";
-import { canonicalPath } from "./read-tool.ts";
+import { canonicalPath } from "./path.ts";
 import { formatDiffCounts, renderMutationCall, renderMutationResult, type DiffCounts } from "./render.ts";
 import { appendMutationAnchors, finalizeMutationResult, formatMutationAnchors, generateMutationDetails, postProcessMutation } from "./mutation-result.ts";
 
