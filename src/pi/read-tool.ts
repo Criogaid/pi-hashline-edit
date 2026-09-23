@@ -1,6 +1,6 @@
 /**
- * Override read: text files output "lineNo#hash│content"; non-text (images /
- * binary) and read errors delegate to the built-in read.
+ * Override read: recognized images and NUL-containing files delegate to Pi's
+ * built-in read; valid UTF-8 text outputs "lineNo#hash│content".
  *
  * Hashes are computed from the current content on the fly — nothing is stored.
  * The hash is `(line number, content)`, recomputed and checked at edit time, so
@@ -9,7 +9,10 @@
  * @module pi-hashline-edit/pi
  */
 
-import { createReadToolDefinition, getLanguageFromPath, highlightCode, truncateHead } from "@earendil-works/pi-coding-agent";
+import {
+	createReadToolDefinition, detectSupportedImageMimeTypeFromFile,
+	getLanguageFromPath, highlightCode, truncateHead,
+} from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { readFile } from "node:fs/promises";
 import { decodeUtf8 } from "../core/index.ts";
@@ -115,13 +118,16 @@ export function makeReadOverride(cwd: string) {
 			const absPath = canonicalPath(cwd, params.path as string);
 			let buf: Buffer;
 			try {
+				if (await detectSupportedImageMimeTypeFromFile(absPath)) {
+					return builtin.execute(toolCallId, params, signal, onUpdate, ctx);
+				}
 				buf = await readFile(absPath);
 			} catch {
 				// read error → delegate to the built-in (it has polished error messages)
 				return builtin.execute(toolCallId, params, signal, onUpdate, ctx);
 			}
 
-			// binary/image detection (null byte) → delegate to the built-in (it uses file-type for images)
+			// NUL is a text-safety signal, not an exhaustive binary classifier.
 			if (buf.includes(0)) return builtin.execute(toolCallId, params, signal, onUpdate, ctx);
 
 			const text = decodeUtf8(buf);

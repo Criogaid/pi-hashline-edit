@@ -60,7 +60,7 @@ Successful `edit` and `replace` results omit candidate rows whose full content a
 
 | Tool | Use it for |
 | --- | --- |
-| `read` | Inspect files with line anchors; images/binary handling delegates to Pi. |
+| `read` | Inspect UTF-8 text with line anchors; Pi-supported images and NUL-containing files use Pi's built-in read. Other invalid UTF-8 is rejected. |
 | `grep` | Search with bundled ripgrep and return anchored matches/context, file paths, or counts. |
 | `edit` | Change specific lines or ranges using verified anchors. |
 | `replace` | Replace every occurrence of a literal string or JavaScript regex across one file. |
@@ -158,7 +158,7 @@ Required: `path`. Optional: 1-based `offset` (default 1) and `limit` (default 20
 
 Context is rebuilt from surviving matches. Multiline filtering, counting, and limits remain line-based. Wildcard-only regexes such as `.*` and `^.+$` are accepted; use `literal: true` to search those characters verbatim.
 
-All inclusion/exclusion matching uses bundled ripgrep on the shared LF view, independent of system `rg` or `PATH`. File selection uses original paths, ignore rules, globs, and link settings. Search batches stage up to 64 normalized temporary files or 8 MiB of text (one large file can exceed that threshold); snapshots are removed after each batch and on failure/cancellation. This adds temporary disk I/O. Match paths refer to original files; line and column positions refer to logical text. Searches include hidden files and pass `--no-config`, `--no-crlf`, and `--encoding=none` for snapshot matching so standalone CR and BOM remain content. The default engine is Rust regex; PCRE2 never silently falls back to another engine or literal matching.
+Text inclusion/exclusion matching uses bundled ripgrep on the shared LF view, independent of system `rg` or `PATH`. NUL-containing files are searched as raw bytes; confirmed content-mode hits are rejected before anchoring. File selection uses original paths, ignore rules, globs, and link settings. Search batches stage up to 64 temporary files or 8 MiB of data (one large file can exceed that threshold); snapshots are removed after each batch and on failure/cancellation. This adds temporary disk I/O. Match paths refer to original files; text line and column positions refer to logical text. Searches include hidden files and pass `--no-config`, `--no-crlf`, and `--encoding=none` for snapshot matching so standalone CR and BOM remain content. The default engine is Rust regex; PCRE2 never silently falls back to another engine or literal matching.
 
 Search diagnostics are preserved even when a result limit stops ripgrep. Readable, confirmed matches remain available with a `Search incomplete` notice and `details.incomplete: true`; counts then cover only confirmed matches. If no results can be returned, the tool reports an error rather than claiming there are no matches. Exclusion-scan failures still reject the query, because incomplete exclusions could admit incorrect results. Search diagnostics have a separate 4 KiB display budget.
 
@@ -242,7 +242,7 @@ Fusion serializes each mutation/command sequence for its target and checks the p
 - **Anchors are checksums, not identities.** Each hash combines the 1-based line number and content. Short hashes can collide and do not prove the model observed a line.
 - **Validation is local to supplied anchors.** Unrelated in-place changes leave stable anchors usable. A range verifies its supplied start/end anchors, not every interior line.
 - **Line shifts change anchors.** Insertions/deletions can invalidate later references. Recovery searches within `shiftRadius`, then the rest of the file if no local candidates match. Unique candidates include bounded line content; ambiguous candidates include neighborhoods for comparison. Use `read` when no candidate is found or needed content is omitted. Retries verify again, without fuzzy matching or automatic relocation.
-- **Edits preserve text representation.** `edit` preserves existing line endings, untouched separators, and the absence of a final newline. `edit`/`replace` reject invalid UTF-8 source text; all mutations reject NUL and output that cannot be encoded losslessly as UTF-8.
+- **Edits preserve text representation.** `edit` preserves existing line endings, untouched separators, and the absence of a final newline. `edit`/`replace` reject invalid UTF-8 source text; all mutations reject NUL and output that cannot be encoded losslessly as UTF-8. UTF-16 and legacy code pages are not decoded or preserved; a BOM-free file whose bytes happen to be valid UTF-8 may still be misinterpreted.
 - **Fresh anchors depend on the final observation.** After `then_run`, anchors are shown only for `unchanged` freshness. Without a command, observed and published revisions must agree. Later edits still verify anchors.
 - **Local queues are not cross-process transactions.** Revision checks bind mutations to the bytes read, but an external writer can still race a check and publication. There is no strict workspace jail or multi-file transaction.
 
@@ -251,7 +251,7 @@ Fusion serializes each mutation/command sequence for its target and checks the p
 
 ### Hashing and BOM handling
 
-`read` computes line hashes only for its requested window; `grep` hashes selected matches/context. Both still read and decode whole files. Mutation revision checks cover actual bytes.
+`read` computes line hashes only for its requested window; `grep` hashes selected matches/context. Anchored text output still requires decoding whole files; grep stages NUL-containing files as raw bytes and rejects confirmed content-mode hits before hashing. Mutation revision checks cover actual bytes.
 
 Line boundaries are LF or CRLF; a standalone CR remains line content. Anchored rows display standalone CR as `␍` (U+240D), while hashes use the original content. Edit/replace `details.diff` marks raw CR as `␍`; `details.displayDiff` renders the shared LF view for the TUI, so CRLF boundary markers stay hidden even in mixed-ending files or beside an unterminated last line. Standalone CR and literal `␍` characters remain visible. Unified patches retain the original characters and line endings. The marker is a display aid, not replacement text.
 

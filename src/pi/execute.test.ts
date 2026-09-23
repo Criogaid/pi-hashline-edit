@@ -56,6 +56,18 @@ test("read execute: text outputs LINE#HASH│content", async () => {
 	});
 });
 
+test("read execute: Pi-supported images without NUL bypass text decoding", async () => withDir(async (dir) => {
+	for (const [name, bytes, mime] of [
+		["picture.jpg", Buffer.from([0xff, 0xd8, 0xff, 0xd9]), "image/jpeg"],
+		["picture.gif", Buffer.from("GIF89a"), "image/gif"],
+	] as const) {
+		await writeFile(join(dir, name), bytes);
+		const result: any = await call(makeReadOverride(dir), { path: name });
+		assert.ok(result.content[0].text.startsWith(`Read image file [${mime}]`));
+		assert.deepEqual(await readFile(join(dir, name)), bytes);
+	}
+}));
+
 test("read execute: a missing final newline is stated in the header", async () => {
 	await withDir(async (dir) => {
 		await writeFile(join(dir, "f.txt"), "line1\nline2");
@@ -563,6 +575,13 @@ test("text tools reject malformed UTF-8 and NUL bytes without rewriting source b
 	await assert.rejects(call(makeEditOverride(dir), { path: "nul.txt", edits: [{ op: "append", body: ["x"] }] }), /UNSUPPORTED_TEXT/);
 	await assert.rejects(call(makeReplaceTool(dir), { path: "nul.txt", find: "a", replace: "b" }), /UNSUPPORTED_TEXT/);
 	assert.deepEqual(await readFile(nulTarget), nulOriginal);
+
+	const nativeRead: any = await call(makeReadOverride(dir), { path: "nul.txt" });
+	assert.equal(nativeRead.content[0].text, "a\0b");
+
+	const utf16Target = join(dir, "utf16.txt");
+	await writeFile(utf16Target, Buffer.from([0xff, 0xfe, 0x49, 0x6c]));
+	await assert.rejects(call(makeReadOverride(dir), { path: "utf16.txt" }), /UNSUPPORTED_ENCODING/);
 }));
 
 test("edit rejects embedded line terminators even when schema validation is bypassed", async () => withDir(async (dir) => {
