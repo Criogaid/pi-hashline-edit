@@ -61,11 +61,11 @@ export const runRgTextView: typeof runRg = async (rgPath, args, signal, onLine) 
       signal?.throwIfAborted();
       const original = resolve(path);
       if (original.startsWith(directory + sep)) return true;
-      let text: string;
+      let text: string | Buffer;
       try {
         const bytes = await readFile(original, { signal });
-        if (bytes.includes(0)) return true;
-        text = normalizeLineEndings(decodeUtf8(bytes));
+        // Let rg decide whether a NUL file matches; the result reader rejects confirmed binary hits.
+        text = bytes.includes(0) ? bytes : normalizeLineEndings(decodeUtf8(bytes));
       } catch (error) {
         signal?.throwIfAborted();
         const message = error instanceof Error ? error.message : String(error);

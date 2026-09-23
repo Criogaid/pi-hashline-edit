@@ -605,3 +605,20 @@ test("normalized grep batches retain original paths, literal option markers, and
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+test("NUL files are rejected on a confirmed hit, not reported as no match", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "hl-grep-nul-"));
+  try {
+    const binary = join(directory, "binary.txt");
+    await writeFile(binary, Buffer.from("needle\r\nother\0needle\n"));
+    const grep = makeGrepOverrideWithBackend(directory, {});
+    await assert.rejects(grep.execute("grep", { path: binary, pattern: "needle", literal: true }, undefined, undefined), /UNSUPPORTED_TEXT/);
+    const absent = await grep.execute("grep", { path: binary, pattern: "absent", literal: true }, undefined, undefined);
+    assert.equal(absent.content[0].type, "text");
+    if (absent.content[0].type === "text") assert.equal(absent.content[0].text, "No matches found");
+    await writeFile(join(directory, "valid.txt"), "needle\n");
+    await assert.rejects(grep.execute("grep", { path: directory, pattern: "needle", literal: true }, undefined, undefined), /UNSUPPORTED_TEXT/);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
