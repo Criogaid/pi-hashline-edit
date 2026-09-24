@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve, sep } from "node:path";
 import { normalizeLineEndings } from "../core/lines.ts";
@@ -63,6 +63,11 @@ export const runRgTextView: typeof runRg = async (rgPath, args, signal, onLine) 
       if (original.startsWith(directory + sep)) return true;
       let text: string | Buffer;
       try {
+        const info = await stat(original);
+        if (info.size > 100 * 1024 * 1024) {
+          record({ code: 2, stopped: false, stderr: `${original}: file exceeds 100 MiB; skipped\n` });
+          return true;
+        }
         const bytes = await readFile(original, { signal });
         // Let rg decide whether a NUL file matches; the result reader rejects confirmed binary hits.
         text = bytes.includes(0) ? bytes : normalizeLineEndings(decodeUtf8(bytes));

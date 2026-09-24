@@ -14,7 +14,7 @@ import {
 	getLanguageFromPath, highlightCode, truncateHead,
 } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
-import { readFile } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import { decodeUtf8 } from "../core/index.ts";
 import { hasFinalNewline, splitLines } from "../core/lines.ts";
 import { createAnchorFormatter } from "./anchor-format.ts";
@@ -23,6 +23,7 @@ import { parseHashline, renderToolError } from "./render.ts";
 
 const MAX_LINES = 2000;
 const MAX_BYTES = 256 * 1024;
+const MAX_FILE_BYTES = 100 * 1024 * 1024;
 
 /**
  * Render the expanded read body for the TUI: color the header, strip the
@@ -119,6 +120,10 @@ export function makeReadOverride(cwd: string) {
 			let buf: Buffer;
 			try {
 				if (await detectSupportedImageMimeTypeFromFile(absPath)) {
+					return builtin.execute(toolCallId, params, signal, onUpdate, ctx);
+				}
+				const info = await stat(absPath);
+				if (info.size > MAX_FILE_BYTES) {
 					return builtin.execute(toolCallId, params, signal, onUpdate, ctx);
 				}
 				buf = await readFile(absPath);
