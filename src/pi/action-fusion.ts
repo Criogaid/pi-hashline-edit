@@ -297,9 +297,18 @@ export function createActionFusionExecutor(commandRunner: CommandRunner = defaul
 					content: [...finalized.content, { type: "text", text: `${error.message}${anchorNotice}` }],
 				} as MutationResult<TDetails>;
 			}
-			if (error instanceof ActionFusionError && error.publication !== "NOT_PUBLISHED") error.message += "\nRe-read before retrying.";
-			if (progressFailure && error instanceof Error) error.message += `\nProgress reporting failed: ${progressFailure}`;
-			throw error;
+			{
+				const parts: string[] = [errorText(error)];
+				if (error instanceof ActionFusionError && error.publication !== "NOT_PUBLISHED") parts.push("Re-read before retrying.");
+				if (progressFailure) parts.push(`Progress reporting failed: ${progressFailure}`);
+				if (parts.length > 1 || !(error instanceof Error)) {
+					const wrapped = error instanceof ActionFusionError
+						? new ActionFusionError(parts.join("\n"), { publication: error.publication, command: error.command, freshness: error.freshness }, { cause: error.cause, commandOutput: error.commandOutput, commandReason: error.commandReason })
+						: new Error(parts.join("\n"), { cause: error });
+					throw wrapped;
+				}
+				throw error;
+			}
 		}).then((result) => progressFailure ? {
 			...result,
 			content: [...result.content, { type: "text" as const, text: `Progress reporting failed: ${progressFailure}` }],
