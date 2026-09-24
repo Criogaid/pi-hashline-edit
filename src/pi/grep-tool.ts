@@ -54,7 +54,7 @@ import {
   type SearchModes,
 } from "./rg-line-filter.ts";
 import { runRgTextView } from "./rg-text-view.ts";
-import { intersectRanges, normalizeRanges, subtractRanges, unionRanges, submatchesToLineRanges, type LineRange, type RgSubmatch } from "./rg-line-ranges.ts";
+import { intersectRanges, normalizeRanges, subtractRanges, unionRanges, submatchesToLineRanges, countPhysicalLines, type LineRange, type RgSubmatch } from "./rg-line-ranges.ts";
 
 const DEFAULT_LIMIT = 100;
 /** Maximum UTF-16 units in a line preview, excluding its partial-line label. */
@@ -360,7 +360,7 @@ async function scanPatternRanges(
     if (!files.includes(filePath)) throw new Error("ripgrep returned an unexpected search path");
     let lineCount = lineCounts.get(filePath);
     if (lineCount === undefined) {
-      lineCount = splitLines(decodeEditableText(await readFile(filePath))).length;
+      lineCount = countPhysicalLines(await readFile(filePath));
       lineCounts.set(filePath, lineCount);
     }
     const bytes = rgBytes(data.lines);

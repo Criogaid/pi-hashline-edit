@@ -618,6 +618,11 @@ test("NUL files are rejected on a confirmed hit, not reported as no match", asyn
     if (absent.content[0].type === "text") assert.equal(absent.content[0].text, "No matches found");
     await writeFile(join(directory, "valid.txt"), "needle\n");
     await assert.rejects(grep.execute("grep", { path: directory, pattern: "needle", literal: true }, undefined, undefined), /UNSUPPORTED_TEXT/);
+    const filesMode: any = await grep.execute("grep", { path: binary, pattern: "needle", literal: true, outputMode: "files" }, undefined, undefined);
+    assert.match(filesMode.content[0].text, /binary\.txt/);
+    const pcre2FilesMode: any = await grep.execute("grep", { path: binary, pattern: "needle", pcre2: true, outputMode: "files" }, undefined, undefined);
+    assert.match(pcre2FilesMode.content[0].text, /binary\.txt/);
+    await assert.rejects(grep.execute("grep", { path: binary, pattern: "needle", pcre2: true }, undefined, undefined), /UNSUPPORTED_TEXT/);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
