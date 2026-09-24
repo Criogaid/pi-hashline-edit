@@ -60,7 +60,11 @@ export function subtractRanges(left: readonly LineRange[], right: readonly LineR
 
 function countLfBefore(bytes: Buffer, offset: number): number {
   let count = 0;
-  for (let i = 0; i < offset; i++) if (bytes[i] === 10) count++;
+  let pos = 0;
+  while ((pos = bytes.indexOf(10, pos)) !== -1 && pos < offset) {
+    count++;
+    pos++;
+  }
   return count;
 }
 
