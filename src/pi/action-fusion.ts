@@ -143,16 +143,19 @@ async function canonicalQueueKey(path: string): Promise<string> {
 	let current = resolved;
 	const missing: string[] = [];
 	while (true) {
-		try { return resolve(await realpath(current), ...missing); }
-		catch (error) {
+		try {
+			const canonical = resolve(await realpath(current), ...missing);
+			return process.platform === "win32" ? canonical.toLowerCase() : canonical;
+		} catch (error) {
 			if (!(typeof error === "object" && error !== null && "code" in error && (error.code === "ENOENT" || error.code === "ENOTDIR"))) throw error;
 			const parent = dirname(current);
-			if (parent === current) return resolved;
+			if (parent === current) return process.platform === "win32" ? resolved.toLowerCase() : resolved;
 			missing.unshift(basename(current));
 			current = parent;
 		}
 	}
 }
+
 
 export function createActionFusionExecutor(commandRunner: CommandRunner = defaultCommandRunner, onProgress?: ProgressReporter) {
 	const queueTails = new Map<string, Promise<void>>();

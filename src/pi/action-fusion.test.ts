@@ -246,3 +246,48 @@ test("progress reports skipped mutations and failed commands without rolling bac
 		await rm(dir, { recursive: true, force: true });
 	}
 });
+
+test("concurrent mutations on case-differing paths serialize on Windows", async () => {
+	if (process.platform !== "win32") return;
+	const dir = await tempDir();
+	try {
+		const fusion = createActionFusionExecutor();
+		const order: string[] = [];
+		let releaseFirst!: () => void;
+		const firstRunning = new Promise<void>((resolve) => { releaseFirst = resolve; });
+		const p1 = fusion({
+			toolCallId: "1",
+			absolutePath: join(dir, "caseTest.txt"),
+			thenRun: undefined,
+			mutate: async () => {
+				order.push("start-1");
+				await firstRunning;
+				order.push("end-1");
+				return { content: [], details: { publication: "PUBLISHED" as const } };
+			},
+			signal: undefined,
+			ctx: ctx(dir),
+		});
+		await new Promise((r) => setTimeout(r, 20));
+		const p2 = fusion({
+			toolCallId: "2",
+			absolutePath: join(dir, "CASETEST.TXT"),
+			thenRun: undefined,
+			mutate: async () => {
+				order.push("start-2");
+				order.push("end-2");
+				return { content: [], details: { publication: "PUBLISHED" as const } };
+			},
+			signal: undefined,
+			ctx: ctx(dir),
+		});
+		await new Promise((r) => setTimeout(r, 20));
+		assert.deepEqual(order, ["start-1"]);
+		releaseFirst();
+		await Promise.all([p1, p2]);
+		assert.deepEqual(order, ["start-1", "end-1", "start-2", "end-2"]);
+	} finally {
+		await rm(dir, { recursive: true, force: true });
+	}
+});
+
