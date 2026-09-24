@@ -167,7 +167,7 @@ const grepOverrideSchema = Type.Object({
         '"content" (default): anchored lines. "files": paths. "count": matching lines per file and total.',
     }),
   ),
-  wordMatch: Type.Optional(Type.Boolean({ description: "Whole words in pattern only (rg -w)" })),
+  wordMatch: Type.Optional(Type.Boolean({ description: "Match whole words only (rg -w). Applies to inclusion pattern, not excludePattern." })),
   path: Type.Optional(Type.Union([Type.String(), Type.Array(Type.String())], {
     description:
       "Directory or file to search (string or array of paths; default: current directory)",
