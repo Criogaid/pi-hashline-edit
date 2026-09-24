@@ -42,7 +42,7 @@ function toBase32(n: number, len: number): string {
 	let s = "";
 	for (let i = 0; i < len; i++) {
 		s = BASE32[n & 31] + s;
-		n = Math.floor(n / 32);
+		n = n >>> 5;
 	}
 	return s;
 }
