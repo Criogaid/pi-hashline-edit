@@ -27,7 +27,7 @@ export function makeWriteOverride(cwd: string, fusion?: ReturnType<typeof create
 	return {
 		name: "write" as const,
 		label: "write",
-		description: "Write complete file content exactly as supplied, including LF/CRLF choices. Use for intentional whole-file line-ending conversion. By default, creates missing files and overwrites existing files.",
+		description: "Write complete file content exactly as supplied, including LF/CRLF choices. Use for intentional whole-file line-ending conversion. By default, creates missing files (including parent directories) and overwrites existing files.",
 		promptSnippet: "Write complete file content to a path",
 		promptGuidelines: fusion ? ACTION_FUSION_GUIDELINES : [],
 		parameters,
