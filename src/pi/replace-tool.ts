@@ -135,7 +135,7 @@ function applyReplacements(source: string, rules: readonly Replacement[]): { tex
 					text: restoreLineEndings(rule.regex ? expandReplacement(replacement, match, view.text) : replacement, source.slice(start, end), fallbackEnding),
 				});
 			}
-			if (count === 0) throw new Error(`no matches for ${rule.regex ? `/${rule.find}/` : JSON.stringify(rule.find)}.`);
+			if (count === 0) throw new Error(`no matches for ${rule.regex ? `/${rule.find}/` : JSON.stringify(rule.find)}. Verify the target text with read or grep; check case sensitivity or regex flags if applicable.`);
 		} catch (error) {
 			throw new Error(`rule ${index}: ${error instanceof Error ? error.message : String(error)}`);
 		}
