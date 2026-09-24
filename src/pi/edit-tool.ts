@@ -58,7 +58,7 @@ const editOpSchema = Type.Object({
 	op: Type.Union(
 		[
 			Type.Literal("replace", { description: "Replace the cited line(s) with `body`." }),
-			Type.Literal("delete", { description: "Delete the cited line(s)." }),
+			Type.Literal("delete", { description: "Delete the cited line(s). Do NOT provide body; specify lines only via anchor and optional end." }),
 			Type.Literal("insert_after", {
 				description: "Insert `body` immediately after the anchor line — the anchor line is kept as-is; do NOT copy it into `body`.",
 			}),
