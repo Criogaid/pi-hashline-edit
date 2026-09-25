@@ -16,7 +16,7 @@ import {
 import { Text } from "@earendil-works/pi-tui";
 import { readFile, stat } from "node:fs/promises";
 import { decodeUtf8 } from "../core/index.ts";
-import { hasFinalNewline, splitLines } from "../core/lines.ts";
+import { hasFinalNewline, sliceLines } from "../core/lines.ts";
 import { createAnchorFormatter } from "./anchor-format.ts";
 import { canonicalPath } from "./path.ts";
 import { parseHashline, renderToolError } from "./render.ts";
@@ -136,16 +136,16 @@ export function makeReadOverride(cwd: string) {
 			if (buf.includes(0)) return builtin.execute(toolCallId, params, signal, onUpdate, ctx);
 
 			const text = decodeUtf8(buf);
-			const allLines = splitLines(text);
-			const totalLines = allLines.length;
 
 			// offset/limit
 			const offset = (params.offset as number | undefined) ?? 1;
 			const limit = (params.limit as number | undefined) ?? MAX_LINES;
 			const startIdx = Math.max(0, offset - 1);
-			const endIdx = Math.min(totalLines, startIdx + limit);
+			const endIdx = startIdx + limit;
 
-			const rows = allLines.slice(startIdx, endIdx).map((line, index) => anchors.row(startIdx + index + 1, line));
+			const { lines, totalLines } = sliceLines(text, startIdx, endIdx);
+
+			const rows = lines.map((line, index) => anchors.row(startIdx + index + 1, line));
 			const truncation = truncateHead(rows.join("\n"), { maxBytes: MAX_BYTES, maxLines: rows.length });
 
 			const shownFrom = offset > 1 ? ` (from line ${offset})` : "";

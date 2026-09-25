@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createLfTextView, normalizeLineEndings, splitLines, detectLineEnding, hasFinalNewline } from "./lines.ts";
+import { createLfTextView, normalizeLineEndings, splitLines, sliceLines, detectLineEnding, hasFinalNewline } from "./lines.ts";
 
 test("splitLines edge cases", () => {
 	assert.deepEqual(splitLines(""), []);
@@ -49,6 +49,45 @@ test("LF views map every UTF-16 boundary back to original CRLF bytes", () => {
 		assert.equal(view.sourceOffset(view.text.length), source.length);
 		for (let offset = 0; offset <= view.text.length; offset++) {
 			assert.equal(normalizeLineEndings(source.slice(0, view.sourceOffset(offset))), view.text.slice(0, offset));
+		}
+	}
+});
+
+test("sliceLines matches splitLines across empty, single-line, multiline, CRLF, and ranges", () => {
+	const fixtures = [
+		"",
+		"a",
+		"a\n",
+		"a\nb",
+		"a\nb\n",
+		"a\n\n",
+		"\n",
+		"\n\n",
+		"a\r\nb\r\n",
+		"a\r\nb",
+		"a\r\n\r\n",
+		"a\r\n\r\nb",
+		"a\rb\r\n",
+		"a\rb\nc",
+		"line1\nline2\nline3\nline4\nline5\n",
+		"line1\r\nline2\r\nline3\r\nline4\r\nline5",
+	];
+
+	for (const text of fixtures) {
+		const expectedFull = splitLines(text);
+		const ranges = [
+			[0, expectedFull.length],
+			[0, 2],
+			[1, 3],
+			[2, 2],
+			[0, 0],
+			[0, 100],
+			[3, 100],
+		];
+		for (const [start, end] of ranges) {
+			const result = sliceLines(text, start, end);
+			assert.equal(result.totalLines, expectedFull.length, `totalLines mismatch for ${JSON.stringify(text)}`);
+			assert.deepEqual(result.lines, expectedFull.slice(start, end), `lines mismatch for range [${start}, ${end}) on ${JSON.stringify(text)}`);
 		}
 	}
 });
