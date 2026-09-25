@@ -21,10 +21,11 @@ export const runRgTextView: typeof runRg = async (rgPath, args, signal, onLine) 
     }
   }
   if (boundary === args.length || args[boundary + 1] === "-") return runRg(rgPath, args, signal, onLine);
-  // ponytail: bounded snapshots add disk I/O; use a streaming backend if large scans dominate.
-  const directory = await mkdtemp(join(tmpdir(), "hashline-grep-"));
+  let directory: string | undefined;
   const result: RgRunResult = { code: 1, stderr: "", stopped: false };
-  const paths = new Map<string, string>();
+  // LF-only files pass through to rg directly; only CRLF files need temp snapshots.
+  const snapshots = new Map<string, string>();
+  const passthroughs: string[] = [];
   let snapshotBytes = 0;
   const record = (run: RgRunResult) => {
     result.stderr = (result.stderr + run.stderr).slice(0, 65536);
@@ -32,27 +33,41 @@ export const runRgTextView: typeof runRg = async (rgPath, args, signal, onLine) 
     else if (run.code === 0 && result.code === 1) result.code = 0;
     result.stopped ||= run.stopped;
   };
-  const flush = async () => {
-    if (!paths.size) return !result.stopped;
-    // Scope filtering belongs to the original paths. Snapshot names have no ignore/glob semantics.
+
+  const searchBatch = async (searchPaths: readonly string[], rewritePaths: ReadonlyMap<string, string>) => {
     const searchArgs = [
-      ...matcher, "--encoding=none", "--no-ignore", "--hidden", "--", ...paths.keys(),
+      ...matcher, "--encoding=none", "--no-ignore", "--hidden", "--", ...searchPaths,
     ];
     const run = await runRg(rgPath, searchArgs, signal, async (line) => {
       const event = JSON.parse(line);
       if (event.data?.path) {
-        const original = paths.get(resolve(rgText(event.data.path)));
-        if (!original) throw new Error("ripgrep returned an unexpected snapshot path");
-        event.data.path = { text: original };
+        const reported = resolve(rgText(event.data.path));
+        const original = rewritePaths.get(reported);
+        if (original) event.data.path = { text: original };
+        // Passthrough paths need no rewrite — reported path is already the original.
       }
       return onLine(JSON.stringify(event));
     });
     record(run);
-    for (const path of paths.keys()) await rm(path);
-    paths.clear();
+  };
+
+  const flush = async () => {
+    if (!snapshots.size && !passthroughs.length) return !result.stopped;
+    // Scope filtering belongs to the original paths. Snapshot names have no ignore/glob semantics.
+    const allPaths = [...snapshots.keys(), ...passthroughs];
+    await searchBatch(allPaths, snapshots);
+    for (const path of snapshots.keys()) await rm(path);
+    snapshots.clear();
+    passthroughs.length = 0;
     snapshotBytes = 0;
     return !result.stopped;
   };
+
+  const ensureDirectory = async () => {
+    directory ??= await mkdtemp(join(tmpdir(), "hashline-grep-"));
+    return directory;
+  };
+
   try {
     const listArgs = [
       ...COMMON_RG_ARGS, ...scope, "--files", "--null", "--", ...args.slice(boundary + 1),
@@ -60,8 +75,7 @@ export const runRgTextView: typeof runRg = async (rgPath, args, signal, onLine) 
     const listed = await runRgPaths(rgPath, listArgs, signal, async (path) => {
       signal?.throwIfAborted();
       const original = resolve(path);
-      if (original.startsWith(directory + sep)) return true;
-      let text: string | Buffer;
+      if (directory && original.startsWith(directory + sep)) return true;
       try {
         const info = await stat(original);
         if (info.size > 100 * 1024 * 1024) {
@@ -69,25 +83,41 @@ export const runRgTextView: typeof runRg = async (rgPath, args, signal, onLine) 
           return true;
         }
         const bytes = await readFile(original, { signal });
-        // Let rg decide whether a NUL file matches; the result reader rejects confirmed binary hits.
-        text = bytes.includes(0) ? bytes : normalizeLineEndings(decodeUtf8(bytes));
+        if (bytes.includes(0)) {
+          // Binary/NUL: let rg decide via snapshot, the result reader rejects confirmed binary hits.
+          const dir = await ensureDirectory();
+          const snapshot = join(dir, String(snapshots.size));
+          await writeFile(snapshot, bytes, { signal });
+          snapshots.set(snapshot, original);
+          snapshotBytes += bytes.length;
+        } else {
+          const decoded = decodeUtf8(bytes);
+          if (!decoded.includes("\r\n")) {
+            // Pure LF (or no line endings at all): search the original file directly.
+            passthroughs.push(original);
+            snapshotBytes += bytes.length;
+          } else {
+            const dir = await ensureDirectory();
+            const snapshot = join(dir, String(snapshots.size));
+            await writeFile(snapshot, normalizeLineEndings(decoded), { signal });
+            snapshots.set(snapshot, original);
+            snapshotBytes += bytes.length;
+          }
+        }
       } catch (error) {
         signal?.throwIfAborted();
         const message = error instanceof Error ? error.message : String(error);
         record({ code: 2, stopped: false, stderr: `${original}: ${message}\n` });
         return true;
       }
-      const snapshot = join(directory, String(paths.size));
-      await writeFile(snapshot, text, { signal });
-      paths.set(snapshot, original);
-      snapshotBytes += Buffer.byteLength(text);
-      return (paths.size < 64 && snapshotBytes < 8 * 1024 * 1024) || await flush();
+      const batchSize = snapshots.size + passthroughs.length;
+      return (batchSize < 64 && snapshotBytes < 8 * 1024 * 1024) || await flush();
     });
     // A successful listing is not itself a text match.
     record({ ...listed, code: listed.code === 0 ? 1 : listed.code });
     if (!result.stopped) await flush();
     return result;
   } finally {
-    await rm(directory, { recursive: true, force: true });
+    if (directory) await rm(directory, { recursive: true, force: true });
   }
 };
