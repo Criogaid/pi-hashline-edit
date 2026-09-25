@@ -87,14 +87,17 @@ async function* delimitedRecords(stream: Readable, delimiter: number): AsyncGene
   let pending = Buffer.alloc(0);
   for await (const value of stream) {
     const chunk = Buffer.isBuffer(value) ? value : Buffer.from(value);
-    pending = pending.length ? Buffer.concat([pending, chunk]) : chunk;
+    // Fast path: no pending data — search the chunk directly.
+    let buf = pending.length ? Buffer.concat([pending, chunk]) : chunk;
+    pending = Buffer.alloc(0);
     let at: number;
-    while ((at = pending.indexOf(delimiter)) !== -1) {
+    while ((at = buf.indexOf(delimiter)) !== -1) {
       if (at > MAX_RG_RECORD_BYTES) throw new Error("ripgrep output record exceeds 16 MiB");
-      yield pending.subarray(0, at);
-      pending = pending.subarray(at + 1);
+      yield buf.subarray(0, at);
+      buf = buf.subarray(at + 1);
     }
-    if (pending.length > MAX_RG_RECORD_BYTES) throw new Error("ripgrep output record exceeds 16 MiB");
+    if (buf.length > MAX_RG_RECORD_BYTES) throw new Error("ripgrep output record exceeds 16 MiB");
+    pending = buf;
   }
   if (pending.length) yield pending;
 }
