@@ -408,7 +408,7 @@ async function complexSearch(options: ComplexSearchOptions): Promise<{ raw: RgMa
     batch = [];
     batchBytes = 0;
     if (files.length === 0) return true;
-    for (const file of files) identities.set(file, await fileIdentity(file));
+    await Promise.all(files.map(async (file) => identities.set(file, await fileIdentity(file))));
     const lineCounts = new Map<string, number>();
     const columns = new Map<string, Map<number, number>>();
 
@@ -432,10 +432,12 @@ async function complexSearch(options: ComplexSearchOptions): Promise<{ raw: RgMa
       included = combineRangeMaps(included, excluded, "subtract");
     }
 
-    for (const file of files) {
+    await Promise.all(files.map(async (file) => {
       if (!sameIdentity(identities.get(file)!, await fileIdentity(file))) {
         throw new Error("File changed during search; rerun the query.");
       }
+    }));
+    for (const file of files) {
       for (const [start, end] of included.get(file) ?? []) {
         for (let lineNumber = start; lineNumber < end; lineNumber++) {
           raw.push({ filePath: file, lineNumber, column: columns.get(file)?.get(lineNumber) });
