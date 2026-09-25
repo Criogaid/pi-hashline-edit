@@ -4,7 +4,7 @@ import { join } from "node:path";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { spawn } from "node:child_process";
-import { byteRevision, commitFile, FileMutationError, fileRevision } from "./file-commit.ts";
+import { byteRevision, commitFile, commitReplacement, FileMutationError, fileRevision, readEditableSnapshot } from "./file-commit.ts";
 import { createActionFusionExecutor } from "./action-fusion.ts";
 import { makeWriteOverride } from "./write-tool.ts";
 
@@ -247,3 +247,57 @@ test("identical commits preserve the file and still enforce mode, revision, and 
 	assert.equal(created.created, true);
 	assert.equal(created.publication, "PUBLISHED");
 }));
+
+test("no-op commit with knownBeforeRevision validates disk revision against external modifications", async () => withTemp(async (dir) => {
+	const target = join(dir, "target.txt");
+	const initialContent = "line 1\nline 2\n";
+	await writeFile(target, initialContent);
+	const snapshot = await readEditableSnapshot(target, "target.txt");
+	assert.equal(snapshot.text, initialContent);
+
+	// External process modifies target after snapshot is read.
+	await writeFile(target, "line 1\nmodified line 2\n");
+	const externalRevision = await fileRevision(target);
+
+	// A no-op replacement (same text as snapshot) must reject because disk has changed.
+	await assert.rejects(
+		commitReplacement(target, "target.txt", snapshot.text, snapshot.baseRevision),
+		(error: unknown) => error instanceof FileMutationError && error.stage === "prepare" && error.publication === "NOT_PUBLISHED" && /expectedRevision/.test(error.message),
+	);
+	// Disk content must remain untouched by the rejected commit.
+	assert.equal(await readFile(target, "utf8"), "line 1\nmodified line 2\n");
+	assert.equal(await fileRevision(target), externalRevision);
+
+	// Direct commitFile with knownBeforeRevision and matching expectedRevision also rejects.
+	await assert.rejects(
+		commitFile(target, snapshot.text, { mode: "overwrite", expectedRevision: snapshot.baseRevision, knownBeforeRevision: snapshot.baseRevision }),
+		(error: unknown) => error instanceof FileMutationError && error.stage === "prepare" && error.publication === "NOT_PUBLISHED" && /expectedRevision/.test(error.message),
+	);
+
+	// Without expectedRevision, commitFile recognizes disk has changed and publishes the content.
+	const overwriteResult = await commitFile(target, snapshot.text, { mode: "overwrite", knownBeforeRevision: snapshot.baseRevision });
+	assert.equal(overwriteResult.publication, "PUBLISHED");
+	assert.equal(await readFile(target, "utf8"), initialContent);
+
+	// When target does not change externally, no-op commit succeeds and confirms observed revision.
+	const freshSnapshot = await readEditableSnapshot(target, "target.txt");
+	const noopResult = await commitReplacement(target, "target.txt", freshSnapshot.text, freshSnapshot.baseRevision);
+	assert.equal(noopResult.publication, "NOT_PUBLISHED");
+	assert.equal(noopResult.baseRevision, freshSnapshot.baseRevision);
+	assert.equal(noopResult.publishedRevision, freshSnapshot.baseRevision);
+	assert.equal(noopResult.observedRevision, freshSnapshot.baseRevision);
+}));
+
+test("no-op commit with knownBeforeRevision rejects if target was deleted externally", async () => withTemp(async (dir) => {
+	const target = join(dir, "deleted.txt");
+	await writeFile(target, "content\n");
+	const snapshot = await readEditableSnapshot(target, "deleted.txt");
+
+	await rm(target);
+
+	await assert.rejects(
+		commitReplacement(target, "deleted.txt", snapshot.text, snapshot.baseRevision),
+		(error: unknown) => error instanceof FileMutationError && error.stage === "prepare" && error.publication === "NOT_PUBLISHED",
+	);
+}));
+

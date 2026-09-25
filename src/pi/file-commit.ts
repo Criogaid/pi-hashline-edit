@@ -191,14 +191,33 @@ export async function commitFile(path: string, content: string, options: CommitO
 	const publishedRevision = byteRevision(bytes);
 	// Mode, revision, target safety, and cancellation checks still apply to no-ops.
 	if (target.beforeRevision === publishedRevision) {
-		return {
-			created: false,
-			baseRevision: target.beforeRevision,
-			publishedRevision,
-			observedRevision: target.beforeRevision,
-			revision: publishedRevision,
-			publication: "NOT_PUBLISHED",
-		};
+		let currentRevision = target.beforeRevision;
+		if (options.knownBeforeRevision !== undefined) {
+			try {
+				options.signal?.throwIfAborted();
+				currentRevision = await fileRevision(target.publishPath);
+				options.signal?.throwIfAborted();
+			} catch (error) {
+				if (options.signal?.aborted) throw prepareError("mutation was cancelled before publication", error);
+				throw prepareError(`unable to read target revision: ${error instanceof Error ? error.message : String(error)}`, error);
+			}
+			if (options.expectedRevision !== undefined && currentRevision !== options.expectedRevision) {
+				throw prepareError("expectedRevision does not match the current file");
+			}
+			if (currentRevision !== publishedRevision) {
+				target.beforeRevision = currentRevision;
+			}
+		}
+		if (target.beforeRevision === publishedRevision) {
+			return {
+				created: false,
+				baseRevision: target.beforeRevision,
+				publishedRevision,
+				observedRevision: currentRevision,
+				revision: publishedRevision,
+				publication: "NOT_PUBLISHED",
+			};
+		}
 	}
 
 	const publishPath = target.publishPath;
