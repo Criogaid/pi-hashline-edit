@@ -21,7 +21,8 @@
     "typecheck": "tsc --noEmit",
     "test": "node --test src/core/*.test.ts src/pi/*.test.ts",
     "test:integration": "node --test src/integration/*.test.ts",
-    "test:all": "npm test && npm run test:integration"
+    "test:all": "npm test && npm run test:integration",
+    "bench": "node bench/throughput.bench.ts"
   },
   "dependencies": {
     "@vscode/ripgrep": "1.18.0"
