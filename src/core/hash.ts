@@ -37,7 +37,14 @@ function fnv1a32(str: string): number {
 	return h >>> 0;
 }
 
-/** Encode a 32-bit integer into a base32 string of the given length. */
+/**
+ * Encode a 32-bit integer into a base32 string of the given length.
+ *
+ * Entropy note: 32 bits divided into 5-bit base32 chunks yields 6.4 characters.
+ * Up to len=7 exhausts all 32 bits (character 7 encodes the final 2 bits, padded
+ * with 3 zero bits). When len=8, the 8th character shifts past 32 bits and is
+ * always '0'.
+ */
 function toBase32(n: number, len: number): string {
 	let s = "";
 	for (let i = 0; i < len; i++) {

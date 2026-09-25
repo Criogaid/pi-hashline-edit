@@ -90,7 +90,8 @@ export function registerFusionCards(pi: ExtensionAPI) {
 		};
 	});
 
-	return (progress: ActionFusionProgress) => {
+	return (progress: ActionFusionProgress, ctx?: ExtensionContext) => {
+		if (ctx?.cwd) currentCwd = ctx.cwd;
 		const first = !states.has(progress.toolCallId);
 		const data = commandCardData(progress);
 		states.set(progress.toolCallId, data);

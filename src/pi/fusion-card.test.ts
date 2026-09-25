@@ -118,3 +118,14 @@ test("session restore syncs ctx.cwd to fusion card render context", () => {
 	assert.match(rendered, /\$ npm test/);
 });
 
+test("progress report syncs ctx.cwd to fusion card render context", () => {
+	const h = harness();
+	h.report(waiting, { cwd: "/dynamic/workspace" } as any);
+	const card = h.card(h.entries[0]);
+	const rendered = card.render(100).join("\n");
+	assert.match(rendered, /then_run/);
+	assert.match(rendered, /waiting/);
+	assert.match(rendered, /\$ npm test/);
+});
+
+

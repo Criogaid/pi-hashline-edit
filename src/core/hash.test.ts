@@ -56,3 +56,12 @@ test("hashFileLines respects the length parameter", () => {
 	assert.equal(hashFileLines(["a", "b"], 6)[0].length, 6);
 	assert.equal(hashFileLines(["a", "b"], 4)[0].length, 4);
 });
+
+test("hashLen 8 exhibits expected zero-padded 8th character due to 32-bit integer limits", () => {
+	for (let i = 1; i <= 20; i++) {
+		const h = computeLineHash(i, `content ${i}`, 8);
+		assert.equal(h.length, 8);
+		assert.equal(h[0], "0");
+	}
+});
+
