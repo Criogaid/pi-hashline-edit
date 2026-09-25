@@ -75,8 +75,8 @@ export function splitLines(text: string): string[] {
 	if (!text.includes("\r")) {
 		return (text.endsWith("\n") ? text.slice(0, -1) : text).split("\n");
 	}
-	const lines = text.split(/\r?\n/);
-	if (text.endsWith("\n")) lines.pop();
+	const normalized = text.replaceAll("\r\n", "\n");
+	const lines = (normalized.endsWith("\n") ? normalized.slice(0, -1) : normalized).split("\n");
 	return lines;
 }
 
