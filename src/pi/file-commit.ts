@@ -177,8 +177,8 @@ async function syncDirectory(path: string): Promise<void> {
 /** Validate the target, skip identical content, otherwise sync and publish. Callers own the file queue. */
 export async function commitFile(path: string, content: string, options: CommitOptions = {}): Promise<CommitResult> {
 	if (content.includes("\0")) throw prepareError("UNSUPPORTED_TEXT: NUL bytes are not editable.");
+	if (!content.isWellFormed()) throw prepareError("INVALID_UNICODE: content cannot be encoded losslessly as UTF-8.");
 	const bytes = Buffer.from(content, "utf8");
-	if (bytes.toString("utf8") !== content) throw prepareError("INVALID_UNICODE: content cannot be encoded losslessly as UTF-8.");
 	const target = await inspectTarget(path, options.knownBeforeRevision);
 	const mode = options.mode ?? (target.existed ? "overwrite" : "create");
 	if (mode === "create" && target.existed) throw prepareError("target already exists; use mode=overwrite");
