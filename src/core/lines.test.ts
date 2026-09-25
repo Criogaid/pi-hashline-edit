@@ -16,6 +16,16 @@ test("splitLines strips CRLF \\r", () => {
 	assert.deepEqual(splitLines("a\r\nb"), ["a", "b"]);
 });
 
+test("splitLines handles mixed line endings and standalone CR correctly", () => {
+	assert.deepEqual(splitLines("a\r\nb\nc\r\n"), ["a", "b", "c"]);
+	assert.deepEqual(splitLines("a\rb\r\n"), ["a\rb"]);
+	assert.deepEqual(splitLines("a\rb\nc"), ["a\rb", "c"]);
+	assert.deepEqual(splitLines("\r\n"), [""]);
+	assert.deepEqual(splitLines("\r\n\r\n"), ["", ""]);
+	assert.deepEqual(splitLines("a\r\n\r\nb"), ["a", "", "b"]);
+	assert.deepEqual(splitLines("a\r\n\r\n"), ["a", ""]);
+});
+
 test("hasFinalNewline", () => {
 	assert.equal(hasFinalNewline("a\nb"), false);
 	assert.equal(hasFinalNewline("a\nb\n"), true);
