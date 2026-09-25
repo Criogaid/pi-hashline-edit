@@ -67,6 +67,7 @@ const FILTER_BATCH_BYTES = 1024 * 1024;
 const FILE_BATCH_SIZE = 64;
 const FILE_BATCH_ARG_BYTES = 16 * 1024;
 const MAX_PENDING_RANGES = 262_144;
+const MAX_CONCURRENT_FILE_READS = 16;
 const LITERAL_FALLBACK_NOTICE = "Invalid regex; searched the pattern as literal text";
 const REGEX_SYNTAX = /[.*+?^${}()|[\]\\]/;
 const REGEX_PARSE_ERROR = /^(?:rg: )?regex parse error:/m;
@@ -770,26 +771,6 @@ export function makeGrepOverrideWithBackend(cwd: string, overrides: Partial<Grep
       }
       for (const lines of byFile.values()) lines.sort((a, b) => a.lineNumber - b.lineNumber);
 
-      // Read each file once; only hash the selected match/context rows below.
-      const getFile = async (filePath: string) => {
-        let bytes: Buffer;
-        try {
-          bytes = await readFile(filePath);
-        } catch (error) {
-          if (strictIdentities) throw error;
-          warnings.push(`Could not read ${filePath}: ${error instanceof Error ? error.message : String(error)}`);
-          return undefined;
-        }
-        const content = decodeEditableText(bytes);
-        if (strictIdentities) {
-          const baseline = strictIdentities.get(filePath);
-          if (!baseline || !sameIdentity(baseline, await fileIdentity(filePath))) {
-            throw new Error("File changed during search; rerun the query.");
-          }
-        }
-        return splitLines(content);
-      };
-
       const formatPath = (filePath: string): string => {
         const absolute = resolve(cwd, filePath);
         const rel = relative(cwd, absolute);
@@ -800,8 +781,43 @@ export function makeGrepOverrideWithBackend(cwd: string, overrides: Partial<Grep
 
       const blocks: string[] = [];
       if (outputMode === "content") {
-        for (const [filePath, matchLines] of byFile) {
-          const lines = await getFile(filePath);
+        const fileEntries = [...byFile.entries()];
+        type FileReadResult = { lines?: string[]; warning?: string };
+        const fileResults = new Array<FileReadResult>(fileEntries.length);
+        let nextIndex = 0;
+        const workerCount = Math.min(MAX_CONCURRENT_FILE_READS, fileEntries.length);
+        const workers = Array.from({ length: workerCount }, async () => {
+          while (nextIndex < fileEntries.length) {
+            const current = nextIndex++;
+            const [fp] = fileEntries[current];
+            let bytes: Buffer;
+            try {
+              bytes = await readFile(fp);
+            } catch (error) {
+              if (strictIdentities) throw error;
+              fileResults[current] = { warning: `Could not read ${fp}: ${error instanceof Error ? error.message : String(error)}` };
+              continue;
+            }
+            const content = decodeEditableText(bytes);
+            if (strictIdentities) {
+              const baseline = strictIdentities.get(fp);
+              if (!baseline || !sameIdentity(baseline, await fileIdentity(fp))) {
+                throw new Error("File changed during search; rerun the query.");
+              }
+            }
+            fileResults[current] = { lines: splitLines(content) };
+          }
+        });
+        await Promise.all(workers);
+
+        for (let i = 0; i < fileEntries.length; i++) {
+          const [filePath, matchLines] = fileEntries[i];
+          const res = fileResults[i];
+          if (res?.warning) {
+            warnings.push(res.warning);
+            continue;
+          }
+          const lines = res?.lines;
           if (!lines) continue;
           const columns = new Map(matchLines.map(match => [match.lineNumber, match.column]));
           // Context windows are rebuilt from surviving matches so context

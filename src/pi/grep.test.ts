@@ -629,3 +629,30 @@ test("complex searches report listing errors but reject incomplete exclusion sca
     await assert.rejects(call(tool, { pattern: "needle", excludePattern: "exclude", multiline: true }), /exclusion scan failed/);
   });
 });
+
+test("concurrent file reads preserve discovery order across multiple matched files", async () => {
+  await withDir(async dir => {
+    const files: string[] = [];
+    const matches: string[] = [];
+    for (let i = 1; i <= 25; i++) {
+      const file = join(dir, `file_${String(i).padStart(2, "0")}.txt`);
+      await writeFile(file, `header\nmatch_${i}\nfooter\n`);
+      files.push(file);
+      matches.push(rgMatch(file, 2, `match_${i}\n`));
+    }
+    const fake = fakeBackend({ lines: matches, paths: files });
+    const result = await call(makeGrepOverrideWithBackend(dir, fake.backend), { pattern: "match" });
+    const content = text(result);
+    // Verify each file block appears in exact discovery order
+    let lastIndex = -1;
+    for (let i = 1; i <= 25; i++) {
+      const pad = String(i).padStart(2, "0");
+      const expectedHeader = `file_${pad}.txt · 1 match`;
+      const idx = content.indexOf(expectedHeader);
+      assert.ok(idx > lastIndex, `Expected ${expectedHeader} at index > ${lastIndex}, found ${idx}`);
+      lastIndex = idx;
+      assert.match(content, new RegExp(`2#[0-9A-Z]+│match_${i}`));
+    }
+  });
+});
+
