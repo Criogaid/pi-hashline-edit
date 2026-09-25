@@ -94,13 +94,21 @@ export class ActionFusionError extends Error {
 	readonly commandOutput: string;
 	readonly commandReason: string | undefined;
 
-	constructor(message: string, state: { publication: PublicationStatus; command: CommandStatus; freshness: Freshness }, options?: { cause?: unknown; mutationFailure?: boolean; commandOutput?: string; commandReason?: string }) {
-		const fileState = state.publication === "PUBLISHED" ? "File changes are saved."
-			: state.publication === "NOT_PUBLISHED" ? "No file changes were published." : "File state is uncertain.";
-		const outcome = `${message} ${state.command === "skipped" || state.command === "cancelled" ? THEN_RUN_SKIPPED : state.command === "succeeded" ? THEN_RUN_SUCCEEDED : THEN_RUN_FAILED}\n${fileState} Command ${state.command}.`;
-		const diagnostic = options?.cause === undefined ? "" : errorText(options.cause);
-		// Pi serializes only the message. Put the mutation's own error first for its card.
-		super((options?.mutationFailure ? [diagnostic, outcome] : [outcome, diagnostic]).filter(Boolean).join("\n"), options);
+	constructor(
+		message: string,
+		state: { publication: PublicationStatus; command: CommandStatus; freshness: Freshness },
+		options?: { cause?: unknown; mutationFailure?: boolean; commandOutput?: string; commandReason?: string; rawMessage?: boolean },
+	) {
+		if (options?.rawMessage) {
+			super(message, options);
+		} else {
+			const fileState = state.publication === "PUBLISHED" ? "File changes are saved."
+				: state.publication === "NOT_PUBLISHED" ? "No file changes were published." : "File state is uncertain.";
+			const outcome = `${message} ${state.command === "skipped" || state.command === "cancelled" ? THEN_RUN_SKIPPED : state.command === "succeeded" ? THEN_RUN_SUCCEEDED : THEN_RUN_FAILED}\n${fileState} Command ${state.command}.`;
+			const diagnostic = options?.cause === undefined ? "" : errorText(options.cause);
+			// Pi serializes only the message. Put the mutation's own error first for its card.
+			super((options?.mutationFailure ? [diagnostic, outcome] : [outcome, diagnostic]).filter(Boolean).join("\n"), options);
+		}
 		this.commandOutput = options?.commandOutput ?? "";
 		this.commandReason = options?.commandReason;
 		this.name = "ActionFusionError";
@@ -306,7 +314,7 @@ export function createActionFusionExecutor(commandRunner: CommandRunner = defaul
 				if (progressFailure) parts.push(`Progress reporting failed: ${progressFailure}`);
 				if (parts.length > 1 || !(error instanceof Error)) {
 					const wrapped = error instanceof ActionFusionError
-						? new ActionFusionError(parts.join("\n"), { publication: error.publication, command: error.command, freshness: error.freshness }, { cause: error.cause, commandOutput: error.commandOutput, commandReason: error.commandReason })
+						? new ActionFusionError(parts.join("\n"), { publication: error.publication, command: error.command, freshness: error.freshness }, { cause: error, commandOutput: error.commandOutput, commandReason: error.commandReason, rawMessage: true })
 						: new Error(parts.join("\n"), { cause: error });
 					throw wrapped;
 				}

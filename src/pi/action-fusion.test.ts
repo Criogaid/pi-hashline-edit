@@ -8,8 +8,8 @@ import { makeReplaceTool } from "./replace-tool.ts";
 import { makeWriteOverride } from "./write-tool.ts";
 import { computeLineHash } from "../core/hash.ts";
 import type { ActionFusionProgress } from "./action-fusion.ts";
-import { ACTION_FUSION_GUIDELINES, createActionFusionExecutor, THEN_RUN_FAILED, THEN_RUN_SKIPPED, THEN_RUN_SUCCEEDED } from "./action-fusion.ts";
-import { byteRevision } from "./file-commit.ts";
+import { ACTION_FUSION_GUIDELINES, ActionFusionError, createActionFusionExecutor, THEN_RUN_FAILED, THEN_RUN_SKIPPED, THEN_RUN_SUCCEEDED } from "./action-fusion.ts";
+import { byteRevision, FileMutationError } from "./file-commit.ts";
 
 async function tempDir(): Promise<string> {
 	return mkdtemp(join(tmpdir(), "hashline-action-fusion-"));
@@ -290,4 +290,48 @@ test("concurrent mutations on case-differing paths serialize on Windows", async 
 		await rm(dir, { recursive: true, force: true });
 	}
 });
+
+test("ActionFusionError re-wrapping appends recovery guidance without duplicating outcome banners", async () => {
+	const dir = await tempDir();
+	try {
+		const fusion = createActionFusionExecutor();
+		const mutationError = new FileMutationError("post_process", "PUBLISHED", "post-process failed");
+		let caught: any;
+		try {
+			await fusion({
+				toolCallId: "test-rewrap",
+				absolutePath: join(dir, "target.txt"),
+				thenRun: { command: "echo done" },
+				mutate: async () => {
+					throw mutationError;
+				},
+				signal: undefined,
+				ctx: ctx(dir),
+			});
+		} catch (error) {
+			caught = error;
+		}
+
+		assert.ok(caught instanceof ActionFusionError);
+		assert.equal(caught.publication, "PUBLISHED");
+		assert.equal(caught.command, "skipped");
+		assert.ok(caught.cause instanceof ActionFusionError);
+		assert.equal(caught.cause.cause, mutationError);
+
+		const lines = caught.message.split("\n");
+		assert.equal(lines[0], "post-process failed");
+		assert.ok(lines[1].includes(THEN_RUN_SKIPPED));
+		assert.equal(lines[2], "File changes are saved. Command skipped.");
+		assert.equal(lines[3], "Re-read before retrying.");
+		assert.equal(lines.length, 4);
+
+		// Verify markers appear exactly once
+		assert.equal((caught.message.match(/\[then_run:skipped\]/g) ?? []).length, 1);
+		assert.equal((caught.message.match(/File changes are saved/g) ?? []).length, 1);
+		assert.equal((caught.message.match(/post-process failed/g) ?? []).length, 1);
+	} finally {
+		await rm(dir, { recursive: true, force: true });
+	}
+});
+
 
