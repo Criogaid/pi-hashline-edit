@@ -42,7 +42,16 @@ function fnv1a32(str: string, seed = 0x811c9dc5): number {
  * the intermediate template string.
  */
 function fnv1a32Line(line: number, content: string): number {
-	let h = fnv1a32(String(line));
+	let h = 0x811c9dc5;
+	// Feed digit characters of the line number without String(line) allocation.
+	let n = line;
+	let divisor = 1;
+	while (divisor * 10 <= n) divisor *= 10;
+	while (divisor >= 1) {
+		h ^= ((n / divisor | 0) % 10) + 48;
+		h = Math.imul(h, 0x01000193);
+		divisor = divisor / 10 | 0;
+	}
 	h ^= 10;
 	h = Math.imul(h, 0x01000193);
 	return fnv1a32(content, h);
