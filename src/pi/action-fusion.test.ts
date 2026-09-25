@@ -334,4 +334,26 @@ test("ActionFusionError re-wrapping appends recovery guidance without duplicatin
 	}
 });
 
+test("ActionFusion rejects missing or invalid then_run command definitions defensively", async () => {
+	const dir = await tempDir();
+	try {
+		const fusion = createActionFusionExecutor();
+		for (const invalid of [{}, { command: null }, { command: 123 }, { command: "   " }, null as any]) {
+			await assert.rejects(
+				fusion({
+					toolCallId: "test-invalid-cmd",
+					absolutePath: join(dir, "target.txt"),
+					thenRun: invalid as any,
+					mutate: async () => ({ content: [{ type: "text", text: "mutated" }], details: {} }),
+					signal: undefined,
+					ctx: ctx(dir),
+				}),
+				{ message: "then_run command must not be empty" },
+			);
+		}
+	} finally {
+		await rm(dir, { recursive: true, force: true });
+	}
+});
+
 

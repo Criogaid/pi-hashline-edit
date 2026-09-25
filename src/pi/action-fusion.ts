@@ -134,7 +134,9 @@ function commandStatus(error: unknown, signal: AbortSignal | undefined): Command
 }
 
 function validateThenRun(input: ThenRunInput): void {
-	if (!input.command.trim()) throw new Error("then_run command must not be empty");
+	if (!input || typeof input !== "object" || typeof input.command !== "string" || !input.command.trim()) {
+		throw new Error("then_run command must not be empty");
+	}
 	if (input.timeout !== undefined && (!Number.isFinite(input.timeout) || input.timeout <= 0)) {
 		throw new Error("then_run timeout must be a finite positive number of seconds");
 	}
