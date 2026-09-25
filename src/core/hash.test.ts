@@ -65,3 +65,29 @@ test("hashLen 8 exhibits expected zero-padded 8th character due to 32-bit intege
 	}
 });
 
+test("computeLineHash produces output identical to hashing full interpolated string", () => {
+	function referenceHash(line: number, content: string, len = 4): string {
+		let h = 0x811c9dc5;
+		const str = `${line}\n${content}`;
+		for (let i = 0; i < str.length; i++) {
+			h ^= str.charCodeAt(i);
+			h = Math.imul(h, 0x01000193);
+		}
+		let s = "";
+		const BASE32 = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
+		let n = h >>> 0;
+		for (let i = 0; i < len; i++) {
+			s = BASE32[n & 31] + s;
+			n = n >>> 5;
+		}
+		return s;
+	}
+	for (const line of [1, 9, 10, 99, 100, 999, 10000]) {
+		for (const content of ["", "a", "function test() {}", "long line with symbols !@#$%^&*()_+-=[]{}|;:,.<>?/`~"]) {
+			assert.equal(computeLineHash(line, content, 4), referenceHash(line, content, 4));
+			assert.equal(computeLineHash(line, content, 6), referenceHash(line, content, 6));
+		}
+	}
+});
+
+

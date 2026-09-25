@@ -28,13 +28,24 @@ const BASE32 = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
  * distributed, non-cryptographic. Uses `Math.imul` for correct 32-bit integer
  * multiplication under JS.
  */
-function fnv1a32(str: string): number {
-	let h = 0x811c9dc5;
+function fnv1a32(str: string, seed = 0x811c9dc5): number {
+	let h = seed;
 	for (let i = 0; i < str.length; i++) {
 		h ^= str.charCodeAt(i);
 		h = Math.imul(h, 0x01000193);
 	}
 	return h >>> 0;
+}
+
+/**
+ * Compute the FNV-1a 32-bit hash of `${line}\n${content}` without allocating
+ * the intermediate template string.
+ */
+function fnv1a32Line(line: number, content: string): number {
+	let h = fnv1a32(String(line));
+	h ^= 10;
+	h = Math.imul(h, 0x01000193);
+	return fnv1a32(content, h);
 }
 
 /**
@@ -62,7 +73,7 @@ function toBase32(n: number, len: number): string {
  * @param len     hash length (default 4, 20 bits ≈ 1M values)
  */
 export function computeLineHash(line: number, content: string, len = 4): string {
-	return toBase32(fnv1a32(`${line}\n${content}`), len);
+	return toBase32(fnv1a32Line(line, content), len);
 }
 
 /** Compute compact per-line checksums; callers must treat collisions as possible. */
