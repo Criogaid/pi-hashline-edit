@@ -346,6 +346,22 @@ test("mutation anchors retain a deletion successor but omit stable rows and dele
 	} finally { await rm(dir, { recursive: true, force: true }); }
 });
 
+test("mutation anchors retain deletion successor even when deleted line content matches the successor", async () => {
+	const dir = await mkdtemp(join(tmpdir(), "hashline-anchor-matching-delete-"));
+	try {
+		const path = join(dir, "edit.txt");
+		const lines = ["a", "duplicate", "duplicate", "d"];
+		await writeFile(path, lines.join("\n") + "\n");
+		const tool = makeEditOverride(dir);
+		const result = await tool.execute("edit", {
+			path,
+			edits: [{ op: "delete", anchor: `2#${computeLineHash(2, "duplicate")}` }],
+		}, undefined, undefined, { cwd: dir });
+		const rows = text(result).split("\n").filter((row) => /^\d+#/.test(row));
+		assert.deepEqual(rows, [`2#${computeLineHash(2, "duplicate")}│duplicate`]);
+	} finally { await rm(dir, { recursive: true, force: true }); }
+});
+
 test("compact mutation anchors exceed forty rows while respecting the byte budget", async () => {
 	const dir = await mkdtemp(join(tmpdir(), "hashline-compact-budget-"));
 	try {

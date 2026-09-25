@@ -71,7 +71,8 @@ export function formatMutationAnchors(
 	for (const index of indices) {
 		const content = lines[index];
 		// Compare source content, not short hashes: a collision must not suppress a changed row.
-		if (beforeLines[index] === content) continue;
+		// Deletion successors (contentIndices) shifted into this position and must not be skipped.
+		if (beforeLines[index] === content && !contentIndices?.has(index)) continue;
 		const row = contentIndices?.has(index) ? anchors.row(index + 1, content) : anchors.token(index + 1, content);
 		const rowBytes = Buffer.byteLength(row) + 1;
 		if (bytes + rowBytes > 16 * 1024) {
