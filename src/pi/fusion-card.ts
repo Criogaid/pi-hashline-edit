@@ -14,11 +14,13 @@ function commandCardData({ toolCallId, commandText, command, output, reason }: A
 
 /** Render one durable transcript card per fused command without adding model context. */
 export function registerFusionCards(pi: ExtensionAPI) {
+	let currentCwd = process.cwd();
 	const bash = createBashToolDefinition(process.cwd());
 	const states = new Map<string, CommandCardData>();
 	const active = new Set<string>();
 
 	const restore = (ctx: ExtensionContext) => {
+		if (ctx.cwd) currentCwd = ctx.cwd;
 		states.clear();
 		active.clear();
 		for (const entry of ctx.sessionManager.getBranch()) {
@@ -67,7 +69,7 @@ export function registerFusionCards(pi: ExtensionAPI) {
 				box.setBgFn((line) => theme.bg(background, line));
 				statusText.setText(`${theme.fg("toolTitle", theme.bold("then_run"))} · ${theme.fg(color, status)}`);
 				const context = {
-					args: { command: current.commandText }, toolCallId: current.toolCallId, cwd: process.cwd(),
+					args: { command: current.commandText }, toolCallId: current.toolCallId, cwd: currentCwd,
 					state: rendererState, invalidate: () => box.invalidate(),
 					// Parent tool updates drive entry rendering; leave the native elapsed-time timer off.
 					executionStarted: false, argsComplete: true, isPartial: pending && !interrupted, expanded, showImages: false,

@@ -23,7 +23,7 @@ function harness(entries: any[] = []) {
 		registerEntryRenderer(type: string, renderer: any) { renderers.set(type, renderer); },
 		appendEntry(customType: string, data: unknown) { entries.push({ type: "custom", customType, data: structuredClone(data) }); },
 	} as any);
-	const restore = (event = "session_start", branch = entries) => handlers.get(event)({}, { sessionManager: { getBranch: () => branch } });
+	const restore = (event = "session_start", branch = entries, extra = {}) => handlers.get(event)({}, { sessionManager: { getBranch: () => branch }, ...extra });
 	const card = (entry: any, expanded = false) => renderers.get(entry.customType)(entry, { expanded }, {
 		...theme, bg: (color: string, text: string) => { backgrounds.push(color); return text; },
 	});
@@ -104,3 +104,17 @@ test("legacy snapshots separate known command failures and suppress mutation dia
 		assert.equal(entries[1].data.output, output, "restoring must not rewrite persisted evidence");
 	}
 });
+
+test("session restore syncs ctx.cwd to fusion card render context", () => {
+	const entries = [
+		{ type: "custom", customType: "hashline-then-run", data: waiting },
+	];
+	const h = harness(entries);
+	h.restore("session_start", entries, { cwd: "/custom/workspace" });
+	const card = h.card(entries[0]);
+	const rendered = card.render(100).join("\n");
+	assert.match(rendered, /then_run/);
+	assert.match(rendered, /interrupted/);
+	assert.match(rendered, /\$ npm test/);
+});
+

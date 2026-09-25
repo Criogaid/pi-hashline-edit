@@ -109,3 +109,17 @@ test("diff previews retain standalone CR and literal control-picture characters"
 	}
 	assert.match(renderDiffPreview("-1 old␍\n+1 new␍", true, theme), /␍/);
 });
+
+test("withMutationStatus renderResult initializes mutationShell defensively", () => {
+	initTheme("dark");
+	const tool = withMutationStatus(makeEditOverride(process.cwd()));
+	const context: any = { args: { path: "a.txt" }, state: {}, isError: false };
+	const container = tool.renderResult!({
+		content: [{ type: "text", text: "Edited a.txt." }],
+		details: { actionFusion: { publication: "PUBLISHED", freshness: "unchanged", command: "not_requested" } },
+	}, { isPartial: false, expanded: false }, theme, context);
+	assert.ok(container);
+	assert.ok(context.state.mutationShell);
+	assert.ok(context.state.mutationShell.box);
+});
+

@@ -155,7 +155,7 @@ export function withMutationStatus(tool: ToolDefinition<any, any, any>): ToolDef
 			return shell.box;
 		},
 		renderResult(result, options, theme, context) {
-			const shell = context.state.mutationShell;
+			const shell = context.state.mutationShell ??= { box: new Box(1, 1) };
 			const isPartial = options.isPartial && result.details?.actionFusion?.mutationCompleted !== true;
 			// Fused errors retain combined details for the model; show the mutation's summary here.
 			const fusedError = context.isError && (context.args as { then_run?: unknown })?.then_run;
