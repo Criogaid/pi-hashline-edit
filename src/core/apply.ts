@@ -246,10 +246,11 @@ export function applyEdits(text: string, edits: Edit[], hashLen = 4, shiftRadius
 	// line inherits the block's trailing gap, leaving the boundary to the next
 	// surviving line unchanged. Internal gaps use the same positional/last-gap
 	// rule as substring replacements, falling back to the file style for insertions.
-	const separators = lineSeparators(text);
 	const separator = ending === "crlf" ? "\r\n" : "\n";
+	// LF-only files have uniform separators; skip the regex scan.
+	const separators = ending === "lf" ? undefined : lineSeparators(text);
 	// Verify legacy anchors above before separating the file BOM from movable line content.
-	let result = lines.map((content, i) => ({ content: bom && i === 0 ? content.slice(1) : content, separator: separators[i] ?? "" }));
+	let result = lines.map((content, i) => ({ content: bom && i === 0 ? content.slice(1) : content, separator: separators?.[i] ?? "" }));
 	for (const op of [...sorted].sort((a, b) => b.lo - a.lo)) {
 		const removed = result.slice(op.lo, op.hi);
 		// The trailing gap is outside the logical replacement, just as in substring replacement.
