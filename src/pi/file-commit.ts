@@ -10,6 +10,8 @@ export interface CommitOptions {
 	mode?: CommitMode;
 	expectedRevision?: string;
 	signal?: AbortSignal;
+	/** Caller-supplied revision of the current file, skipping the readFile + SHA-256 in inspectTarget. */
+	knownBeforeRevision?: string;
 }
 
 export interface MutationVersions {
@@ -58,7 +60,7 @@ export async function readEditableSnapshot(path: string, displayPath: string) {
 /** Publish a read-modify-write result against its source revision. Callers own the queue. */
 export async function commitReplacement(path: string, displayPath: string, text: string, baseRevision: string, signal?: AbortSignal) {
 	try {
-		return await commitFile(path, text, { mode: "overwrite", expectedRevision: baseRevision, signal });
+		return await commitFile(path, text, { mode: "overwrite", expectedRevision: baseRevision, knownBeforeRevision: baseRevision, signal });
 	} catch (error) {
 		if (error instanceof FileMutationError) throw error;
 		throw new FileMutationError("commit", "UNKNOWN", `Error writing ${displayPath}: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
@@ -80,7 +82,7 @@ interface TargetInfo {
 	modeBits?: number;
 }
 
-async function inspectTarget(path: string): Promise<TargetInfo> {
+async function inspectTarget(path: string, knownBeforeRevision?: string): Promise<TargetInfo> {
 	let entry;
 	try {
 		entry = await lstat(path);
@@ -108,10 +110,14 @@ async function inspectTarget(path: string): Promise<TargetInfo> {
 	if (target.nlink > 1) throw prepareError("target has multiple hard links; refusing to split the link set");
 
 	let beforeRevision: string;
-	try {
-		beforeRevision = await fileRevision(publishPath);
-	} catch (error) {
-		throw prepareError(`unable to read target revision: ${error instanceof Error ? error.message : String(error)}`, error);
+	if (knownBeforeRevision !== undefined) {
+		beforeRevision = knownBeforeRevision;
+	} else {
+		try {
+			beforeRevision = await fileRevision(publishPath);
+		} catch (error) {
+			throw prepareError(`unable to read target revision: ${error instanceof Error ? error.message : String(error)}`, error);
+		}
 	}
 	return {
 		existed: true,
@@ -173,7 +179,7 @@ export async function commitFile(path: string, content: string, options: CommitO
 	if (content.includes("\0")) throw prepareError("UNSUPPORTED_TEXT: NUL bytes are not editable.");
 	const bytes = Buffer.from(content, "utf8");
 	if (bytes.toString("utf8") !== content) throw prepareError("INVALID_UNICODE: content cannot be encoded losslessly as UTF-8.");
-	const target = await inspectTarget(path);
+	const target = await inspectTarget(path, options.knownBeforeRevision);
 	const mode = options.mode ?? (target.existed ? "overwrite" : "create");
 	if (mode === "create" && target.existed) throw prepareError("target already exists; use mode=overwrite");
 	if (mode === "overwrite" && !target.existed) throw prepareError("target does not exist; use mode=create or omit mode");
