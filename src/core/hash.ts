@@ -66,12 +66,12 @@ function fnv1a32Line(line: number, content: string): number {
  * always '0'.
  */
 function toBase32(n: number, len: number): string {
-	let s = "";
-	for (let i = 0; i < len; i++) {
-		s = BASE32[n & 31] + s;
+	const chars = new Array<string>(len);
+	for (let i = len - 1; i >= 0; i--) {
+		chars[i] = BASE32[n & 31];
 		n = n >>> 5;
 	}
-	return s;
+	return chars.join("");
 }
 
 /**
