@@ -285,7 +285,7 @@ export function applyEdits(text: string, edits: Edit[], hashLen = 4, shiftRadius
 				// An adjacent replacement may supply the deletion successor itself.
 				contextLines.delete(newLo + i);
 			}
-		} else if (newLo < result.length) {
+		} else if (op.hi > op.lo && newLo < result.length) {
 			touched.push(newLo);
 			contextLines.add(newLo);
 		}

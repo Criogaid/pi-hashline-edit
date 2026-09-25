@@ -502,6 +502,22 @@ test("invalid anchors and conflicting fields fail before changing the file", asy
 	assert.throws(() => validateToolArguments(edit as any, { type: "toolCall", id: "invalid", name: "edit", arguments: { path: "invalid.txt", edits: [invalid[0]] } as any }));
 }));
 
+test("edit execute rejects empty body array for operations requiring body", async () => withDir(async (dir) => {
+	const original = "a\nb\n";
+	await writeFile(join(dir, "empty_body.txt"), original);
+	const edit = makeEditOverride(dir);
+	const anchor = h(original, 1);
+	for (const op of ["replace", "insert_after", "insert_before", "append", "prepend"] as const) {
+		const editOp = (op === "append" || op === "prepend") ? { op, body: [] } : { op, anchor, body: [] };
+		await assert.rejects(
+			call(edit, { path: "empty_body.txt", edits: [editOp] }),
+			new RegExp(`${op} needs non-empty \`body\``),
+		);
+	}
+	assert.equal(await readFile(join(dir, "empty_body.txt"), "utf8"), original);
+}));
+
+
 test("local and full-file recovery return copyable anchors without changing the rejected batch", async () => withDir(async (dir) => {
 	const original = "a\nb\n";
 	const edit = makeEditOverride(dir);

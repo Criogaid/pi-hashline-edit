@@ -441,3 +441,20 @@ test("matched anchor checks do not imply valid ranges", () => {
 		assert.ok(result.failure.checks.every((check) => check.status === "matched"));
 	}
 });
+
+test("zero-length replacement without line deletion does not produce false deletion successors", () => {
+	const text = "a\nb\nc\n";
+	// A batch with a real change and an empty body insertion
+	const edits: Edit[] = [
+		{ op: "replace", start: at(text, 1), body: ["A"] },
+		{ op: "insert_after", anchor: at(text, 2), body: [] },
+	];
+	const result = applyEdits(text, edits);
+	assert.ok(result.ok);
+	if (result.ok) {
+		assert.equal(result.changed, true);
+		assert.deepEqual(result.touchedLines, [0]);
+		assert.deepEqual(result.contextLines, []);
+	}
+});
+
