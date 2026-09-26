@@ -83,6 +83,8 @@ All text inspection and matching uses one logical representation: CRLF boundarie
 | `insert_before` / `insert_after` | `anchor`, `body` | — | Insert beside the anchor; keep the anchor line. |
 | `prepend` / `append` | `body` | — | Insert at the start/end; no anchors. |
 
+An empty `body: []` deletes the cited range for `replace` and leaves the file unchanged for insertion, `append`, or `prepend`. Anchors and batch validation still apply.
+
 All operations in a batch use the same snapshot. Validation failure rejects the whole batch. Conflicting fields and overlapping operations are rejected; some touching operations also conflict and need separate calls with fresh anchors. For insertion, **do not repeat the anchor line in `body`**. `edit` uses structured operations, not `oldText`/`newText` pairs.
 
 Rejected batches report each supplied anchor's status from that validation snapshot: `matched`, `mismatched`, or `not_checked` when body validation stopped the batch before hashing. Entries identify the zero-based operation index, `anchor` or `end`, and the cited token. The bounded list reports omitted entries explicitly. These statuses do not establish range/overlap validity, semantic intent, publication, command success, or validity on a later retry.

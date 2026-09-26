@@ -193,8 +193,7 @@ function toCoreEdits(ops: readonly EditOpInput[]): { ok: true; edits: Edit[] } |
 		switch (o.op) {
 			case "replace":
 				if (!anchor) return { ok: false, error: 'replace needs `anchor` "LINE#HASH"' };
-				if (!o.body) return { ok: false, error: "replace needs `body`" };
-				if (!Array.isArray(o.body) || o.body.length === 0) return { ok: false, error: "replace needs non-empty `body`" };
+				if (!Array.isArray(o.body)) return { ok: false, error: "replace needs `body` array" };
 				edits.push({ op: "replace", start: anchor, end, body: o.body });
 				break;
 			case "delete":
@@ -204,14 +203,12 @@ function toCoreEdits(ops: readonly EditOpInput[]): { ok: true; edits: Edit[] } |
 			case "insert_after":
 			case "insert_before":
 				if (!anchor) return { ok: false, error: `${o.op} needs \`anchor\` "LINE#HASH"` };
-				if (!o.body) return { ok: false, error: `${o.op} needs \`body\`` };
-				if (!Array.isArray(o.body) || o.body.length === 0) return { ok: false, error: `${o.op} needs non-empty \`body\`` };
+				if (!Array.isArray(o.body)) return { ok: false, error: `${o.op} needs \`body\` array` };
 				edits.push({ op: o.op, anchor, body: o.body });
 				break;
 			case "append":
 			case "prepend":
-				if (!o.body) return { ok: false, error: `${o.op} needs \`body\`` };
-				if (!Array.isArray(o.body) || o.body.length === 0) return { ok: false, error: `${o.op} needs non-empty \`body\`` };
+				if (!Array.isArray(o.body)) return { ok: false, error: `${o.op} needs \`body\` array` };
 				edits.push({ op: o.op, body: o.body });
 				break;
 		}
