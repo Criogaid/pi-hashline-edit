@@ -212,6 +212,24 @@ function replaceHeader(args: ReplaceParams, theme: any, counts?: DiffCounts): st
 	return t;
 }
 
+export function prepareReplaceArguments(input: unknown): unknown {
+	if (!input || typeof input !== "object" || Array.isArray(input)) {
+		return input;
+	}
+	const args = { ...(input as Record<string, unknown>) };
+	if (typeof args.replacements === "string") {
+		try {
+			const parsed = JSON.parse(args.replacements);
+			if (Array.isArray(parsed)) {
+				args.replacements = parsed;
+			} else if (parsed && typeof parsed === "object") {
+				args.replacements = [parsed];
+			}
+		} catch {}
+	}
+	return args;
+}
+
 export function makeReplaceTool(cwd: string, fusion?: ReturnType<typeof createActionFusionExecutor>): any {
 	const parameters = createReplaceSchema(fusion !== undefined);
 	return {
@@ -225,6 +243,7 @@ export function makeReplaceTool(cwd: string, fusion?: ReturnType<typeof createAc
 			...(fusion ? ACTION_FUSION_GUIDELINES : []),
 		],
 		parameters,
+		prepareArguments: prepareReplaceArguments,
 		renderShell: "default" as const,
 
 		renderCall(args: ReplaceParams & { then_run?: ThenRunInput }, theme: any, context: any) {
@@ -236,7 +255,8 @@ export function makeReplaceTool(cwd: string, fusion?: ReturnType<typeof createAc
 		},
 
 		async execute(toolCallId: string, params: ReplaceParams & { then_run?: ThenRunInput }, signal: AbortSignal | undefined, onUpdate: any, ctx: any) {
-			const { then_run, ...mutationParams } = params;
+			const prepared = prepareReplaceArguments(params) as ReplaceParams & { then_run?: ThenRunInput };
+			const { then_run, ...mutationParams } = prepared;
 			if (!fusion && then_run !== undefined) throw new Error("then_run is unavailable because hashlineEdit.actionFusion is disabled");
 			const path = mutationParams.path;
 			const absolutePath = canonicalPath(cwd, path);

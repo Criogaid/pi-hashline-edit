@@ -856,3 +856,73 @@ test("read budgets visible standalone CR characters using rendered UTF-8 bytes",
 	assert.equal(result.details.truncation.outputBytes, 0);
 	assert.equal(result.details.truncation.totalBytes, Buffer.byteLength(`1#${computeLineHash(1, content)}│${"␍".repeat(content.length)}`));
 }));
+
+test("edit execute accepts edits as a single object", async () => withDir(async (dir) => {
+	const file = join(dir, "f.txt");
+	await writeFile(file, "hello\nworld\n");
+	const edit = makeEditOverride(dir);
+	const anchor = h("hello\nworld\n", 1);
+	const result = await call(edit, {
+		path: "f.txt",
+		edits: { op: "replace", anchor, body: ["hi"] },
+	});
+	assert.equal(result.isError, undefined);
+	assert.equal(await readFile(file, "utf8"), "hi\nworld\n");
+}));
+
+test("edit execute accepts edits as a JSON string array or single object", async () => withDir(async (dir) => {
+	const file = join(dir, "f.txt");
+	await writeFile(file, "line1\nline2\nline3\n");
+	const edit = makeEditOverride(dir);
+	const a1 = h("line1\nline2\nline3\n", 1);
+	await call(edit, {
+		path: "f.txt",
+		edits: JSON.stringify([{ op: "replace", anchor: a1, body: ["replaced1"] }]),
+	});
+	assert.equal(await readFile(file, "utf8"), "replaced1\nline2\nline3\n");
+
+	const current = await readFile(file, "utf8");
+	const a2 = h(current, 2);
+	await call(edit, {
+		path: "f.txt",
+		edits: JSON.stringify({ op: "replace", anchor: a2, body: ["replaced2"] }),
+	});
+	assert.equal(await readFile(file, "utf8"), "replaced1\nreplaced2\nline3\n");
+}));
+
+test("edit execute accepts top-level single op parameters", async () => withDir(async (dir) => {
+	const file = join(dir, "f.txt");
+	await writeFile(file, "first\nsecond\n");
+	const edit = makeEditOverride(dir);
+	const anchor = h("first\nsecond\n", 2);
+	const result = await call(edit, {
+		path: "f.txt",
+		op: "replace",
+		anchor,
+		body: ["SECOND"],
+	});
+	assert.equal(result.isError, undefined);
+	assert.equal(await readFile(file, "utf8"), "first\nSECOND\n");
+}));
+
+test("edit execute rejects legacy oldText/newText without op", async () => withDir(async (dir) => {
+	const file = join(dir, "f.txt");
+	await writeFile(file, "first\nsecond\n");
+	const edit = makeEditOverride(dir);
+	await assert.rejects(
+		call(edit, {
+			path: "f.txt",
+			oldText: "first",
+			newText: "FIRST",
+		}),
+		/legacy oldText\/newText|edits is empty or missing/i,
+	);
+	await assert.rejects(
+		call(edit, {
+			path: "f.txt",
+			edits: [{ oldText: "first", newText: "FIRST" } as any],
+		}),
+		/legacy oldText\/newText|operation/i,
+	);
+	assert.equal(await readFile(file, "utf8"), "first\nsecond\n");
+}));

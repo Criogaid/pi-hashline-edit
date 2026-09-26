@@ -74,7 +74,7 @@ All text inspection and matching uses one logical representation: CRLF boundarie
 
 ### Edit operations
 
-`edit` takes `path` and an `edits` array. Anchors are `"LINE#HASH"` strings; each `body` element is one logical line without CR or LF.
+`edit` takes `path` and an `edits` array. A single edit object, stringified JSON, or top-level single op parameters are normalized to `edits: [...]`. Anchors are `"LINE#HASH"` strings; each `body` element is one logical line without CR or LF.
 
 | `op` | Required | Optional | Effect |
 | --- | --- | --- | --- |
@@ -152,7 +152,7 @@ Required: `path`. Optional: 1-based `offset` (default 1) and `limit` (default 20
 | `glob` | None | One glob or an ordered array; prefix exclusions with `!`. |
 | `noIgnore` | `false` | Include ignored files; explicit globs still apply. |
 | `follow` | `false` | Traverse symlinks and return resolved target paths. |
-| `context` | `0` | Include 0–20 anchored lines before and after matches. |
+| `context` | `0` | Include 0–20 anchored lines before and after matches (pass 3–5 to inspect and edit code blocks directly without a separate read). |
 | `limit` | `100` | Maximum matching physical lines, counted after filtering. |
 | `outputMode` | `"content"` | `"files"` returns paths; `"count"` returns per-file counts and a total. Both use the same limited match set. |
 | `pcre2` | `false` | Enable PCRE2 lookarounds/backreferences; strict regex, incompatible with `literal: true`. |

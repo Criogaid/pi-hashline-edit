@@ -202,7 +202,7 @@ const grepOverrideSchema = Type.Object({
     Type.Integer({
       minimum: 0,
       maximum: GREP_CONTEXT_MAX,
-      description: `Number of lines to show before and after each match (0-${GREP_CONTEXT_MAX}; default: 0); context lines are anchored too`,
+      description: `Number of lines to show before and after each match (0-${GREP_CONTEXT_MAX}; default: 0). Set to 3-5 when searching code to edit so surrounding lines and anchors are included without needing a separate read; context lines are anchored too`,
     }),
   ),
   limit: Type.Optional(
@@ -551,7 +551,7 @@ export function makeGrepOverrideWithBackend(cwd: string, overrides: Partial<Grep
     promptGuidelines: [
       "Prefer the grep tool for file-content searches.",
       "Set literal:true when searching code text containing regex punctuation (for example pi.on(, compact(, or \\0); use a pattern array for literal alternatives. Use literal:false only for intentional valid regex.",
-      "Use returned grep anchors directly for edits; no re-read needed.",
+      "Use returned grep anchors directly for edits; no re-read needed. When searching for code to edit, pass context (e.g. context: 3 or 5) to inspect surrounding code and get anchors for the whole block in one call, eliminating the need for a follow-up read.",
       "Use files/count when only paths or counts are needed; use matchMode all and excludePattern instead of shell pipelines.",
     ],
     parameters: grepOverrideSchema,

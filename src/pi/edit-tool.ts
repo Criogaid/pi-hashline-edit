@@ -185,6 +185,12 @@ function formatFailure(
 function toCoreEdits(ops: readonly EditOpInput[]): { ok: true; edits: Edit[] } | { ok: false; error: string } {
 	const edits: Edit[] = [];
 	for (const o of ops) {
+		if (typeof o !== "object" || o === null) {
+			return { ok: false, error: "invalid edit operation: each edit must be an object" };
+		}
+		if ("oldText" in o || "newText" in o) {
+			return { ok: false, error: "legacy oldText/newText is not supported; use structured hashline ops with LINE#HASH anchors" };
+		}
 		const anchor = parseAnchor(o.anchor);
 		const end = parseAnchor(o.end);
 		if (o.op !== "replace" && o.op !== "delete" && end) return { ok: false, error: `${o.op} does not accept \`end\`` };
@@ -211,9 +217,60 @@ function toCoreEdits(ops: readonly EditOpInput[]): { ok: true; edits: Edit[] } |
 				if (!Array.isArray(o.body)) return { ok: false, error: `${o.op} needs \`body\` array` };
 				edits.push({ op: o.op, body: o.body });
 				break;
+			default:
+				return { ok: false, error: `unknown or missing operation \`${(o as any).op}\`; must be replace, delete, insert_after, insert_before, append, or prepend` };
 		}
 	}
 	return { ok: true, edits };
+}
+
+function isSingleEditInput(value: unknown): value is Record<string, unknown> {
+	if (!value || typeof value !== "object" || Array.isArray(value)) {
+		return false;
+	}
+	const candidate = value as Record<string, unknown>;
+	return typeof candidate.op === "string";
+}
+
+/**
+ * Normalize model arguments into standard { path, edits: [...] } format.
+ * Accommodates models emitting edits as a JSON string, a single edit object,
+ * or top-level single op parameters, while rejecting legacy oldText/newText.
+ */
+export function prepareEditArguments(input: unknown): unknown {
+	if (!input || typeof input !== "object" || Array.isArray(input)) {
+		return input;
+	}
+	const args = { ...(input as Record<string, unknown>) };
+
+	if ("oldText" in args || "newText" in args) {
+		const target = typeof args.path === "string" && args.path ? ` ${args.path}` : "";
+		throw new Error(`Edit${target}: legacy oldText/newText is not supported; use structured hashline ops with LINE#HASH anchors.`);
+	}
+
+	if (typeof args.edits === "string") {
+		try {
+			const parsed = JSON.parse(args.edits);
+			if (Array.isArray(parsed)) {
+				args.edits = parsed;
+			} else if (isSingleEditInput(parsed)) {
+				args.edits = [parsed];
+			}
+		} catch {
+			// keep original so downstream validation reports format issues
+		}
+	} else if (isSingleEditInput(args.edits)) {
+		args.edits = [args.edits];
+	} else if ((args.edits === undefined || args.edits === null) && typeof args.op === "string") {
+		const { op, anchor, end, body } = args;
+		const singleEdit: Record<string, unknown> = { op };
+		if (anchor !== undefined) singleEdit.anchor = anchor;
+		if (end !== undefined) singleEdit.end = end;
+		if (body !== undefined) singleEdit.body = body;
+		args.edits = [singleEdit];
+	}
+
+	return args;
 }
 
 /**
@@ -245,11 +302,12 @@ export function makeEditOverride(cwd: string, fusion?: ReturnType<typeof createA
 			"Edit file lines using content-verified anchors. Returns fresh anchors for subsequent edits. Anchor failures report input-anchor status and bounded current-file context. Inspect recovery candidates before retrying; retries always revalidate anchors and never run automatically.",
 		promptSnippet: "Edit file lines using verified anchors",
 		promptGuidelines: [
-			"Batch changes to the same file in one edit call.",
-			"Reuse prior anchors when their line number and content are unchanged. Re-read changed or shifted lines when no fresh anchor is available.",
+			"Batch related changes to the same file in one edit call — all operations in a batch are verified against the same snapshot simultaneously.",
+			"Reuse prior anchors when their line number and content are unchanged. For sequential edits, use the returned Updated anchors for changed lines; re-read shifted lines when no fresh anchor is available.",
 			...(fusion ? ACTION_FUSION_GUIDELINES : []),
 		],
 		parameters,
+		prepareArguments: prepareEditArguments,
 		renderShell: "default" as const,
 
 		renderCall(args: EditParams, theme: any, context: any) {
@@ -261,13 +319,16 @@ export function makeEditOverride(cwd: string, fusion?: ReturnType<typeof createA
 		},
 
 		async execute(toolCallId: string, params: EditParams, signal: AbortSignal | undefined, onUpdate: any, ctx: any) {
-			const { then_run, ...mutationParams } = params;
+			const prepared = prepareEditArguments(params) as EditParams;
+			const { then_run, ...mutationParams } = prepared;
 			if (!fusion && then_run !== undefined) throw new Error("then_run is unavailable because hashlineEdit.actionFusion is disabled");
 			const absolutePath = canonicalPath(cwd, mutationParams.path);
 			let mutationAnchors = "";
 			const mutate = () => {
 				const path = mutationParams.path;
-				if (!mutationParams.edits?.length) throw new Error(`Edit ${path}: \`edits\` is empty or missing.`);
+				if (!mutationParams.edits || !Array.isArray(mutationParams.edits) || mutationParams.edits.length === 0) {
+					throw new Error(`Edit ${path}: \`edits\` is empty or missing.`);
+				}
 				return withFileMutationQueue(absolutePath, () => runHashline(
 					absolutePath,
 					path,

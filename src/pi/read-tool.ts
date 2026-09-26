@@ -91,6 +91,7 @@ export function makeReadOverride(cwd: string) {
 		promptSnippet: "Read files with editable line anchors",
 		promptGuidelines: [
 			"Prefer read over shell output for files you intend to edit.",
+			"For targeted inspection of large files, pass offset and limit (e.g. limit: 50) to inspect only the relevant section and conserve context.",
 		],
 		parameters: builtin.parameters,
 		renderShell: "default" as const,

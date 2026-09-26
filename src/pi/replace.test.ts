@@ -477,3 +477,14 @@ test("regex captures and zero-width insertions use logical offsets without consu
 	await call(makeReplaceTool(dir), { path, find: "(?=\\n)", replace: "!", regex: true });
 	assert.equal(await readFile(path, "utf8"), "a!\r\nb\rc\r!\r\n");
 }));
+
+test("replace accepts replacements as a JSON string array", async () => withDir(async (dir) => {
+	const file = join(dir, "f.txt");
+	await writeFile(file, "hello foo world");
+	const tool = makeReplaceTool(dir);
+	await call(tool, {
+		path: "f.txt",
+		replacements: JSON.stringify([{ find: "foo", replace: "bar" }]),
+	});
+	assert.equal(await readFile(file, "utf8"), "hello bar world");
+}));
