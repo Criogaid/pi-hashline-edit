@@ -4,3 +4,4 @@ node_modules/
 .env.*
 *.tsbuildinfo
 .DS_Store
+docs/research/
