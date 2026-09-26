@@ -461,6 +461,18 @@ test("read preserves empty files and explicit limits above the native default", 
 	assert.equal(many.details, undefined);
 }));
 
+test("read defaults to 500 lines when limit is omitted and respects explicit limits", async () => withDir(async (dir) => {
+	await writeFile(join(dir, "large.txt"), Array.from({ length: 600 }, (_, i) => `line${i + 1}\n`).join(""));
+	const def = await call(makeReadOverride(dir), { path: "large.txt" });
+	assert.match(def.content[0].text, /large\.txt · 600 lines/);
+	assert.match(def.content[0].text, /\n500#[0-9A-Z]+│line500/);
+	assert.doesNotMatch(def.content[0].text, /\n501#[0-9A-Z]+│/);
+
+	const custom = await call(makeReadOverride(dir), { path: "large.txt", limit: 550 });
+	assert.match(custom.content[0].text, /\n550#[0-9A-Z]+│line550/);
+	assert.doesNotMatch(custom.content[0].text, /\n551#[0-9A-Z]+│/);
+}));
+
 test("native read and write renderers preserve resource titles, previews, and full errors", async () => withDir(async (dir) => {
 	const context = { cwd: dir, state: {}, argsComplete: true, expanded: false, isPartial: false, lastComponent: undefined };
 	const read = makeReadOverride(dir);

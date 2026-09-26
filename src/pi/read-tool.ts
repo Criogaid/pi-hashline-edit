@@ -19,7 +19,7 @@ import { createAnchorFormatter, displayCarriageReturns } from "./anchor-format.t
 import { canonicalPath } from "./path.ts";
 import { parseHashline, renderToolError } from "./render.ts";
 
-const MAX_LINES = 2000;
+const MAX_LINES = 500;
 const MAX_BYTES = 256 * 1024;
 
 /**

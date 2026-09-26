@@ -136,7 +136,7 @@ Original `foo bar` becomes `bar baz`; inserted text is not searched again. All r
 
 ### Read
 
-Required: `path`. Optional: 1-based `offset` (default 1) and `limit` (default 2000 lines). Returned text is capped at 256 KiB; oversized rows are not returned as partial editable lines. Files without a final newline are identified in the header.
+Required: `path`. Optional: 1-based `offset` (default 1) and `limit` (default 500 lines). Returned text is capped at 256 KiB; oversized rows are not returned as partial editable lines. Files without a final newline are identified in the header.
 
 ### Grep
 
@@ -265,7 +265,7 @@ These limits bound model context, not file size. Omission notices direct the cal
 
 | Output | Limit |
 | --- | --- |
-| `read` | Default 2000 rows, overridable with `limit`; 256 KiB of anchored text. No partial anchor rows. An oversized single row directs the caller to inspect chunks with `bash` or make a known text change with `replace`; reducing `limit` cannot split a physical line. |
+| `read` | Default 500 rows, overridable with `limit`; 256 KiB of anchored text. No partial anchor rows. An oversized single row directs the caller to inspect chunks with `bash` or make a known text change with `replace`; reducing `limit` cannot split a physical line. |
 | `grep` | Default 100 matching lines, overridable; up to 500 UTF-16 units per partial line preview, plus labels and Pi's total output limits. Match previews use rg byte offsets; hashes use full content. Search error notices have a separate 4 KiB budget. |
 | `edit` / `replace` anchors | 16 KiB including heading/omission notice, with no fixed entry-count limit. Compact tokens for changed positions; selected deletion successors retain complete content. Rows that do not fit are omitted in full; later rows that fit are still returned. |
 | Anchor failure details | 16 KiB, with no fixed failure-count limit; unique candidates include complete rows up to 4 KiB, and ambiguous failures list up to eight candidates each. Unresolved anchors request a fresh read without context rows. |
