@@ -57,21 +57,13 @@ export function subtractRanges(left: readonly LineRange[], right: readonly LineR
   }
   return result;
 }
-export function countPhysicalLines(bytes: Buffer): number {
-  if (bytes.length === 0) return 0;
-  let count = 0;
-  let pos = 0;
-  while ((pos = bytes.indexOf(10, pos)) !== -1) {
-    count++;
-    pos++;
-  }
-  return bytes[bytes.length - 1] === 10 ? count : count + 1;
-}
 
 function countLfBefore(bytes: Buffer, offset: number): number {
+  // Limit the native scan too: a prefix match must not scan a long trailing line.
+  const prefix = bytes.subarray(0, offset);
   let count = 0;
   let pos = 0;
-  while ((pos = bytes.indexOf(10, pos)) !== -1 && pos < offset) {
+  while ((pos = prefix.indexOf(10, pos)) !== -1) {
     count++;
     pos++;
   }

@@ -11,19 +11,16 @@
 
 import {
 	createReadToolDefinition, detectSupportedImageMimeTypeFromFile,
-	getLanguageFromPath, highlightCode, truncateHead,
+	getLanguageFromPath, highlightCode,
 } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
-import { readFile, stat } from "node:fs/promises";
-import { decodeUtf8 } from "../core/index.ts";
-import { hasFinalNewline, sliceLines } from "../core/lines.ts";
-import { createAnchorFormatter } from "./anchor-format.ts";
+import { scanTextLines } from "./text-stream.ts";
+import { createAnchorFormatter, displayCarriageReturns } from "./anchor-format.ts";
 import { canonicalPath } from "./path.ts";
 import { parseHashline, renderToolError } from "./render.ts";
 
 const MAX_LINES = 2000;
 const MAX_BYTES = 256 * 1024;
-const MAX_FILE_BYTES = 100 * 1024 * 1024;
 
 /**
  * Render the expanded read body for the TUI: color the header, strip the
@@ -117,46 +114,65 @@ export function makeReadOverride(cwd: string) {
 			const anchors = createAnchorFormatter();
 
 			const absPath = canonicalPath(cwd, params.path as string);
-			let buf: Buffer;
 			try {
 				if (await detectSupportedImageMimeTypeFromFile(absPath)) {
 					return builtin.execute(toolCallId, params, signal, onUpdate, ctx);
 				}
-				const info = await stat(absPath);
-				if (info.size > MAX_FILE_BYTES) {
-					return builtin.execute(toolCallId, params, signal, onUpdate, ctx);
-				}
-				buf = await readFile(absPath);
 			} catch {
-				// read error → delegate to the built-in (it has polished error messages)
 				return builtin.execute(toolCallId, params, signal, onUpdate, ctx);
 			}
 
-			// NUL is a text-safety signal, not an exhaustive binary classifier.
-			if (buf.includes(0)) return builtin.execute(toolCallId, params, signal, onUpdate, ctx);
-
-			const text = decodeUtf8(buf);
-
-			// offset/limit
 			const offset = (params.offset as number | undefined) ?? 1;
 			const limit = (params.limit as number | undefined) ?? MAX_LINES;
-			const startIdx = Math.max(0, offset - 1);
-			const endIdx = startIdx + limit;
-
-			const { lines, totalLines } = sliceLines(text, startIdx, endIdx);
-
-			const rows = lines.map((line, index) => anchors.row(startIdx + index + 1, line));
-			const truncation = truncateHead(rows.join("\n"), { maxBytes: MAX_BYTES, maxLines: rows.length });
+			const start = Math.max(1, offset);
+			const end = start + limit;
+			const rows: string[] = [];
+			const crExpansion = Buffer.byteLength(displayCarriageReturns("\r")) - 1;
+			let totalRows = 0;
+			let totalBytes = 0;
+			let outputBytes = 0;
+			let truncated = false;
+			let firstLineExceedsLimit = false;
+			let stats: Awaited<ReturnType<typeof scanTextLines>>;
+			try {
+				stats = await scanTextLines(absPath,
+					(number) => number >= start && number < end,
+					(line) => {
+						const rowBytes = line.byteLength + line.carriageReturns * crExpansion + Buffer.byteLength(anchors.row(line.number, ""));
+						totalBytes += rowBytes + (totalRows++ > 0 ? 1 : 0);
+						if (truncated) return;
+						const nextBytes = outputBytes + rowBytes + (rows.length > 0 ? 1 : 0);
+						if (nextBytes > MAX_BYTES) {
+							truncated = true;
+							firstLineExceedsLimit = rows.length === 0;
+							return;
+						}
+						rows.push(anchors.row(line.number, line.text!));
+						outputBytes = nextBytes;
+					}, { signal, maxLineBytes: MAX_BYTES });
+			} catch (error) {
+				// Keep native filesystem diagnostics without retrying decoding or cancellation failures.
+				if (!signal?.aborted && error instanceof Error && "code" in error) {
+					return builtin.execute(toolCallId, params, signal, onUpdate, ctx);
+				}
+				throw error;
+			}
+			if (stats.hasNul) return builtin.execute(toolCallId, params, signal, onUpdate, ctx);
+			const truncation = {
+				content: rows.join("\n"), truncated, truncatedBy: truncated ? "bytes" as const : null,
+				totalLines: totalRows, totalBytes, outputLines: rows.length, outputBytes,
+				lastLinePartial: false, firstLineExceedsLimit, maxLines: totalRows, maxBytes: MAX_BYTES,
+			};
 
 			const shownFrom = offset > 1 ? ` (from line ${offset})` : "";
 			// A file whose last line carries no terminator is a byte-level fact that the
 			// numbered rows cannot show; state it in the header, the one line the model
 			// never copies into an edit `body`.
-			const noFinalNewline = hasFinalNewline(text) ? "" : " · no trailing newline";
+			const noFinalNewline = stats.finalNewline ? "" : " · no trailing newline";
 			const tail = truncation.firstLineExceedsLimit
 				? `\n… (line ${offset} exceeds ${MAX_BYTES >> 10}KB; cannot return a complete anchor row. Reducing limit cannot split a physical line; use bash to inspect it in chunks, or replace for a known literal/regex change)`
 				: truncation.truncated ? `\n… (truncated at ${MAX_BYTES >> 10}KB; use offset/limit to read more)` : "";
-			const header = `${params.path} · ${totalLines} lines${shownFrom}${noFinalNewline}\n`;
+			const header = `${params.path} · ${stats.totalLines} lines${shownFrom}${noFinalNewline}\n`;
 			const body = truncation.content;
 
 			return {

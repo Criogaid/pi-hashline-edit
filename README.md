@@ -158,7 +158,7 @@ Required: `path`. Optional: 1-based `offset` (default 1) and `limit` (default 20
 
 Context is rebuilt from surviving matches. Multiline filtering, counting, and limits remain line-based. Wildcard-only regexes such as `.*` and `^.+$` are accepted; use `literal: true` to search those characters verbatim.
 
-Text inclusion/exclusion matching uses bundled ripgrep on the shared LF view, independent of system `rg` or `PATH`. NUL-containing files are searched as raw bytes; confirmed content-mode hits are rejected before anchoring. File selection uses original paths, ignore rules, globs, and link settings. Search batches stage up to 64 temporary files or 8 MiB of data (one large file can exceed that threshold); snapshots are removed after each batch and on failure/cancellation. This adds temporary disk I/O. Match paths refer to original files; text line and column positions refer to logical text. Searches include hidden files and pass `--no-config`, `--no-crlf`, and `--encoding=none` for snapshot matching so standalone CR and BOM remain content. The default engine is Rust regex; PCRE2 never silently falls back to another engine or literal matching.
+Text inclusion/exclusion matching uses bundled ripgrep on the shared LF view, independent of system `rg` or `PATH`. NUL-containing files are searched as raw bytes; confirmed content-mode hits are rejected before anchoring. File selection uses original paths, ignore rules, globs, and link settings. Files without CRLF are searched at their original paths; CRLF text is normalized into temporary snapshots using bounded reads and writes. Batches contain up to 64 files or 8 MiB of source data (one large file can exceed that threshold); snapshots are removed after each batch and on failure/cancellation. Match paths refer to original files; text line and column positions refer to logical text. Searches include hidden files and pass `--no-config`, `--no-crlf`, and `--encoding=none` so standalone CR and BOM remain content. The default engine is Rust regex; PCRE2 never silently falls back to another engine or literal matching.
 
 Search diagnostics are preserved even when a result limit stops ripgrep. Readable, confirmed matches remain available with a `Search incomplete` notice and `details.incomplete: true`; counts then cover only confirmed matches. If no results can be returned, the tool reports an error rather than claiming there are no matches. Exclusion-scan failures still reject the query, because incomplete exclusions could admit incorrect results. Search diagnostics have a separate 4 KiB display budget.
 
@@ -251,7 +251,7 @@ Fusion serializes each mutation/command sequence for its target and checks the p
 
 ### Hashing and BOM handling
 
-`read` computes line hashes only for its requested window; `grep` hashes selected matches/context. Anchored text output still requires decoding whole files; grep stages NUL-containing files as raw bytes and rejects confirmed content-mode hits before hashing. Mutation revision checks cover actual bytes.
+`read` scans text in bounded chunks, validates the whole file, and retains requested line content within its output budget. It reports the total line count and computes hashes for complete output rows. `grep` scans matching files concurrently, retaining only selected matches/context while formatting each file's output. Completed workers retain formatted output blocks in discovery order. NUL-containing files are searched as raw bytes and confirmed content-mode hits are rejected before anchoring. Mutation revision checks cover actual bytes.
 
 Line boundaries are LF or CRLF; a standalone CR remains line content. Anchored rows display standalone CR as `␍` (U+240D), while hashes use the original content. Edit/replace `details.diff` marks raw CR as `␍`; `details.displayDiff` renders the shared LF view for the TUI, so CRLF boundary markers stay hidden even in mixed-ending files or beside an unterminated last line. Standalone CR and literal `␍` characters remain visible. Unified patches retain the original characters and line endings. The marker is a display aid, not replacement text.
 
@@ -302,3 +302,11 @@ The shared commit layer validates the target and skips publication when the requ
 Streaming mutation summaries omit anchors. Result-generation failures preserve publication status and any completed command outcome; progress callback failures are reported separately from mutation/command outcomes. Command progress `output` contains only command output or execution errors, with an optional `reason` for commands that never started. Command cards persist only their own state and use native Bash output rendering. Final cards survive reloads without adding model-context messages; unfinished saved commands show an interrupted/unknown outcome. Older mixed failure snapshots expose only recognized command diagnostics, leaving other details in the original tool result.
 
 </details>
+
+## Verification
+
+- `npm run typecheck` checks source and test types.
+- `npm test` runs core and tool tests.
+- `npm run test:integration` exercises bundled ripgrep and files over 100 MiB, including LF and CRLF text.
+- `npm run bench` measures core throughput and long-line match mapping.
+- `node --expose-gc bench/grep-memory.bench.ts` measures grep latency and sampled peak heap/RSS for 24 files totaling 192 MiB, each with one matching line. It creates and removes its fixtures in the system temporary directory.

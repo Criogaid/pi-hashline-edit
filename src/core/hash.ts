@@ -60,18 +60,16 @@ function fnv1a32Line(line: number, content: string): number {
 /**
  * Encode a 32-bit integer into a base32 string of the given length.
  *
- * Entropy note: 32 bits divided into 5-bit base32 chunks yields 6.4 characters.
- * Up to len=7 exhausts all 32 bits (character 7 encodes the final 2 bits, padded
- * with 3 zero bits). When len=8, the 8th character shifts past 32 bits and is
- * always '0'.
+ * Seven characters expose all 32 bits; the leading character contains only
+ * two bits. An eighth character is a leading '0', adding no entropy.
  */
 function toBase32(n: number, len: number): string {
-	const chars = new Array<string>(len);
-	for (let i = len - 1; i >= 0; i--) {
-		chars[i] = BASE32[n & 31];
-		n = n >>> 5;
+	let encoded = "";
+	for (let i = 0; i < len; i++) {
+		encoded = BASE32[n & 31] + encoded;
+		n >>>= 5;
 	}
-	return chars.join("");
+	return encoded;
 }
 
 /**

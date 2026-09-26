@@ -32,10 +32,10 @@ import {
 import { rgPath as bundledRgPath } from "@vscode/ripgrep";
 import { Type } from "typebox";
 import { Text } from "@earendil-works/pi-tui";
-import { readFile, realpath, stat } from "node:fs/promises";
+import { realpath, stat } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
-import { normalizeLineEndings, splitLines } from "../core/lines.ts";
-import { decodeEditableText } from "../core/text.ts";
+import { normalizeLineEndings } from "../core/lines.ts";
+import { scanTextFile, scanTextLines } from "./text-stream.ts";
 import { createAnchorFormatter, displayCarriageReturns } from "./anchor-format.ts";
 import { canonicalPath } from "./path.ts";
 import { parseHashline, renderToolError } from "./render.ts";
@@ -54,7 +54,7 @@ import {
   type SearchModes,
 } from "./rg-line-filter.ts";
 import { runRgTextView } from "./rg-text-view.ts";
-import { intersectRanges, normalizeRanges, subtractRanges, unionRanges, submatchesToLineRanges, countPhysicalLines, type LineRange, type RgSubmatch } from "./rg-line-ranges.ts";
+import { intersectRanges, normalizeRanges, subtractRanges, unionRanges, submatchesToLineRanges, type LineRange, type RgSubmatch } from "./rg-line-ranges.ts";
 
 const DEFAULT_LIMIT = 100;
 /** Maximum UTF-16 units in a line preview, excluding its partial-line label. */
@@ -361,7 +361,7 @@ async function scanPatternRanges(
     if (!files.includes(filePath)) throw new Error("ripgrep returned an unexpected search path");
     let lineCount = lineCounts.get(filePath);
     if (lineCount === undefined) {
-      lineCount = countPhysicalLines(await readFile(filePath));
+      lineCount = (await scanTextFile(filePath, undefined, signal)).totalLines;
       lineCounts.set(filePath, lineCount);
     }
     const bytes = rgBytes(data.lines);
@@ -784,63 +784,49 @@ export function makeGrepOverrideWithBackend(cwd: string, overrides: Partial<Grep
       const blocks: string[] = [];
       if (outputMode === "content") {
         const fileEntries = [...byFile.entries()];
-        type FileReadResult = { lines?: string[]; warning?: string };
-        const fileResults = new Array<FileReadResult>(fileEntries.length);
+        const fileResults = new Array<{ block?: string; warning?: string }>(fileEntries.length);
         let nextIndex = 0;
         const workerCount = Math.min(MAX_CONCURRENT_FILE_READS, fileEntries.length);
         const workers = Array.from({ length: workerCount }, async () => {
           while (nextIndex < fileEntries.length) {
             const current = nextIndex++;
-            const [fp] = fileEntries[current];
-            let bytes: Buffer;
+            const [filePath, matchLines] = fileEntries[current];
+            const columns = new Map(matchLines.map(match => [match.lineNumber, match.column]));
+            // Retain only surviving matches and their context, then store the formatted block.
+            const windowSet = new Set<number>();
+            for (const { lineNumber } of matchLines) {
+              for (let n = Math.max(1, lineNumber - ctx); n <= lineNumber + ctx; n++) windowSet.add(n);
+            }
+            const rows: string[] = [];
+            let stats: Awaited<ReturnType<typeof scanTextLines>>;
             try {
-              bytes = await readFile(fp);
+              stats = await scanTextLines(filePath, (number) => windowSet.has(number), (line) => {
+                if (line.text === undefined) return;
+                const { text: display, wasTruncated } = previewLine(displayCarriageReturns(line.text), columns.get(line.number));
+                if (wasTruncated) linesTruncated = true;
+                rows.push(anchors.row(line.number, line.text, display));
+              }, { signal });
             } catch (error) {
-              if (strictIdentities) throw error;
-              fileResults[current] = { warning: `Could not read ${fp}: ${error instanceof Error ? error.message : String(error)}` };
+              if (strictIdentities || signal?.aborted || !(error instanceof Error) || !("code" in error)) throw error;
+              fileResults[current] = { warning: `Could not read ${filePath}: ${error.message}` };
               continue;
             }
-            const content = decodeEditableText(bytes);
+            if (stats.hasNul) throw new Error("UNSUPPORTED_TEXT: NUL bytes are not editable.");
             if (strictIdentities) {
-              const baseline = strictIdentities.get(fp);
-              if (!baseline || !sameIdentity(baseline, await fileIdentity(fp))) {
+              const baseline = strictIdentities.get(filePath);
+              if (!baseline || !sameIdentity(baseline, await fileIdentity(filePath))) {
                 throw new Error("File changed during search; rerun the query.");
               }
             }
-            fileResults[current] = { lines: splitLines(content) };
+            const header = `${formatPath(filePath)} · ${matchLines.length} match${matchLines.length !== 1 ? "es" : ""}\n`;
+            fileResults[current] = { block: header + rows.join("\n") };
           }
         });
         await Promise.all(workers);
 
-        for (let i = 0; i < fileEntries.length; i++) {
-          const [filePath, matchLines] = fileEntries[i];
-          const res = fileResults[i];
-          if (res?.warning) {
-            warnings.push(res.warning);
-            continue;
-          }
-          const lines = res?.lines;
-          if (!lines) continue;
-          const columns = new Map(matchLines.map(match => [match.lineNumber, match.column]));
-          // Context windows are rebuilt from surviving matches so context
-          // lines of a filtered-out match never leak.
-          const windowSet = new Set<number>();
-          for (const { lineNumber } of matchLines) {
-            for (
-              let n = Math.max(1, lineNumber - ctx);
-              n <= Math.min(lines.length, lineNumber + ctx);
-              n++
-            ) windowSet.add(n);
-          }
-          const header = `${formatPath(filePath)} · ${matchLines.length} match${matchLines.length !== 1 ? "es" : ""}\n`;
-          const rows: string[] = [];
-          for (const n of [...windowSet].sort((a, b) => a - b)) {
-            const content = lines[n - 1] ?? "";
-            const { text: display, wasTruncated } = previewLine(displayCarriageReturns(content), columns.get(n));
-            if (wasTruncated) linesTruncated = true;
-            rows.push(anchors.row(n, content, display));
-          }
-          blocks.push(`${header}${rows.join("\n")}`);
+        for (const result of fileResults) {
+          if (result.warning) warnings.push(result.warning);
+          else if (result.block) blocks.push(result.block);
         }
       } else if (outputMode === "files") {
         for (const filePath of byFile.keys()) blocks.push(formatPath(filePath));

@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { intersectRanges, normalizeRanges, submatchesToLineRanges, subtractRanges, unionRanges, countPhysicalLines } from "./rg-line-ranges.ts";
+import { intersectRanges, normalizeRanges, submatchesToLineRanges, subtractRanges, unionRanges } from "./rg-line-ranges.ts";
 
 test("normalizes and combines half-open physical line ranges", () => {
   assert.deepEqual(normalizeRanges([[5, 7], [1, 3], [3, 5], [9, 10]]), [[1, 7], [9, 10]]);
@@ -37,16 +37,5 @@ test("match columns translate UTF-8 bytes to UTF-16 positions and retain EOF pre
   const first = new Map<number, number>();
   submatchesToLineRanges(bytes, 1, [{ start: 0, end: 13 }], 2, first);
   assert.equal(first.get(1), 0);
-});
-
-test("countPhysicalLines counts lines correctly across empty, single-line, multiline and binary buffers", () => {
-  assert.equal(countPhysicalLines(Buffer.alloc(0)), 0);
-  assert.equal(countPhysicalLines(Buffer.from("a")), 1);
-  assert.equal(countPhysicalLines(Buffer.from("a\n")), 1);
-  assert.equal(countPhysicalLines(Buffer.from("a\r\n")), 1);
-  assert.equal(countPhysicalLines(Buffer.from("a\nb\n")), 2);
-  assert.equal(countPhysicalLines(Buffer.from("a\nb")), 2);
-  assert.equal(countPhysicalLines(Buffer.from("a\0b\nc\0d\n")), 2);
-  assert.equal(countPhysicalLines(Buffer.from("a\0b\nc\0d")), 2);
 });
 

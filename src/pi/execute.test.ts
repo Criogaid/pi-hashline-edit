@@ -828,3 +828,31 @@ test("deletion successors and unique candidate rows display CR without altering 
 		return true;
 	});
 }));
+
+test("read bounds oversized selected lines while preserving truncation metadata and later anchors", async () => withDir(async (dir) => {
+	const long = "界".repeat(200_000);
+	await writeFile(join(dir, "long.txt"), `first\r\n${long}\r\nlast`);
+	const read = makeReadOverride(dir);
+	const result = await call(read, { path: "long.txt" });
+	assert.match(result.content[0].text, /1#[0-9A-Z]+│first/);
+	assert.doesNotMatch(result.content[0].text, /2#[0-9A-Z]+│/);
+	assert.equal(result.details.truncation.firstLineExceedsLimit, false);
+	assert.equal(result.details.truncation.outputLines, 1);
+	const expectedRows = ["first", long, "last"].map((text, index) => `${index + 1}#${computeLineHash(index + 1, text)}│${text}`);
+	assert.equal(result.details.truncation.totalBytes, Buffer.byteLength(expectedRows.join("\n")));
+	const oversized = await call(read, { path: "long.txt", offset: 2, limit: 1 });
+	assert.equal(oversized.details.truncation.firstLineExceedsLimit, true);
+	assert.equal(oversized.details.truncation.outputBytes, 0);
+	const last = await call(read, { path: "long.txt", offset: 3, limit: 1 });
+	assert.match(last.content[0].text, /3#[0-9A-Z]+│last/);
+	assert.match(last.content[0].text, /no trailing newline/);
+}));
+
+test("read budgets visible standalone CR characters using rendered UTF-8 bytes", async () => withDir(async (dir) => {
+	const content = "\r".repeat(90_000);
+	await writeFile(join(dir, "cr.txt"), content);
+	const result = await call(makeReadOverride(dir), { path: "cr.txt", limit: 1 });
+	assert.equal(result.details.truncation.firstLineExceedsLimit, true);
+	assert.equal(result.details.truncation.outputBytes, 0);
+	assert.equal(result.details.truncation.totalBytes, Buffer.byteLength(`1#${computeLineHash(1, content)}│${"␍".repeat(content.length)}`));
+}));
