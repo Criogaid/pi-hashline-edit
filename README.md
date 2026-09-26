@@ -287,7 +287,7 @@ The shared commit layer validates the target and skips publication when the requ
 | Multiple hard links | Reject existing regular files with multiple links to avoid splitting the link set. |
 | Permissions | Copy existing mode bits; new files use `0600`. No separate public permission setting. |
 | Post-publication failure | Directory-sync, result-generation, revision observation, or cleanup errors retain `PUBLISHED`; unconfirmed publication is `UNKNOWN`. Read before retrying uncertain mutations. |
-| Durability | Attempt POSIX directory synchronization. Windows has no equivalent directory-sync path here; no Windows crash-persistence guarantee is claimed. |
+| Durability | Attempt directory synchronization on POSIX, including macOS; tolerate `EINVAL` / `ENOTSUP` from directory fsync and propagate other failures. Windows skips directory synchronization. |
 
 ### Result and card states
 

@@ -163,12 +163,13 @@ async function publishReplace(tempPath: string, targetPath: string, signal: Abor
 }
 
 async function syncDirectory(path: string): Promise<void> {
-	// Windows has no directory-sync equivalent; macOS throws EINVAL for
-	// fsync on directory file descriptors.  Only Linux benefits here.
-	if (process.platform === "win32" || process.platform === "darwin") return;
+	if (process.platform === "win32") return;
 	const handle = await open(path, "r");
 	try {
 		await handle.sync();
+	} catch (error) {
+		// Some filesystems do not support directory fsync; preserve real I/O failures.
+		if (errorCode(error) !== "EINVAL" && errorCode(error) !== "ENOTSUP") throw error;
 	} finally {
 		await handle.close();
 	}
