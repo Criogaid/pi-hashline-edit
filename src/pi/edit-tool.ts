@@ -303,7 +303,7 @@ export function makeEditOverride(cwd: string, fusion?: ReturnType<typeof createA
 		promptSnippet: "Edit file lines using verified anchors",
 		promptGuidelines: [
 			"Batch related changes to the same file in one edit call — all operations in a batch are verified against the same snapshot simultaneously.",
-			"Reuse prior anchors when their line number and content are unchanged. For sequential edits, use the returned Updated anchors for changed lines; re-read shifted lines when no fresh anchor is available.",
+			"Reuse prior anchors when their line number and content are unchanged. For sequential edits, use the returned Updated anchors for changed lines; inspect failure diagnostics for recovery candidates before resorting to read or grep.",
 			...(fusion ? ACTION_FUSION_GUIDELINES : []),
 		],
 		parameters,

@@ -183,7 +183,7 @@ Required: `path`, `content`. By default, create missing files and overwrite exis
 
 - `mode: "create"`: refuse an existing target.
 - `mode: "overwrite"`: require an existing target.
-- `expectedRevision`: strictly check the current file's SHA-256; cannot be combined with create mode.
+- `expectedRevision`: strictly check the current file's SHA-256; cannot be combined with create mode. Intended for programmatic callers; text-only models should not guess or compute it manually.
 
 Write results report the write outcome without returning line anchors. Use `read` or content-mode `grep` to obtain anchors for a later `edit`.
 

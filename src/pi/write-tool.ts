@@ -13,7 +13,7 @@ function createWriteSchema(actionFusion: boolean) {
 			Type.Literal("create", { description: "Fail if the target already exists" }),
 			Type.Literal("overwrite", { description: "Fail if the target does not exist" }),
 		])),
-		expectedRevision: Type.Optional(Type.String({ description: "Expected SHA-256 revision of an existing target" })),
+		expectedRevision: Type.Optional(Type.String({ description: "Optional expected SHA-256 revision for optimistic locking (programmatic callers only; text-only models should not guess or compute manually)." })),
 		...(actionFusion ? { then_run: createThenRunSchema("Command to run after write succeeds; failure does not roll back the write.") } : {}),
 	});
 }
