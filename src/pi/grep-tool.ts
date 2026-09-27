@@ -630,6 +630,259 @@ function toDisplayLines(raw: string, theme: any): string[] {
   }
   return out;
 }
+interface SimpleSearchOptions {
+  backend: GrepBackend;
+  rgPath: string;
+  scope: SearchScope;
+  patterns: readonly string[];
+  excludes: readonly string[];
+  matchMode: "any" | "all";
+  modes: SearchModes;
+  word: boolean;
+  limit: number;
+  outputMode: "content" | "files" | "count";
+  signal?: AbortSignal;
+  warnings: string[];
+}
+
+async function simpleSearch(options: SimpleSearchOptions) {
+  const {
+    backend,
+    rgPath,
+    scope,
+    patterns,
+    excludes,
+    matchMode,
+    modes,
+    word,
+    limit,
+    outputMode,
+    signal,
+    warnings,
+  } = options;
+  const raw: RgMatch[] = [];
+  const revisions = new Map<string, string>();
+  let matchLimitReached = false;
+  const args = [...matcherArgs(modes, word), "--json", "--line-number", ...scopeArgs(scope)];
+  for (const pattern of matchMode === "all" ? patterns.slice(0, 1) : patterns)
+    args.push("-e", pattern);
+  args.push("--", ...scope.searchPaths);
+  const andPredicates =
+    matchMode === "all"
+      ? patterns
+          .slice(1)
+          .map((pattern) => backend.createLinePredicate(rgPath, [pattern], modes, word, signal))
+      : [];
+  const exclusionPredicate = excludes.length
+    ? backend.createLinePredicate(rgPath, excludes, modes, false, signal)
+    : undefined;
+  const predicates: LinePredicate[] = [
+    ...andPredicates,
+    ...(exclusionPredicate ? [exclusionPredicate] : []),
+  ];
+  const batch: { filePath: string; lineNumber: number; line: Buffer; column: number }[] = [];
+  let batchBytes = 0;
+  const flushBatch = async (): Promise<boolean> => {
+    const candidates = batch.splice(0);
+    batchBytes = 0;
+    const lines = candidates.map(({ line }) => line);
+    const decisions = await Promise.all(predicates.map((predicate) => predicate(lines)));
+    for (let index = 0; index < candidates.length; index++) {
+      if (
+        !decisions.every((results, predicate) =>
+          predicate < andPredicates.length ? results[index] : !results[index],
+        )
+      )
+        continue;
+      const candidate = candidates[index];
+      if (outputMode === "content" && !revisions.has(candidate.filePath)) {
+        revisions.set(candidate.filePath, await fileRevision(candidate.filePath));
+      }
+      raw.push({
+        filePath: candidate.filePath,
+        lineNumber: candidate.lineNumber,
+        column: candidate.column,
+        matchedText: candidate.line.toString("utf8").replace(/\n$/, ""),
+      });
+      if (raw.length >= limit) {
+        matchLimitReached = true;
+        return false;
+      }
+    }
+    return true;
+  };
+  const resolvedPaths = new Map<string, string>();
+  const seenMatches = new Set<string>();
+  const run = await backend.runRg(rgPath, args, signal, async (line) => {
+    if (raw.length >= limit) return false;
+    let event: any;
+    try {
+      event = JSON.parse(line);
+    } catch {
+      return true;
+    }
+    if (event.type !== "match") return true;
+    const data = event.data;
+    if (!data?.path || !data?.lines || !Number.isSafeInteger(data.line_number)) return true;
+    const reportedPath = resolve(rgText(data.path));
+    let filePath = reportedPath;
+    if (scope.follow) {
+      filePath = resolvedPaths.get(reportedPath) ?? (await realpath(reportedPath));
+      resolvedPaths.set(reportedPath, filePath);
+    }
+    const matchKey = `${filePath}\0${data.line_number}`;
+    if (seenMatches.has(matchKey)) return true;
+    seenMatches.add(matchKey);
+    const bytes = rgBytes(data.lines);
+    batch.push({
+      filePath,
+      lineNumber: data.line_number,
+      line: bytes,
+      column: bytes.subarray(0, data.submatches?.[0]?.start ?? 0).toString("utf8").length,
+    });
+    batchBytes += bytes.length;
+    if (
+      predicates.length === 0 ||
+      batch.length >= FILTER_BATCH_SIZE ||
+      batchBytes >= FILTER_BATCH_BYTES
+    ) {
+      return flushBatch();
+    }
+    return true;
+  });
+  if (signal?.aborted) throw new Error("Operation aborted");
+  recordSearchDiagnostics(run, warnings);
+  if (batch.length && raw.length < limit) await flushBatch();
+  return { raw, matchLimitReached, revisions };
+}
+
+interface FormatMatchesOptions {
+  cwd: string;
+  raw: readonly RgMatch[];
+  outputMode: "content" | "files" | "count";
+  context: number;
+  anchors: ReturnType<typeof createAnchorFormatter>;
+  signal?: AbortSignal;
+  warnings: string[];
+  simpleRevisions: ReadonlyMap<string, string>;
+  strictIdentities?: ReadonlyMap<string, FileIdentity>;
+}
+
+async function formatMatches(options: FormatMatchesOptions) {
+  const {
+    cwd,
+    raw,
+    outputMode,
+    context,
+    anchors,
+    signal,
+    warnings,
+    simpleRevisions,
+    strictIdentities,
+  } = options;
+  const byFile = new Map<string, RgMatch[]>();
+  for (const match of raw) {
+    const lines = byFile.get(match.filePath) ?? [];
+    lines.push(match);
+    byFile.set(match.filePath, lines);
+  }
+  for (const lines of byFile.values()) lines.sort((a, b) => a.lineNumber - b.lineNumber);
+  const formatPath = (filePath: string): string => {
+    const absolute = resolve(cwd, filePath);
+    const rel = relative(cwd, absolute);
+    return rel && rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel)
+      ? rel.replace(/\\/g, "/")
+      : absolute;
+  };
+  const blocks: string[] = [];
+  let linesTruncated = false;
+  if (outputMode === "content") {
+    const fileEntries = [...byFile.entries()];
+    const fileResults = new Array<{ block?: string; warning?: string }>(fileEntries.length);
+    let nextIndex = 0;
+    const workers = Array.from(
+      { length: Math.min(MAX_CONCURRENT_FILE_READS, fileEntries.length) },
+      async () => {
+        while (nextIndex < fileEntries.length) {
+          const current = nextIndex++;
+          const [filePath, matchLines] = fileEntries[current];
+          const columns = new Map(matchLines.map((match) => [match.lineNumber, match.column]));
+          const matchedTexts = new Map(
+            matchLines.map((match) => [match.lineNumber, match.matchedText]),
+          );
+          const windowSet = new Set<number>();
+          for (const { lineNumber } of matchLines) {
+            for (let n = Math.max(1, lineNumber - context); n <= lineNumber + context; n++)
+              windowSet.add(n);
+          }
+          const rows: string[] = [];
+          let stats: Awaited<ReturnType<typeof scanTextLines>>;
+          try {
+            stats = await scanTextLines(
+              filePath,
+              (number) => windowSet.has(number),
+              (line) => {
+                if (line.text === undefined) return;
+                const matchedText = matchedTexts.get(line.number);
+                if (matchedText !== undefined && matchedText !== line.text) {
+                  throw new Error("File changed during search; rerun the query.");
+                }
+                const { text: display, wasTruncated } = previewLine(
+                  displayCarriageReturns(line.text),
+                  columns.get(line.number),
+                );
+                if (wasTruncated) linesTruncated = true;
+                rows.push(anchors.row(line.number, line.text, display));
+              },
+              { signal },
+            );
+          } catch (error) {
+            if (
+              strictIdentities ||
+              signal?.aborted ||
+              !(error instanceof Error) ||
+              !("code" in error)
+            )
+              throw error;
+            fileResults[current] = { warning: `Could not read ${filePath}: ${error.message}` };
+            continue;
+          }
+          if (stats.hasNul) throw new Error("UNSUPPORTED_TEXT: NUL bytes are not editable.");
+          const simpleRevision = simpleRevisions.get(filePath);
+          if (simpleRevision && simpleRevision !== (await fileRevision(filePath))) {
+            throw new Error("File changed during search; rerun the query.");
+          }
+          if (strictIdentities) {
+            const baseline = strictIdentities.get(filePath);
+            if (!baseline || !sameIdentity(baseline, await fileIdentity(filePath))) {
+              throw new Error("File changed during search; rerun the query.");
+            }
+          }
+          const header = `${formatPath(filePath)} · ${matchLines.length} match${matchLines.length !== 1 ? "es" : ""}\n`;
+          fileResults[current] = { block: header + rows.join("\n") };
+        }
+      },
+    );
+    await Promise.all(workers);
+    for (const result of fileResults) {
+      if (result.warning) warnings.push(result.warning);
+      else if (result.block) blocks.push(result.block);
+    }
+  } else if (outputMode === "files") {
+    for (const filePath of byFile.keys()) blocks.push(formatPath(filePath));
+  } else {
+    let total = 0;
+    for (const [filePath, matchLines] of byFile) {
+      blocks.push(`${formatPath(filePath)}: ${matchLines.length}`);
+      total += matchLines.length;
+    }
+    blocks.push(
+      `Total: ${total} match${total !== 1 ? "es" : ""} in ${byFile.size} file${byFile.size !== 1 ? "s" : ""}`,
+    );
+  }
+  return { blocks, linesTruncated };
+}
+
 interface AssembleGrepOutputOptions {
   blocks: readonly string[];
   warnings: readonly string[];
@@ -850,8 +1103,7 @@ export function makeGrepOverrideWithBackend(cwd: string, overrides: Partial<Grep
       let raw: RgMatch[];
       let matchLimitReached: boolean;
       let strictIdentities: Map<string, FileIdentity> | undefined;
-      let linesTruncated = false;
-      const simpleRevisions = new Map<string, string>();
+      let simpleRevisions = new Map<string, string>();
 
       if (scope.searchPaths.length === 0) {
         raw = [];
@@ -876,110 +1128,23 @@ export function makeGrepOverrideWithBackend(cwd: string, overrides: Partial<Grep
         matchLimitReached = result.matchLimitReached;
         strictIdentities = result.identities;
       } else {
-        let matchCount = 0;
-        matchLimitReached = false;
-        raw = [];
-        const args = [
-          ...matcherArgs(modes, !!wordMatch),
-          "--json",
-          "--line-number",
-          ...scopeArgs(scope),
-        ];
-        for (const pattern of matchMode === "all" ? patterns.slice(0, 1) : patterns)
-          args.push("-e", pattern);
-        args.push("--", ...scope.searchPaths);
-
-        const andPredicates =
-          matchMode === "all"
-            ? patterns
-                .slice(1)
-                .map((pattern) =>
-                  backend.createLinePredicate(rgPath, [pattern], modes, !!wordMatch, signal),
-                )
-            : [];
-        const exclusionPredicate = excludes.length
-          ? backend.createLinePredicate(rgPath, excludes, modes, false, signal)
-          : undefined;
-        const predicates: LinePredicate[] = [
-          ...andPredicates,
-          ...(exclusionPredicate ? [exclusionPredicate] : []),
-        ];
-        const batch: { filePath: string; lineNumber: number; line: Buffer; column: number }[] = [];
-        let batchBytes = 0;
-        const flushBatch = async (): Promise<boolean> => {
-          const candidates = batch.splice(0);
-          batchBytes = 0;
-          const lines = candidates.map(({ line }) => line);
-          const decisions = await Promise.all(predicates.map((predicate) => predicate(lines)));
-          for (let index = 0; index < candidates.length; index++) {
-            if (
-              !decisions.every((results, predicate) =>
-                predicate < andPredicates.length ? results[index] : !results[index],
-              )
-            )
-              continue;
-            if (outputMode === "content" && !simpleRevisions.has(candidates[index].filePath)) {
-              simpleRevisions.set(
-                candidates[index].filePath,
-                await fileRevision(candidates[index].filePath),
-              );
-            }
-            raw.push({
-              filePath: candidates[index].filePath,
-              lineNumber: candidates[index].lineNumber,
-              column: candidates[index].column,
-              matchedText: candidates[index].line.toString("utf8").replace(/\n$/, ""),
-            });
-            matchCount++;
-            if (matchCount >= effectiveLimit) {
-              matchLimitReached = true;
-              return false;
-            }
-          }
-          return true;
-        };
-        const resolvedPaths = new Map<string, string>();
-        const seenMatches = new Set<string>();
-        const run = await backend.runRg(rgPath, args, signal, async (line) => {
-          if (matchCount >= effectiveLimit) return false;
-          let event: any;
-          try {
-            event = JSON.parse(line);
-          } catch {
-            return true;
-          }
-          if (event.type !== "match") return true;
-          const data = event.data;
-          if (!data?.path || !data?.lines || !Number.isSafeInteger(data.line_number)) return true;
-          const reportedPath = resolve(rgText(data.path));
-          let filePath = reportedPath;
-          if (scope.follow) {
-            filePath = resolvedPaths.get(reportedPath) ?? (await realpath(reportedPath));
-            resolvedPaths.set(reportedPath, filePath);
-          }
-          const matchKey = `${filePath}\0${data.line_number}`;
-          if (seenMatches.has(matchKey)) return true;
-          seenMatches.add(matchKey);
-          const bytes = rgBytes(data.lines);
-          batch.push({
-            filePath,
-            lineNumber: data.line_number,
-            line: bytes,
-            column: bytes.subarray(0, data.submatches?.[0]?.start ?? 0).toString("utf8").length,
-          });
-          batchBytes += bytes.length;
-          if (
-            predicates.length === 0 ||
-            batch.length >= FILTER_BATCH_SIZE ||
-            batchBytes >= FILTER_BATCH_BYTES
-          ) {
-            return flushBatch();
-          }
-          return true;
+        const result = await simpleSearch({
+          backend,
+          rgPath,
+          scope,
+          patterns,
+          excludes,
+          matchMode,
+          modes,
+          word: !!wordMatch,
+          limit: effectiveLimit,
+          outputMode,
+          signal,
+          warnings,
         });
-        if (signal?.aborted) throw new Error("Operation aborted");
-        recordSearchDiagnostics(run, warnings);
-        if (batch.length && matchCount < effectiveLimit) await flushBatch();
+        raw = result.raw;
+        matchLimitReached = result.matchLimitReached;
+        simpleRevisions = result.revisions;
       }
 
       if (raw.length === 0) {
@@ -997,109 +1162,17 @@ export function makeGrepOverrideWithBackend(cwd: string, overrides: Partial<Grep
         };
       }
 
-      // Group by file, matches sorted by line number (Map keeps rg's discovery order).
-      const byFile = new Map<string, RgMatch[]>();
-      for (const match of raw) {
-        const lines = byFile.get(match.filePath) ?? [];
-        lines.push(match);
-        byFile.set(match.filePath, lines);
-      }
-      for (const lines of byFile.values()) lines.sort((a, b) => a.lineNumber - b.lineNumber);
-
-      const formatPath = (filePath: string): string => {
-        const absolute = resolve(cwd, filePath);
-        const rel = relative(cwd, absolute);
-        return rel && rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel)
-          ? rel.replace(/\\/g, "/")
-          : absolute;
-      };
-
-      const blocks: string[] = [];
-      if (outputMode === "content") {
-        const fileEntries = [...byFile.entries()];
-        const fileResults = new Array<{ block?: string; warning?: string }>(fileEntries.length);
-        let nextIndex = 0;
-        const workerCount = Math.min(MAX_CONCURRENT_FILE_READS, fileEntries.length);
-        const workers = Array.from({ length: workerCount }, async () => {
-          while (nextIndex < fileEntries.length) {
-            const current = nextIndex++;
-            const [filePath, matchLines] = fileEntries[current];
-            const columns = new Map(matchLines.map((match) => [match.lineNumber, match.column]));
-            const matchedTexts = new Map(
-              matchLines.map((match) => [match.lineNumber, match.matchedText]),
-            );
-            // Retain only surviving matches and their context, then store the formatted block.
-            const windowSet = new Set<number>();
-            for (const { lineNumber } of matchLines) {
-              for (let n = Math.max(1, lineNumber - ctx); n <= lineNumber + ctx; n++)
-                windowSet.add(n);
-            }
-            const rows: string[] = [];
-            let stats: Awaited<ReturnType<typeof scanTextLines>>;
-            try {
-              stats = await scanTextLines(
-                filePath,
-                (number) => windowSet.has(number),
-                (line) => {
-                  if (line.text === undefined) return;
-                  const matchedText = matchedTexts.get(line.number);
-                  if (matchedText !== undefined && matchedText !== line.text) {
-                    throw new Error("File changed during search; rerun the query.");
-                  }
-                  const { text: display, wasTruncated } = previewLine(
-                    displayCarriageReturns(line.text),
-                    columns.get(line.number),
-                  );
-                  if (wasTruncated) linesTruncated = true;
-                  rows.push(anchors.row(line.number, line.text, display));
-                },
-                { signal },
-              );
-            } catch (error) {
-              if (
-                strictIdentities ||
-                signal?.aborted ||
-                !(error instanceof Error) ||
-                !("code" in error)
-              )
-                throw error;
-              fileResults[current] = { warning: `Could not read ${filePath}: ${error.message}` };
-              continue;
-            }
-            if (stats.hasNul) throw new Error("UNSUPPORTED_TEXT: NUL bytes are not editable.");
-            const simpleRevision = simpleRevisions.get(filePath);
-            if (simpleRevision && simpleRevision !== (await fileRevision(filePath))) {
-              throw new Error("File changed during search; rerun the query.");
-            }
-            if (strictIdentities) {
-              const baseline = strictIdentities.get(filePath);
-              if (!baseline || !sameIdentity(baseline, await fileIdentity(filePath))) {
-                throw new Error("File changed during search; rerun the query.");
-              }
-            }
-            const header = `${formatPath(filePath)} · ${matchLines.length} match${matchLines.length !== 1 ? "es" : ""}\n`;
-            fileResults[current] = { block: header + rows.join("\n") };
-          }
-        });
-        await Promise.all(workers);
-
-        for (const result of fileResults) {
-          if (result.warning) warnings.push(result.warning);
-          else if (result.block) blocks.push(result.block);
-        }
-      } else if (outputMode === "files") {
-        for (const filePath of byFile.keys()) blocks.push(formatPath(filePath));
-      } else {
-        let total = 0;
-        for (const [filePath, matchLines] of byFile) {
-          blocks.push(`${formatPath(filePath)}: ${matchLines.length}`);
-          total += matchLines.length;
-        }
-        blocks.push(
-          `Total: ${total} match${total !== 1 ? "es" : ""} in ${byFile.size} file${byFile.size !== 1 ? "s" : ""}`,
-        );
-      }
-
+      const { blocks, linesTruncated } = await formatMatches({
+        cwd,
+        raw,
+        outputMode,
+        context: ctx,
+        anchors,
+        signal,
+        warnings,
+        simpleRevisions,
+        strictIdentities,
+      });
       return assembleGrepOutput({
         blocks,
         warnings,
