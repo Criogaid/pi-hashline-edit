@@ -242,17 +242,13 @@ test("shifted recovery: content moved down → found with a fresh anchor", () =>
 	const readText = "a\nb\nc\nd\ne\n";
 	const currentText = "a\nX\nb\nc\nd\ne\n"; // inserted X after line 1 → "c" moved 3→4
 	const r = applyEdits(currentText, [{ op: "replace", start: at(readText, 3), body: ["C"] }]);
-	assert.equal(r.ok, false);
-	if (!r.ok && r.failure.kind === "anchor") {
-		const f = r.failure.failures[0];
-		assert.equal(f.recovery.kind, "found");
-		if (f.recovery.kind === "found") {
-			assert.equal(f.recovery.newLine, 4);
-			assert.equal(f.recovery.scope, "local");
-			// the rescued anchor must verify against the current file
-			assert.equal(computeLineHash(4, splitLines(currentText)[3]), f.recovery.newHash);
-		}
-	}
+	assert.ok(!r.ok && r.failure.kind === "anchor");
+	const f = r.failure.failures[0];
+	assert.ok(f.recovery.kind === "found");
+	assert.equal(f.recovery.newLine, 4);
+	assert.equal(f.recovery.scope, "local");
+	// The recovered anchor must verify against the current file.
+	assert.equal(computeLineHash(4, splitLines(currentText)[3]), f.recovery.newHash);
 });
 
 test("rescued anchor lets the retry succeed without a re-read", () => {
@@ -260,48 +256,36 @@ test("rescued anchor lets the retry succeed without a re-read", () => {
 	const currentText = "a\nX\nb\nc\nd\ne\n";
 	// first attempt with a stale anchor → rescued
 	const r1 = applyEdits(currentText, [{ op: "replace", start: at(readText, 3), body: ["C"] }]);
-	assert.equal(r1.ok, false);
-	if (r1.ok) return;
-	if (r1.failure.kind !== "anchor") return;
+	assert.ok(!r1.ok && r1.failure.kind === "anchor");
 	const f = r1.failure.failures[0];
-	assert.equal(f.recovery.kind, "found");
-	if (f.recovery.kind !== "found") return;
-	// retry with the rescued anchor → succeeds, file unchanged elsewhere
+	assert.ok(f.recovery.kind === "found");
+	// Retry with the recovered anchor; the rest of the file stays unchanged.
 	const r2 = applyEdits(currentText, [
 		{ op: "replace", start: { line: f.recovery.newLine, hash: f.recovery.newHash }, body: ["C"] },
 	]);
-	assert.equal(r2.ok, true);
-	if (r2.ok) assert.equal(r2.text, "a\nX\nb\nC\nd\ne\n");
+	assert.ok(r2.ok);
+	assert.equal(r2.text, "a\nX\nb\nC\nd\ne\n");
 });
 
 test("shifted recovery: duplicate content → ambiguous candidates", () => {
 	const readText = "a\nx\nb\nx\nc\n";
 	const currentText = "a\nY\nx\nb\nx\nc\n"; // both "x" shifted
 	const r = applyEdits(currentText, [{ op: "replace", start: at(readText, 2), body: ["Z"] }]);
-	assert.equal(r.ok, false);
-	if (!r.ok && r.failure.kind === "anchor") {
-		const f = r.failure.failures[0];
-		assert.equal(f.recovery.kind, "ambiguous");
-		if (f.recovery.kind === "ambiguous") {
-			assert.equal(f.recovery.scope, "local");
-			assert.deepEqual(
-				f.recovery.candidates.map((c) => c.line),
-				[3, 5],
-			);
-		}
-	}
+	assert.ok(!r.ok && r.failure.kind === "anchor");
+	const f = r.failure.failures[0];
+	assert.ok(f.recovery.kind === "ambiguous");
+	assert.equal(f.recovery.scope, "local");
+	assert.deepEqual(f.recovery.candidates.map((c) => c.line), [3, 5]);
 });
 
 test("shifted recovery: content genuinely changed → none, with live content", () => {
 	const readText = "a\nb\nc\n";
 	const currentText = "a\nBCHANGED\nc\n"; // "b" is gone
 	const r = applyEdits(currentText, [{ op: "replace", start: at(readText, 2), body: ["B"] }]);
-	assert.equal(r.ok, false);
-	if (!r.ok && r.failure.kind === "anchor") {
-		const f = r.failure.failures[0];
-		assert.equal(f.recovery.kind, "none");
-		assert.equal(f.current?.content, "BCHANGED");
-	}
+	assert.ok(!r.ok && r.failure.kind === "anchor");
+	const f = r.failure.failures[0];
+	assert.equal(f.recovery.kind, "none");
+	assert.equal(f.current?.content, "BCHANGED");
 });
 
 test("full-file recovery finds distant content and anchors beyond the current EOF", () => {
@@ -343,22 +327,18 @@ test("collect-all: two stale anchors in one batch → both failures returned", (
 		{ op: "replace", start: at(readText, 2), body: ["B"] },
 		{ op: "replace", start: at(readText, 4), body: ["D"] },
 	]);
-	assert.equal(r.ok, false);
-	if (!r.ok && r.failure.kind === "anchor") {
-		assert.equal(r.failure.failures.length, 2);
-		const found = r.failure.failures.map((f) => (f.recovery.kind === "found" ? f.recovery.newLine : -1));
-		assert.deepEqual(found, [3, 5]);
-	}
+	assert.ok(!r.ok && r.failure.kind === "anchor");
+	assert.equal(r.failure.failures.length, 2);
+	const found = r.failure.failures.map((f) => (f.recovery.kind === "found" ? f.recovery.newLine : -1));
+	assert.deepEqual(found, [3, 5]);
 });
 
 test("shiftRadius=0 disables rescue (always none)", () => {
 	const readText = "a\nb\nc\nd\ne\n";
 	const currentText = "a\nX\nb\nc\nd\ne\n";
 	const r = applyEdits(currentText, [{ op: "replace", start: at(readText, 3), body: ["C"] }], 4, 0);
-	assert.equal(r.ok, false);
-	if (!r.ok && r.failure.kind === "anchor") {
-		assert.equal(r.failure.failures[0].recovery.kind, "none");
-	}
+	assert.ok(!r.ok && r.failure.kind === "anchor");
+	assert.equal(r.failure.failures[0].recovery.kind, "none");
 });
 
 
