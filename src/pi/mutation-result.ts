@@ -7,9 +7,13 @@ import { normalizeLineEndings } from "../core/lines.ts";
 /** Keep byte-faithful diff/patch data and a separate preview of the shared logical text. */
 export function generateMutationDetails(path: string, before: string, after: string, versions: MutationVersions, publication: PublicationStatus) {
 	const { diff, firstChangedLine } = generateDiffString(before, after);
+	const logicalBefore = normalizeLineEndings(before);
+	const logicalAfter = normalizeLineEndings(after);
+	const displayDiff = logicalBefore === before && logicalAfter === after
+		? diff : generateDiffString(logicalBefore, logicalAfter).diff;
 	return {
 		diff: displayCarriageReturns(diff),
-		displayDiff: displayCarriageReturns(generateDiffString(normalizeLineEndings(before), normalizeLineEndings(after)).diff),
+		displayDiff: displayCarriageReturns(displayDiff),
 		firstChangedLine,
 		patch: generateUnifiedPatch(path, before, after),
 		publication,
