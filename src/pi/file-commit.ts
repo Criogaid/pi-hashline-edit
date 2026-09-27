@@ -140,7 +140,7 @@ async function writeAndSyncTemp(tempPath: string, content: Buffer, modeBits: num
 }
 
 async function publishCreate(tempPath: string, targetPath: string, signal: AbortSignal | undefined): Promise<void> {
-	// link() 在同一文件系统内创建不可覆盖的目录项，避免检查与发布之间的覆盖竞争。
+	// link() creates an unclobberable directory entry on the same filesystem, avoiding create/replace races.
 	signal?.throwIfAborted();
 	try {
 		await link(tempPath, targetPath);
@@ -153,7 +153,7 @@ async function publishCreate(tempPath: string, targetPath: string, signal: Abort
 }
 
 async function publishReplace(tempPath: string, targetPath: string, signal: AbortSignal | undefined): Promise<void> {
-	// rename() 替换目录项，但不会先删除旧文件；读者看到旧文件或完整新文件。
+	// rename() replaces the directory entry atomically without deleting the old file first; readers observe old or new.
 	signal?.throwIfAborted();
 	try {
 		await rename(tempPath, targetPath);
