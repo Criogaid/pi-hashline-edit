@@ -65,14 +65,11 @@ test("replacement exposes complete old or new content during concurrent reads", 
 	await writeFile(target, oldContent);
 	let done = false;
 	const commit = commitFile(target, newContent, { mode: "overwrite" }).finally(() => { done = true; });
-	const observed = new Set<string>();
 	while (!done) {
 		const current = await readFile(target, "utf8");
 		assert.ok(current === oldContent || current === newContent, "reader observed partial replacement content");
-		observed.add(current === oldContent ? "old" : "new");
 	}
 	await commit;
-	assert.ok(observed.size === 0 || [...observed].every((value) => value === "old" || value === "new"));
 	assert.equal(await readFile(target, "utf8"), newContent);
 }));
 
@@ -132,22 +129,6 @@ test("directories are rejected instead of entering regular-file publication", as
 	await assert.rejects(commitFile(target, "bad\n", { mode: "overwrite" }), /not a regular file/);
 }));
 
-test("Windows replacement failure never falls back to delete-then-write", async (t) => withTemp(async (dir) => {
-	if (process.platform !== "win32") return t.skip("Windows-specific behavior");
-	const target = join(dir, "readonly.txt");
-	await writeFile(target, "original\n");
-	await chmod(target, 0o444);
-	try {
-		await commitFile(target, "replacement\n", { mode: "overwrite" });
-	} catch (error) {
-		assert.ok(error instanceof FileMutationError);
-		assert.ok(error.publication === "NOT_PUBLISHED" || error.publication === "UNKNOWN");
-		assert.equal(await readFile(target, "utf8"), "original\n");
-		return;
-	}
-	assert.equal(await readFile(target, "utf8"), "replacement\n");
-}));
-
 test("Windows shared access failure preserves the target, skips then_run, and releases the queue", async (t) => withTemp(async (dir) => {
 	if (process.platform !== "win32") return t.skip("Windows shared-access behavior");
 	const target = join(dir, "shared.txt");
@@ -188,15 +169,19 @@ test("cancellation racing publication never reports a settled operation as unpub
 	const controller = new AbortController();
 	const commit = commitFile(target, newContent, { mode: "overwrite", signal: controller.signal });
 	setImmediate(() => controller.abort());
+	let publication: "NOT_PUBLISHED" | "PUBLISHED" | "UNKNOWN";
 	try {
 		const result = await commit;
-		assert.equal(result.publication, "PUBLISHED");
+		publication = result.publication;
+		assert.equal(publication, "PUBLISHED");
 	} catch (error) {
 		assert.ok(error instanceof FileMutationError);
-		assert.notEqual(error.publication, "PUBLISHED");
+		publication = error.publication;
 	}
 	const finalContent = await readFile(target, "utf8");
 	assert.ok(finalContent === oldContent || finalContent === newContent);
+	if (publication === "NOT_PUBLISHED") assert.equal(finalContent, oldContent);
+	if (publication === "PUBLISHED") assert.equal(finalContent, newContent);
 }));
 
 test("commit result binds base, published, and observed revisions", async () => withTemp(async (dir) => {

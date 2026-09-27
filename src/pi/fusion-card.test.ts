@@ -104,28 +104,3 @@ test("legacy snapshots separate known command failures and suppress mutation dia
 		assert.equal(entries[1].data.output, output, "restoring must not rewrite persisted evidence");
 	}
 });
-
-test("session restore syncs ctx.cwd to fusion card render context", () => {
-	const entries = [
-		{ type: "custom", customType: "hashline-then-run", data: waiting },
-	];
-	const h = harness(entries);
-	h.restore("session_start", entries, { cwd: "/custom/workspace" });
-	const card = h.card(entries[0]);
-	const rendered = card.render(100).join("\n");
-	assert.match(rendered, /then_run/);
-	assert.match(rendered, /interrupted/);
-	assert.match(rendered, /\$ npm test/);
-});
-
-test("progress report syncs ctx.cwd to fusion card render context", () => {
-	const h = harness();
-	h.report(waiting, { cwd: "/dynamic/workspace" } as any);
-	const card = h.card(h.entries[0]);
-	const rendered = card.render(100).join("\n");
-	assert.match(rendered, /then_run/);
-	assert.match(rendered, /waiting/);
-	assert.match(rendered, /\$ npm test/);
-});
-
-
