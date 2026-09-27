@@ -138,6 +138,8 @@ Original `foo bar` becomes `bar baz`; inserted text is not searched again. All r
 
 Required: `path`. Optional: 1-based `offset` (default 1) and `limit` (default 500 lines). Returned text is capped at 256 KiB; oversized rows are not returned as partial editable lines. Files without a final newline are identified in the header.
 
+When the line limit leaves more content, the result reports the shown range and the next `offset`, for example `showing lines 1-500 of 1200; use offset 501 to continue`. `details.pagination` contains 1-based `start`, inclusive `end`, `totalLines`, and `nextOffset`. This applies to default and explicit limits. Reads reaching EOF omit pagination; byte-limited reads retain their byte-truncation notice and metadata.
+
 ### Grep
 
 | Parameter | Default | Meaning |

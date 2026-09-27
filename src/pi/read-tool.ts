@@ -159,6 +159,9 @@ export function makeReadOverride(cwd: string) {
 				throw error;
 			}
 			if (stats.hasNul) return builtin.execute(toolCallId, params, signal, onUpdate, ctx);
+			const pagination = !truncated && rows.length > 0 && end <= stats.totalLines
+				? { start, end: start + rows.length - 1, totalLines: stats.totalLines, nextOffset: start + rows.length }
+				: undefined;
 			const truncation = {
 				content: rows.join("\n"), truncated, truncatedBy: truncated ? "bytes" as const : null,
 				totalLines: totalRows, totalBytes, outputLines: rows.length, outputBytes,
@@ -172,13 +175,14 @@ export function makeReadOverride(cwd: string) {
 			const noFinalNewline = stats.finalNewline ? "" : " · no trailing newline";
 			const tail = truncation.firstLineExceedsLimit
 				? `\n… (line ${offset} exceeds ${MAX_BYTES >> 10}KB; cannot return a complete anchor row. Reducing limit cannot split a physical line; use bash to inspect it in chunks, or replace for a known literal/regex change)`
-				: truncation.truncated ? `\n… (truncated at ${MAX_BYTES >> 10}KB; use offset/limit to read more)` : "";
+				: truncation.truncated ? `\n… (truncated at ${MAX_BYTES >> 10}KB; use offset/limit to read more)`
+					: pagination ? `\n… (showing lines ${pagination.start}-${pagination.end} of ${pagination.totalLines}; use offset ${pagination.nextOffset} to continue)` : "";
 			const header = `${params.path} · ${stats.totalLines} lines${shownFrom}${noFinalNewline}\n`;
 			const body = truncation.content;
 
 			return {
 				content: [{ type: "text" as const, text: header + body + tail }],
-				details: truncation.truncated ? { truncation } : undefined,
+				details: truncation.truncated ? { truncation } : pagination ? { pagination } : undefined,
 			};
 		},
 	};

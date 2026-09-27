@@ -467,10 +467,41 @@ test("read defaults to 500 lines when limit is omitted and respects explicit lim
 	assert.match(def.content[0].text, /large\.txt · 600 lines/);
 	assert.match(def.content[0].text, /\n500#[0-9A-Z]+│line500/);
 	assert.doesNotMatch(def.content[0].text, /\n501#[0-9A-Z]+│/);
+	assert.match(def.content[0].text, /showing lines 1-500 of 600; use offset 501 to continue/);
+	assert.deepEqual(def.details, { pagination: { start: 1, end: 500, totalLines: 600, nextOffset: 501 } });
 
 	const custom = await call(makeReadOverride(dir), { path: "large.txt", limit: 550 });
 	assert.match(custom.content[0].text, /\n550#[0-9A-Z]+│line550/);
 	assert.doesNotMatch(custom.content[0].text, /\n551#[0-9A-Z]+│/);
+	assert.match(custom.content[0].text, /showing lines 1-550 of 600; use offset 551 to continue/);
+	assert.deepEqual(custom.details, { pagination: { start: 1, end: 550, totalLines: 600, nextOffset: 551 } });
+}));
+
+test("read pagination supports offset windows and stops suggesting continuation at EOF", async () => withDir(async (dir) => {
+	await writeFile(join(dir, "pages.txt"), Array.from({ length: 600 }, (_, i) => `line${i + 1}\n`).join(""));
+	const read = makeReadOverride(dir);
+	const page = await call(read, { path: "pages.txt", offset: 20 });
+	assert.match(page.content[0].text, /showing lines 20-519 of 600; use offset 520 to continue/);
+	assert.deepEqual(page.details, { pagination: { start: 20, end: 519, totalLines: 600, nextOffset: 520 } });
+	const next = await call(read, { path: "pages.txt", offset: page.details.pagination.nextOffset });
+	assert.match(next.content[0].text, /\n520#[0-9A-Z]+│line520/);
+	assert.match(next.content[0].text, /\n600#[0-9A-Z]+│line600/);
+	assert.equal(next.details, undefined);
+	assert.doesNotMatch(next.content[0].text, /to continue/);
+	for (const offset of [101, 601]) {
+		const result = await call(read, { path: "pages.txt", offset });
+		assert.equal(result.details, undefined);
+		assert.doesNotMatch(result.content[0].text, /to continue/);
+	}
+}));
+
+test("read byte truncation takes precedence over line pagination", async () => withDir(async (dir) => {
+	await writeFile(join(dir, "large.txt"), `first\n${"x".repeat(256 * 1024)}\ntail\n`);
+	const result = await call(makeReadOverride(dir), { path: "large.txt", limit: 2 });
+	assert.equal(result.details.truncation.truncatedBy, "bytes");
+	assert.equal(result.details.pagination, undefined);
+	assert.match(result.content[0].text, /truncated at 256KB/);
+	assert.doesNotMatch(result.content[0].text, /showing lines|to continue/);
 }));
 
 test("native read and write renderers preserve resource titles, previews, and full errors", async () => withDir(async (dir) => {
