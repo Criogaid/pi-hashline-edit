@@ -103,19 +103,23 @@ test("E2E Dev D2: Chained multi-site edits using returned fresh anchors", async 
 		path: "service.ts",
 		edits: [{ op: "replace", anchor: h(original, 2), body: ["  version = 2;"] }],
 	});
-	assert.match(r1.content[0].text, /Updated anchors:\n2#/);
+	const returnedAnchor = anchorLine(r1.content[0].text, 2);
+	assert.equal(returnedAnchor, h("class Service {\n  version = 2;\n", 2));
 
-	// Step 2: Immediate follow-up edit using stable anchor on untouched lines
+	// Step 2: Reuse the returned anchor and edit another site in the same batch.
 	const r2 = await call(edit, {
 		path: "service.ts",
-		edits: [{ op: "replace", anchor: h(original, 5), body: ["    return 'active';"] }],
+		edits: [
+			{ op: "replace", anchor: returnedAnchor, body: ["  version = 3;"] },
+			{ op: "replace", anchor: h(original, 5), body: ["    return 'active';"] },
+		],
 	});
-	assert.match(r2.content[0].text, /Updated anchors:\n5#/);
+	assert.match(r2.content[0].text, /Updated anchors:/);
 
 	const final = await readFile(file, "utf8");
 	assert.equal(final, [
 		"class Service {",
-		"  version = 2;",
+		"  version = 3;",
 		"  enabled = false;",
 		"  status() {",
 		"    return 'active';",
@@ -279,19 +283,28 @@ test("E2E Holdout H1: Ambiguous candidates provide distinguishing neighborhoods"
 	await writeFile(file, text);
 
 	const edit = makeEditOverride(dir);
-
-	// Cited anchor for line 2 ("  return true;") but shifted
-	// Simulate ambiguity
+	// The cited content moved away from line 3 and now occurs at lines 2 and 5.
+	const staleAnchor = h("header\nheader\n  return true;\n", 3);
+	let candidateAnchor = "";
 	await assert.rejects(
 		call(edit, {
 			path: "ambiguous.txt",
-			edits: [{ op: "replace", anchor: "99#ABCD", body: ["  return false;"] }],
+			edits: [{ op: "replace", anchor: staleAnchor, body: ["  return false;"] }],
 		}),
 		(error: Error) => {
-			assert.match(error.message, /Anchor mismatch: 1 unresolved/);
+			assert.match(error.message, /ambiguous checksum matches/);
+			assert.match(error.message, /Ambiguous-candidate neighborhoods/);
+			assert.ok(error.message.includes(`${h(text, 2)}│  return true;`));
+			assert.ok(error.message.includes(`${h(text, 5)}│  return true;`));
+			assert.ok(error.message.includes(`${h(text, 1)}│function one() {`));
+			assert.ok(error.message.includes(`${h(text, 4)}│function two() {`));
+			candidateAnchor = anchorLine(error.message.split("Ambiguous-candidate neighborhoods")[1], 5);
 			return true;
 		},
 	);
+	assert.equal(await readFile(file, "utf8"), text);
+	await call(edit, { path: "ambiguous.txt", edits: [{ op: "replace", anchor: candidateAnchor, body: ["  return false;"] }] });
+	assert.equal(await readFile(file, "utf8"), "function one() {\n  return true;\n}\nfunction two() {\n  return false;\n}\n");
 }));
 
 test("E2E Holdout H2: Action Fusion command failure preserves file changes and anchors", async () => withDir(async (dir) => {
