@@ -23,7 +23,9 @@ test("read and both grep engines retain anchors on LF and CRLF files over 100 Mi
         await handle.writeFile("needle" + ending);
         for (let i = 0; i < 101; i++) await handle.writeFile(block);
         await handle.writeFile("tail" + ending);
-      } finally { await handle.close(); }
+      } finally {
+        await handle.close();
+      }
       const first: any = await call(read, { path, limit: 1 });
       assert.match(first.content[0].text, /103426 lines/);
       assert.ok(first.content[0].text.includes(`1#${computeLineHash(1, "needle")}│needle`));
@@ -35,7 +37,9 @@ test("read and both grep engines retain anchors on LF and CRLF files over 100 Mi
         assert.doesNotMatch(result.content[0].text, /Search incomplete/);
       }
     }
-  } finally { await rm(directory, { recursive: true, force: true }); }
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 });
 
 test("CRLF snapshots normalize terminators split across read chunks and preserve standalone CR", async () => {
@@ -44,8 +48,14 @@ test("CRLF snapshots normalize terminators split across read chunks and preserve
     const path = join(directory, "boundary.txt");
     await writeFile(path, "x".repeat(65535) + "\r\nneedle\r\nstandalone\r");
     const grep = makeGrepOverrideWithBackend(directory, {});
-    const result: any = await call(grep, { path, pattern: "needle\nstandalone\r", multiline: true });
+    const result: any = await call(grep, {
+      path,
+      pattern: "needle\nstandalone\r",
+      multiline: true,
+    });
     assert.ok(result.content[0].text.includes(`2#${computeLineHash(2, "needle")}│needle`));
     assert.ok(result.content[0].text.includes(`3#${computeLineHash(3, "standalone\r")}│`));
-  } finally { await rm(directory, { recursive: true, force: true }); }
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 });

@@ -22,7 +22,9 @@ test("macOS attempts directory sync, tolerates unsupported operations, and prese
           syncs++;
           if (failure) throw Object.assign(new Error(failure), { code: failure });
         },
-        async close() { closes++; },
+        async close() {
+          closes++;
+        },
       } as Awaited<ReturnType<typeof fs.open>>;
     });
     syncBuiltinESMExports();
@@ -30,7 +32,13 @@ test("macOS attempts directory sync, tolerates unsupported operations, and prese
       const path = join(directory, failure ?? "success");
       const commit = commitFile(path, "published\n");
       if (failure === "EIO") {
-        await assert.rejects(commit, (error: unknown) => error instanceof FileMutationError && error.publication === "PUBLISHED" && /EIO/.test(error.message));
+        await assert.rejects(
+          commit,
+          (error: unknown) =>
+            error instanceof FileMutationError &&
+            error.publication === "PUBLISHED" &&
+            /EIO/.test(error.message),
+        );
       } else {
         assert.equal((await commit).publication, "PUBLISHED");
       }

@@ -29,12 +29,12 @@ const BASE32 = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
  * multiplication under JS.
  */
 function fnv1a32(str: string, seed = 0x811c9dc5): number {
-	let h = seed;
-	for (let i = 0; i < str.length; i++) {
-		h ^= str.charCodeAt(i);
-		h = Math.imul(h, 0x01000193);
-	}
-	return h >>> 0;
+  let h = seed;
+  for (let i = 0; i < str.length; i++) {
+    h ^= str.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return h >>> 0;
 }
 
 /**
@@ -42,19 +42,19 @@ function fnv1a32(str: string, seed = 0x811c9dc5): number {
  * the intermediate template string.
  */
 function fnv1a32Line(line: number, content: string): number {
-	let h = 0x811c9dc5;
-	// Feed digit characters of the line number without String(line) allocation.
-	let n = line;
-	let divisor = 1;
-	while (divisor * 10 <= n) divisor *= 10;
-	while (divisor >= 1) {
-		h ^= ((n / divisor | 0) % 10) + 48;
-		h = Math.imul(h, 0x01000193);
-		divisor = divisor / 10 | 0;
-	}
-	h ^= 10;
-	h = Math.imul(h, 0x01000193);
-	return fnv1a32(content, h);
+  let h = 0x811c9dc5;
+  // Feed digit characters of the line number without String(line) allocation.
+  let n = line;
+  let divisor = 1;
+  while (divisor * 10 <= n) divisor *= 10;
+  while (divisor >= 1) {
+    h ^= (((n / divisor) | 0) % 10) + 48;
+    h = Math.imul(h, 0x01000193);
+    divisor = (divisor / 10) | 0;
+  }
+  h ^= 10;
+  h = Math.imul(h, 0x01000193);
+  return fnv1a32(content, h);
 }
 
 /**
@@ -64,12 +64,12 @@ function fnv1a32Line(line: number, content: string): number {
  * two bits. An eighth character is a leading '0', adding no entropy.
  */
 function toBase32(n: number, len: number): string {
-	let encoded = "";
-	for (let i = 0; i < len; i++) {
-		encoded = BASE32[n & 31] + encoded;
-		n >>>= 5;
-	}
-	return encoded;
+  let encoded = "";
+  for (let i = 0; i < len; i++) {
+    encoded = BASE32[n & 31] + encoded;
+    n >>>= 5;
+  }
+  return encoded;
 }
 
 /**
@@ -80,10 +80,10 @@ function toBase32(n: number, len: number): string {
  * @param len     hash length (default 4, 20 bits ≈ 1M values)
  */
 export function computeLineHash(line: number, content: string, len = 4): string {
-	return toBase32(fnv1a32Line(line, content), len);
+  return toBase32(fnv1a32Line(line, content), len);
 }
 
 /** Compute compact per-line checksums; callers must treat collisions as possible. */
 export function hashFileLines(lines: readonly string[], len = 4): string[] {
-	return lines.map((content, i) => computeLineHash(i + 1, content, len));
+  return lines.map((content, i) => computeLineHash(i + 1, content, len));
 }

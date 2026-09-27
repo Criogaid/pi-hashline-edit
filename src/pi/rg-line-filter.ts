@@ -116,7 +116,7 @@ async function runDelimited(
   try {
     for await (const record of delimitedRecords(process.child.stdout, delimiter)) {
       checkAbort(signal);
-      if (!await onRecord(record)) {
+      if (!(await onRecord(record))) {
         stopped = true;
         process.kill();
         break;
@@ -140,7 +140,7 @@ export function runRg(
   onLine: (line: string) => boolean | Promise<boolean>,
 ): Promise<RgRunResult> {
   return runDelimited(rgPath, args, undefined, 10, signal, (record) =>
-    record.length === 0 ? true : onLine(record.toString("utf8"))
+    record.length === 0 ? true : onLine(record.toString("utf8")),
   );
 }
 
@@ -153,7 +153,8 @@ export function runRgPaths(
 ): Promise<RgRunResult> {
   return runDelimited(rgPath, args, undefined, 0, signal, (record) => {
     const path = record.toString("utf8");
-    if (!Buffer.from(path, "utf8").equals(record)) throw new Error("Non-UTF-8 search paths are not supported");
+    if (!Buffer.from(path, "utf8").equals(record))
+      throw new Error("Non-UTF-8 search paths are not supported");
     return onPath(path);
   });
 }
@@ -217,7 +218,12 @@ export function matcherArgs(modes: SearchModes, word: boolean): string[] {
 }
 
 function pcre2CaseCarrier(patterns: readonly string[]): string {
-  return ["(?x)", ...patterns.flatMap((pattern) => pattern.split("\n").map((line) => `#${line}`)), "\\x{41}", ""].join("\n");
+  return [
+    "(?x)",
+    ...patterns.flatMap((pattern) => pattern.split("\n").map((line) => `#${line}`)),
+    "\\x{41}",
+    "",
+  ].join("\n");
 }
 
 /** Resolve rg's query-level default case flag; inline regex flags still apply normally. */
@@ -235,8 +241,15 @@ export async function resolveIgnoreCase(
 
   if (modes.engine === "pcre2") {
     const version = await run(rgPath, ["--version"], Buffer.alloc(0), signal);
-    if (version.code !== 0 || !/^ripgrep 15\.0\.0\b/m.test(version.stdout) || !/^features:\+pcre2$/m.test(version.stdout) || !/^PCRE2 10\.45 is available/m.test(version.stdout)) {
-      throw new Error("PCRE2 smart-case is not validated for this bundled ripgrep build; set ignoreCase explicitly");
+    if (
+      version.code !== 0 ||
+      !/^ripgrep 15\.0\.0\b/m.test(version.stdout) ||
+      !/^features:\+pcre2$/m.test(version.stdout) ||
+      !/^PCRE2 10\.45 is available/m.test(version.stdout)
+    ) {
+      throw new Error(
+        "PCRE2 smart-case is not validated for this bundled ripgrep build; set ignoreCase explicitly",
+      );
     }
     const result = await run(
       rgPath,
@@ -251,7 +264,7 @@ export async function resolveIgnoreCase(
     return result.code === 0;
   }
 
-  const sources = patterns.map((pattern) => modes.literal ? escapeRegex(pattern) : pattern);
+  const sources = patterns.map((pattern) => (modes.literal ? escapeRegex(pattern) : pattern));
   const result = await run(
     rgPath,
     [
@@ -276,7 +289,8 @@ export async function resolveIgnoreCase(
   checkAbort(signal);
   assertRgSucceeded(result);
   const lines = result.stdout.replace(/\r\n/g, "\n").split("\n");
-  if (lines.some((line) => line !== "" && line !== "a")) throw new Error("Unexpected smart-case probe output");
+  if (lines.some((line) => line !== "" && line !== "a"))
+    throw new Error("Unexpected smart-case probe output");
   return lines.includes("a");
 }
 
@@ -340,18 +354,27 @@ export function createLinePredicate(
     if (lines.length === 0) return [];
     const records = lines.map((line) => {
       const firstLf = line.indexOf(10);
-      if (firstLf >= 0 && firstLf !== line.length - 1) throw new Error("Expected exactly one physical candidate line");
+      if (firstLf >= 0 && firstLf !== line.length - 1)
+        throw new Error("Expected exactly one physical candidate line");
       return firstLf >= 0 ? line : Buffer.concat([line, Buffer.from("\n")]);
     });
     const matches: boolean[] = [];
-    const result = await runDelimited(rgPath, args, Buffer.concat(records), 10, signal, (record) => {
-      if (record.length === 0) return true;
-      const event = JSON.parse(record.toString("utf8"));
-      if (event.type !== "match" && event.type !== "context") return true;
-      if (event.data.line_number !== matches.length + 1) throw new Error("rg predicate line-number protocol mismatch");
-      matches.push(event.type === "match");
-      return true;
-    });
+    const result = await runDelimited(
+      rgPath,
+      args,
+      Buffer.concat(records),
+      10,
+      signal,
+      (record) => {
+        if (record.length === 0) return true;
+        const event = JSON.parse(record.toString("utf8"));
+        if (event.type !== "match" && event.type !== "context") return true;
+        if (event.data.line_number !== matches.length + 1)
+          throw new Error("rg predicate line-number protocol mismatch");
+        matches.push(event.type === "match");
+        return true;
+      },
+    );
     assertRgSucceeded(result);
     if (matches.length !== lines.length) throw new Error("rg predicate ended before all responses");
     return matches;

@@ -25,6 +25,7 @@ pi 扩展 `@criogaid/pi-hashline-edit`，注册入口为 `src/index.ts`。
 
 按改动影响选择检查：
 
+- 格式：`npm run format:check`（自动格式化为 `npm run format`）。
 - 类型：`npm run typecheck`。
 - 单文件测试：`node --test src/pi/execute.test.ts`（按需替换路径）。
 - core 和 pi 测试：`npm test`。

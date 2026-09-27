@@ -18,6 +18,8 @@
     "LICENSE"
   ],
   "scripts": {
+    "format": "biome format --write src/",
+    "format:check": "biome format src/",
     "typecheck": "tsc --noEmit",
     "test": "node --test src/core/*.test.ts src/pi/*.test.ts",
     "test:integration": "node --test src/integration/*.test.ts",
@@ -31,6 +33,7 @@
     "@earendil-works/pi-coding-agent": "*"
   },
   "devDependencies": {
+    "@biomejs/biome": "2.5.14",
     "@earendil-works/pi-agent-core": "*",
     "@earendil-works/pi-ai": "*",
     "@earendil-works/pi-coding-agent": "*",

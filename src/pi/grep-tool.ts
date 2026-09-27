@@ -24,11 +24,7 @@
  * @module pi-hashline-edit/pi
  */
 
-import {
-  truncateHead,
-  formatSize,
-  DEFAULT_MAX_BYTES,
-} from "@earendil-works/pi-coding-agent";
+import { truncateHead, formatSize, DEFAULT_MAX_BYTES } from "@earendil-works/pi-coding-agent";
 import { rgPath as bundledRgPath } from "@vscode/ripgrep";
 import { Type } from "typebox";
 import { Text } from "@earendil-works/pi-tui";
@@ -54,7 +50,15 @@ import {
   type SearchModes,
 } from "./rg-line-filter.ts";
 import { runRgTextView } from "./rg-text-view.ts";
-import { intersectRanges, normalizeRanges, subtractRanges, unionRanges, submatchesToLineRanges, type LineRange, type RgSubmatch } from "./rg-line-ranges.ts";
+import {
+  intersectRanges,
+  normalizeRanges,
+  subtractRanges,
+  unionRanges,
+  submatchesToLineRanges,
+  type LineRange,
+  type RgSubmatch,
+} from "./rg-line-ranges.ts";
 
 const DEFAULT_LIMIT = 100;
 /** Maximum UTF-16 units in a line preview, excluding its partial-line label. */
@@ -74,8 +78,11 @@ const REGEX_PARSE_ERROR = /^(?:rg: )?regex parse error:/m;
 
 /** Exclusion scans must succeed: incomplete exclusions could admit false matches. */
 function recordSearchDiagnostics(result: RgRunResult, warnings?: string[]): void {
-  const message = result.stderr.trim() || (!result.stopped && result.code !== 0 && result.code !== 1
-    ? `ripgrep exited with code ${result.code}` : "");
+  const message =
+    result.stderr.trim() ||
+    (!result.stopped && result.code !== 0 && result.code !== 1
+      ? `ripgrep exited with code ${result.code}`
+      : "");
   if (!message) return;
   if (!warnings) throw new Error(message);
   warnings.push(message);
@@ -94,7 +101,10 @@ function previewLine(text: string, column = 0): { text: string; wasTruncated: bo
   if (start > 0 && /[\uDC00-\uDFFF]/.test(text[start])) start++;
   let end = Math.min(text.length, start + GREP_MAX_LINE_LENGTH);
   if (end < text.length && /[\uDC00-\uDFFF]/.test(text[end])) end--;
-  return { text: `[partial, columns ${start + 1}-${end}] ${start ? "…" : ""}${text.slice(start, end)}${end < text.length ? "…" : ""}`, wasTruncated: true };
+  return {
+    text: `[partial, columns ${start + 1}-${end}] ${start ? "…" : ""}${text.slice(start, end)}${end < text.length ? "…" : ""}`,
+    wasTruncated: true,
+  };
 }
 
 async function resolveLiteralMode(
@@ -108,7 +118,8 @@ async function resolveLiteralMode(
 ): Promise<boolean> {
   if (modes.engine === "pcre2") return false;
   if (explicit === true) return true;
-  if (explicit === undefined && !patterns.some((pattern) => REGEX_SYNTAX.test(pattern))) return true;
+  if (explicit === undefined && !patterns.some((pattern) => REGEX_SYNTAX.test(pattern)))
+    return true;
 
   const result = await backend.runRg(
     rgPath,
@@ -128,7 +139,10 @@ async function resolveLiteralMode(
   if (result.code === 0 || result.code === 1) return false;
   if (result.code === 2 && REGEX_PARSE_ERROR.test(result.stderr)) {
     if (explicit === false) throw new Error(result.stderr.trim());
-    if (!allowFallback) throw new Error(`Invalid regex in compound query; automatic literal fallback is disabled. Fix the regex or set literal:true for all patterns.\n${result.stderr.trim()}`);
+    if (!allowFallback)
+      throw new Error(
+        `Invalid regex in compound query; automatic literal fallback is disabled. Fix the regex or set literal:true for all patterns.\n${result.stderr.trim()}`,
+      );
     return true;
   }
   throw new Error(result.stderr.trim() || `ripgrep exited with code ${result.code}`);
@@ -152,14 +166,12 @@ const grepOverrideSchema = Type.Object({
   }),
   matchMode: Type.Optional(
     Type.Union([Type.Literal("any"), Type.Literal("all")], {
-      description:
-        `"any" (default): OR. "all": AND on the same line (maximum ${MAX_ALL_PATTERNS} patterns).`,
+      description: `"any" (default): OR. "all": AND on the same line (maximum ${MAX_ALL_PATTERNS} patterns).`,
     }),
   ),
   excludePattern: Type.Optional(
     Type.Union([Type.String(), Type.Array(Type.String())], {
-      description:
-        "Drop lines matching any exclusion after pattern matching.",
+      description: "Drop lines matching any exclusion after pattern matching.",
     }),
   ),
   outputMode: Type.Optional(
@@ -168,36 +180,60 @@ const grepOverrideSchema = Type.Object({
         '"content" (default): anchored lines. "files": paths. "count": matching lines per file and total.',
     }),
   ),
-  wordMatch: Type.Optional(Type.Boolean({ description: "Match whole words only (rg -w). Applies to inclusion pattern, not excludePattern." })),
-  path: Type.Optional(Type.Union([Type.String(), Type.Array(Type.String())], {
-    description:
-      "Directory or file to search (string or array of paths; default: current directory)",
-  })),
+  wordMatch: Type.Optional(
+    Type.Boolean({
+      description:
+        "Match whole words only (rg -w). Applies to inclusion pattern, not excludePattern.",
+    }),
+  ),
+  path: Type.Optional(
+    Type.Union([Type.String(), Type.Array(Type.String())], {
+      description:
+        "Directory or file to search (string or array of paths; default: current directory)",
+    }),
+  ),
   glob: Type.Optional(
     Type.Union([Type.String(), Type.Array(Type.String())], {
-      description: "Filter files by glob pattern; pass an array for multiple filters and prefix exclusions with `!`, e.g. ['*.ts', '!**/*.test.ts']",
+      description:
+        "Filter files by glob pattern; pass an array for multiple filters and prefix exclusions with `!`, e.g. ['*.ts', '!**/*.test.ts']",
     }),
   ),
   ignoreCase: Type.Optional(
-    Type.Boolean({ description: "true: ignore case; false: match case. Default: ripgrep smart-case across inclusion patterns. The resolved default also applies to exclusions." }),
+    Type.Boolean({
+      description:
+        "true: ignore case; false: match case. Default: ripgrep smart-case across inclusion patterns. The resolved default also applies to exclusions.",
+    }),
   ),
   literal: Type.Optional(
     Type.Boolean({
-      description: "Set true for literal code text, especially calls, brackets, pipes, and backslashes. Set false only for intentional valid regex. Applies to pattern and excludePattern. Automatic mode tries regex for metacharacters; only one pattern without exclusions can fall back, searching the entire input literally.",
+      description:
+        "Set true for literal code text, especially calls, brackets, pipes, and backslashes. Set false only for intentional valid regex. Applies to pattern and excludePattern. Automatic mode tries regex for metacharacters; only one pattern without exclusions can fall back, searching the entire input literally.",
     }),
   ),
-  noIgnore: Type.Optional(Type.Boolean({
-    description: "Search files normally excluded by ignore files, including .gitignore, .ignore, and .rgignore. Explicit glob filters still apply.",
-  })),
-  follow: Type.Optional(Type.Boolean({
-    description: "Follow symbolic links during directory traversal. Return resolved target paths. This does not grant additional filesystem access.",
-  })),
-  pcre2: Type.Optional(Type.Boolean({
-    description: "Use PCRE2 for lookarounds and backreferences. Forces regex matching with no literal fallback; incompatible with literal:true. Default: the standard ripgrep engine.",
-  })),
-  multiline: Type.Optional(Type.Boolean({
-    description: "Allow matches to span physical lines. Results and filters still operate on physical lines. Dot matches line breaks only with an inline (?s) flag.",
-  })),
+  noIgnore: Type.Optional(
+    Type.Boolean({
+      description:
+        "Search files normally excluded by ignore files, including .gitignore, .ignore, and .rgignore. Explicit glob filters still apply.",
+    }),
+  ),
+  follow: Type.Optional(
+    Type.Boolean({
+      description:
+        "Follow symbolic links during directory traversal. Return resolved target paths. This does not grant additional filesystem access.",
+    }),
+  ),
+  pcre2: Type.Optional(
+    Type.Boolean({
+      description:
+        "Use PCRE2 for lookarounds and backreferences. Forces regex matching with no literal fallback; incompatible with literal:true. Default: the standard ripgrep engine.",
+    }),
+  ),
+  multiline: Type.Optional(
+    Type.Boolean({
+      description:
+        "Allow matches to span physical lines. Results and filters still operate on physical lines. Dot matches line breaks only with an inline (?s) flag.",
+    }),
+  ),
   context: Type.Optional(
     Type.Integer({
       minimum: 0,
@@ -298,7 +334,12 @@ async function fileIdentity(path: string): Promise<FileIdentity> {
 }
 
 function sameIdentity(left: FileIdentity, right: FileIdentity): boolean {
-  return left.dev === right.dev && left.ino === right.ino && left.size === right.size && left.mtimeMs === right.mtimeMs;
+  return (
+    left.dev === right.dev &&
+    left.ino === right.ino &&
+    left.size === right.size &&
+    left.mtimeMs === right.mtimeMs
+  );
 }
 
 function rangeCount(files: ReadonlyMap<string, readonly LineRange[]>): number {
@@ -313,15 +354,21 @@ function combineRangeMaps(
   operation: "union" | "intersect" | "subtract",
 ): Map<string, LineRange[]> {
   const result = new Map<string, LineRange[]>();
-  const paths = operation === "union" ? new Set([...left.keys(), ...right.keys()]) : new Set(left.keys());
+  const paths =
+    operation === "union" ? new Set([...left.keys(), ...right.keys()]) : new Set(left.keys());
   for (const path of paths) {
     const a = left.get(path) ?? [];
     const b = right.get(path) ?? [];
-    const ranges = operation === "union" ? unionRanges(a, b)
-      : operation === "intersect" ? intersectRanges(a, b) : subtractRanges(a, b);
+    const ranges =
+      operation === "union"
+        ? unionRanges(a, b)
+        : operation === "intersect"
+          ? intersectRanges(a, b)
+          : subtractRanges(a, b);
     if (ranges.length) result.set(path, ranges);
   }
-  if (rangeCount(result) > MAX_PENDING_RANGES) throw new Error("Search produced too many pending line ranges; refine the query");
+  if (rangeCount(result) > MAX_PENDING_RANGES)
+    throw new Error("Search produced too many pending line ranges; refine the query");
   return result;
 }
 
@@ -351,7 +398,11 @@ async function scanPatternRanges(
   const result = new Map<string, LineRange[]>();
   const run = await backend.runRg(rgPath, args, signal, async (line) => {
     let event: any;
-    try { event = JSON.parse(line); } catch { return true; }
+    try {
+      event = JSON.parse(line);
+    } catch {
+      return true;
+    }
     if (event.type !== "match") return true;
     const data = event.data;
     if (!data?.path || !data?.lines || !Number.isSafeInteger(data.line_number)) {
@@ -370,10 +421,17 @@ async function scanPatternRanges(
     if (data.submatches.length === 0) submatches = [{ start: bytes.length, end: bytes.length }];
     else submatches = data.submatches.map((match: any) => ({ start: match.start, end: match.end }));
     const fileColumns = columns?.get(filePath) ?? new Map<number, number>();
-    const ranges = submatchesToLineRanges(bytes, data.line_number, submatches, lineCount, columns ? fileColumns : undefined);
+    const ranges = submatchesToLineRanges(
+      bytes,
+      data.line_number,
+      submatches,
+      lineCount,
+      columns ? fileColumns : undefined,
+    );
     columns?.set(filePath, fileColumns);
     result.set(filePath, unionRanges(result.get(filePath) ?? [], ranges));
-    if (rangeCount(result) > MAX_PENDING_RANGES) throw new Error("Search produced too many pending line ranges; refine the query");
+    if (rangeCount(result) > MAX_PENDING_RANGES)
+      throw new Error("Search produced too many pending line ranges; refine the query");
     return true;
   });
   recordSearchDiagnostics(run, warnings);
@@ -394,8 +452,22 @@ interface ComplexSearchOptions {
   warnings: string[];
 }
 
-async function complexSearch(options: ComplexSearchOptions): Promise<{ raw: RgMatch[]; matchLimitReached: boolean; identities: Map<string, FileIdentity> }> {
-  const { backend, rgPath, scope, patterns, excludes, matchMode, modes, word, limit, signal, warnings } = options;
+async function complexSearch(
+  options: ComplexSearchOptions,
+): Promise<{ raw: RgMatch[]; matchLimitReached: boolean; identities: Map<string, FileIdentity> }> {
+  const {
+    backend,
+    rgPath,
+    scope,
+    patterns,
+    excludes,
+    matchMode,
+    modes,
+    word,
+    limit,
+    signal,
+    warnings,
+  } = options;
   const raw: RgMatch[] = [];
   const identities = new Map<string, FileIdentity>();
   const seen = new Set<string>();
@@ -414,9 +486,24 @@ async function complexSearch(options: ComplexSearchOptions): Promise<{ raw: RgMa
 
     let included = new Map<string, LineRange[]>();
     for (let index = 0; index < patterns.length; index++) {
-      const candidates = matchMode === "all" && index > 0 ? files.filter((file) => included.has(file)) : files;
-      const ranges = await scanPatternRanges(backend, rgPath, candidates, patterns[index], modes, word, signal, lineCounts, warnings, columns);
-      included = index === 0 ? ranges : combineRangeMaps(included, ranges, matchMode === "all" ? "intersect" : "union");
+      const candidates =
+        matchMode === "all" && index > 0 ? files.filter((file) => included.has(file)) : files;
+      const ranges = await scanPatternRanges(
+        backend,
+        rgPath,
+        candidates,
+        patterns[index],
+        modes,
+        word,
+        signal,
+        lineCounts,
+        warnings,
+        columns,
+      );
+      included =
+        index === 0
+          ? ranges
+          : combineRangeMaps(included, ranges, matchMode === "all" ? "intersect" : "union");
       if (matchMode === "all" && included.size === 0) break;
     }
     if (included.size && excludes.length) {
@@ -425,18 +512,29 @@ async function complexSearch(options: ComplexSearchOptions): Promise<{ raw: RgMa
       for (const pattern of excludes) {
         excluded = combineRangeMaps(
           excluded,
-          await scanPatternRanges(backend, rgPath, candidates, pattern, modes, false, signal, lineCounts),
+          await scanPatternRanges(
+            backend,
+            rgPath,
+            candidates,
+            pattern,
+            modes,
+            false,
+            signal,
+            lineCounts,
+          ),
           "union",
         );
       }
       included = combineRangeMaps(included, excluded, "subtract");
     }
 
-    await Promise.all(files.map(async (file) => {
-      if (!sameIdentity(identities.get(file)!, await fileIdentity(file))) {
-        throw new Error("File changed during search; rerun the query.");
-      }
-    }));
+    await Promise.all(
+      files.map(async (file) => {
+        if (!sameIdentity(identities.get(file)!, await fileIdentity(file))) {
+          throw new Error("File changed during search; rerun the query.");
+        }
+      }),
+    );
     for (const file of files) {
       for (const [start, end] of included.get(file) ?? []) {
         for (let lineNumber = start; lineNumber < end; lineNumber++) {
@@ -466,13 +564,14 @@ async function complexSearch(options: ComplexSearchOptions): Promise<{ raw: RgMa
     seen.add(filePath);
     batch.push(filePath);
     batchBytes += Buffer.byteLength(filePath) + 1;
-    return batch.length >= FILE_BATCH_SIZE || batchBytes >= FILE_BATCH_ARG_BYTES ? processBatch() : true;
+    return batch.length >= FILE_BATCH_SIZE || batchBytes >= FILE_BATCH_ARG_BYTES
+      ? processBatch()
+      : true;
   });
   recordSearchDiagnostics(listed, warnings);
   if (!matchLimitReached && batch.length) await processBatch();
   return { raw, matchLimitReached, identities };
 }
-
 
 /**
  * Convert the anchored grep output (grouped, `LINE#HASH│`) into a human-readable
@@ -514,7 +613,11 @@ function toDisplayLines(raw: string, theme: any): string[] {
       const marker = base > 0 ? theme.fg("dim", "›") + " " : "";
       for (const g of group) {
         const body = g.content.slice(base);
-        out.push(theme.fg("dim", `   ${g.lineNo.padStart(lineNoWidth)}: `) + marker + theme.fg("toolOutput", body));
+        out.push(
+          theme.fg("dim", `   ${g.lineNo.padStart(lineNoWidth)}: `) +
+            marker +
+            theme.fg("toolOutput", body),
+        );
       }
       i = j;
       continue;
@@ -626,17 +729,32 @@ export function makeGrepOverrideWithBackend(cwd: string, overrides: Partial<Grep
       const engine: SearchModes["engine"] = params.pcre2 ? "pcre2" : "default";
       const multiline = params.multiline === true;
       if (params.pcre2 === true && params.literal === true) {
-        throw new Error("pcre2:true cannot be combined with literal:true. Remove pcre2 for literal searches.");
+        throw new Error(
+          "pcre2:true cannot be combined with literal:true. Remove pcre2 for literal searches.",
+        );
       }
       const allPatterns = [...patterns, ...excludes];
       const literal = await resolveLiteralMode(
-        allPatterns, params.literal, rgPath, backend, { engine, multiline }, signal, patterns.length === 1 && excludes.length === 0,
+        allPatterns,
+        params.literal,
+        rgPath,
+        backend,
+        { engine, multiline },
+        signal,
+        patterns.length === 1 && excludes.length === 0,
       );
-      const literalFallback = !params.pcre2 && params.literal === undefined && literal &&
+      const literalFallback =
+        !params.pcre2 &&
+        params.literal === undefined &&
+        literal &&
         allPatterns.some((pattern) => REGEX_SYNTAX.test(pattern));
       const { ignoreCase, wordMatch, context, limit } = params;
       const matcherIgnoreCase = await backend.resolveIgnoreCase(
-        rgPath, patterns, { engine, multiline, literal }, ignoreCase, signal,
+        rgPath,
+        patterns,
+        { engine, multiline, literal },
+        ignoreCase,
+        signal,
       );
       const modes: SearchModes = { engine, multiline, literal, ignoreCase: matcherIgnoreCase };
       const ctx = clampContext(context);
@@ -653,12 +771,22 @@ export function makeGrepOverrideWithBackend(cwd: string, overrides: Partial<Grep
 
       const pathInfo: SearchPathInfo[] = [];
       for (const searchPath of searchPaths) {
-        try { pathInfo.push({ path: searchPath, isFile: (await stat(searchPath)).isFile() }); }
-        catch { throw new Error(`Path not found: ${searchPath}`); }
+        try {
+          pathInfo.push({ path: searchPath, isFile: (await stat(searchPath)).isFile() });
+        } catch {
+          throw new Error(`Path not found: ${searchPath}`);
+        }
       }
       scope = {
         ...scope,
-        searchPaths: await filterExplicitFilesByGlob(backend, rgPath, scope, pathInfo, signal, warnings),
+        searchPaths: await filterExplicitFilesByGlob(
+          backend,
+          rgPath,
+          scope,
+          pathInfo,
+          signal,
+          warnings,
+        ),
       };
       if (matchMode === "all" && patterns.length > MAX_ALL_PATTERNS) {
         throw new Error(`matchMode:"all" supports at most ${MAX_ALL_PATTERNS} patterns`);
@@ -678,8 +806,17 @@ export function makeGrepOverrideWithBackend(cwd: string, overrides: Partial<Grep
         await backend.validatePatterns(rgPath, patterns, modes, !!wordMatch, signal);
         await backend.validatePatterns(rgPath, excludes, modes, false, signal);
         const result = await complexSearch({
-          backend, rgPath, scope, patterns, excludes, matchMode, modes,
-          word: !!wordMatch, limit: effectiveLimit, signal, warnings,
+          backend,
+          rgPath,
+          scope,
+          patterns,
+          excludes,
+          matchMode,
+          modes,
+          word: !!wordMatch,
+          limit: effectiveLimit,
+          signal,
+          warnings,
         });
         raw = result.raw;
         matchLimitReached = result.matchLimitReached;
@@ -694,16 +831,25 @@ export function makeGrepOverrideWithBackend(cwd: string, overrides: Partial<Grep
           "--line-number",
           ...scopeArgs(scope),
         ];
-        for (const pattern of matchMode === "all" ? patterns.slice(0, 1) : patterns) args.push("-e", pattern);
+        for (const pattern of matchMode === "all" ? patterns.slice(0, 1) : patterns)
+          args.push("-e", pattern);
         args.push("--", ...scope.searchPaths);
 
-        const andPredicates = matchMode === "all"
-          ? patterns.slice(1).map((pattern) => backend.createLinePredicate(rgPath, [pattern], modes, !!wordMatch, signal))
-          : [];
+        const andPredicates =
+          matchMode === "all"
+            ? patterns
+                .slice(1)
+                .map((pattern) =>
+                  backend.createLinePredicate(rgPath, [pattern], modes, !!wordMatch, signal),
+                )
+            : [];
         const exclusionPredicate = excludes.length
           ? backend.createLinePredicate(rgPath, excludes, modes, false, signal)
           : undefined;
-        const predicates: LinePredicate[] = [...andPredicates, ...(exclusionPredicate ? [exclusionPredicate] : [])];
+        const predicates: LinePredicate[] = [
+          ...andPredicates,
+          ...(exclusionPredicate ? [exclusionPredicate] : []),
+        ];
         const batch: { filePath: string; lineNumber: number; line: Buffer; column: number }[] = [];
         let batchBytes = 0;
         const flushBatch = async (): Promise<boolean> => {
@@ -712,10 +858,17 @@ export function makeGrepOverrideWithBackend(cwd: string, overrides: Partial<Grep
           const lines = candidates.map(({ line }) => line);
           const decisions = await Promise.all(predicates.map((predicate) => predicate(lines)));
           for (let index = 0; index < candidates.length; index++) {
-            if (!decisions.every((results, predicate) =>
-              predicate < andPredicates.length ? results[index] : !results[index],
-            )) continue;
-            raw.push({ filePath: candidates[index].filePath, lineNumber: candidates[index].lineNumber, column: candidates[index].column });
+            if (
+              !decisions.every((results, predicate) =>
+                predicate < andPredicates.length ? results[index] : !results[index],
+              )
+            )
+              continue;
+            raw.push({
+              filePath: candidates[index].filePath,
+              lineNumber: candidates[index].lineNumber,
+              column: candidates[index].column,
+            });
             matchCount++;
             if (matchCount >= effectiveLimit) {
               matchLimitReached = true;
@@ -729,24 +882,36 @@ export function makeGrepOverrideWithBackend(cwd: string, overrides: Partial<Grep
         const run = await backend.runRg(rgPath, args, signal, async (line) => {
           if (matchCount >= effectiveLimit) return false;
           let event: any;
-          try { event = JSON.parse(line); } catch { return true; }
+          try {
+            event = JSON.parse(line);
+          } catch {
+            return true;
+          }
           if (event.type !== "match") return true;
           const data = event.data;
           if (!data?.path || !data?.lines || !Number.isSafeInteger(data.line_number)) return true;
           const reportedPath = resolve(rgText(data.path));
           let filePath = reportedPath;
           if (scope.follow) {
-            filePath = resolvedPaths.get(reportedPath) ?? await realpath(reportedPath);
+            filePath = resolvedPaths.get(reportedPath) ?? (await realpath(reportedPath));
             resolvedPaths.set(reportedPath, filePath);
           }
           const matchKey = `${filePath}\0${data.line_number}`;
           if (seenMatches.has(matchKey)) return true;
           seenMatches.add(matchKey);
           const bytes = rgBytes(data.lines);
-          batch.push({ filePath, lineNumber: data.line_number, line: bytes,
-            column: bytes.subarray(0, data.submatches?.[0]?.start ?? 0).toString("utf8").length });
+          batch.push({
+            filePath,
+            lineNumber: data.line_number,
+            line: bytes,
+            column: bytes.subarray(0, data.submatches?.[0]?.start ?? 0).toString("utf8").length,
+          });
           batchBytes += bytes.length;
-          if (predicates.length === 0 || batch.length >= FILTER_BATCH_SIZE || batchBytes >= FILTER_BATCH_BYTES) {
+          if (
+            predicates.length === 0 ||
+            batch.length >= FILTER_BATCH_SIZE ||
+            batchBytes >= FILTER_BATCH_BYTES
+          ) {
             return flushBatch();
           }
           return true;
@@ -757,9 +922,16 @@ export function makeGrepOverrideWithBackend(cwd: string, overrides: Partial<Grep
       }
 
       if (raw.length === 0) {
-        if (warnings.length) throw new Error(`No matches confirmed.${formatSearchWarnings(warnings)}`);
+        if (warnings.length)
+          throw new Error(`No matches confirmed.${formatSearchWarnings(warnings)}`);
         return {
-          content: [{ type: "text" as const, text: "No matches found" + (literalFallback ? `\n\n[${LITERAL_FALLBACK_NOTICE}]` : "") }],
+          content: [
+            {
+              type: "text" as const,
+              text:
+                "No matches found" + (literalFallback ? `\n\n[${LITERAL_FALLBACK_NOTICE}]` : ""),
+            },
+          ],
           details: undefined,
         };
       }
@@ -791,23 +963,38 @@ export function makeGrepOverrideWithBackend(cwd: string, overrides: Partial<Grep
           while (nextIndex < fileEntries.length) {
             const current = nextIndex++;
             const [filePath, matchLines] = fileEntries[current];
-            const columns = new Map(matchLines.map(match => [match.lineNumber, match.column]));
+            const columns = new Map(matchLines.map((match) => [match.lineNumber, match.column]));
             // Retain only surviving matches and their context, then store the formatted block.
             const windowSet = new Set<number>();
             for (const { lineNumber } of matchLines) {
-              for (let n = Math.max(1, lineNumber - ctx); n <= lineNumber + ctx; n++) windowSet.add(n);
+              for (let n = Math.max(1, lineNumber - ctx); n <= lineNumber + ctx; n++)
+                windowSet.add(n);
             }
             const rows: string[] = [];
             let stats: Awaited<ReturnType<typeof scanTextLines>>;
             try {
-              stats = await scanTextLines(filePath, (number) => windowSet.has(number), (line) => {
-                if (line.text === undefined) return;
-                const { text: display, wasTruncated } = previewLine(displayCarriageReturns(line.text), columns.get(line.number));
-                if (wasTruncated) linesTruncated = true;
-                rows.push(anchors.row(line.number, line.text, display));
-              }, { signal });
+              stats = await scanTextLines(
+                filePath,
+                (number) => windowSet.has(number),
+                (line) => {
+                  if (line.text === undefined) return;
+                  const { text: display, wasTruncated } = previewLine(
+                    displayCarriageReturns(line.text),
+                    columns.get(line.number),
+                  );
+                  if (wasTruncated) linesTruncated = true;
+                  rows.push(anchors.row(line.number, line.text, display));
+                },
+                { signal },
+              );
             } catch (error) {
-              if (strictIdentities || signal?.aborted || !(error instanceof Error) || !("code" in error)) throw error;
+              if (
+                strictIdentities ||
+                signal?.aborted ||
+                !(error instanceof Error) ||
+                !("code" in error)
+              )
+                throw error;
               fileResults[current] = { warning: `Could not read ${filePath}: ${error.message}` };
               continue;
             }
@@ -841,7 +1028,8 @@ export function makeGrepOverrideWithBackend(cwd: string, overrides: Partial<Grep
         );
       }
 
-      if (!blocks.length && warnings.length) throw new Error(`No matches could be displayed.${formatSearchWarnings(warnings)}`);
+      if (!blocks.length && warnings.length)
+        throw new Error(`No matches could be displayed.${formatSearchWarnings(warnings)}`);
       let output = blocks.join(outputMode === "content" ? "\n\n" : "\n");
       const truncation = truncateHead(output, { maxBytes: DEFAULT_MAX_BYTES });
       output = truncation.content;

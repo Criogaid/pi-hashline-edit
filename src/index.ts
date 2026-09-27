@@ -25,21 +25,27 @@ import { registerFusionCards } from "./pi/fusion-card.ts";
 import { withMutationStatus } from "./pi/render.ts";
 
 export default function (pi: ExtensionAPI) {
-	const cwd = process.cwd();
+  const cwd = process.cwd();
 
-	const state = getState();
-	state.config = loadConfig(cwd);
+  const state = getState();
+  state.config = loadConfig(cwd);
 
-	// `enabled: false` leaves the extension fully inert — pi's built-in
-	// read/edit/grep/replace/write stay in place, as if this package were not installed.
-	if (state.config.enabled) {
-		const reportProgress = registerFusionCards(pi);
-		const fusion = state.config.actionFusion ? createActionFusionExecutor(undefined, reportProgress) : undefined;
-		for (const tool of [makeWriteOverride(cwd, fusion), makeEditOverride(cwd, fusion), makeReplaceTool(cwd, fusion)]) {
-			pi.registerTool(fusion ? withMutationStatus(tool) : tool);
-		}
+  // `enabled: false` leaves the extension fully inert — pi's built-in
+  // read/edit/grep/replace/write stay in place, as if this package were not installed.
+  if (state.config.enabled) {
+    const reportProgress = registerFusionCards(pi);
+    const fusion = state.config.actionFusion
+      ? createActionFusionExecutor(undefined, reportProgress)
+      : undefined;
+    for (const tool of [
+      makeWriteOverride(cwd, fusion),
+      makeEditOverride(cwd, fusion),
+      makeReplaceTool(cwd, fusion),
+    ]) {
+      pi.registerTool(fusion ? withMutationStatus(tool) : tool);
+    }
 
-		pi.registerTool(makeReadOverride(cwd));
-		pi.registerTool(makeGrepOverride(cwd));
-	}
+    pi.registerTool(makeReadOverride(cwd));
+    pi.registerTool(makeGrepOverride(cwd));
+  }
 }

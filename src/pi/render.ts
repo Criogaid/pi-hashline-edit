@@ -15,10 +15,10 @@ import { Box, Container, Text } from "@earendil-works/pi-tui";
 const HASHLINE_RE = /^(\d+)#[A-Za-z0-9]+│(.*)$/;
 
 export interface HashlineRow {
-	/** Line number as written in the anchor (string form). */
-	lineNo: string;
-	/** Line content with the `LINE#HASH│` prefix removed. */
-	content: string;
+  /** Line number as written in the anchor (string form). */
+  lineNo: string;
+  /** Line content with the `LINE#HASH│` prefix removed. */
+  content: string;
 }
 
 /**
@@ -28,8 +28,8 @@ export interface HashlineRow {
  *   text) so callers can fall through to their own formatting.
  */
 export function parseHashline(line: string): HashlineRow | null {
-	const m = line.match(HASHLINE_RE);
-	return m ? { lineNo: m[1], content: m[2] } : null;
+  const m = line.match(HASHLINE_RE);
+  return m ? { lineNo: m[1], content: m[2] } : null;
 }
 
 /** Max diff lines shown when a result is rendered collapsed. */
@@ -43,36 +43,36 @@ const MAX_COLLAPSED_DIFF_LINES = 24;
  * keeps `-`/`+` pairs intact so the intra-line highlight never dangles.
  */
 export function renderDiffPreview(diff: string, expanded: boolean, theme: any): string {
-	const rendered = renderDiff(diff);
-	if (expanded) return rendered;
-	const allLines = rendered.split("\n");
-	const more =
-		allLines.length > MAX_COLLAPSED_DIFF_LINES
-			? `\n${theme.fg("dim", `… (${allLines.length - MAX_COLLAPSED_DIFF_LINES} more)`)}`
-			: "";
-	return allLines.slice(0, MAX_COLLAPSED_DIFF_LINES).join("\n") + more;
+  const rendered = renderDiff(diff);
+  if (expanded) return rendered;
+  const allLines = rendered.split("\n");
+  const more =
+    allLines.length > MAX_COLLAPSED_DIFF_LINES
+      ? `\n${theme.fg("dim", `… (${allLines.length - MAX_COLLAPSED_DIFF_LINES} more)`)}`
+      : "";
+  return allLines.slice(0, MAX_COLLAPSED_DIFF_LINES).join("\n") + more;
 }
 
 /** Added/removed line counts of a pi-format diff string (`+N`/`-N` leading char). */
 export interface DiffCounts {
-	added: number;
-	removed: number;
+  added: number;
+  removed: number;
 }
 
 /** Count added/removed lines in a pi-format diff (`+N content` / `-N content` / ` N content`). */
 export function countDiffLines(diff: string): DiffCounts {
-	let added = 0;
-	let removed = 0;
-	for (const line of diff.split("\n")) {
-		if (line.startsWith("+")) added++;
-		else if (line.startsWith("-")) removed++;
-	}
-	return { added, removed };
+  let added = 0;
+  let removed = 0;
+  for (const line of diff.split("\n")) {
+    if (line.startsWith("+")) added++;
+    else if (line.startsWith("-")) removed++;
+  }
+  return { added, removed };
 }
 
 /** Format `+N -N` with the theme's diff colors for the tool call header. */
 export function formatDiffCounts(counts: DiffCounts, theme: any): string {
-	return ` ${theme.fg("toolDiffAdded", `+${counts.added}`)} ${theme.fg("toolDiffRemoved", `-${counts.removed}`)}`;
+  return ` ${theme.fg("toolDiffAdded", `+${counts.added}`)} ${theme.fg("toolDiffRemoved", `-${counts.removed}`)}`;
 }
 
 /**
@@ -92,86 +92,116 @@ export function formatDiffCounts(counts: DiffCounts, theme: any): string {
  * component after the nested one — the diff renders twice.
  */
 export function publishDiffCounts(
-	diff: string | undefined,
-	context: any,
-	refreshHeader: (counts: DiffCounts) => void,
+  diff: string | undefined,
+  context: any,
+  refreshHeader: (counts: DiffCounts) => void,
 ): void {
-	if (!diff || !context?.state) return;
-	const counts = countDiffLines(diff);
-	const prev: DiffCounts | undefined = context.state.diffCounts;
-	context.state.diffCounts = counts;
-	if (!prev || prev.added !== counts.added || prev.removed !== counts.removed) refreshHeader(counts);
+  if (!diff || !context?.state) return;
+  const counts = countDiffLines(diff);
+  const prev: DiffCounts | undefined = context.state.diffCounts;
+  context.state.diffCounts = counts;
+  if (!prev || prev.added !== counts.added || prev.removed !== counts.removed)
+    refreshHeader(counts);
 }
 
 /** Reuse the call component and retain it for the result's in-place count refresh. */
 export function renderMutationCall(
-	args: any, theme: any, context: any, header: (args: any, theme: any, counts?: DiffCounts) => string,
+  args: any,
+  theme: any,
+  context: any,
+  header: (args: any, theme: any, counts?: DiffCounts) => string,
 ): Text {
-	const text = (context?.lastComponent as Text | undefined) ?? new Text("", 0, 0);
-	if (context?.state) context.state.callText = text;
-	text.setText(header(args, theme, context?.state?.diffCounts));
-	return text;
+  const text = (context?.lastComponent as Text | undefined) ?? new Text("", 0, 0);
+  if (context?.state) context.state.callText = text;
+  text.setText(header(args, theme, context?.state?.diffCounts));
+  return text;
 }
 
 /** Keep model-facing diagnostic details out of the compact error row. */
 export function renderToolError(result: any, theme: any): Text {
-	const content = result.content?.[0];
-	const text = content?.type === "text" ? content.text.split("\n")[0] : "Error";
-	return new Text(theme.fg("error", text), 0, 0);
+  const content = result.content?.[0];
+  const text = content?.type === "text" ? content.text.split("\n")[0] : "Error";
+  return new Text(theme.fg("error", text), 0, 0);
 }
 
 /** Render mutation status or a diff, refreshing the call header's counts in place. */
 export function renderMutationResult(
-	result: any, { isPartial, expanded }: any, theme: any, context: any,
-	pending: string, fallback: string, header: (args: any, theme: any, counts?: DiffCounts) => string,
+  result: any,
+  { isPartial, expanded }: any,
+  theme: any,
+  context: any,
+  pending: string,
+  fallback: string,
+  header: (args: any, theme: any, counts?: DiffCounts) => string,
 ): Text {
-	if (isPartial && result.details?.actionFusion?.publication !== "PUBLISHED") return new Text(theme.fg("warning", pending), 0, 0);
-	const content = result.content?.[0];
-	if (context.isError) return renderToolError(result, theme);
-	const diff: string | undefined = result.details?.displayDiff ?? result.details?.diff;
-	// Refresh in place: invalidation inside a renderer re-enters updateDisplay.
-	publishDiffCounts(diff, context, (counts) => {
-		context.state?.callText?.setText(header(context.args, theme, counts));
-	});
-	if (!diff) {
-		// Only the summary is displayed; subsequent anchor rows are for the model.
-		const summary = content?.type === "text" ? content.text.split("\n")[0] : fallback;
-		return new Text(theme.fg("success", summary), 0, 0);
-	}
-	return new Text(renderDiffPreview(diff, expanded, theme), 0, 0);
+  if (isPartial && result.details?.actionFusion?.publication !== "PUBLISHED")
+    return new Text(theme.fg("warning", pending), 0, 0);
+  const content = result.content?.[0];
+  if (context.isError) return renderToolError(result, theme);
+  const diff: string | undefined = result.details?.displayDiff ?? result.details?.diff;
+  // Refresh in place: invalidation inside a renderer re-enters updateDisplay.
+  publishDiffCounts(diff, context, (counts) => {
+    context.state?.callText?.setText(header(context.args, theme, counts));
+  });
+  if (!diff) {
+    // Only the summary is displayed; subsequent anchor rows are for the model.
+    const summary = content?.type === "text" ? content.text.split("\n")[0] : fallback;
+    return new Text(theme.fg("success", summary), 0, 0);
+  }
+  return new Text(renderDiffPreview(diff, expanded, theme), 0, 0);
 }
 
 /** Keep the mutation card's background independent of the fused command's lifetime. */
-export function withMutationStatus(tool: ToolDefinition<any, any, any>): ToolDefinition<any, any, any> {
-	return {
-		...tool,
-		renderShell: "self",
-		renderCall(args, theme, context) {
-			const shell = context.state.mutationShell ??= { box: new Box(1, 1) };
-			shell.call = tool.renderCall!(args, theme, { ...context, lastComponent: shell.call });
-			shell.box.clear();
-			shell.box.addChild(shell.call);
-			shell.box.setBgFn((line: string) => theme.bg(context.isPartial ? "toolPendingBg" : context.isError ? "toolErrorBg" : "toolSuccessBg", line));
-			return shell.box;
-		},
-		renderResult(result, options, theme, context) {
-			const shell = context.state.mutationShell ??= { box: new Box(1, 1) };
-			const isPartial = options.isPartial && result.details?.actionFusion?.mutationCompleted !== true;
-			// Fused errors retain combined details for the model; show the mutation's summary here.
-			const fusedError = context.isError && (context.args as { then_run?: unknown })?.then_run;
-			shell.result = fusedError ? renderToolError(result, theme)
-				: tool.renderResult!(result, { ...options, isPartial }, theme, { ...context, isPartial, lastComponent: shell.result });
-			// Pi runs renderCall first; update its box in place without invalidating the tool row.
-			shell.box.addChild(shell.result);
-			const file = result.details?.actionFusion ?? shell.fileState;
-			if (file) {
-				shell.fileState = { freshness: file.freshness };
-				if (file.freshness === "changed" || file.freshness === "missing") {
-					shell.box.addChild(new Text(theme.fg("warning", `Anchors are stale: target ${file.freshness}.`), 0, 0));
-				}
-			}
-			shell.box.setBgFn((line: string) => theme.bg(isPartial ? "toolPendingBg" : context.isError ? "toolErrorBg" : "toolSuccessBg", line));
-			return new Container();
-		},
-	};
+export function withMutationStatus(
+  tool: ToolDefinition<any, any, any>,
+): ToolDefinition<any, any, any> {
+  return {
+    ...tool,
+    renderShell: "self",
+    renderCall(args, theme, context) {
+      const shell = (context.state.mutationShell ??= { box: new Box(1, 1) });
+      shell.call = tool.renderCall!(args, theme, { ...context, lastComponent: shell.call });
+      shell.box.clear();
+      shell.box.addChild(shell.call);
+      shell.box.setBgFn((line: string) =>
+        theme.bg(
+          context.isPartial ? "toolPendingBg" : context.isError ? "toolErrorBg" : "toolSuccessBg",
+          line,
+        ),
+      );
+      return shell.box;
+    },
+    renderResult(result, options, theme, context) {
+      const shell = (context.state.mutationShell ??= { box: new Box(1, 1) });
+      const isPartial =
+        options.isPartial && result.details?.actionFusion?.mutationCompleted !== true;
+      // Fused errors retain combined details for the model; show the mutation's summary here.
+      const fusedError = context.isError && (context.args as { then_run?: unknown })?.then_run;
+      shell.result = fusedError
+        ? renderToolError(result, theme)
+        : tool.renderResult!(result, { ...options, isPartial }, theme, {
+            ...context,
+            isPartial,
+            lastComponent: shell.result,
+          });
+      // Pi runs renderCall first; update its box in place without invalidating the tool row.
+      shell.box.addChild(shell.result);
+      const file = result.details?.actionFusion ?? shell.fileState;
+      if (file) {
+        shell.fileState = { freshness: file.freshness };
+        if (file.freshness === "changed" || file.freshness === "missing") {
+          shell.box.addChild(
+            new Text(theme.fg("warning", `Anchors are stale: target ${file.freshness}.`), 0, 0),
+          );
+        }
+      }
+      shell.box.setBgFn((line: string) =>
+        theme.bg(
+          isPartial ? "toolPendingBg" : context.isError ? "toolErrorBg" : "toolSuccessBg",
+          line,
+        ),
+      );
+      return new Container();
+    },
+  };
 }

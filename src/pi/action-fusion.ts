@@ -12,320 +12,526 @@ export const THEN_RUN_SKIPPED = "[then_run:skipped]";
 export const THEN_RUN_STALE = "[then_run:stale]";
 
 export const ACTION_FUSION_GUIDELINES = [
-	"Before each file mutation, identify its next command. When that command is known, authorized, and ready once the mutation succeeds, prefer including it in then_run instead of making a separate command call (for example, write a script and execute it, or finish edits and run a typecheck).",
-	"When several edits are prerequisites, attach then_run to the last one. Separate the command only when its choice or arguments depend on inspecting the mutation result, or a required approval or user reload is still pending.",
-	"Ensure commands are platform-appropriate; avoid hardcoded Unix-only paths like /tmp on Windows.",
-	"Check the command outcome before claiming validation passed.",
+  "Before each file mutation, identify its next command. When that command is known, authorized, and ready once the mutation succeeds, prefer including it in then_run instead of making a separate command call (for example, write a script and execute it, or finish edits and run a typecheck).",
+  "When several edits are prerequisites, attach then_run to the last one. Separate the command only when its choice or arguments depend on inspecting the mutation result, or a required approval or user reload is still pending.",
+  "Ensure commands are platform-appropriate; avoid hardcoded Unix-only paths like /tmp on Windows.",
+  "Check the command outcome before claiming validation passed.",
 ];
 
 export interface ThenRunInput {
-	command: string;
-	timeout?: number;
+  command: string;
+  timeout?: number;
 }
 
-export type CommandStatus = "not_requested" | "skipped" | "succeeded" | "failed" | "timeout" | "cancelled";
+export type CommandStatus =
+  | "not_requested"
+  | "skipped"
+  | "succeeded"
+  | "failed"
+  | "timeout"
+  | "cancelled";
 export type Freshness = "unchanged" | "changed" | "missing" | "unknown";
 export interface ActionFusionDetails {
-	publication: PublicationStatus;
-	command: CommandStatus;
-	freshness: Freshness;
+  publication: PublicationStatus;
+  command: CommandStatus;
+  freshness: Freshness;
 }
 
 export interface ActionFusionProgress extends Omit<ActionFusionDetails, "command"> {
-	toolCallId: string;
-	path: string;
-	commandText: string;
-	command: Exclude<CommandStatus, "not_requested"> | "waiting" | "running";
-	/** Command output or command execution errors only. */
-	output: string;
-	/** A short explanation when the command was not started; never mutation diagnostics. */
-	reason?: string;
-	/** True only after mutation execution and result generation both succeed. */
-	mutationCompleted: boolean;
+  toolCallId: string;
+  path: string;
+  commandText: string;
+  command: Exclude<CommandStatus, "not_requested"> | "waiting" | "running";
+  /** Command output or command execution errors only. */
+  output: string;
+  /** A short explanation when the command was not started; never mutation diagnostics. */
+  reason?: string;
+  /** True only after mutation execution and result generation both succeed. */
+  mutationCompleted: boolean;
 }
 
 type ProgressReporter = (progress: ActionFusionProgress, ctx: ExtensionContext) => void;
 
 export function createThenRunSchema(description: string) {
-	return Type.Optional(Type.Object({
-		command: Type.String({ minLength: 1, description: "Bash command to run" }),
-		timeout: Type.Optional(Type.Number({ exclusiveMinimum: 0, description: "Timeout in seconds (optional, no default timeout)" })),
-	}, { description }));
+  return Type.Optional(
+    Type.Object(
+      {
+        command: Type.String({ minLength: 1, description: "Bash command to run" }),
+        timeout: Type.Optional(
+          Type.Number({
+            exclusiveMinimum: 0,
+            description: "Timeout in seconds (optional, no default timeout)",
+          }),
+        ),
+      },
+      { description },
+    ),
+  );
 }
 
-type CommandRunner = (toolCallId: string, input: ThenRunInput, signal: AbortSignal | undefined, ctx: ExtensionContext, onUpdate?: AgentToolUpdateCallback<unknown>) => Promise<string>;
+type CommandRunner = (
+  toolCallId: string,
+  input: ThenRunInput,
+  signal: AbortSignal | undefined,
+  ctx: ExtensionContext,
+  onUpdate?: AgentToolUpdateCallback<unknown>,
+) => Promise<string>;
 
 type MutationResult<TDetails> = AgentToolResult<TDetails>;
-type MutationFinalizer<TDetails> = (result: MutationResult<TDetails>, publishAnchors: boolean) => MutationResult<TDetails>;
+type MutationFinalizer<TDetails> = (
+  result: MutationResult<TDetails>,
+  publishAnchors: boolean,
+) => MutationResult<TDetails>;
 
 function staleAnchorNotice(): string {
-	return `${THEN_RUN_STALE} Pre-command anchors are omitted: target freshness is unconfirmed. Re-read before further edits.`;
+  return `${THEN_RUN_STALE} Pre-command anchors are omitted: target freshness is unconfirmed. Re-read before further edits.`;
 }
 
 function errorText(error: unknown): string {
-	return error instanceof Error ? error.message : String(error);
+  return error instanceof Error ? error.message : String(error);
 }
 
 async function readFreshness(path: string, baseline: string): Promise<Freshness> {
-	try {
-		return (await fileRevision(path)) === baseline ? "unchanged" : "changed";
-	} catch (error) {
-		if (typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT") return "missing";
-		return "unknown";
-	}
+  try {
+    return (await fileRevision(path)) === baseline ? "unchanged" : "changed";
+  } catch (error) {
+    if (typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT")
+      return "missing";
+    return "unknown";
+  }
 }
 
 async function assertUnchangedBeforeCommand(path: string, baseline: string): Promise<void> {
-	try {
-		const before = await fileRevision(path);
-		await new Promise<void>((resolve) => setImmediate(resolve));
-		const after = await fileRevision(path);
-		if (before !== baseline || after !== baseline) {
-			throw new Error("target content changed after the fused mutation");
-		}
-	} catch (error) {
-		throw new Error(`${THEN_RUN_SKIPPED} ${errorText(error)}; the command was not run.`);
-	}
+  try {
+    const before = await fileRevision(path);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    const after = await fileRevision(path);
+    if (before !== baseline || after !== baseline) {
+      throw new Error("target content changed after the fused mutation");
+    }
+  } catch (error) {
+    throw new Error(`${THEN_RUN_SKIPPED} ${errorText(error)}; the command was not run.`);
+  }
 }
 
 export class ActionFusionError extends Error {
-	readonly publication: PublicationStatus;
-	readonly command: CommandStatus;
-	readonly freshness: Freshness;
-	readonly commandOutput: string;
-	readonly commandReason: string | undefined;
+  readonly publication: PublicationStatus;
+  readonly command: CommandStatus;
+  readonly freshness: Freshness;
+  readonly commandOutput: string;
+  readonly commandReason: string | undefined;
 
-	constructor(
-		message: string,
-		state: { publication: PublicationStatus; command: CommandStatus; freshness: Freshness },
-		options?: { cause?: unknown; mutationFailure?: boolean; commandOutput?: string; commandReason?: string; rawMessage?: boolean },
-	) {
-		if (options?.rawMessage) {
-			super(message, options);
-		} else {
-			const fileState = state.publication === "PUBLISHED" ? "File changes are saved."
-				: state.publication === "NOT_PUBLISHED" ? "No file changes were published." : "File state is uncertain.";
-			const outcome = `${message} ${state.command === "skipped" || state.command === "cancelled" ? THEN_RUN_SKIPPED : state.command === "succeeded" ? THEN_RUN_SUCCEEDED : THEN_RUN_FAILED}\n${fileState} Command ${state.command}.`;
-			const diagnostic = options?.cause === undefined ? "" : errorText(options.cause);
-			// Pi serializes only the message. Put the mutation's own error first for its card.
-			super((options?.mutationFailure ? [diagnostic, outcome] : [outcome, diagnostic]).filter(Boolean).join("\n"), options);
-		}
-		this.commandOutput = options?.commandOutput ?? "";
-		this.commandReason = options?.commandReason;
-		this.name = "ActionFusionError";
-		this.publication = state.publication;
-		this.command = state.command;
-		this.freshness = state.freshness;
-	}
+  constructor(
+    message: string,
+    state: { publication: PublicationStatus; command: CommandStatus; freshness: Freshness },
+    options?: {
+      cause?: unknown;
+      mutationFailure?: boolean;
+      commandOutput?: string;
+      commandReason?: string;
+      rawMessage?: boolean;
+    },
+  ) {
+    if (options?.rawMessage) {
+      super(message, options);
+    } else {
+      const fileState =
+        state.publication === "PUBLISHED"
+          ? "File changes are saved."
+          : state.publication === "NOT_PUBLISHED"
+            ? "No file changes were published."
+            : "File state is uncertain.";
+      const outcome = `${message} ${state.command === "skipped" || state.command === "cancelled" ? THEN_RUN_SKIPPED : state.command === "succeeded" ? THEN_RUN_SUCCEEDED : THEN_RUN_FAILED}\n${fileState} Command ${state.command}.`;
+      const diagnostic = options?.cause === undefined ? "" : errorText(options.cause);
+      // Pi serializes only the message. Put the mutation's own error first for its card.
+      super(
+        (options?.mutationFailure ? [diagnostic, outcome] : [outcome, diagnostic])
+          .filter(Boolean)
+          .join("\n"),
+        options,
+      );
+    }
+    this.commandOutput = options?.commandOutput ?? "";
+    this.commandReason = options?.commandReason;
+    this.name = "ActionFusionError";
+    this.publication = state.publication;
+    this.command = state.command;
+    this.freshness = state.freshness;
+  }
 }
 
 function mutationPublication<TDetails>(result: MutationResult<TDetails>): PublicationStatus {
-	const details = result.details as { publication?: PublicationStatus } | undefined;
-	return details?.publication ?? "PUBLISHED";
+  const details = result.details as { publication?: PublicationStatus } | undefined;
+  return details?.publication ?? "PUBLISHED";
 }
 
 function mutationPublishedRevision<TDetails>(result: MutationResult<TDetails>): string | undefined {
-	const revision = (result.details as { publishedRevision?: unknown } | undefined)?.publishedRevision;
-	return typeof revision === "string" && revision.length > 0 ? revision : undefined;
+  const revision = (result.details as { publishedRevision?: unknown } | undefined)
+    ?.publishedRevision;
+  return typeof revision === "string" && revision.length > 0 ? revision : undefined;
 }
 
 function commandStatus(error: unknown, signal: AbortSignal | undefined): CommandStatus {
-	if (signal?.aborted) return "cancelled";
-	return /timeout|timed out/i.test(errorText(error)) ? "timeout" : "failed";
+  if (signal?.aborted) return "cancelled";
+  return /timeout|timed out/i.test(errorText(error)) ? "timeout" : "failed";
 }
 
 function validateThenRun(input: ThenRunInput): void {
-	if (!input || typeof input !== "object" || typeof input.command !== "string" || !input.command.trim()) {
-		throw new Error("then_run command must not be empty");
-	}
-	if (input.timeout !== undefined && (!Number.isFinite(input.timeout) || input.timeout <= 0)) {
-		throw new Error("then_run timeout must be a finite positive number of seconds");
-	}
+  if (
+    !input ||
+    typeof input !== "object" ||
+    typeof input.command !== "string" ||
+    !input.command.trim()
+  ) {
+    throw new Error("then_run command must not be empty");
+  }
+  if (input.timeout !== undefined && (!Number.isFinite(input.timeout) || input.timeout <= 0)) {
+    throw new Error("then_run timeout must be a finite positive number of seconds");
+  }
 }
 
-async function defaultCommandRunner(toolCallId: string, input: ThenRunInput, signal: AbortSignal | undefined, ctx: ExtensionContext, onUpdate?: AgentToolUpdateCallback<unknown>): Promise<string> {
-	const bash = createBashToolDefinition(ctx.cwd);
-	const result = await bash.execute(`${toolCallId}:then_run`, input, signal, onUpdate, ctx);
-	return result.content.filter((block) => block.type === "text").map((block) => block.text).join("\n");
+async function defaultCommandRunner(
+  toolCallId: string,
+  input: ThenRunInput,
+  signal: AbortSignal | undefined,
+  ctx: ExtensionContext,
+  onUpdate?: AgentToolUpdateCallback<unknown>,
+): Promise<string> {
+  const bash = createBashToolDefinition(ctx.cwd);
+  const result = await bash.execute(`${toolCallId}:then_run`, input, signal, onUpdate, ctx);
+  return result.content
+    .filter((block) => block.type === "text")
+    .map((block) => block.text)
+    .join("\n");
 }
 
 async function canonicalQueueKey(path: string): Promise<string> {
-	const resolved = resolve(path);
-	let current = resolved;
-	const missing: string[] = [];
-	while (true) {
-		try {
-			const canonical = resolve(await realpath(current), ...missing);
-			return process.platform === "win32" ? canonical.toLowerCase() : canonical;
-		} catch (error) {
-			if (!(typeof error === "object" && error !== null && "code" in error && (error.code === "ENOENT" || error.code === "ENOTDIR"))) throw error;
-			const parent = dirname(current);
-			if (parent === current) return process.platform === "win32" ? resolved.toLowerCase() : resolved;
-			missing.unshift(basename(current));
-			current = parent;
-		}
-	}
+  const resolved = resolve(path);
+  let current = resolved;
+  const missing: string[] = [];
+  while (true) {
+    try {
+      const canonical = resolve(await realpath(current), ...missing);
+      return process.platform === "win32" ? canonical.toLowerCase() : canonical;
+    } catch (error) {
+      if (
+        !(
+          typeof error === "object" &&
+          error !== null &&
+          "code" in error &&
+          (error.code === "ENOENT" || error.code === "ENOTDIR")
+        )
+      )
+        throw error;
+      const parent = dirname(current);
+      if (parent === current)
+        return process.platform === "win32" ? resolved.toLowerCase() : resolved;
+      missing.unshift(basename(current));
+      current = parent;
+    }
+  }
 }
 
+export function createActionFusionExecutor(
+  commandRunner: CommandRunner = defaultCommandRunner,
+  onProgress?: ProgressReporter,
+) {
+  const queueTails = new Map<string, Promise<void>>();
 
-export function createActionFusionExecutor(commandRunner: CommandRunner = defaultCommandRunner, onProgress?: ProgressReporter) {
-	const queueTails = new Map<string, Promise<void>>();
+  async function withQueue<T>(path: string, work: () => Promise<T>): Promise<T> {
+    const key = await canonicalQueueKey(path);
+    const previous = queueTails.get(key) ?? Promise.resolve();
+    let release!: () => void;
+    const owned = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const tail = previous.then(() => owned);
+    queueTails.set(key, tail);
+    await previous;
+    try {
+      return await work();
+    } finally {
+      release();
+      if (queueTails.get(key) === tail) queueTails.delete(key);
+    }
+  }
 
-	async function withQueue<T>(path: string, work: () => Promise<T>): Promise<T> {
-		const key = await canonicalQueueKey(path);
-		const previous = queueTails.get(key) ?? Promise.resolve();
-		let release!: () => void;
-		const owned = new Promise<void>((resolve) => { release = resolve; });
-		const tail = previous.then(() => owned);
-		queueTails.set(key, tail);
-		await previous;
-		try {
-			return await work();
-		} finally {
-			release();
-			if (queueTails.get(key) === tail) queueTails.delete(key);
-		}
-	}
+  return async function execute<TDetails>({
+    toolCallId,
+    absolutePath,
+    thenRun,
+    mutate,
+    signal,
+    ctx,
+    onUpdate,
+    finalizeMutation,
+  }: {
+    toolCallId: string;
+    absolutePath: string;
+    thenRun: ThenRunInput | undefined;
+    mutate: () => Promise<MutationResult<TDetails>>;
+    signal: AbortSignal | undefined;
+    ctx: ExtensionContext;
+    onUpdate?: AgentToolUpdateCallback<TDetails>;
+    finalizeMutation?: MutationFinalizer<TDetails>;
+  }): Promise<MutationResult<TDetails>> {
+    if (thenRun !== undefined) validateThenRun(thenRun);
+    let completedMutation: MutationResult<TDetails> | undefined;
+    let progressFailure: string | undefined;
+    let commandSucceeded = false;
+    const report = (
+      command: ActionFusionProgress["command"],
+      publication: PublicationStatus,
+      freshness: Freshness,
+      output = "",
+      reason?: string,
+    ) => {
+      if (command === "succeeded") commandSucceeded = true;
+      if (!thenRun) return;
+      const progress: ActionFusionProgress = {
+        toolCallId,
+        path: absolutePath,
+        commandText: thenRun.command,
+        command,
+        publication,
+        freshness,
+        output,
+        ...(reason ? { reason } : {}),
+        mutationCompleted: completedMutation !== undefined,
+      };
+      // Display callbacks are observers: their failures must not change publication or command execution.
+      for (const notify of [
+        () => onProgress?.(progress, ctx),
+        () =>
+          onUpdate?.({
+            content: [
+              ...(completedMutation?.content ?? []),
+              {
+                type: "text",
+                text: `then_run ${command}: ${thenRun.command}\n${reason ?? output}`,
+              },
+            ],
+            details: { ...((completedMutation?.details as object) ?? {}), actionFusion: progress },
+          } as MutationResult<TDetails>),
+      ]) {
+        try {
+          notify();
+        } catch (error) {
+          progressFailure ??= errorText(error);
+        }
+      }
+    };
+    report("waiting", "NOT_PUBLISHED", "unknown");
+    return withQueue(absolutePath, async () => {
+      try {
+        signal?.throwIfAborted();
+      } catch (error) {
+        if (thenRun !== undefined)
+          throw new ActionFusionError(
+            "mutation was cancelled before it started; the command was not run",
+            { publication: "NOT_PUBLISHED", command: "cancelled", freshness: "unknown" },
+            {
+              cause: error,
+              mutationFailure: true,
+              commandReason: "Not run because the mutation was cancelled.",
+            },
+          );
+        throw error;
+      }
+      let mutationResult: MutationResult<TDetails>;
+      try {
+        mutationResult = await mutate();
+        completedMutation = mutationResult;
+      } catch (error) {
+        const publication =
+          error instanceof FileMutationError ? error.publication : "NOT_PUBLISHED";
+        if (thenRun !== undefined) {
+          throw new ActionFusionError(
+            `mutation ${error instanceof FileMutationError ? error.stage : "failed"}; the command was not run`,
+            { publication, command: "skipped", freshness: "unknown" },
+            {
+              cause: error,
+              mutationFailure: true,
+              commandReason: "Not run because the mutation did not complete.",
+            },
+          );
+        }
+        throw error;
+      }
 
-	return async function execute<TDetails>({
-		toolCallId,
-		absolutePath,
-		thenRun,
-		mutate,
-		signal,
-		ctx,
-		onUpdate,
-		finalizeMutation,
-	}: {
-		toolCallId: string;
-		absolutePath: string;
-		thenRun: ThenRunInput | undefined;
-		mutate: () => Promise<MutationResult<TDetails>>;
-		signal: AbortSignal | undefined;
-		ctx: ExtensionContext;
-		onUpdate?: AgentToolUpdateCallback<TDetails>;
-		finalizeMutation?: MutationFinalizer<TDetails>;
-	}): Promise<MutationResult<TDetails>> {
-		if (thenRun !== undefined) validateThenRun(thenRun);
-		let completedMutation: MutationResult<TDetails> | undefined;
-		let progressFailure: string | undefined;
-		let commandSucceeded = false;
-		const report = (command: ActionFusionProgress["command"], publication: PublicationStatus, freshness: Freshness, output = "", reason?: string) => {
-			if (command === "succeeded") commandSucceeded = true;
-			if (!thenRun) return;
-			const progress: ActionFusionProgress = { toolCallId, path: absolutePath, commandText: thenRun.command, command, publication, freshness, output, ...(reason ? { reason } : {}), mutationCompleted: completedMutation !== undefined };
-			// Display callbacks are observers: their failures must not change publication or command execution.
-			for (const notify of [
-				() => onProgress?.(progress, ctx),
-				() => onUpdate?.({
-					content: [...(completedMutation?.content ?? []), { type: "text", text: `then_run ${command}: ${thenRun.command}\n${reason ?? output}` }],
-					details: { ...(completedMutation?.details as object ?? {}), actionFusion: progress },
-				} as MutationResult<TDetails>),
-			]) {
-				try { notify(); } catch (error) { progressFailure ??= errorText(error); }
-			}
-		};
-		report("waiting", "NOT_PUBLISHED", "unknown");
-		return withQueue(absolutePath, async () => {
-			try { signal?.throwIfAborted(); } catch (error) {
-				if (thenRun !== undefined) throw new ActionFusionError("mutation was cancelled before it started; the command was not run", { publication: "NOT_PUBLISHED", command: "cancelled", freshness: "unknown" }, { cause: error, mutationFailure: true, commandReason: "Not run because the mutation was cancelled." });
-				throw error;
-			}
-			let mutationResult: MutationResult<TDetails>;
-			try {
-				mutationResult = await mutate();
-				completedMutation = mutationResult;
-			} catch (error) {
-				const publication = error instanceof FileMutationError ? error.publication : "NOT_PUBLISHED";
-				if (thenRun !== undefined) {
-					throw new ActionFusionError(`mutation ${error instanceof FileMutationError ? error.stage : "failed"}; the command was not run`, { publication, command: "skipped", freshness: "unknown" }, { cause: error, mutationFailure: true, commandReason: "Not run because the mutation did not complete." });
-				}
-				throw error;
-			}
+      const publication = mutationPublication(mutationResult);
+      report("waiting", publication, "unknown");
+      if (thenRun === undefined) {
+        const finalized = finalizeMutation
+          ? finalizeMutationResult(mutationResult, finalizeMutation)
+          : mutationResult;
+        return {
+          ...finalized,
+          details: {
+            ...((finalized.details as object) ?? {}),
+            actionFusion: {
+              publication,
+              command: "not_requested",
+              freshness: observedFreshness(mutationResult),
+            } satisfies ActionFusionDetails,
+          },
+        } as MutationResult<TDetails>;
+      }
 
-			const publication = mutationPublication(mutationResult);
-			report("waiting", publication, "unknown");
-			if (thenRun === undefined) {
-				const finalized = finalizeMutation ? finalizeMutationResult(mutationResult, finalizeMutation) : mutationResult;
-				return {
-					...finalized,
-					details: { ...(finalized.details as object ?? {}), actionFusion: { publication, command: "not_requested", freshness: observedFreshness(mutationResult) } satisfies ActionFusionDetails },
-				} as MutationResult<TDetails>;
-			}
+      const baseline = mutationPublishedRevision(mutationResult);
+      if (baseline === undefined) {
+        throw new ActionFusionError(
+          "Missing published revision; cannot validate fused command freshness.",
+          { publication, command: "skipped", freshness: "unknown" },
+          { commandReason: "Not run because the mutation revision is unavailable." },
+        );
+      }
+      try {
+        signal?.throwIfAborted();
+        await assertUnchangedBeforeCommand(absolutePath, baseline);
+        signal?.throwIfAborted();
+      } catch (error) {
+        const freshness = await readFreshness(absolutePath, baseline);
+        throw new ActionFusionError(
+          "mutation completed; the command was not run",
+          { publication, command: signal?.aborted ? "cancelled" : "skipped", freshness },
+          {
+            cause: error,
+            commandReason: signal?.aborted
+              ? "Not run because the operation was cancelled."
+              : "Not run because the target revision could not be confirmed.",
+          },
+        );
+      }
 
-			const baseline = mutationPublishedRevision(mutationResult);
-			if (baseline === undefined) {
-				throw new ActionFusionError("Missing published revision; cannot validate fused command freshness.", { publication, command: "skipped", freshness: "unknown" }, { commandReason: "Not run because the mutation revision is unavailable." });
-			}
-			try {
-				signal?.throwIfAborted();
-				await assertUnchangedBeforeCommand(absolutePath, baseline);
-				signal?.throwIfAborted();
-			} catch (error) {
-				const freshness = await readFreshness(absolutePath, baseline);
-				throw new ActionFusionError("mutation completed; the command was not run", { publication, command: signal?.aborted ? "cancelled" : "skipped", freshness }, { cause: error, commandReason: signal?.aborted ? "Not run because the operation was cancelled." : "Not run because the target revision could not be confirmed." });
-			}
+      report("running", publication, "unchanged");
+      let output: string;
+      let commandError: unknown;
+      try {
+        output = await commandRunner(toolCallId, thenRun, signal, ctx, (partial) => {
+          const text = partial.content
+            .filter((block) => block.type === "text")
+            .map((block) => block.text)
+            .join("\n");
+          report("running", publication, "unknown", text);
+        });
+      } catch (error) {
+        commandError = error;
+        output = "";
+      }
+      const freshness = await readFreshness(absolutePath, baseline);
+      if (commandError !== undefined) {
+        throw new ActionFusionError(
+          "mutation completed; then_run did not complete successfully",
+          { publication, command: commandStatus(commandError, signal), freshness },
+          { cause: commandError, commandOutput: errorText(commandError) },
+        );
+      }
 
-			report("running", publication, "unchanged");
-			let output: string;
-			let commandError: unknown;
-			try {
-				output = await commandRunner(toolCallId, thenRun, signal, ctx, (partial) => {
-					const text = partial.content.filter((block) => block.type === "text").map((block) => block.text).join("\n");
-					report("running", publication, "unknown", text);
-				});
-			} catch (error) {
-				commandError = error;
-				output = "";
-			}
-			const freshness = await readFreshness(absolutePath, baseline);
-			if (commandError !== undefined) {
-				throw new ActionFusionError("mutation completed; then_run did not complete successfully", { publication, command: commandStatus(commandError, signal), freshness }, { cause: commandError, commandOutput: errorText(commandError) });
-			}
-
-			const actionFusion: ActionFusionDetails = { publication, command: "succeeded", freshness };
-			report("succeeded", publication, freshness, output);
-			const finalized = finalizeMutation ? finalizeMutationResult(mutationResult, finalizeMutation, freshness === "unchanged", staleAnchorNotice()) : mutationResult;
-			const commandText = `${THEN_RUN_SUCCEEDED}${!finalizeMutation && freshness !== "unchanged" ? `\n${THEN_RUN_STALE} Re-read the file before further edits; previous anchors may no longer match.` : ""}${output ? `\n${output}` : ""}`;
-			return {
-				...finalized,
-				details: { ...(finalized.details as object ?? {}), actionFusion },
-				content: [...finalized.content, { type: "text", text: commandText }],
-			} as MutationResult<TDetails>;
-		}).catch((error: unknown) => {
-			// Result-generation errors after a successful command must not relabel it skipped.
-			if (!commandSucceeded) {
-				report(error instanceof ActionFusionError ? error.command as ActionFusionProgress["command"] : "skipped",
-					error instanceof ActionFusionError || error instanceof FileMutationError ? error.publication : completedMutation ? mutationPublication(completedMutation) : "NOT_PUBLISHED",
-					error instanceof ActionFusionError ? error.freshness : "unknown",
-					error instanceof ActionFusionError ? error.commandOutput : "",
-					error instanceof ActionFusionError ? error.commandReason : "Not run because the mutation did not complete.");
-			}
-			// A completed mutation remains successful; command failure belongs to its own card.
-			if (completedMutation && error instanceof ActionFusionError) {
-				const finalized = finalizeMutation ? finalizeMutationResult(completedMutation, finalizeMutation, error.freshness === "unchanged", staleAnchorNotice()) : completedMutation;
-				const anchorNotice = !finalizeMutation && error.freshness !== "unchanged" ? `\n${THEN_RUN_STALE} Re-read before further edits; previous anchors may no longer match.` : "";
-				return {
-					...finalized,
-					details: { ...(finalized.details as object ?? {}), actionFusion: { publication: error.publication, command: error.command, freshness: error.freshness } satisfies ActionFusionDetails },
-					content: [...finalized.content, { type: "text", text: `${error.message}${anchorNotice}` }],
-				} as MutationResult<TDetails>;
-			}
-			{
-				const parts: string[] = [errorText(error)];
-				if (error instanceof ActionFusionError && error.publication !== "NOT_PUBLISHED") parts.push("Re-read before retrying.");
-				if (progressFailure) parts.push(`Progress reporting failed: ${progressFailure}`);
-				if (parts.length > 1 || !(error instanceof Error)) {
-					const wrapped = error instanceof ActionFusionError
-						? new ActionFusionError(parts.join("\n"), { publication: error.publication, command: error.command, freshness: error.freshness }, { cause: error, commandOutput: error.commandOutput, commandReason: error.commandReason, rawMessage: true })
-						: new Error(parts.join("\n"), { cause: error });
-					throw wrapped;
-				}
-				throw error;
-			}
-		}).then((result) => progressFailure ? {
-			...result,
-			content: [...result.content, { type: "text" as const, text: `Progress reporting failed: ${progressFailure}` }],
-		} : result);
-	};
+      const actionFusion: ActionFusionDetails = { publication, command: "succeeded", freshness };
+      report("succeeded", publication, freshness, output);
+      const finalized = finalizeMutation
+        ? finalizeMutationResult(
+            mutationResult,
+            finalizeMutation,
+            freshness === "unchanged",
+            staleAnchorNotice(),
+          )
+        : mutationResult;
+      const commandText = `${THEN_RUN_SUCCEEDED}${!finalizeMutation && freshness !== "unchanged" ? `\n${THEN_RUN_STALE} Re-read the file before further edits; previous anchors may no longer match.` : ""}${output ? `\n${output}` : ""}`;
+      return {
+        ...finalized,
+        details: { ...((finalized.details as object) ?? {}), actionFusion },
+        content: [...finalized.content, { type: "text", text: commandText }],
+      } as MutationResult<TDetails>;
+    })
+      .catch((error: unknown) => {
+        // Result-generation errors after a successful command must not relabel it skipped.
+        if (!commandSucceeded) {
+          report(
+            error instanceof ActionFusionError
+              ? (error.command as ActionFusionProgress["command"])
+              : "skipped",
+            error instanceof ActionFusionError || error instanceof FileMutationError
+              ? error.publication
+              : completedMutation
+                ? mutationPublication(completedMutation)
+                : "NOT_PUBLISHED",
+            error instanceof ActionFusionError ? error.freshness : "unknown",
+            error instanceof ActionFusionError ? error.commandOutput : "",
+            error instanceof ActionFusionError
+              ? error.commandReason
+              : "Not run because the mutation did not complete.",
+          );
+        }
+        // A completed mutation remains successful; command failure belongs to its own card.
+        if (completedMutation && error instanceof ActionFusionError) {
+          const finalized = finalizeMutation
+            ? finalizeMutationResult(
+                completedMutation,
+                finalizeMutation,
+                error.freshness === "unchanged",
+                staleAnchorNotice(),
+              )
+            : completedMutation;
+          const anchorNotice =
+            !finalizeMutation && error.freshness !== "unchanged"
+              ? `\n${THEN_RUN_STALE} Re-read before further edits; previous anchors may no longer match.`
+              : "";
+          return {
+            ...finalized,
+            details: {
+              ...((finalized.details as object) ?? {}),
+              actionFusion: {
+                publication: error.publication,
+                command: error.command,
+                freshness: error.freshness,
+              } satisfies ActionFusionDetails,
+            },
+            content: [
+              ...finalized.content,
+              { type: "text", text: `${error.message}${anchorNotice}` },
+            ],
+          } as MutationResult<TDetails>;
+        }
+        {
+          const parts: string[] = [errorText(error)];
+          if (error instanceof ActionFusionError && error.publication !== "NOT_PUBLISHED")
+            parts.push("Re-read before retrying.");
+          if (progressFailure) parts.push(`Progress reporting failed: ${progressFailure}`);
+          if (parts.length > 1 || !(error instanceof Error)) {
+            const wrapped =
+              error instanceof ActionFusionError
+                ? new ActionFusionError(
+                    parts.join("\n"),
+                    {
+                      publication: error.publication,
+                      command: error.command,
+                      freshness: error.freshness,
+                    },
+                    {
+                      cause: error,
+                      commandOutput: error.commandOutput,
+                      commandReason: error.commandReason,
+                      rawMessage: true,
+                    },
+                  )
+                : new Error(parts.join("\n"), { cause: error });
+            throw wrapped;
+          }
+          throw error;
+        }
+      })
+      .then((result) =>
+        progressFailure
+          ? {
+              ...result,
+              content: [
+                ...result.content,
+                { type: "text" as const, text: `Progress reporting failed: ${progressFailure}` },
+              ],
+            }
+          : result,
+      );
+  };
 }

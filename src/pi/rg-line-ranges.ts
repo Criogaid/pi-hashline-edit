@@ -8,7 +8,12 @@ export interface RgSubmatch {
 }
 
 function assertRange(range: LineRange): void {
-  if (!Number.isSafeInteger(range[0]) || !Number.isSafeInteger(range[1]) || range[0] < 1 || range[1] <= range[0]) {
+  if (
+    !Number.isSafeInteger(range[0]) ||
+    !Number.isSafeInteger(range[1]) ||
+    range[0] < 1 ||
+    range[1] <= range[0]
+  ) {
     throw new Error("Invalid physical line range");
   }
 }
@@ -22,7 +27,10 @@ export function unionRanges(left: readonly LineRange[], right: readonly LineRang
   return normalizeRanges([...left, ...right]);
 }
 
-export function intersectRanges(left: readonly LineRange[], right: readonly LineRange[]): LineRange[] {
+export function intersectRanges(
+  left: readonly LineRange[],
+  right: readonly LineRange[],
+): LineRange[] {
   const a = normalizeRanges(left);
   const b = normalizeRanges(right);
   const result: LineRange[] = [];
@@ -38,7 +46,10 @@ export function intersectRanges(left: readonly LineRange[], right: readonly Line
   return result;
 }
 
-export function subtractRanges(left: readonly LineRange[], right: readonly LineRange[]): LineRange[] {
+export function subtractRanges(
+  left: readonly LineRange[],
+  right: readonly LineRange[],
+): LineRange[] {
   const source = normalizeRanges(left);
   const removed = normalizeRanges(right);
   const result: LineRange[] = [];
@@ -70,7 +81,12 @@ function countLfBefore(bytes: Buffer, offset: number): number {
   return count;
 }
 
-function zeroWidthLine(bytes: Buffer, offset: number, eventStartLine: number, fileLineCount: number): number | undefined {
+function zeroWidthLine(
+  bytes: Buffer,
+  offset: number,
+  eventStartLine: number,
+  fileLineCount: number,
+): number | undefined {
   if (fileLineCount === 0) return undefined;
   const candidate = eventStartLine + countLfBefore(bytes, offset);
   return Math.min(candidate, fileLineCount);
@@ -84,7 +100,12 @@ export function submatchesToLineRanges(
   fileLineCount: number,
   columns?: Map<number, number>,
 ): LineRange[] {
-  if (!Number.isSafeInteger(eventStartLine) || eventStartLine < 1 || !Number.isSafeInteger(fileLineCount) || fileLineCount < 0) {
+  if (
+    !Number.isSafeInteger(eventStartLine) ||
+    eventStartLine < 1 ||
+    !Number.isSafeInteger(fileLineCount) ||
+    fileLineCount < 0
+  ) {
     throw new Error("Invalid rg physical line metadata");
   }
   const ranges: LineRange[] = [];
@@ -95,14 +116,23 @@ export function submatchesToLineRanges(
   };
   for (const submatch of submatches) {
     const { start, end } = submatch;
-    if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start < 0 || end < start || end > bytes.length) {
+    if (
+      !Number.isSafeInteger(start) ||
+      !Number.isSafeInteger(end) ||
+      start < 0 ||
+      end < start ||
+      end > bytes.length
+    ) {
       throw new Error("Invalid rg submatch byte offsets");
     }
     if (start === end) {
       const line = zeroWidthLine(bytes, start, eventStartLine, fileLineCount);
       if (line !== undefined) {
         ranges.push([line, line + 1]);
-        const offset = eventStartLine + countLfBefore(bytes, start) > fileLineCount ? Math.max(0, start - 1) : start;
+        const offset =
+          eventStartLine + countLfBefore(bytes, start) > fileLineCount
+            ? Math.max(0, start - 1)
+            : start;
         recordColumn(line, offset);
       }
       continue;

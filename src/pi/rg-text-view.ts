@@ -9,11 +9,15 @@ async function writeLfSnapshot(source: string, destination: string, signal?: Abo
   const handle = await open(destination, "w");
   let pendingCr = "";
   try {
-    const stats = await scanTextFile(source, async (chunk) => {
-      const text = pendingCr + chunk;
-      pendingCr = text.endsWith("\r") ? "\r" : "";
-      await handle.writeFile(normalizeLineEndings(pendingCr ? text.slice(0, -1) : text));
-    }, signal);
+    const stats = await scanTextFile(
+      source,
+      async (chunk) => {
+        const text = pendingCr + chunk;
+        pendingCr = text.endsWith("\r") ? "\r" : "";
+        await handle.writeFile(normalizeLineEndings(pendingCr ? text.slice(0, -1) : text));
+      },
+      signal,
+    );
     if (stats.hasNul) throw new Error("File changed during search; rerun the query.");
     if (pendingCr) await handle.writeFile(pendingCr);
   } finally {
@@ -28,7 +32,10 @@ export const runRgTextView: typeof runRg = async (rgPath, args, signal, onLine) 
   const matcher: string[] = [];
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
-    if (arg === "--") { boundary = i; break; }
+    if (arg === "--") {
+      boundary = i;
+      break;
+    }
     if (arg === "--glob") scope.push(arg, args[++i]);
     else if (["--hidden", "--no-ignore", "--follow"].includes(arg)) scope.push(arg);
     else {
@@ -36,7 +43,8 @@ export const runRgTextView: typeof runRg = async (rgPath, args, signal, onLine) 
       if (arg === "-e") matcher.push(args[++i]);
     }
   }
-  if (boundary === args.length || args[boundary + 1] === "-") return runRg(rgPath, args, signal, onLine);
+  if (boundary === args.length || args[boundary + 1] === "-")
+    return runRg(rgPath, args, signal, onLine);
   let directory: string | undefined;
   const result: RgRunResult = { code: 1, stderr: "", stopped: false };
   // LF-only files pass through to rg directly; only CRLF files need temp snapshots.
@@ -50,9 +58,17 @@ export const runRgTextView: typeof runRg = async (rgPath, args, signal, onLine) 
     result.stopped ||= run.stopped;
   };
 
-  const searchBatch = async (searchPaths: readonly string[], rewritePaths: ReadonlyMap<string, string>) => {
+  const searchBatch = async (
+    searchPaths: readonly string[],
+    rewritePaths: ReadonlyMap<string, string>,
+  ) => {
     const searchArgs = [
-      ...matcher, "--encoding=none", "--no-ignore", "--hidden", "--", ...searchPaths,
+      ...matcher,
+      "--encoding=none",
+      "--no-ignore",
+      "--hidden",
+      "--",
+      ...searchPaths,
     ];
     const run = await runRg(rgPath, searchArgs, signal, async (line) => {
       const event = JSON.parse(line);
@@ -85,7 +101,12 @@ export const runRgTextView: typeof runRg = async (rgPath, args, signal, onLine) 
 
   try {
     const listArgs = [
-      ...COMMON_RG_ARGS, ...scope, "--files", "--null", "--", ...args.slice(boundary + 1),
+      ...COMMON_RG_ARGS,
+      ...scope,
+      "--files",
+      "--null",
+      "--",
+      ...args.slice(boundary + 1),
     ];
     const listed = await runRgPaths(rgPath, listArgs, signal, async (path) => {
       signal?.throwIfAborted();
@@ -110,7 +131,7 @@ export const runRgTextView: typeof runRg = async (rgPath, args, signal, onLine) 
         record({ code: 2, stopped: false, stderr: `${original}: ${message}\n` });
         return true;
       }
-      return (searchPaths.length < 64 && batchBytes < 8 * 1024 * 1024) || await flush();
+      return (searchPaths.length < 64 && batchBytes < 8 * 1024 * 1024) || (await flush());
     });
     // A successful listing is not itself a text match.
     record({ ...listed, code: listed.code === 0 ? 1 : listed.code });

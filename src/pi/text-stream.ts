@@ -2,7 +2,11 @@ import { createReadStream } from "node:fs";
 import { createUtf8Decoder } from "../core/text.ts";
 
 /** Scan and validate the whole file with bounded chunks, preserving BOM and raw line endings. */
-export async function scanTextFile(path: string, onChunk?: (text: string) => void | Promise<void>, signal?: AbortSignal) {
+export async function scanTextFile(
+  path: string,
+  onChunk?: (text: string) => void | Promise<void>,
+  signal?: AbortSignal,
+) {
   const decode = createUtf8Decoder();
   let byteLength = 0;
   let lineFeeds = 0;
@@ -18,12 +22,19 @@ export async function scanTextFile(path: string, onChunk?: (text: string) => voi
     hasCrLf ||= (lastByte === 13 && bytes[0] === 10) || bytes.includes("\r\n");
     lastByte = bytes[bytes.length - 1];
     let offset = 0;
-    while ((offset = bytes.indexOf(10, offset)) !== -1) { lineFeeds++; offset++; }
+    while ((offset = bytes.indexOf(10, offset)) !== -1) {
+      lineFeeds++;
+      offset++;
+    }
     // NUL takes precedence even when an earlier chunk contained malformed UTF-8.
     if (hasNul || decodingError) continue;
     let text: string;
-    try { text = decode(bytes, true); }
-    catch (error) { decodingError = error; continue; }
+    try {
+      text = decode(bytes, true);
+    } catch (error) {
+      decodingError = error;
+      continue;
+    }
     await onChunk?.(text);
   }
   signal?.throwIfAborted();
@@ -69,7 +80,12 @@ export async function scanTextLines(
       const logicalBytes = byteLength - (stripCr ? 1 : 0);
       let text = logicalBytes <= maxBytes ? parts.join("") : undefined;
       if (stripCr && text !== undefined) text = text.slice(0, -1);
-      onLine({ number, byteLength: logicalBytes, carriageReturns: carriageReturns - (stripCr ? 1 : 0), text });
+      onLine({
+        number,
+        byteLength: logicalBytes,
+        carriageReturns: carriageReturns - (stripCr ? 1 : 0),
+        text,
+      });
       carriageReturns = 0;
       byteLength = 0;
       parts = [];
@@ -78,26 +94,33 @@ export async function scanTextLines(
     number++;
     selected = select(number);
   };
-  const stats = await scanTextFile(path, (text) => {
-    let start = 0;
-    while (start < text.length) {
-      const lf = text.indexOf("\n", start);
-      if (selected) {
-        const end = lf === -1 ? text.length : lf;
-        const fragment = text.slice(start, end);
-        byteLength += Buffer.byteLength(fragment);
-        let cr = 0;
-        while ((cr = fragment.indexOf("\r", cr)) !== -1) { carriageReturns++; cr++; }
-        if (fragment) lastChar = fragment[fragment.length - 1];
-        // Keep one extra byte until the terminator decides whether a final CR is content.
-        if (byteLength <= maxBytes + 1) parts.push(fragment);
-        else parts = [];
+  const stats = await scanTextFile(
+    path,
+    (text) => {
+      let start = 0;
+      while (start < text.length) {
+        const lf = text.indexOf("\n", start);
+        if (selected) {
+          const end = lf === -1 ? text.length : lf;
+          const fragment = text.slice(start, end);
+          byteLength += Buffer.byteLength(fragment);
+          let cr = 0;
+          while ((cr = fragment.indexOf("\r", cr)) !== -1) {
+            carriageReturns++;
+            cr++;
+          }
+          if (fragment) lastChar = fragment[fragment.length - 1];
+          // Keep one extra byte until the terminator decides whether a final CR is content.
+          if (byteLength <= maxBytes + 1) parts.push(fragment);
+          else parts = [];
+        }
+        if (lf === -1) break;
+        finish(true);
+        start = lf + 1;
       }
-      if (lf === -1) break;
-      finish(true);
-      start = lf + 1;
-    }
-  }, options.signal);
+    },
+    options.signal,
+  );
   if (!stats.hasNul && byteLength > 0) finish(false);
   return stats;
 }

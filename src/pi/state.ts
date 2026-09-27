@@ -13,14 +13,14 @@ import { DEFAULT_CONFIG, type HashlineEditConfig } from "./config.ts";
 const GLOBAL_KEY = "__piHashlineEdit";
 
 export interface HashlineEditState {
-	config: HashlineEditConfig;
+  config: HashlineEditConfig;
 }
 
 export function getState(): HashlineEditState {
-	const g = globalThis as Record<string, unknown>;
-	const existing = g[GLOBAL_KEY];
-	if (existing) return existing as HashlineEditState;
-	const state: HashlineEditState = { config: { ...DEFAULT_CONFIG } };
-	g[GLOBAL_KEY] = state;
-	return state;
+  const g = globalThis as Record<string, unknown>;
+  const existing = g[GLOBAL_KEY];
+  if (existing) return existing as HashlineEditState;
+  const state: HashlineEditState = { config: { ...DEFAULT_CONFIG } };
+  g[GLOBAL_KEY] = state;
+  return state;
 }

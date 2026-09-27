@@ -20,44 +20,48 @@ import type { LineEnding } from "./types.ts";
 
 /** Normalize CRLF boundaries to LF; standalone CR remains content. */
 export function normalizeLineEndings(text: string): string {
-	return text.replace(/\r\n/g, "\n");
+  return text.replace(/\r\n/g, "\n");
 }
 
 /** Raw separators in logical-line order, shared by both mutation applicators. */
 export function lineSeparators(text: string): string[] {
-	return text.match(/\r?\n/g) ?? [];
+  return text.match(/\r?\n/g) ?? [];
 }
 
 /** New internal gaps reuse the corresponding old gap, then the last gap or file style. */
-export function replacementSeparator(separators: readonly string[], index: number, fallback: string): string {
-	return separators[index] || separators[separators.length - 1] || fallback;
+export function replacementSeparator(
+  separators: readonly string[],
+  index: number,
+  fallback: string,
+): string {
+  return separators[index] || separators[separators.length - 1] || fallback;
 }
 
 /** Restore a logical replacement without normalizing it a second time. */
 export function restoreLineEndings(logical: string, original: string, fallback: string): string {
-	const separators = lineSeparators(original);
-	let index = 0;
-	return logical.replace(/\n/g, () => replacementSeparator(separators, index++, fallback));
+  const separators = lineSeparators(original);
+  let index = 0;
+  return logical.replace(/\n/g, () => replacementSeparator(separators, index++, fallback));
 }
 
 /** Build an LF matching view with UTF-16 boundary offsets back into the original text. */
 export function createLfTextView(source: string) {
-	const removed: number[] = [];
-	for (const match of source.matchAll(/\r\n/g)) removed.push(match.index! - removed.length);
-	return {
-		text: normalizeLineEndings(source),
-		sourceOffset(offset: number): number {
-			// Count removed CRs strictly before this boundary: a newline starts at its original CR.
-			let lo = 0;
-			let hi = removed.length;
-			while (lo < hi) {
-				const mid = Math.floor((lo + hi) / 2);
-				if (removed[mid] < offset) lo = mid + 1;
-				else hi = mid;
-			}
-			return offset + lo;
-		},
-	};
+  const removed: number[] = [];
+  for (const match of source.matchAll(/\r\n/g)) removed.push(match.index! - removed.length);
+  return {
+    text: normalizeLineEndings(source),
+    sourceOffset(offset: number): number {
+      // Count removed CRs strictly before this boundary: a newline starts at its original CR.
+      let lo = 0;
+      let hi = removed.length;
+      while (lo < hi) {
+        const mid = Math.floor((lo + hi) / 2);
+        if (removed[mid] < offset) lo = mid + 1;
+        else hi = mid;
+      }
+      return offset + lo;
+    },
+  };
 }
 
 /**
@@ -71,13 +75,13 @@ export function createLfTextView(source: string) {
  * - `""` → `[]`
  */
 export function splitLines(text: string): string[] {
-	if (text === "") return [];
-	if (!text.includes("\r")) {
-		return (text.endsWith("\n") ? text.slice(0, -1) : text).split("\n");
-	}
-	const normalized = text.replaceAll("\r\n", "\n");
-	const lines = (normalized.endsWith("\n") ? normalized.slice(0, -1) : normalized).split("\n");
-	return lines;
+  if (text === "") return [];
+  if (!text.includes("\r")) {
+    return (text.endsWith("\n") ? text.slice(0, -1) : text).split("\n");
+  }
+  const normalized = text.replaceAll("\r\n", "\n");
+  const lines = (normalized.endsWith("\n") ? normalized.slice(0, -1) : normalized).split("\n");
+  return lines;
 }
 
 /**
@@ -85,58 +89,59 @@ export function splitLines(text: string): string[] {
  * Counts total lines accurately across CRLF, standalone CR, and missing final newline.
  */
 export function sliceLines(
-	text: string,
-	startIdx: number,
-	endIdx: number,
+  text: string,
+  startIdx: number,
+  endIdx: number,
 ): { lines: string[]; totalLines: number } {
-	if (text === "") return { lines: [], totalLines: 0 };
+  if (text === "") return { lines: [], totalLines: 0 };
 
-	const len = text.length;
-	const lines: string[] = [];
-	let currentLine = 0;
-	let lineStart = 0;
-	let pos = 0;
+  const len = text.length;
+  const lines: string[] = [];
+  let currentLine = 0;
+  let lineStart = 0;
+  let pos = 0;
 
-	while (pos < len) {
-		const nextLf = text.indexOf("\n", pos);
-		if (nextLf === -1) {
-			// Last line without trailing newline
-			if (currentLine >= startIdx && currentLine < endIdx) {
-				lines.push(text.slice(lineStart));
-			}
-			currentLine++;
-			break;
-		}
+  while (pos < len) {
+    const nextLf = text.indexOf("\n", pos);
+    if (nextLf === -1) {
+      // Last line without trailing newline
+      if (currentLine >= startIdx && currentLine < endIdx) {
+        lines.push(text.slice(lineStart));
+      }
+      currentLine++;
+      break;
+    }
 
-		if (currentLine >= startIdx && currentLine < endIdx) {
-			const lineEnd = (nextLf > lineStart && text.charCodeAt(nextLf - 1) === 13) ? nextLf - 1 : nextLf;
-			lines.push(text.slice(lineStart, lineEnd));
-		}
+    if (currentLine >= startIdx && currentLine < endIdx) {
+      const lineEnd =
+        nextLf > lineStart && text.charCodeAt(nextLf - 1) === 13 ? nextLf - 1 : nextLf;
+      lines.push(text.slice(lineStart, lineEnd));
+    }
 
-		currentLine++;
-		lineStart = nextLf + 1;
-		pos = nextLf + 1;
+    currentLine++;
+    lineStart = nextLf + 1;
+    pos = nextLf + 1;
 
-		// Once we have collected all requested lines, count remaining newlines rapidly.
-		if (currentLine >= endIdx) {
-			let remainingLfs = 0;
-			let scan = pos;
-			while ((scan = text.indexOf("\n", scan)) !== -1) {
-				remainingLfs++;
-				scan++;
-			}
-			const hasTrailingTerminator = text.charCodeAt(len - 1) === 10;
-			currentLine += remainingLfs + (hasTrailingTerminator ? 0 : 1);
-			break;
-		}
-	}
+    // Once we have collected all requested lines, count remaining newlines rapidly.
+    if (currentLine >= endIdx) {
+      let remainingLfs = 0;
+      let scan = pos;
+      while ((scan = text.indexOf("\n", scan)) !== -1) {
+        remainingLfs++;
+        scan++;
+      }
+      const hasTrailingTerminator = text.charCodeAt(len - 1) === 10;
+      currentLine += remainingLfs + (hasTrailingTerminator ? 0 : 1);
+      break;
+    }
+  }
 
-	return { lines, totalLines: currentLine };
+  return { lines, totalLines: currentLine };
 }
 
 /** Whether the text uses CRLF at all (any `\r\n` counts; mixed files report "crlf"). */
 export function detectLineEnding(text: string): LineEnding {
-	return text.includes("\r\n") ? "crlf" : "lf";
+  return text.includes("\r\n") ? "crlf" : "lf";
 }
 
 /**
@@ -148,5 +153,5 @@ export function detectLineEnding(text: string): LineEnding {
  * round-trips.
  */
 export function hasFinalNewline(text: string): boolean {
-	return text === "" || text.endsWith("\n");
+  return text === "" || text.endsWith("\n");
 }
