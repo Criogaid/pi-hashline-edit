@@ -628,6 +628,57 @@ function toDisplayLines(raw: string, theme: any): string[] {
   }
   return out;
 }
+interface AssembleGrepOutputOptions {
+  blocks: readonly string[];
+  warnings: readonly string[];
+  outputMode: "content" | "files" | "count";
+  literalFallback: boolean;
+  matchLimitReached: boolean;
+  effectiveLimit: number;
+  linesTruncated: boolean;
+}
+
+function assembleGrepOutput(options: AssembleGrepOutputOptions): {
+  content: [{ type: "text"; text: string }];
+  details?: { incomplete: true };
+} {
+  const {
+    blocks,
+    warnings,
+    outputMode,
+    literalFallback,
+    matchLimitReached,
+    effectiveLimit,
+    linesTruncated,
+  } = options;
+
+  if (!blocks.length && warnings.length) {
+    throw new Error(`No matches could be displayed.${formatSearchWarnings(warnings)}`);
+  }
+  let output = blocks.join(outputMode === "content" ? "\n\n" : "\n");
+  const truncation = truncateHead(output, { maxBytes: DEFAULT_MAX_BYTES });
+  output = truncation.content;
+
+  const notices: string[] = literalFallback ? [LITERAL_FALLBACK_NOTICE] : [];
+  if (matchLimitReached) {
+    notices.push(
+      `${effectiveLimit} matches limit reached. Use limit=${effectiveLimit * 2} for more, or refine pattern`,
+    );
+  }
+  if (truncation.truncated) notices.push(`${formatSize(DEFAULT_MAX_BYTES)} limit reached`);
+  if (linesTruncated) {
+    notices.push(
+      `Line previews capped at ${GREP_MAX_LINE_LENGTH} chars (anchors hash full lines); use read for full content`,
+    );
+  }
+  if (notices.length) output += `\n\n[${notices.join(". ")}]`;
+  output += formatSearchWarnings(warnings);
+
+  return {
+    content: [{ type: "text" as const, text: output }],
+    details: warnings.length ? { incomplete: true } : undefined,
+  };
+}
 
 /** Build the production grep override (a ToolDefinition fragment for registerTool). */
 export function makeGrepOverride(cwd: string) {
@@ -1028,31 +1079,15 @@ export function makeGrepOverrideWithBackend(cwd: string, overrides: Partial<Grep
         );
       }
 
-      if (!blocks.length && warnings.length)
-        throw new Error(`No matches could be displayed.${formatSearchWarnings(warnings)}`);
-      let output = blocks.join(outputMode === "content" ? "\n\n" : "\n");
-      const truncation = truncateHead(output, { maxBytes: DEFAULT_MAX_BYTES });
-      output = truncation.content;
-
-      const notices: string[] = literalFallback ? [LITERAL_FALLBACK_NOTICE] : [];
-      if (matchLimitReached) {
-        notices.push(
-          `${effectiveLimit} matches limit reached. Use limit=${effectiveLimit * 2} for more, or refine pattern`,
-        );
-      }
-      if (truncation.truncated) notices.push(`${formatSize(DEFAULT_MAX_BYTES)} limit reached`);
-      if (linesTruncated) {
-        notices.push(
-          `Line previews capped at ${GREP_MAX_LINE_LENGTH} chars (anchors hash full lines); use read for full content`,
-        );
-      }
-      if (notices.length) output += `\n\n[${notices.join(". ")}]`;
-      output += formatSearchWarnings(warnings);
-
-      return {
-        content: [{ type: "text" as const, text: output }],
-        details: warnings.length ? { incomplete: true } : undefined,
-      };
+      return assembleGrepOutput({
+        blocks,
+        warnings,
+        outputMode,
+        literalFallback,
+        matchLimitReached,
+        effectiveLimit,
+        linesTruncated,
+      });
     },
   };
 }
