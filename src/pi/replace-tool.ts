@@ -37,8 +37,6 @@ import { canonicalPath } from "./path.ts";
 import { formatDiffCounts, renderMutationCall, renderMutationResult, type DiffCounts } from "./render.ts";
 import { appendMutationAnchors, finalizeMutationResult, formatMutationAnchors, generateMutationDetails, postProcessMutation } from "./mutation-result.ts";
 
-/** Default safety cap on match count (errors before writing if exceeded). */
-const DEFAULT_MAX_MATCHES = 2000;
 /** Valid JavaScript regular-expression flag characters (ES2023+, incl. hasIndices `d`). */
 const VALID_FLAGS = new Set(["g", "i", "m", "s", "u", "y", "d"]);
 
@@ -47,7 +45,6 @@ const replacementSchema = Type.Object({
 	replace: Type.String({ description: "Replacement text in the shared LF view. Restores original line endings; extra lines use the last matched ending or the file style. Literal mode keeps $ verbatim; regex mode expands JavaScript $ substitutions against the LF snapshot. Use write for explicit whole-file line-ending conversion." }),
 	regex: Type.Optional(Type.Boolean({ description: "Interpret find as a JavaScript regex (default false)." })),
 	flags: Type.Optional(Type.String({ description: "Regex flags in either mode; g is always added." })),
-	maxMatches: Type.Optional(Type.Number({ exclusiveMinimum: 0, description: `Per-rule match cap (default ${DEFAULT_MAX_MATCHES}); exceeding it rejects the entire call.` })),
 });
 type Replacement = Static<typeof replacementSchema>;
 
@@ -55,7 +52,7 @@ function createReplaceSchema(actionFusion: boolean) {
 	return Type.Object({
 		path: Type.String({ description: "Path to the file to edit (relative or absolute)" }),
 		...Type.Partial(replacementSchema).properties,
-		replacements: Type.Optional(Type.Array(replacementSchema, { minItems: 1, description: "Rules matched against one original snapshot. Mutually exclusive with top-level find/replace/regex/flags/maxMatches. Overlaps reject the entire batch." })),
+		replacements: Type.Optional(Type.Array(replacementSchema, { minItems: 1, description: "Rules matched against one original snapshot. Mutually exclusive with top-level find/replace/regex/flags. Overlaps reject the entire batch." })),
 		...(actionFusion ? { then_run: createThenRunSchema("Command to run once after all replacements succeed; failure does not roll back the replacement.") } : {}),
 	});
 }
@@ -74,7 +71,6 @@ function replacementRules(params: ReplaceParams): Replacement[] {
 		if (rule.find === "") throw new Error(`rule ${index}: \`find\` is empty`);
 		if (rule.regex !== undefined && typeof rule.regex !== "boolean") throw new Error(`rule ${index}: regex must be a boolean`);
 		if (rule.flags !== undefined && typeof rule.flags !== "string") throw new Error(`rule ${index}: flags must be a string`);
-		if (rule.maxMatches !== undefined && (!Number.isFinite(rule.maxMatches) || rule.maxMatches <= 0)) throw new Error(`rule ${index}: maxMatches must be finite and positive`);
 	}
 	return rules as Replacement[];
 }
@@ -123,11 +119,10 @@ function applyReplacements(source: string, rules: readonly Replacement[]): { tex
 	for (const [index, rule] of rules.entries()) {
 		try {
 			const regex = buildRegex(rule.find, rule.regex === true, rule.flags);
-			const maxMatches = rule.maxMatches ?? DEFAULT_MAX_MATCHES;
 			let count = 0;
 			const replacement = normalizeLineEndings(rule.replace);
 			for (const match of view.text.matchAll(regex)) {
-				if (++count > maxMatches) throw new Error(`${count}+ matches exceed \`maxMatches\` (${maxMatches}). Raise \`maxMatches\` if intentional, or narrow \`find\`.`);
+				count++;
 				const start = view.sourceOffset(match.index!);
 				const end = view.sourceOffset(match.index! + match[0].length);
 				changes.push({

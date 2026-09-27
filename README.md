@@ -168,11 +168,10 @@ Long lines show a labeled partial preview of up to 500 UTF-16 units around a rip
 
 ### Replace
 
-Required: `path` and either top-level `find` / `replace`, or a non-empty `replacements` array. These forms are mutually exclusive: batch calls cannot include top-level `find`, `replace`, `regex`, `flags`, or `maxMatches`. Each rule requires `find` and `replace`, with these optional fields:
+Required: `path` and either top-level `find` / `replace`, or a non-empty `replacements` array. These forms are mutually exclusive: batch calls cannot include top-level `find`, `replace`, `regex`, or `flags`. Each rule requires `find` and `replace`, with these optional fields:
 
 - `regex`: defaults to `false`; both modes match the shared LF view. Regex mode supports capture groups, the full match, and prefix/suffix substitutions.
 - `flags`: applies in both modes; `g` is always added. Supported flags: `g i m s u y d`.
-- `maxMatches`: defaults to 2000 per rule and must be finite and positive; rejects excess matches before writing. Raise it for intentional bulk changes. It does not bound regex execution time or result size.
 
 Zero matches in any rule, an invalid rule, or overlapping match ranges rejects the whole call without writing. Adjacent ranges are allowed. Zero-length matches conflict at the same position or at the start/interior of another match; a zero-length match at another match's end is allowed unless it conflicts with a following match. Error rule indices and string offsets are zero-based (offsets count UTF-16 code units in the original text). Literal and regex rules share the same original ranges for conflict detection.
 

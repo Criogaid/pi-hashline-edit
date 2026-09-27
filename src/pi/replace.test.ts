@@ -1,6 +1,6 @@
 /**
  * pi integration tests for the `replace` tool: literal replaceAll, regex with
- * capture groups, flags, the maxMatches guard, 0-match / invalid-pattern
+ * capture groups, flags, 0-match / invalid-pattern
  * failures (signaled by throwing — pi's failure contract), diff + fresh-anchor
  * return, and chaining a hashline `edit` on an anchor returned by `replace`.
  *
@@ -193,15 +193,13 @@ test("replace: empty find throws", async () => {
 	});
 });
 
-test("replace: maxMatches guard throws before writing", async () => {
+test("replace: handles large match counts without an arbitrary cap", async () => {
 	await withDir(async (dir) => {
 		const f = join(dir, "f.txt");
-		await writeFile(f, "a".repeat(20) + "\n");
-		await assert.rejects(
-			call(makeReplaceTool(dir), { path: "f.txt", find: "a", replace: "b", maxMatches: 5 }),
-			/exceed `maxMatches`/,
-		);
-		assert.equal(await readFile(f, "utf-8"), "a".repeat(20) + "\n", "file untouched when guard trips");
+		await writeFile(f, "a\n".repeat(2500));
+		const result: any = await call(makeReplaceTool(dir), { path: "f.txt", find: "a", replace: "b" });
+		assert.match(result.content[0].text, /Replaced f\.txt \(2500 matches\)\./);
+		assert.equal(await readFile(f, "utf-8"), "b\n".repeat(2500));
 	});
 });
 
@@ -379,14 +377,11 @@ test("invalid batches reject every change and skip the fused command", async () 
 	const first = { find: "bar", replace: "changed" };
 	const cases = [
 		{ replacements: [first, { find: "missing", replace: "x" }] },
-		{ replacements: [first, { find: "foo", replace: "x", maxMatches: 1 }] },
 		{ replacements: [first, { find: "(", replace: "x", regex: true }] },
 		{ replacements: [first, { find: "bar foo", replace: "x" }] },
 		{ replacements: [first, { find: "bar", replace: "x" }] },
 		{ replacements: [first, { find: "foo", replace: "\0" }] },
 		{ replacements: [first, { find: "foo", replace: "\ud800" }] },
-		{ replacements: [first, { find: "foo", replace: "x", maxMatches: NaN }] },
-		{ replacements: [first, { find: "foo", replace: "x", maxMatches: Infinity }] },
 		{ replacements: [first, { find: "", replace: "x" }] },
 		{ replacements: [first, { find: "foo" }] },
 		{ replacements: [] },
@@ -462,7 +457,7 @@ test("successful batches run one command against the complete result", async () 
 		assert.equal(await readFile(file, "utf8"), "bar baz");
 		return "checked";
 	}));
-	const result = await tool.execute("0", { path: file, replacements: [{ find: "foo", replace: "bar", maxMatches: 1 }, { find: "bar", replace: "baz", maxMatches: 1 }], then_run: { command: "check" } }, undefined, undefined, { cwd: dir });
+	const result = await tool.execute("0", { path: file, replacements: [{ find: "foo", replace: "bar" }, { find: "bar", replace: "baz" }], then_run: { command: "check" } }, undefined, undefined, { cwd: dir });
 	assert.equal(commands, 1);
 	assert.equal(result.details.actionFusion.command, "succeeded");
 	assert.match(result.content[0].text, /Updated anchors/);
