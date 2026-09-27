@@ -139,7 +139,7 @@ function formatFailureDetails(
 			case "none": {
 				const row = f.current === null ? null : snapshot.anchors.row(f.cited.line, f.current.content);
 				if (row !== null && Buffer.byteLength(row, "utf8") <= MAX_RECOVERY_CANDIDATE_BYTES) {
-					lines.push(`• ${where}: no checksum-matching candidate found. Current cited line (validation snapshot; observation only):\n${row}\nConfirm this is the intended target before reusing its anchor directly; use read or grep if additional context is needed. Retries revalidate.`);
+					lines.push(`• ${where}: no checksum-matching candidate found. Current cited line (validation snapshot; observation only):\n${row}\nConfirm this is the intended target before reusing its anchor directly; retries revalidate.`);
 				} else {
 					lines.push(`• ${where}: no checksum-matching candidate found. Use read or grep to inspect the current file before retrying.` +
 						(f.current === null ? " Cited line is out of range." : ` Current row exceeds ${MAX_RECOVERY_CANDIDATE_BYTES} bytes.`));

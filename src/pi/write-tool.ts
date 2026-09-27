@@ -29,7 +29,10 @@ export function makeWriteOverride(cwd: string, fusion?: ReturnType<typeof create
 		label: "write",
 		description: "Write complete file content exactly as supplied, including LF/CRLF choices. Use for intentional whole-file line-ending conversion. By default, creates missing files (including parent directories) and overwrites existing files.",
 		promptSnippet: "Write complete file content to a path",
-		promptGuidelines: fusion ? ACTION_FUSION_GUIDELINES : [],
+		promptGuidelines: [
+			"Use write for creating new files or whole-file overwrites; for targeted changes, prefer edit or replace to preserve surrounding content.",
+			...(fusion ? ACTION_FUSION_GUIDELINES : []),
+		],
 		parameters,
 		renderShell: "default" as const,
 		renderCall: builtin.renderCall,
