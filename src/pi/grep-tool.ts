@@ -855,7 +855,7 @@ export function makeGrepOverrideWithBackend(cwd: string, overrides: Partial<Grep
       if (truncation.truncated) notices.push(`${formatSize(DEFAULT_MAX_BYTES)} limit reached`);
       if (linesTruncated) {
         notices.push(
-          `Partial line previews show up to ${GREP_MAX_LINE_LENGTH} characters near a match (context-only lines show the start). Columns are 1-based UTF-16 positions; anchors hash full lines. Use read for full content`,
+          `Line previews capped at ${GREP_MAX_LINE_LENGTH} chars (anchors hash full lines); use read for full content`,
         );
       }
       if (notices.length) output += `\n\n[${notices.join(". ")}]`;
