@@ -182,7 +182,8 @@ function formatFailure(
 		: { text: "", shownLines: new Set<number>() };
 	const guidance = failure.kind === "anchor"
 		? "\nCheck the intended target before retrying; use read or grep for omitted or additional context." : "";
-	return `${formatFailureDetails(failure, snapshot, candidateNeighborhoods.shownLines)}\n${formatAnchorChecks(failure, snapshot.anchors)}${candidateNeighborhoods.text}${guidance}`;
+	const anchorChecks = failure.checks.length > 1 ? `\n${formatAnchorChecks(failure, snapshot.anchors)}` : "";
+	return `${formatFailureDetails(failure, snapshot, candidateNeighborhoods.shownLines)}${anchorChecks}${candidateNeighborhoods.text}${guidance}`;
 }
 
 /** Translate JSON edit ops into core Edit[]. Validates conditional required fields (anchor/body per op). */

@@ -759,7 +759,10 @@ test("input status distinguishes skipped checks and expires before the next retr
 	await writeFile(file, before);
 	const edit = makeEditOverride(dir);
 	const stable = h(before, 1);
-	await assert.rejects(call(edit, { path: file, edits: [{ op: "replace", anchor: stable, body: ["bad\nline"] }] }), (error: Error) => {
+	await assert.rejects(call(edit, { path: file, edits: [
+		{ op: "replace", anchor: stable, body: ["bad\nline"] },
+		{ op: "replace", anchor: "2#XXXX", body: ["B"] },
+	] }), (error: Error) => {
 		assert.ok(error.message.includes(`op 0 / anchor / ${stable} / not_checked`));
 		assert.doesNotMatch(error.message, /\/ matched/);
 		return true;
@@ -775,11 +778,26 @@ test("input status distinguishes skipped checks and expires before the next retr
 	});
 	assert.equal(await readFile(file, "utf8"), before);
 	await writeFile(file, "changed\nb\nc\n");
-	await assert.rejects(call(edit, { path: file, edits: [{ op: "replace", anchor: stable, body: ["A"] }] }), (error: Error) => {
+	await assert.rejects(call(edit, { path: file, edits: [
+		{ op: "replace", anchor: stable, body: ["A"] },
+		{ op: "replace", anchor: "3#ZZ", body: ["B"] },
+	] }), (error: Error) => {
 		assert.ok(error.message.includes(`op 0 / anchor / ${stable} / mismatched`));
 		return true;
 	});
 	assert.equal(await readFile(file, "utf8"), "changed\nb\nc\n");
+}));
+
+test("single-operation edit failures omit redundant Input-anchor checks table", async () => withDir(async (dir) => {
+	const file = join(dir, "single.txt");
+	await writeFile(file, "line1\nline2\n");
+	const edit = makeEditOverride(dir);
+	await assert.rejects(call(edit, { path: file, edits: [{ op: "replace", anchor: "1#XXXX", body: ["new"] }] }), (error: Error) => {
+		assert.match(error.message, /Anchor mismatch: 1 unresolved/);
+		assert.match(error.message, /no checksum-matching candidate found/);
+		assert.doesNotMatch(error.message, /Input-anchor checks/);
+		return true;
+	});
 }));
 
 test("failed batches return more than forty checks and mappings when byte budgets allow", async () => withDir(async (dir) => {

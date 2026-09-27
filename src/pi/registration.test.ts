@@ -97,7 +97,7 @@ test("mutation cards use Fusion by default and explicit false removes command su
 		const stale = { path: "stale.txt", edits: [{ op: "replace", anchor: `1#${computeLineHash(1, "target")}`, body: ["changed"] }], then_run: { command: "exit 99" } };
 		const staleCard = new ToolExecutionComponent("edit", "stale", stale, {}, edit, { requestRender() {} } as any, dir);
 		await assert.rejects(edit.execute("stale", stale, undefined, (update: any) => staleCard.updateResult({ ...update, isError: false }, true), { cwd: dir }), (error: Error) => {
-			assert.match(error.message, /checksum-matching candidate[\s\S]*Input-anchor checks/);
+			assert.match(error.message, /checksum-matching candidate/);
 			staleCard.updateResult({ content: [{ type: "text", text: error.message }], isError: true });
 			assert.match(staleCard.render(160).join("\n"), /Anchor mismatch/);
 			const entry = entries.find((entry) => entry.customType === "hashline-then-run" && entry.data.toolCallId === "stale");
