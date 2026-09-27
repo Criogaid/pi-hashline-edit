@@ -189,6 +189,45 @@ test("formats parsed rg matches with full-line hash anchors", async () => {
   );
 });
 
+test("grep rejects a file changed between a match and anchor formatting", async () => {
+  await withDir(async (dir) => {
+    const file = join(dir, "grep.txt");
+    await writeFile(file, "needle\nother\n");
+    const fake = fakeBackend({ lines: [rgMatch(file, 1, "needle\n")] });
+    const backend: GrepBackend = {
+      ...fake.backend,
+      async runRg(...args) {
+        const result = await fake.backend.runRg(...args);
+        await writeFile(file, "NOT_THE_MATCH\nneedle\n");
+        return result;
+      },
+    };
+    await assert.rejects(
+      call(makeGrepOverrideWithBackend(dir, backend), { pattern: "needle" }),
+      /File changed during search/,
+    );
+  });
+});
+test("grep rejects changed context even when the matched line stays the same", async () => {
+  await withDir(async (dir) => {
+    const file = join(dir, "grep.txt");
+    await writeFile(file, "needle\nold context\n");
+    const fake = fakeBackend({ lines: [rgMatch(file, 1, "needle\n")] });
+    const backend: GrepBackend = {
+      ...fake.backend,
+      async runRg(...args) {
+        const result = await fake.backend.runRg(...args);
+        await writeFile(file, "needle\nnew context\n");
+        return result;
+      },
+    };
+    await assert.rejects(
+      call(makeGrepOverrideWithBackend(dir, backend), { pattern: "needle", context: 1 }),
+      /File changed during search/,
+    );
+  });
+});
+
 test("grep in a subdirectory returns a path that edits the matching file", async () => {
   await withDir(async (dir) =>
     withEnabled(true, async () => {
@@ -232,9 +271,9 @@ test("applies all, exclude, context, and CRLF filtering after rg output", async 
       );
       const fake = fakeBackend({
         lines: [
-          rgMatch(file, 2, "alpha beta drop\r\n"),
-          rgMatch(file, 4, "alpha beta\r\n"),
-          rgMatch(file, 6, "alpha only\r\n"),
+          rgMatch(file, 2, "alpha beta drop\n"),
+          rgMatch(file, 4, "alpha beta\n"),
+          rgMatch(file, 6, "alpha only\n"),
         ],
       });
 

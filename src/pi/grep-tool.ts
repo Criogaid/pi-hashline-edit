@@ -34,6 +34,7 @@ import { normalizeLineEndings } from "../core/lines.ts";
 import { scanTextFile, scanTextLines } from "./text-stream.ts";
 import { createAnchorFormatter, displayCarriageReturns } from "./anchor-format.ts";
 import { canonicalPath } from "./path.ts";
+import { fileRevision } from "./file-commit.ts";
 import { parseHashline, renderToolError } from "./render.ts";
 import {
   COMMON_RG_ARGS,
@@ -250,6 +251,7 @@ interface RgMatch {
   filePath: string;
   lineNumber: number;
   column?: number;
+  matchedText?: string;
 }
 
 /** @internal — injectable process boundary for deterministic tests. */
@@ -849,6 +851,7 @@ export function makeGrepOverrideWithBackend(cwd: string, overrides: Partial<Grep
       let matchLimitReached: boolean;
       let strictIdentities: Map<string, FileIdentity> | undefined;
       let linesTruncated = false;
+      const simpleRevisions = new Map<string, string>();
 
       if (scope.searchPaths.length === 0) {
         raw = [];
@@ -915,10 +918,17 @@ export function makeGrepOverrideWithBackend(cwd: string, overrides: Partial<Grep
               )
             )
               continue;
+            if (outputMode === "content" && !simpleRevisions.has(candidates[index].filePath)) {
+              simpleRevisions.set(
+                candidates[index].filePath,
+                await fileRevision(candidates[index].filePath),
+              );
+            }
             raw.push({
               filePath: candidates[index].filePath,
               lineNumber: candidates[index].lineNumber,
               column: candidates[index].column,
+              matchedText: candidates[index].line.toString("utf8").replace(/\n$/, ""),
             });
             matchCount++;
             if (matchCount >= effectiveLimit) {
@@ -1015,6 +1025,9 @@ export function makeGrepOverrideWithBackend(cwd: string, overrides: Partial<Grep
             const current = nextIndex++;
             const [filePath, matchLines] = fileEntries[current];
             const columns = new Map(matchLines.map((match) => [match.lineNumber, match.column]));
+            const matchedTexts = new Map(
+              matchLines.map((match) => [match.lineNumber, match.matchedText]),
+            );
             // Retain only surviving matches and their context, then store the formatted block.
             const windowSet = new Set<number>();
             for (const { lineNumber } of matchLines) {
@@ -1029,6 +1042,10 @@ export function makeGrepOverrideWithBackend(cwd: string, overrides: Partial<Grep
                 (number) => windowSet.has(number),
                 (line) => {
                   if (line.text === undefined) return;
+                  const matchedText = matchedTexts.get(line.number);
+                  if (matchedText !== undefined && matchedText !== line.text) {
+                    throw new Error("File changed during search; rerun the query.");
+                  }
                   const { text: display, wasTruncated } = previewLine(
                     displayCarriageReturns(line.text),
                     columns.get(line.number),
@@ -1050,6 +1067,10 @@ export function makeGrepOverrideWithBackend(cwd: string, overrides: Partial<Grep
               continue;
             }
             if (stats.hasNul) throw new Error("UNSUPPORTED_TEXT: NUL bytes are not editable.");
+            const simpleRevision = simpleRevisions.get(filePath);
+            if (simpleRevision && simpleRevision !== (await fileRevision(filePath))) {
+              throw new Error("File changed during search; rerun the query.");
+            }
             if (strictIdentities) {
               const baseline = strictIdentities.get(filePath);
               if (!baseline || !sameIdentity(baseline, await fileIdentity(filePath))) {
