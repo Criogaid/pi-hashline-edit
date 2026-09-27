@@ -178,6 +178,7 @@ Required: `path` and either top-level `find` / `replace`, or a non-empty `replac
 Zero matches in any rule, an invalid rule, or overlapping match ranges rejects the whole call without writing. Adjacent ranges are allowed. Zero-length matches conflict at the same position or at the start/interior of another match; a zero-length match at another match's end is allowed unless it conflicts with a following match. Error rule indices and string offsets are zero-based (offsets count UTF-16 code units in the original text). Literal and regex rules share the same original ranges for conflict detection.
 
 Regex captures and prefix/suffix substitutions always refer to the original LF-normalized snapshot.
+Regex batches run in a worker and are terminated on cancellation or after 5 seconds of evaluation. A cancelled or timed-out batch leaves the file unchanged; literal-only batches retain their existing execution path.
 
 ### Write
 

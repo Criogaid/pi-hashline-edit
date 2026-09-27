@@ -159,6 +159,44 @@ test("replace literal: case-insensitive via flags", async () => {
   });
 });
 
+test("replace aborts catastrophic regex without blocking the event loop or publishing", async () => {
+  await withDir(async (dir) => {
+    const file = join(dir, "f.txt");
+    const before = `${"a".repeat(30)}!`;
+    await writeFile(file, before);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 100);
+    const start = performance.now();
+    try {
+      await assert.rejects(
+        makeReplaceTool(dir).execute(
+          "abort",
+          { path: file, find: "^(a+)+$", replace: "x", regex: true },
+          controller.signal,
+          undefined,
+        ),
+        /aborted/,
+      );
+      assert.ok(performance.now() - start < 2000);
+      assert.equal(await readFile(file, "utf8"), before);
+    } finally {
+      clearTimeout(timer);
+    }
+  });
+});
+test("replace times out catastrophic regex without publishing", async () => {
+  await withDir(async (dir) => {
+    const file = join(dir, "f.txt");
+    const before = `${"a".repeat(35)}!`;
+    await writeFile(file, before);
+    await assert.rejects(
+      call(makeReplaceTool(dir), { path: file, find: "^(a+)+$", replace: "x", regex: true }),
+      /regex evaluation timed out/,
+    );
+    assert.equal(await readFile(file, "utf8"), before);
+  });
+});
+
 test("replace regex: capture groups in replacement", async () => {
   await withDir(async (dir) => {
     const f = join(dir, "f.txt");

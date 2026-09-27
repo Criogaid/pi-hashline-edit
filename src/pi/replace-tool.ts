@@ -18,22 +18,16 @@
  *
  * Concurrency: read-modify-write is wrapped in {@link withFileMutationQueue}
  * (shared with `edit`), so a `replace` and an `edit` on the same file never
- * interleave. AbortSignal is honored after read / before write.
+ * interleave. Regex batches run in a cancellable worker with a time limit.
  *
  * @module pi-hashline-edit/pi
  */
 
 import { withFileMutationQueue } from "@earendil-works/pi-coding-agent";
 import { Type, type Static } from "typebox";
-import { escapeRegex } from "../core/text.ts";
-import {
-  createLfTextView,
-  detectLineEnding,
-  normalizeLineEndings,
-  restoreLineEndings,
-  splitLines,
-} from "../core/lines.ts";
-import { findSortedRangeConflict } from "../core/ranges.ts";
+import { Worker } from "node:worker_threads";
+import { splitLines } from "../core/lines.ts";
+import { applyReplacements } from "./replace-apply.ts";
 import {
   ACTION_FUSION_GUIDELINES,
   createActionFusionExecutor,
@@ -56,9 +50,6 @@ import {
   generateMutationDetails,
   postProcessMutation,
 } from "./mutation-result.ts";
-
-/** Valid JavaScript regular-expression flag characters (ES2023+, incl. hasIndices `d`). */
-const VALID_FLAGS = new Set(["g", "i", "m", "s", "u", "y", "d"]);
 
 const replacementSchema = Type.Object({
   find: Type.String({
@@ -129,99 +120,56 @@ function replacementRules(params: ReplaceParams): Replacement[] {
   return rules as Replacement[];
 }
 
-/** Both matcher modes operate on the shared LF view. */
-function buildRegex(find: string, isRegex: boolean, flagsRaw: string | undefined): RegExp {
-  for (const c of flagsRaw ?? "") {
-    if (!VALID_FLAGS.has(c)) throw new Error(`invalid regex flag '${c}' (valid: g i m s u y d)`);
-  }
-  const set = new Set((flagsRaw ?? "").split(""));
-  set.add("g");
-  const flagStr = [...set].join("");
-  const logical = normalizeLineEndings(find);
-  const source = isRegex ? logical : escapeRegex(logical);
-  try {
-    return new RegExp(source, flagStr);
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    throw new Error(`invalid regex /${source}/${flagStr}: ${msg}`);
-  }
-}
+const REGEX_TIMEOUT_MS = 5_000;
 
-/** Expand JS replacement tokens against the original match, including prefix/suffix context. */
-function expandReplacement(template: string, match: RegExpMatchArray, source: string): string {
-  // Without named captures, $<...> is ordinary text and may contain other $ tokens.
-  const tokens =
-    match.groups === undefined ? /\$(\$|&|`|'|\d{1,2})/g : /\$(\$|&|`|'|<[^>]*>|\d{1,2})/g;
-  return template.replace(tokens, (token, key: string) => {
-    if (key === "$") return "$";
-    if (key === "&") return match[0];
-    if (key === "`") return source.slice(0, match.index);
-    if (key === "'") return source.slice(match.index! + match[0].length);
-    if (key.startsWith("<"))
-      return match.groups === undefined ? token : (match.groups[key.slice(1, -1)] ?? "");
-    const index = Number(key);
-    if (index > 0 && index < match.length) return match[index] ?? "";
-    // $12 falls back to capture 1 plus literal 2 when capture 12 does not exist.
-    const first = Number(key[0]);
-    if (key.length === 2 && first > 0 && first < match.length) return (match[first] ?? "") + key[1];
-    return token;
-  });
-}
-
-function applyReplacements(
+async function applyRegexReplacements(
   source: string,
   rules: readonly Replacement[],
-): { text: string; count: number } {
-  const changes: { start: number; end: number; text: string; rule: number }[] = [];
-  const view = createLfTextView(source);
-  const fallbackEnding = detectLineEnding(source) === "crlf" ? "\r\n" : "\n";
-  for (const [index, rule] of rules.entries()) {
-    try {
-      const regex = buildRegex(rule.find, rule.regex === true, rule.flags);
-      let count = 0;
-      const replacement = normalizeLineEndings(rule.replace);
-      for (const match of view.text.matchAll(regex)) {
-        count++;
-        const start = view.sourceOffset(match.index!);
-        const end = view.sourceOffset(match.index! + match[0].length);
-        changes.push({
-          start,
-          end,
-          rule: index,
-          text: restoreLineEndings(
-            rule.regex ? expandReplacement(replacement, match, view.text) : replacement,
-            source.slice(start, end),
-            fallbackEnding,
+  signal: AbortSignal | undefined,
+  displayPath: string,
+): Promise<{ text: string; count: number }> {
+  signal?.throwIfAborted();
+  const worker = new Worker(new URL("./replace-worker.ts", import.meta.url), {
+    workerData: { source, rules },
+  });
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const finish = (result: { text: string; count: number } | Error, terminate = false) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", abort);
+      const complete = () => (result instanceof Error ? reject(result) : resolve(result));
+      if (terminate) void worker.terminate().then(complete, reject);
+      else complete();
+    };
+    const abort = () => finish(new Error(`Replace ${displayPath} aborted before apply.`), true);
+    const timer = setTimeout(
+      () =>
+        finish(
+          new Error(
+            `Replace ${displayPath}: regex evaluation timed out after ${REGEX_TIMEOUT_MS}ms`,
           ),
-        });
-      }
-      if (count === 0)
-        throw new Error(
-          `no matches for ${rule.regex ? `/${rule.find}/` : JSON.stringify(rule.find)}. Verify the target text with read or grep; check case sensitivity or regex flags if applicable.`,
-        );
-    } catch (error) {
-      throw new Error(`rule ${index}: ${error instanceof Error ? error.message : String(error)}`);
-    }
-  }
-  changes.sort((a, b) => a.start - b.start || a.end - b.end);
-  const conflict = findSortedRangeConflict(changes.map((change) => [change.start, change.end]));
-  if (conflict !== undefined) {
-    const previous = changes[conflict - 1];
-    const current = changes[conflict];
-    throw new Error(
-      `rules ${previous.rule} and ${current.rule} overlap at offset ${current.start}; no replacements applied`,
+          true,
+        ),
+      REGEX_TIMEOUT_MS,
     );
-  }
-  const parts: string[] = [];
-  let cursor = 0;
-  for (const change of changes) {
-    parts.push(source.slice(cursor, change.start), change.text);
-    cursor = change.end;
-  }
-  parts.push(source.slice(cursor));
-  return { text: parts.join(""), count: changes.length };
+    worker.on(
+      "message",
+      (message: { result?: { text: string; count: number }; error?: string }) => {
+        if (message.error !== undefined) finish(new Error(message.error));
+        else if (message.result) finish(message.result);
+        else finish(new Error("Regex worker returned an invalid result"));
+      },
+    );
+    worker.on("error", (error) =>
+      finish(error instanceof Error ? error : new Error(String(error))),
+    );
+    worker.on("exit", (code) => finish(new Error(`Regex worker exited with code ${code}`)));
+    signal?.addEventListener("abort", abort, { once: true });
+    if (signal?.aborted) abort();
+  });
 }
-
 /**
  * Bound candidate anchors by stripping common prefix/suffix lines in O(n).
  * For a pure deletion, retain its first surviving successor. Shifted suffixes
@@ -413,7 +361,9 @@ async function runReplace(
   let newText: string;
   let count: number;
   try {
-    ({ text: newText, count } = applyReplacements(currentText, rules));
+    ({ text: newText, count } = rules.some((rule) => rule.regex === true)
+      ? await applyRegexReplacements(currentText, rules, signal, displayPath)
+      : applyReplacements(currentText, rules));
   } catch (error) {
     throw new Error(
       `Replace ${displayPath}: ${error instanceof Error ? error.message : String(error)}`,
