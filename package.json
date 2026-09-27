@@ -27,7 +27,8 @@
     "bench": "node bench/throughput.bench.ts"
   },
   "dependencies": {
-    "@vscode/ripgrep": "1.18.0"
+    "@vscode/ripgrep": "1.18.0",
+    "jiti": "2.7.0"
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*"

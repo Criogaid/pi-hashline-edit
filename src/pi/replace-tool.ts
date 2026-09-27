@@ -129,7 +129,7 @@ async function applyRegexReplacements(
   displayPath: string,
 ): Promise<{ text: string; count: number }> {
   signal?.throwIfAborted();
-  const worker = new Worker(new URL("./replace-worker.ts", import.meta.url), {
+  const worker = new Worker(new URL("./replace-worker.mjs", import.meta.url), {
     workerData: { source, rules },
   });
   return new Promise((resolve, reject) => {
