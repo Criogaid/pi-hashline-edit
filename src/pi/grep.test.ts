@@ -368,10 +368,10 @@ test("aligns TUI line numbers across files to the widest result", () => {
   ].join("\n");
   const theme = { fg: (_color: string, value: string) => value };
   const rendered = tool.renderResult!(
-    { content: [{ type: "text", text: raw }] },
+    { content: [{ type: "text", text: raw }], details: undefined },
     { isPartial: false, expanded: true },
-    theme,
-    {},
+    theme as any,
+    {} as any,
   )
     .render(80)
     .map((line: string) => line.trimEnd());

@@ -24,9 +24,14 @@
  * @module pi-hashline-edit/pi
  */
 
-import { truncateHead, formatSize, DEFAULT_MAX_BYTES } from "@earendil-works/pi-coding-agent";
+import {
+  truncateHead,
+  formatSize,
+  DEFAULT_MAX_BYTES,
+  type ToolDefinition,
+} from "@earendil-works/pi-coding-agent";
 import { rgPath as bundledRgPath } from "@vscode/ripgrep";
-import { Type } from "typebox";
+import { Type, type Static } from "typebox";
 import { Text } from "@earendil-works/pi-tui";
 import { realpath, stat } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
@@ -246,6 +251,7 @@ const grepOverrideSchema = Type.Object({
     Type.Number({ description: "Maximum number of matching lines to return (default: 100)" }),
   ),
 });
+type GrepTool = ToolDefinition<typeof grepOverrideSchema, { incomplete?: true } | undefined>;
 
 interface RgMatch {
   filePath: string;
@@ -895,7 +901,7 @@ interface AssembleGrepOutputOptions {
 
 function assembleGrepOutput(options: AssembleGrepOutputOptions): {
   content: [{ type: "text"; text: string }];
-  details?: { incomplete: true };
+  details: { incomplete: true } | undefined;
 } {
   const {
     blocks,
@@ -967,7 +973,10 @@ export function makeGrepOverrideWithBackend(cwd: string, overrides: Partial<Grep
 
     renderShell: "default" as const,
 
-    renderCall(args: any, theme: any) {
+    renderCall(
+      args: Static<typeof grepOverrideSchema>,
+      theme: Parameters<NonNullable<GrepTool["renderCall"]>>[1],
+    ) {
       const rawPattern = args?.pattern;
       const patternText = Array.isArray(rawPattern)
         ? rawPattern.join(" | ")
@@ -997,7 +1006,12 @@ export function makeGrepOverrideWithBackend(cwd: string, overrides: Partial<Grep
       return new Text(text, 0, 0);
     },
 
-    renderResult(result: any, { isPartial, expanded }: any, theme: any, context: any) {
+    renderResult(
+      result: Parameters<NonNullable<GrepTool["renderResult"]>>[0],
+      { isPartial, expanded }: Parameters<NonNullable<GrepTool["renderResult"]>>[1],
+      theme: Parameters<NonNullable<GrepTool["renderResult"]>>[2],
+      context: Parameters<NonNullable<GrepTool["renderResult"]>>[3],
+    ) {
       if (isPartial) return new Text(theme.fg("warning", "Searching…"), 0, 0);
       if (context?.isError) return renderToolError(result, theme);
       const out = result.content?.[0]?.type === "text" ? result.content[0].text : "";
@@ -1013,10 +1027,10 @@ export function makeGrepOverrideWithBackend(cwd: string, overrides: Partial<Grep
 
     async execute(
       _toolCallId: string,
-      params: any,
+      params: Static<typeof grepOverrideSchema>,
       signal: AbortSignal | undefined,
-      _onUpdate: any,
-    ): Promise<any> {
+      _onUpdate: Parameters<GrepTool["execute"]>[3],
+    ) {
       if (signal?.aborted) throw new Error("Operation aborted");
       const anchors = createAnchorFormatter();
       const warnings: string[] = [];
@@ -1183,5 +1197,5 @@ export function makeGrepOverrideWithBackend(cwd: string, overrides: Partial<Grep
         linesTruncated,
       });
     },
-  };
+  } satisfies GrepTool;
 }

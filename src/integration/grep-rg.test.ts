@@ -59,7 +59,7 @@ test("real rg and line filters share case and Unicode semantics", async () => {
       const expectedCount = ignoreCase === false ? 2 : 3;
       for (const query of [
         { pattern: "foo\\S*" },
-        { pattern: ["foo\\S*", "\\S+"], matchMode: "all" },
+        { pattern: ["foo\\S*", "\\S+"], matchMode: "all" as const },
       ]) {
         const result: any = await tool.execute("0", { ...query, ignoreCase }, undefined, undefined);
         assert.match(result.content[0].text, new RegExp(`fixture\\.ts · ${expectedCount} matches`));
@@ -750,7 +750,7 @@ test("long-line previews expose real rg hits across engines and preserve full-li
     const tool = makeGrepOverrideWithBackend(directory, {});
     for (const params of [
       { pattern: "NEEDLE" },
-      { pattern: ["NEEDLE", "tail"], matchMode: "all", excludePattern: "absent" },
+      { pattern: ["NEEDLE", "tail"], matchMode: "all" as const, excludePattern: "absent" },
       { pattern: "NEEDLE(?=tail)", pcre2: true },
       { pattern: "NEEDLE(?:tail)+\\r?\\nfollow", multiline: true },
     ]) {
@@ -792,7 +792,7 @@ test("all text tools share logical CRLF matching, anchors, and mutation separato
       { pattern: "alpha\r\nbeta", literal: true },
       { pattern: "alpha\\nbeta", literal: false },
       { pattern: "alpha\\nbeta", literal: false, pcre2: true },
-      { pattern: ["alpha\\nbeta", "alpha|beta"], matchMode: "all", literal: false },
+      { pattern: ["alpha\\nbeta", "alpha|beta"], matchMode: "all" as const, literal: false },
     ]) {
       const found = await grep.execute(
         "grep",
