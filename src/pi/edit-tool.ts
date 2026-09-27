@@ -176,13 +176,14 @@ function formatAnchorChecks(failure: ApplyFailure, anchors: AnchorFormatter): st
 function formatFailure(
 	failure: ApplyFailure,
 	snapshot: Readonly<{ currentText: string; anchors: AnchorFormatter }>,
+	isBatch: boolean,
 ): string {
 	const candidateNeighborhoods = failure.kind === "anchor"
 		? formatAmbiguousCandidateNeighborhoods(snapshot.currentText, failure.failures, snapshot.anchors)
 		: { text: "", shownLines: new Set<number>() };
 	const guidance = failure.kind === "anchor"
 		? "\nCheck the intended target before retrying; use read or grep for omitted or additional context." : "";
-	const anchorChecks = failure.checks.length > 1 ? `\n${formatAnchorChecks(failure, snapshot.anchors)}` : "";
+	const anchorChecks = isBatch && failure.checks.length > 0 ? `\n${formatAnchorChecks(failure, snapshot.anchors)}` : "";
 	return `${formatFailureDetails(failure, snapshot, candidateNeighborhoods.shownLines)}${anchorChecks}${candidateNeighborhoods.text}${guidance}`;
 }
 
@@ -380,7 +381,7 @@ async function runHashline(
 	// candidates and resubmit with fresh anchors.
 	const result = applyEdits(currentText, translated.edits, anchorFormatter.hashLen, shiftRadius);
 	if (!result.ok) {
-		throw new Error(formatFailure(result.failure, { currentText, anchors: anchorFormatter }));
+		throw new Error(formatFailure(result.failure, { currentText, anchors: anchorFormatter }, translated.edits.length > 1));
 	}
 
 	// Check for cancel before write: if aborted, don't touch the disk; the file stays untouched

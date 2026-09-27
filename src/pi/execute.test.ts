@@ -800,6 +800,39 @@ test("single-operation edit failures omit redundant Input-anchor checks table", 
 	});
 }));
 
+test("single-op range edits with two anchors omit Input-anchor checks table on failure", async () => withDir(async (dir) => {
+	const file = join(dir, "range.txt");
+	await writeFile(file, "line1\nline2\nline3\n");
+	const edit = makeEditOverride(dir);
+	await assert.rejects(call(edit, {
+		path: file,
+		edits: [{ op: "replace", anchor: "1#XXXX", end: "2#YYYY", body: ["new"] }],
+	}), (error: Error) => {
+		assert.match(error.message, /Anchor mismatch/);
+		assert.doesNotMatch(error.message, /Input-anchor checks/);
+		return true;
+	});
+}));
+test("multi-op batches with only one anchor still display Input-anchor checks including not_checked", async () => withDir(async (dir) => {
+	const file = join(dir, "batch-append.txt");
+	await writeFile(file, "line1\nline2\n");
+	const edit = makeEditOverride(dir);
+	const stable = h("line1\nline2\n", 1);
+	// Op 0 has invalid body (triggers input rejection), Op 1 has an anchor
+	await assert.rejects(call(edit, {
+		path: file,
+		edits: [
+			{ op: "append", body: ["bad\nline"] },
+			{ op: "replace", anchor: stable, body: ["new"] },
+		],
+	}), (error: Error) => {
+		assert.match(error.message, /INVALID_BODY/);
+		assert.match(error.message, /Input-anchor checks/);
+		assert.ok(error.message.includes(`op 1 / anchor / ${stable} / not_checked`));
+		return true;
+	});
+}));
+
 test("failed batches return more than forty checks and mappings when byte budgets allow", async () => withDir(async (dir) => {
 	const original = "a\ntarget\nz\n";
 	const before = `prefix\n${original}`;
