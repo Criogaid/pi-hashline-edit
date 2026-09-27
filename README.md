@@ -97,7 +97,7 @@ A unique recovery candidate returns its new anchor and complete line content, wi
 
 Ambiguous failures list up to eight candidate anchors and include a bounded ±3-line neighborhood around each listed candidate from the same snapshot. Windows are clipped to file boundaries, merged, and emitted in ascending line order within byte budgets. Neighboring rows are observations, not recommended replacement targets. Candidate content already present in a neighborhood is not repeated in failure details. Inspect the code to choose the correct anchor and operation, then resubmit. No edit or retry is performed automatically, and every submitted anchor is verified again.
 
-When no candidate is found, diagnostics ask the caller to use `read` to inspect the current file before retrying and include no context rows for that failure. Input-anchor checks still report the cited tokens and their validation status.
+When no candidate is found, diagnostics show the current cited line as a complete `LINE#HASH│content` observation within the 4 KiB row limit. Confirm it is the intended target before reusing its anchor directly. Use `read` or `grep` for additional context, omitted rows, or out-of-range references. Input-anchor checks still report the cited tokens and their validation status; every retry revalidates.
 
 ### Bulk replacement
 

@@ -211,7 +211,7 @@ test("edit on a line that changed externally → anchor mismatch", async () => {
 	});
 });
 
-test("unresolved anchors require a fresh read and return no context rows", async () => {
+test("unresolved observations require target confirmation before retrying a moved target", async () => {
 	await withDir(async (dir) => {
 		const file = join(dir, "recover.txt");
 		const observed = ["one", "two", "three", "four", "old marker", "six", "seven", "eight"].join("\n") + "\n";
@@ -223,8 +223,8 @@ test("unresolved anchors require a fresh read and return no context rows", async
 		}), (error: Error) => {
 			assert.match(error.message, /Anchor mismatch: 1 unresolved/);
 			assert.match(error.message, /No changes written by this edit batch/);
-			assert.match(error.message, /Use read to inspect the current file before retrying/);
-			assert.doesNotMatch(error.message, /^\d+#[0-9A-Z]+│|neighborhoods|Current-file context/m);
+			assert.match(error.message, /Confirm this is the intended target before reusing its anchor/);
+			assert.match(error.message, /^5#[0-9A-Z]+│changed$/m);
 			return true;
 		});
 		const read = await call(makeReadOverride(dir), { path: "recover.txt" });
@@ -938,3 +938,44 @@ test("edit execute rejects legacy oldText/newText without op", async () => withD
 	);
 	assert.equal(await readFile(file, "utf8"), "first\nsecond\n");
 }));
+
+test("unresolved snapshot rows support direct retry and revalidate after further changes", async () => {
+	await withDir(async (dir) => {
+		const file = join(dir, "recover.txt");
+		const observed = "\uFEFFguard\r\ntarget = old\r\n中文 literal \\n\\0\r\n";
+		const current = observed.replace("old", "pending");
+		await writeFile(file, current);
+		const edit = makeEditOverride(dir);
+		let diagnostic = "";
+		await assert.rejects(call(edit, { path: "recover.txt", edits: [{ op: "replace", anchor: h(observed, 2), body: ["target = new"] }] }), (error: Error) => {
+			diagnostic = error.message;
+			assert.match(diagnostic, /^2#[0-9A-Z]+│target = pending$/m);
+			return true;
+		});
+		assert.deepEqual(await readFile(file), Buffer.from(current));
+		const retryAnchor = anchorLine(diagnostic, 2);
+		const changedAgain = current.replace("pending", "other");
+		await writeFile(file, changedAgain);
+		await assert.rejects(call(edit, { path: "recover.txt", edits: [{ op: "replace", anchor: retryAnchor, body: ["target = new"] }] }), /Anchor mismatch/);
+		assert.deepEqual(await readFile(file), Buffer.from(changedAgain));
+		await writeFile(file, current);
+		await call(edit, { path: "recover.txt", edits: [{ op: "replace", anchor: retryAnchor, body: ["target = new"] }] });
+		assert.deepEqual(await readFile(file), Buffer.from(observed.replace("old", "new")));
+	});
+});
+test("unresolved oversized and out-of-range rows require more context without partial anchors", async () => {
+	await withDir(async (dir) => {
+		const file = join(dir, "recover.txt");
+		const current = "界".repeat(1400) + "\n";
+		await writeFile(file, current);
+		const edit = makeEditOverride(dir);
+		for (const anchor of [h("old\n", 1), "99#XXXX"]) {
+			await assert.rejects(call(edit, { path: "recover.txt", edits: [{ op: "replace", anchor, body: ["new"] }] }), (error: Error) => {
+				assert.match(error.message, /Use read or grep to inspect/);
+				assert.doesNotMatch(error.message, /^\d+#[0-9A-Z]+│/m);
+				return true;
+			});
+			assert.deepEqual(await readFile(file), Buffer.from(current));
+		}
+	});
+});
