@@ -82,6 +82,16 @@ function renderReadBody(raw: string, path: string, theme: any): string {
 /** Build the read override (a ToolDefinition fragment for registerTool). */
 export function makeReadOverride(cwd: string) {
 	const builtin = createReadToolDefinition(cwd);
+	const parameters = {
+		...builtin.parameters,
+		properties: {
+			...builtin.parameters.properties,
+			limit: {
+				...builtin.parameters.properties.limit,
+				description: "Maximum number of lines to read. Text reads default to 500 lines when omitted.",
+			},
+		},
+	};
 
 	return {
 		name: "read" as const,
@@ -93,7 +103,7 @@ export function makeReadOverride(cwd: string) {
 			"Prefer read over shell output for files you intend to edit.",
 			"For targeted inspection of large files, pass offset and limit (e.g. limit: 50) to inspect only the relevant section and conserve context.",
 		],
-		parameters: builtin.parameters,
+		parameters: parameters as typeof builtin.parameters,
 		renderShell: "default" as const,
 
 		renderCall: builtin.renderCall,

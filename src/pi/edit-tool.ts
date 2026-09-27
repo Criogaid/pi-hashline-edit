@@ -82,7 +82,7 @@ const editOpSchema = Type.Object({
 function createEditSchema(actionFusion: boolean) {
 	return Type.Object({
 		path: Type.String({ description: "Path to the file to edit (relative or absolute)" }),
-		edits: Type.Array(editOpSchema, { description: "Hashline ops, each referencing LINE#HASH anchors from your latest read or edit result" }),
+		edits: Type.Array(editOpSchema, { description: "Hashline ops; ops requiring anchors use LINE#HASH from your latest read, grep, or mutation result (append/prepend omit anchors)" }),
 		...(actionFusion ? { then_run: createThenRunSchema("Command to run after the edit succeeds; failure does not roll back the edit.") } : {}),
 	});
 }
