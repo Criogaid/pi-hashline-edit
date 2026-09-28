@@ -1,5 +1,6 @@
 import { computeLineHash } from "../core/hash.ts";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
+import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import assert from "node:assert/strict";
 import { mkdtemp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { writeFileSync } from "node:fs";
@@ -17,8 +18,9 @@ import {
   postProcessMutation,
 } from "./mutation-result.ts";
 
-const text = (result: any): string =>
-  result.content.map((block: any) => block.text ?? "").join("\n");
+const text = (result: Pick<AgentToolResult<unknown>, "content">): string =>
+  result.content.map((block) => (block.type === "text" ? block.text : "")).join("\n");
+const ctx = (cwd: string) => ({ cwd }) as ExtensionContext;
 
 function assertFailureByteBudgets(message: string): void {
   const checksAt = message.indexOf("\nInput-anchor checks (this snapshot):\n");
@@ -137,7 +139,7 @@ test("progress callback failures preserve publication and do not prevent the com
           throw new FileMutationError("post_process", "PUBLISHED", "original failure");
         },
         signal: undefined,
-        ctx: { cwd: dir } as any,
+        ctx: ctx(dir),
       }),
       (error: any) => error.publication === "PUBLISHED" && /original failure/.test(error.message),
     );
@@ -170,7 +172,7 @@ test("standalone and Fusion finalizers suppress anchors unless commit observatio
         mutate: async () => mutation,
         finalizeMutation: finalize,
         signal: undefined,
-        ctx: { cwd: dir } as any,
+        ctx: ctx(dir),
       });
       for (const result of [standalone, fused]) {
         assert.equal(text(result).includes("ANCHOR"), observedRevision === "published");
@@ -200,14 +202,22 @@ test("mutation anchor output and aggregate anchor diagnostics have byte budgets"
     const long = "界".repeat(100000);
     for (const name of ["edit", "replace"]) {
       await writeFile(path, "before\n");
-      const tool: any = name === "edit" ? makeEditOverride(dir) : makeReplaceTool(dir);
-      const args =
+      const result =
         name === "edit"
-          ? { edits: [{ op: "append", body: [long] }] }
-          : { find: "before", replace: long };
-      const result = await tool.execute(name, { path, ...args }, undefined, undefined, {
-        cwd: dir,
-      });
+          ? await makeEditOverride(dir).execute(
+              name,
+              { path, edits: [{ op: "append", body: [long] }] },
+              undefined,
+              undefined,
+              ctx(dir),
+            )
+          : await makeReplaceTool(dir).execute(
+              name,
+              { path, find: "before", replace: long },
+              undefined,
+              undefined,
+              ctx(dir),
+            );
       const output = text(result);
       assert.ok(Buffer.byteLength(output) < 17 * 1024);
       assert.match(output, new RegExp(`^${name === "edit" ? 2 : 1}#[0-9A-Z]+$`, "m"));
@@ -215,13 +225,22 @@ test("mutation anchor output and aggregate anchor diagnostics have byte budgets"
       assert.doesNotMatch(output, /\d+#[0-9A-Z]+│界/);
       assert.ok((await readFile(path, "utf8")).includes(long));
       await writeFile(path, `remove\n${long}\n`);
-      const deletion =
+      const deleted =
         name === "edit"
-          ? { edits: [{ op: "delete", anchor: `1#${computeLineHash(1, "remove")}` }] }
-          : { find: "remove\n", replace: "" };
-      const deleted = await tool.execute(name, { path, ...deletion }, undefined, undefined, {
-        cwd: dir,
-      });
+          ? await makeEditOverride(dir).execute(
+              name,
+              { path, edits: [{ op: "delete", anchor: `1#${computeLineHash(1, "remove")}` }] },
+              undefined,
+              undefined,
+              ctx(dir),
+            )
+          : await makeReplaceTool(dir).execute(
+              name,
+              { path, find: "remove\n", replace: "" },
+              undefined,
+              undefined,
+              ctx(dir),
+            );
       assert.ok(Buffer.byteLength(text(deleted)) < 17 * 1024);
       assert.match(text(deleted), /additional anchors omitted: 16 KiB limit/);
       assert.doesNotMatch(text(deleted), /^\d+#[0-9A-Z]+/m);
@@ -259,19 +278,35 @@ test("every mutation entry rejects unpaired surrogates without running then_run"
     });
     const path = join(dir, "file.txt");
     await writeFile(path, "original\n");
-    for (const [tool, args] of [
-      [makeEditOverride(dir, fusion) as any, { edits: [{ op: "append", body: ["\ud800"] }] }],
-      [makeReplaceTool(dir, fusion), { find: "original", replace: "\udfff" }],
-      [makeWriteOverride(dir, fusion), { content: "\ud800" }],
-    ] as const) {
-      await assert.rejects(
-        tool.execute(
+    const cases = [
+      () =>
+        makeEditOverride(dir, fusion).execute(
           "unicode",
-          { path, ...args, then_run: { command: "check" } },
+          { path, edits: [{ op: "append", body: ["\ud800"] }], then_run: { command: "check" } },
           undefined,
           undefined,
-          { cwd: dir },
+          ctx(dir),
         ),
+      () =>
+        makeReplaceTool(dir, fusion).execute(
+          "unicode",
+          { path, find: "original", replace: "\udfff", then_run: { command: "check" } },
+          undefined,
+          undefined,
+          ctx(dir),
+        ),
+      () =>
+        makeWriteOverride(dir, fusion).execute(
+          "unicode",
+          { path, content: "\ud800", then_run: { command: "check" } },
+          undefined,
+          undefined,
+          ctx(dir),
+        ),
+    ];
+    for (const run of cases) {
+      await assert.rejects(
+        run(),
         (error: any) =>
           error.publication === "NOT_PUBLISHED" && /INVALID_UNICODE/.test(error.message),
       );
@@ -323,7 +358,33 @@ test("all mutation tools report NUL rejection through the shared Fusion lifecycl
     const path = join(dir, "file.txt");
     await writeFile(path, "original\n");
     let commands = 0;
-    for (const makeTool of [makeEditOverride, makeReplaceTool, makeWriteOverride] as any[]) {
+    const cases = [
+      (fusion: ReturnType<typeof createActionFusionExecutor>) =>
+        makeEditOverride(dir, fusion).execute(
+          "nul",
+          { path, edits: [{ op: "append", body: ["\0"] }], then_run: { command: "check" } },
+          undefined,
+          undefined,
+          ctx(dir),
+        ),
+      (fusion: ReturnType<typeof createActionFusionExecutor>) =>
+        makeReplaceTool(dir, fusion).execute(
+          "nul",
+          { path, find: "original", replace: "\0", then_run: { command: "check" } },
+          undefined,
+          undefined,
+          ctx(dir),
+        ),
+      (fusion: ReturnType<typeof createActionFusionExecutor>) =>
+        makeWriteOverride(dir, fusion).execute(
+          "nul",
+          { path, content: "\0", then_run: { command: "check" } },
+          undefined,
+          undefined,
+          ctx(dir),
+        ),
+    ];
+    for (const run of cases) {
       const events: string[] = [];
       const fusion = createActionFusionExecutor(
         async () => {
@@ -332,21 +393,8 @@ test("all mutation tools report NUL rejection through the shared Fusion lifecycl
         },
         (event) => events.push(event.command),
       );
-      const tool = makeTool(dir, fusion);
-      const args =
-        tool.name === "edit"
-          ? { edits: [{ op: "append", body: ["\0"] }] }
-          : tool.name === "replace"
-            ? { find: "original", replace: "\0" }
-            : { content: "\0" };
       await assert.rejects(
-        tool.execute(
-          "nul",
-          { path, ...args, then_run: { command: "check" } },
-          undefined,
-          undefined,
-          { cwd: dir },
-        ),
+        run(fusion),
         (error: any) =>
           error.publication === "NOT_PUBLISHED" &&
           error.command === "skipped" &&
@@ -510,28 +558,38 @@ test("mutation anchors omit unchanged positions across distant changes", async (
     for (const name of ["edit", "replace"]) {
       const path = join(dir, `${name}.txt`);
       await writeFile(path, before.join("\r\n") + "\r\n");
-      const tool: any = name === "edit" ? makeEditOverride(dir) : makeReplaceTool(dir);
-      const params =
+      const result =
         name === "edit"
-          ? {
-              edits: [
-                {
-                  op: "replace",
-                  anchor: `1#${computeLineHash(1, before[0])}`,
-                  end: `100#${computeLineHash(100, before[99])}`,
-                  body: after,
-                },
-              ],
-            }
-          : {
-              replacements: [
-                { find: before[0] + "\r\n", replace: after[0] + "\r\n" },
-                { find: before[99], replace: after[99] },
-              ],
-            };
-      const result = await tool.execute(name, { path, ...params }, undefined, undefined, {
-        cwd: dir,
-      });
+          ? await makeEditOverride(dir).execute(
+              name,
+              {
+                path,
+                edits: [
+                  {
+                    op: "replace",
+                    anchor: `1#${computeLineHash(1, before[0])}`,
+                    end: `100#${computeLineHash(100, before[99])}`,
+                    body: after,
+                  },
+                ],
+              },
+              undefined,
+              undefined,
+              ctx(dir),
+            )
+          : await makeReplaceTool(dir).execute(
+              name,
+              {
+                path,
+                replacements: [
+                  { find: before[0] + "\r\n", replace: after[0] + "\r\n" },
+                  { find: before[99], replace: after[99] },
+                ],
+              },
+              undefined,
+              undefined,
+              ctx(dir),
+            );
       const returned = [...text(result).matchAll(/^(\d+#[0-9A-Z]+)/gm)].map((match) => match[1]);
       assert.deepEqual(returned, [
         `1#${computeLineHash(1, after[0])}`,
@@ -573,15 +631,26 @@ test("mutation anchors retain a deletion successor but omit stable rows and dele
         const path = join(dir, `${name}.txt`);
         const lines = atEnd ? ["a", "c", "remove"] : ["a", "remove", "c", "d"];
         await writeFile(path, lines.join("\n") + "\n");
-        const tool: any = name === "edit" ? makeEditOverride(dir) : makeReplaceTool(dir);
         const line = atEnd ? 3 : 2;
-        const params =
+        const result =
           name === "edit"
-            ? { edits: [{ op: "delete", anchor: `${line}#${computeLineHash(line, "remove")}` }] }
-            : { find: "remove\n", replace: "" };
-        const result = await tool.execute(name, { path, ...params }, undefined, undefined, {
-          cwd: dir,
-        });
+            ? await makeEditOverride(dir).execute(
+                name,
+                {
+                  path,
+                  edits: [{ op: "delete", anchor: `${line}#${computeLineHash(line, "remove")}` }],
+                },
+                undefined,
+                undefined,
+                ctx(dir),
+              )
+            : await makeReplaceTool(dir).execute(
+                name,
+                { path, find: "remove\n", replace: "" },
+                undefined,
+                undefined,
+                ctx(dir),
+              );
         const rows = text(result)
           .split("\n")
           .filter((row) => /^\d+#/.test(row));
@@ -627,14 +696,22 @@ test("compact mutation anchors exceed forty rows while respecting the byte budge
         const path = join(dir, `${name}.txt`);
         await writeFile(path, "before\n");
         const inserted = Array.from({ length: count }, (_, i) => `changed ${i}`);
-        const tool: any = name === "edit" ? makeEditOverride(dir) : makeReplaceTool(dir);
-        const params =
+        const result =
           name === "edit"
-            ? { edits: [{ op: "append", body: inserted }] }
-            : { find: "before", replace: inserted.join("\n") };
-        const result = await tool.execute(name, { path, ...params }, undefined, undefined, {
-          cwd: dir,
-        });
+            ? await makeEditOverride(dir).execute(
+                name,
+                { path, edits: [{ op: "append", body: inserted }] },
+                undefined,
+                undefined,
+                ctx(dir),
+              )
+            : await makeReplaceTool(dir).execute(
+                name,
+                { path, find: "before", replace: inserted.join("\n") },
+                undefined,
+                undefined,
+                ctx(dir),
+              );
         const output = text(result);
         const rows = [...output.matchAll(/^(\d+)#([0-9A-Z]+)$/gm)];
         assert.ok(rows.length > 40);

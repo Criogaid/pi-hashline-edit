@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { makeEditOverride } from "./edit-tool.ts";
 import { makeReplaceTool } from "./replace-tool.ts";
 import { makeWriteOverride } from "./write-tool.ts";
@@ -22,15 +23,17 @@ async function tempDir(): Promise<string> {
   return mkdtemp(join(tmpdir(), "hashline-action-fusion-"));
 }
 
-const ctx = (cwd: string) => ({ cwd }) as any;
+const ctx = (cwd: string) => ({ cwd }) as ExtensionContext;
 
 test("mutation tools expose Fusion schemas and guidance when supplied an executor", () => {
   const fusion = createActionFusionExecutor();
   for (const makeTool of [makeEditOverride, makeReplaceTool, makeWriteOverride]) {
-    const disabled = makeTool("/tmp") as any;
-    const enabled = makeTool("/tmp", fusion) as any;
-    assert.equal(disabled.parameters.properties.then_run, undefined);
-    assert.ok(enabled.parameters.properties.then_run);
+    const disabled = makeTool("/tmp");
+    const enabled = makeTool("/tmp", fusion);
+    assert.equal(Object.hasOwn(disabled.parameters.properties, "then_run"), false);
+    assert.ok(
+      "then_run" in enabled.parameters.properties && enabled.parameters.properties.then_run,
+    );
     assert.deepEqual(enabled.promptGuidelines, [
       ...(disabled.promptGuidelines ?? []),
       ...ACTION_FUSION_GUIDELINES,
@@ -51,8 +54,8 @@ test("edit and replace share one embedded executor and preserve mutation results
       calls.push(input.command);
       return "checked";
     });
-    const edit = makeEditOverride(dir, fusion) as any;
-    const replace = makeReplaceTool(dir, fusion) as any;
+    const edit = makeEditOverride(dir, fusion);
+    const replace = makeReplaceTool(dir, fusion);
     await writeFile(join(dir, "edit.txt"), "before\n");
     await writeFile(join(dir, "replace.txt"), "before\n");
     const editResult = await edit.execute(
@@ -78,12 +81,16 @@ test("edit and replace share one embedded executor and preserve mutation results
       undefined,
       ctx(dir),
     );
-    assert.match(editResult.content.at(-1).text, new RegExp(THEN_RUN_SUCCEEDED));
+    const editOutput = editResult.content.at(-1);
+    assert.ok(editOutput?.type === "text");
+    assert.match(editOutput.text, new RegExp(THEN_RUN_SUCCEEDED));
     assert.match(
-      editResult.content.map((block: any) => block.text ?? "").join("\n"),
+      editResult.content.map((block) => (block.type === "text" ? block.text : "")).join("\n"),
       /Updated anchors/,
     );
-    assert.match(replaceResult.content.at(-1).text, new RegExp(THEN_RUN_SUCCEEDED));
+    const replaceOutput = replaceResult.content.at(-1);
+    assert.ok(replaceOutput?.type === "text");
+    assert.match(replaceOutput.text, new RegExp(THEN_RUN_SUCCEEDED));
     assert.deepEqual(calls, ["check edit", "check replace"]);
     assert.equal(await readFile(join(dir, "edit.txt"), "utf8"), "before\nafter\n");
     assert.equal(await readFile(join(dir, "replace.txt"), "utf8"), "after\n");
@@ -318,24 +325,45 @@ test("all mutation tools forward command progress before completion in RPC mode"
       (event) => events.push(event),
     );
     const cases = [
-      {
-        tool: makeEditOverride(dir, fusion) as any,
-        input: { edits: [{ op: "append", body: ["after"] }] },
-      },
-      { tool: makeReplaceTool(dir, fusion), input: { find: "before", replace: "after" } },
-      { tool: makeWriteOverride(dir, fusion), input: { content: "after\n" } },
+      () =>
+        makeEditOverride(dir, fusion).execute(
+          "edit",
+          {
+            path: "progress.txt",
+            edits: [{ op: "append", body: ["after"] }],
+            then_run: { command: "check" },
+          },
+          undefined,
+          (update) => updates.push(update),
+          { ...ctx(dir), mode: "rpc" },
+        ),
+      () =>
+        makeReplaceTool(dir, fusion).execute(
+          "replace",
+          {
+            path: "progress.txt",
+            find: "before",
+            replace: "after",
+            then_run: { command: "check" },
+          },
+          undefined,
+          (update) => updates.push(update),
+          { ...ctx(dir), mode: "rpc" },
+        ),
+      () =>
+        makeWriteOverride(dir, fusion).execute(
+          "write",
+          { path: "progress.txt", content: "after\n", then_run: { command: "check" } },
+          undefined,
+          (update) => updates.push(update),
+          { ...ctx(dir), mode: "rpc" },
+        ),
     ];
-    for (const { tool, input } of cases) {
+    for (const run of cases) {
       events.length = 0;
       updates.length = 0;
       await writeFile(join(dir, "progress.txt"), "before\n");
-      await tool.execute(
-        tool.name,
-        { path: "progress.txt", ...input, then_run: { command: "check" } },
-        undefined,
-        (update: any) => updates.push(update),
-        { cwd: dir, mode: "rpc" },
-      );
+      await run();
       assert.deepEqual(
         events.map((event) => event.command),
         ["waiting", "waiting", "running", "running", "succeeded"],

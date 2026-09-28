@@ -9,8 +9,14 @@
  * @module pi-hashline-edit/pi
  */
 
-import { renderDiff, type ToolDefinition } from "@earendil-works/pi-coding-agent";
-import { Box, Container, Text } from "@earendil-works/pi-tui";
+import {
+  renderDiff,
+  type Theme,
+  type ToolDefinition,
+  type ToolRenderResultOptions,
+} from "@earendil-works/pi-coding-agent";
+import type { AgentToolResult } from "@earendil-works/pi-agent-core";
+import { Box, Container, Text, type Component } from "@earendil-works/pi-tui";
 import type { TSchema } from "typebox";
 
 const HASHLINE_RE = /^(\d+)#[A-Za-z0-9]+│(.*)$/;
@@ -43,7 +49,7 @@ const MAX_COLLAPSED_DIFF_LINES = 24;
  * first 24 rendered lines with an overflow marker — truncating after rendering
  * keeps `-`/`+` pairs intact so the intra-line highlight never dangles.
  */
-export function renderDiffPreview(diff: string, expanded: boolean, theme: any): string {
+export function renderDiffPreview(diff: string, expanded: boolean, theme: Theme): string {
   const rendered = renderDiff(diff);
   if (expanded) return rendered;
   const allLines = rendered.split("\n");
@@ -60,6 +66,17 @@ export interface DiffCounts {
   removed: number;
 }
 
+interface MutationRenderState {
+  diffCounts?: DiffCounts;
+  callText?: Text;
+  mutationShell?: {
+    box: Box;
+    call?: Component;
+    result?: Component;
+    fileState?: { freshness?: string };
+  };
+}
+
 /** Count added/removed lines in a pi-format diff (`+N content` / `-N content` / ` N content`). */
 export function countDiffLines(diff: string): DiffCounts {
   let added = 0;
@@ -72,7 +89,7 @@ export function countDiffLines(diff: string): DiffCounts {
 }
 
 /** Format `+N -N` with the theme's diff colors for the tool call header. */
-export function formatDiffCounts(counts: DiffCounts, theme: any): string {
+export function formatDiffCounts(counts: DiffCounts, theme: Theme): string {
   return ` ${theme.fg("toolDiffAdded", `+${counts.added}`)} ${theme.fg("toolDiffRemoved", `-${counts.removed}`)}`;
 }
 
@@ -94,7 +111,7 @@ export function formatDiffCounts(counts: DiffCounts, theme: any): string {
  */
 export function publishDiffCounts(
   diff: string | undefined,
-  context: any,
+  context: { state?: MutationRenderState },
   refreshHeader: (counts: DiffCounts) => void,
 ): void {
   if (!diff || !context?.state) return;
@@ -106,11 +123,11 @@ export function publishDiffCounts(
 }
 
 /** Reuse the call component and retain it for the result's in-place count refresh. */
-export function renderMutationCall(
-  args: any,
-  theme: any,
-  context: any,
-  header: (args: any, theme: any, counts?: DiffCounts) => string,
+export function renderMutationCall<TArgs>(
+  args: TArgs,
+  theme: Theme,
+  context: { lastComponent?: Component; state?: MutationRenderState },
+  header: (args: TArgs, theme: Theme, counts?: DiffCounts) => string,
 ): Text {
   const text = (context?.lastComponent as Text | undefined) ?? new Text("", 0, 0);
   if (context?.state) context.state.callText = text;
@@ -119,21 +136,28 @@ export function renderMutationCall(
 }
 
 /** Keep model-facing diagnostic details out of the compact error row. */
-export function renderToolError(result: any, theme: any): Text {
+export function renderToolError(
+  result: Pick<AgentToolResult<unknown>, "content">,
+  theme: Theme,
+): Text {
   const content = result.content?.[0];
   const text = content?.type === "text" ? content.text.split("\n")[0] : "Error";
   return new Text(theme.fg("error", text), 0, 0);
 }
 
 /** Render mutation status or a diff, refreshing the call header's counts in place. */
-export function renderMutationResult(
-  result: any,
-  { isPartial, expanded }: any,
-  theme: any,
-  context: any,
+export function renderMutationResult<TArgs>(
+  result: AgentToolResult<{
+    displayDiff?: string;
+    diff?: string;
+    actionFusion?: { publication?: string };
+  }>,
+  { isPartial, expanded }: ToolRenderResultOptions,
+  theme: Theme,
+  context: { isError: boolean; args: TArgs; state?: MutationRenderState },
   pending: string,
   fallback: string,
-  header: (args: any, theme: any, counts?: DiffCounts) => string,
+  header: (args: TArgs, theme: Theme, counts?: DiffCounts) => string,
 ): Text {
   if (isPartial && result.details?.actionFusion?.publication !== "PUBLISHED")
     return new Text(theme.fg("warning", pending), 0, 0);
@@ -154,8 +178,8 @@ export function renderMutationResult(
 
 /** Keep the mutation card's background independent of the fused command's lifetime. */
 export function withMutationStatus<TParams extends TSchema, TDetails>(
-  tool: ToolDefinition<TParams, TDetails, any>,
-): ToolDefinition<TParams, TDetails, any> {
+  tool: ToolDefinition<TParams, TDetails, MutationRenderState>,
+): ToolDefinition<TParams, TDetails, MutationRenderState> {
   return {
     ...tool,
     renderShell: "self",

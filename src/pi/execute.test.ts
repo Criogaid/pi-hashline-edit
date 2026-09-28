@@ -9,6 +9,7 @@ import { mkdir, mkdtemp, rm, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createEditTool, initTheme } from "@earendil-works/pi-coding-agent";
+import type { Theme } from "@earendil-works/pi-coding-agent";
 import { validateToolArguments } from "@earendil-works/pi-ai";
 import registerHashline from "../index.ts";
 import { makeEditOverride } from "./edit-tool.ts";
@@ -20,6 +21,7 @@ import { getState } from "./state.ts";
 import { computeLineHash } from "../core/hash.ts";
 import { splitLines } from "../core/lines.ts";
 import { byteRevision } from "./file-commit.ts";
+import { generateMutationDetails } from "./mutation-result.ts";
 
 async function withDir<T>(fn: (dir: string) => Promise<T>): Promise<T> {
   const dir = await mkdtemp(join(tmpdir(), "hl-"));
@@ -339,7 +341,7 @@ test("disabled config registers no tools — built-ins remain", async () => {
 
 // --- renderer regression guards (details.diff must be a string, renderResult must not throw) ---
 
-const stubTheme = { fg: (_k: string, s: string) => s, bold: (s: string) => s };
+const stubTheme = { fg: (_k: string, s: string) => s, bold: (s: string) => s } as Theme;
 
 // renderResult delegates to pi's renderDiff, which reads the global TUI theme
 // singleton — initialize it once for this test process (watcher off by default).
@@ -366,20 +368,23 @@ test("edit success: renderResult renders the diff without throwing", async () =>
     const f = join(dir, "f.txt");
     const text = "a\nb\nc\n";
     await writeFile(f, text);
-    const edit: any = makeEditOverride(dir);
+    const edit = makeEditOverride(dir);
     const r: any = await call(edit, {
       path: "f.txt",
       edits: [{ op: "replace", anchor: h(text, 2), body: ["B"] }],
     });
-    // @ts-ignore — drive the renderer with a stub theme
-    const comp: any = edit.renderResult(
+    const comp = edit.renderResult(
       { content: r.content, details: r.details },
       { isPartial: false, expanded: true },
       stubTheme,
-      { isError: r.isError ?? false, state: {}, invalidate: () => {} },
+      {
+        args: { path: "f.txt", edits: [{ op: "replace" }] },
+        isError: r.isError ?? false,
+        state: {},
+        invalidate: () => {},
+      } as Parameters<typeof edit.renderResult>[3],
     );
-    assert.ok(typeof comp?.text === "string");
-    assert.ok(comp.text.includes("B"), "rendered diff should contain the new content");
+    assert.match(comp.render(80).join("\n"), /B/, "rendered diff should contain the new content");
   });
 });
 
@@ -389,7 +394,7 @@ test("edit header: renderResult refreshes the call header in place — no invali
     const text = "a\nb\nc\nd\ne\n";
     await writeFile(f, text);
     await call(makeReadOverride(dir), { path: "f.txt" });
-    const edit: any = makeEditOverride(dir);
+    const edit = makeEditOverride(dir);
     const r: any = await call(edit, {
       path: "f.txt",
       edits: [
@@ -425,8 +430,7 @@ test("edit header: renderResult refreshes the call header in place — no invali
     assert.ok(!invalidated, "renderResult must not call invalidate");
     // later full passes (expand/collapse) re-run renderCall; counts survive in state
     const header2: any = edit.renderCall(args, stubTheme, {
-      args,
-      state: context.state,
+      ...context,
       lastComponent: header,
     });
     assert.equal(header2, header, "renderCall reuses the stashed component");
@@ -437,7 +441,7 @@ test("edit header: renderResult refreshes the call header in place — no invali
 test("edit error: renderResult renders the error line without throwing", async () => {
   await withDir(async (dir) => {
     await writeFile(join(dir, "f.txt"), "a\n");
-    const edit: any = makeEditOverride(dir);
+    const edit = makeEditOverride(dir);
     let thrown: any;
     await call(edit, {
       path: "f.txt",
@@ -446,14 +450,24 @@ test("edit error: renderResult renders the error line without throwing", async (
       thrown = e;
     });
     assert.ok(thrown, "expected the edit to throw");
-    // @ts-ignore — simulate the framework handing the thrown message to renderResult
-    const comp: any = edit.renderResult(
-      { content: [{ type: "text", text: thrown.message }] },
+    const comp = edit.renderResult(
+      {
+        content: [{ type: "text", text: thrown.message }],
+        details: generateMutationDetails(
+          "f.txt",
+          "a\n",
+          "a\n",
+          { publishedRevision: "r", observedRevision: "r" },
+          "PUBLISHED",
+        ),
+      },
       { isPartial: false, expanded: false },
       stubTheme,
-      { isError: true },
+      { args: { path: "f.txt", edits: [{ op: "replace" }] }, isError: true } as Parameters<
+        typeof edit.renderResult
+      >[3],
     );
-    assert.ok(typeof comp?.text === "string");
+    assert.match(comp.render(80).join("\n"), /anchor|checksum|mismatch/i);
   });
 });
 
@@ -585,27 +599,32 @@ test("native read and write renderers preserve resource titles, previews, and fu
       lastComponent: undefined,
     };
     const read = makeReadOverride(dir);
-    const readCall = read.renderCall!(
-      { path: "SKILL.md", offset: 2, limit: 3 },
-      stubTheme as any,
-      { ...context, args: { path: "SKILL.md" } } as any,
-    );
+    const readCall = read.renderCall!({ path: "SKILL.md", offset: 2, limit: 3 }, stubTheme, {
+      ...context,
+      args: { path: "SKILL.md" },
+    } as Parameters<NonNullable<typeof read.renderCall>>[2]);
     assert.match(readCall.render(120).join("\n"), /\[skill\]/);
     const write = makeWriteOverride(dir);
     const writeCall = write.renderCall(
       { path: "preview.txt", content: "native content preview\n" },
-      stubTheme as any,
-      context as any,
+      stubTheme,
+      context as Parameters<typeof write.renderCall>[2],
     );
     assert.match(writeCall.render(120).join("\n"), /native content preview/);
     const error = write.renderResult(
       {
         content: [{ type: "text", text: "first error\nsecond error" }],
-        details: undefined as never,
+        details: {
+          path: "preview.txt",
+          created: false,
+          publication: "NOT_PUBLISHED",
+          publishedRevision: "r",
+          observedRevision: "r",
+        },
       },
       { isPartial: false, expanded: false },
-      stubTheme as any,
-      { ...context, isError: true } as any,
+      stubTheme,
+      { ...context, isError: true } as Parameters<typeof write.renderResult>[3],
     );
     assert.match(error.render(120).join("\n"), /first error[\s\S]*second error/);
   }));
@@ -760,45 +779,105 @@ test("failed commands preserve mutation results and stay out of all main card re
     );
     const cases = [
       {
-        tool: makeEditOverride(dir, fusion) as any,
-        args: { path: "edit.txt", edits: [{ op: "append", body: ["after"] }] },
+        path: "edit.txt",
+        run: async () => {
+          const tool = makeEditOverride(dir, fusion);
+          const args = { path: "edit.txt", edits: [{ op: "append" as const, body: ["after"] }] };
+          const result = await tool.execute(
+            args.path,
+            { ...args, then_run: { command: "check" } },
+            undefined,
+            undefined,
+            { cwd: dir } as Parameters<typeof tool.execute>[4],
+          );
+          return {
+            result,
+            rendered: tool
+              .renderResult(
+                result,
+                { expanded: true, isPartial: false },
+                stubTheme as Theme,
+                { args, state: {}, cwd: dir, isError: false } as Parameters<
+                  typeof tool.renderResult
+                >[3],
+              )
+              .render(120)
+              .join("\n"),
+          };
+        },
         expected: "before\nafter\n",
       },
       {
-        tool: makeReplaceTool(dir, fusion),
-        args: { path: "replace.txt", find: "before", replace: "after" },
+        path: "replace.txt",
+        run: async () => {
+          const tool = makeReplaceTool(dir, fusion);
+          const args = { path: "replace.txt", find: "before", replace: "after" };
+          const result = await tool.execute(
+            args.path,
+            { ...args, then_run: { command: "check" } },
+            undefined,
+            undefined,
+            { cwd: dir } as Parameters<typeof tool.execute>[4],
+          );
+          return {
+            result,
+            rendered: tool
+              .renderResult(
+                result,
+                { expanded: true, isPartial: false },
+                stubTheme as Theme,
+                { args, state: {}, cwd: dir, isError: false } as Parameters<
+                  typeof tool.renderResult
+                >[3],
+              )
+              .render(120)
+              .join("\n"),
+          };
+        },
         expected: "after\n",
       },
       {
-        tool: makeWriteOverride(dir, fusion),
-        args: { path: "write.txt", content: "after\n" },
+        path: "write.txt",
+        run: async () => {
+          const tool = makeWriteOverride(dir, fusion);
+          const args = { path: "write.txt", content: "after\n" };
+          const result = await tool.execute(
+            args.path,
+            { ...args, then_run: { command: "check" } },
+            undefined,
+            undefined,
+            { cwd: dir } as Parameters<typeof tool.execute>[4],
+          );
+          return {
+            result,
+            rendered: tool
+              .renderResult(
+                result,
+                { expanded: true, isPartial: false },
+                stubTheme as Theme,
+                { args, state: {}, cwd: dir, isError: false } as Parameters<
+                  typeof tool.renderResult
+                >[3],
+              )
+              .render(120)
+              .join("\n"),
+          };
+        },
         expected: "after\n",
       },
     ];
-    for (const { tool, args, expected } of cases) {
-      await writeFile(join(dir, args.path), "before\n");
-      const result = await tool.execute(
-        args.path,
-        { ...args, then_run: { command: "check" } },
-        undefined,
-        undefined,
-        { cwd: dir },
-      );
-      assert.equal(result.isError, undefined);
-      assert.equal(result.details.actionFusion.command, "failed");
-      assert.match(result.content.at(-1).text, /then_run:failed[\s\S]*command-only diagnostic/);
-      if (tool.name !== "write") assert.equal(typeof result.details.diff, "string");
-      const rendered = tool.renderResult(result, { expanded: true, isPartial: false }, stubTheme, {
-        args,
-        state: {},
-        cwd: dir,
-        isError: false,
-      });
-      assert.doesNotMatch(
-        rendered.render(120).join("\n"),
-        /command-only diagnostic|then_run:failed/,
-      );
-      assert.equal(await readFile(join(dir, args.path), "utf8"), expected);
+    for (const { path, run, expected } of cases) {
+      await writeFile(join(dir, path), "before\n");
+      const { result, rendered } = await run();
+      assert.equal("isError" in result, false);
+      assert.equal(result.details.actionFusion?.command, "failed");
+      const last = result.content.at(-1);
+      assert.ok(last?.type === "text");
+      assert.match(last.text, /then_run:failed[\s\S]*command-only diagnostic/);
+      if (path !== "write.txt")
+        assert.equal(typeof ("diff" in result.details ? result.details.diff : undefined), "string");
+      assert.doesNotMatch(rendered, /command-only diagnostic|then_run:failed/);
+      assert.equal(await readFile(join(dir, path), "utf8"), expected);
     }
     assert.deepEqual(
       commands,

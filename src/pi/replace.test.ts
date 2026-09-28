@@ -11,11 +11,12 @@ import assert from "node:assert/strict";
 import { mkdtemp, rm, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { initTheme } from "@earendil-works/pi-coding-agent";
+import { initTheme, type Theme } from "@earendil-works/pi-coding-agent";
 import { makeReplaceTool } from "./replace-tool.ts";
 import { makeEditOverride } from "./edit-tool.ts";
 import { validateToolArguments } from "@earendil-works/pi-ai";
 import { createActionFusionExecutor } from "./action-fusion.ts";
+import { generateMutationDetails } from "./mutation-result.ts";
 
 async function withDir<T>(fn: (dir: string) => Promise<T>): Promise<T> {
   const dir = await mkdtemp(join(tmpdir(), "hl-replace-"));
@@ -35,7 +36,7 @@ function anchorLine(block: string, line: number) {
   return `${line}#${m[1]}`;
 }
 
-const stubTheme = { fg: (_k: string, s: string) => s, bold: (s: string) => s };
+const stubTheme = { fg: (_k: string, s: string) => s, bold: (s: string) => s } as Theme;
 
 // renderResult delegates to pi's renderDiff, which reads the global TUI theme
 // singleton — initialize it once for this test process (watcher off by default).
@@ -384,17 +385,20 @@ test("replace renderResult: renders the diff without throwing", async () => {
   await withDir(async (dir) => {
     const f = join(dir, "f.txt");
     await writeFile(f, "a\nb\nc\n");
-    const tool: any = makeReplaceTool(dir);
+    const tool = makeReplaceTool(dir);
     const r: any = await call(tool, { path: "f.txt", find: "b", replace: "B" });
-    // @ts-ignore — drive the renderer with a stub theme
-    const comp: any = tool.renderResult(
+    const comp = tool.renderResult(
       { content: r.content, details: r.details },
       { isPartial: false, expanded: true },
       stubTheme,
-      { isError: r.isError ?? false, state: {}, invalidate: () => {} },
+      {
+        args: { path: "f.txt", find: "b", replace: "B" },
+        isError: r.isError ?? false,
+        state: {},
+        invalidate: () => {},
+      } as Parameters<typeof tool.renderResult>[3],
     );
-    assert.ok(typeof comp?.text === "string");
-    assert.ok(comp.text.includes("B"), "rendered diff should contain the new content");
+    assert.match(comp.render(80).join("\n"), /B/, "rendered diff should contain the new content");
   });
 });
 
@@ -402,7 +406,7 @@ test("replace renderResult: renders the error line without throwing", async () =
   await withDir(async (dir) => {
     const f = join(dir, "f.txt");
     await writeFile(f, "a\n");
-    const tool: any = makeReplaceTool(dir);
+    const tool = makeReplaceTool(dir);
     let thrown: any;
     const r: any = await call(tool, { path: "f.txt", find: "zzz", replace: "y" }).catch(
       (e: any) => {
@@ -411,14 +415,24 @@ test("replace renderResult: renders the error line without throwing", async () =
       },
     );
     assert.ok(thrown, "expected the call to throw");
-    // @ts-ignore — simulate how the framework hands the thrown message to renderResult
-    const comp: any = tool.renderResult(
-      { content: [{ type: "text", text: thrown.message }] },
+    const comp = tool.renderResult(
+      {
+        content: [{ type: "text", text: thrown.message }],
+        details: generateMutationDetails(
+          "f.txt",
+          "a\n",
+          "a\n",
+          { publishedRevision: "r", observedRevision: "r" },
+          "PUBLISHED",
+        ),
+      },
       { isPartial: false, expanded: false },
       stubTheme,
-      { isError: true },
+      { args: { path: "f.txt", find: "zzz", replace: "y" }, isError: true } as Parameters<
+        typeof tool.renderResult
+      >[3],
     );
-    assert.ok(typeof comp?.text === "string");
+    assert.match(comp.render(80).join("\n"), /zero matches|no matches|match/i);
   });
 });
 
@@ -426,7 +440,7 @@ test("replace header: renderResult refreshes the call header in place — no inv
   await withDir(async (dir) => {
     const f = join(dir, "f.txt");
     await writeFile(f, "a\nb\nc\n");
-    const tool: any = makeReplaceTool(dir);
+    const tool = makeReplaceTool(dir);
     const args = { path: "f.txt", find: "b", replace: "B1\nB2" };
     const r: any = await call(tool, args);
     let invalidated = false;
@@ -456,7 +470,7 @@ test("replace header: renderResult refreshes the call header in place — no inv
 test("replacement batches use one snapshot and return anchors for the final content", async () =>
   withDir(async (dir) => {
     const file = join(dir, "batch.txt");
-    const tool: any = makeReplaceTool(dir);
+    const tool = makeReplaceTool(dir);
     const args = {
       path: file,
       replacements: [
@@ -475,7 +489,13 @@ test("replacement batches use one snapshot and return anchors for the final cont
       edits: [{ op: "replace", anchor: anchorLine(result.content[0].text, 2), body: ["chained"] }],
     });
     assert.equal(await readFile(file, "utf8"), "\uFEFFbar\r\nchained\nbar");
-    assert.match(tool.renderCall(args, stubTheme, {}).text, /2 rules/);
+    assert.match(
+      tool
+        .renderCall(args, stubTheme, {} as Parameters<typeof tool.renderCall>[2])
+        .render(80)
+        .join("\n"),
+      /2 rules/,
+    );
   }));
 
 test("invalid batches reject every change and skip the fused command", async () =>

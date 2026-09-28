@@ -8,13 +8,20 @@ import { makeReplaceTool } from "./replace-tool.ts";
 import { renderDiffPreview, withMutationStatus } from "./render.ts";
 import { makeWriteOverride } from "./write-tool.ts";
 import { generateMutationDetails } from "./mutation-result.ts";
+import type { ActionFusionDetails } from "./action-fusion.ts";
+
+const versions = { publishedRevision: "r", observedRevision: "r" };
+const mutationDetails = (actionFusion?: ActionFusionDetails) => ({
+  ...generateMutationDetails("a.txt", "same\n", "same\n", versions, "PUBLISHED"),
+  actionFusion,
+});
 
 test("mutation headers refresh in place and retain isolated per-call counts", () => {
   initTheme("dark");
-  for (const tool of [makeEditOverride(process.cwd()), makeReplaceTool(process.cwd())] as any[]) {
+  for (const tool of [makeEditOverride(process.cwd()), makeReplaceTool(process.cwd())]) {
     const args = {
       path: "a.txt",
-      edits: [{ op: "append", body: ["new"] }],
+      edits: [{ op: "append" as const, body: ["new"] }],
       find: "old",
       replace: "new",
     };
@@ -26,10 +33,13 @@ test("mutation headers refresh in place and retain isolated per-call counts", ()
       },
     };
     const header = tool.renderCall(args, theme, context);
-    const other = tool.renderCall({ ...args, path: "b.txt" }, theme, { state: {} });
+    const other = tool.renderCall({ ...args, path: "b.txt" }, theme, { ...context, state: {} });
     assert.equal(context.state.callText, header);
     tool.renderResult(
-      { content: [{ type: "text", text: "Done" }], details: { diff: "-1 old\n+1 new" } },
+      {
+        content: [{ type: "text", text: "Done" }],
+        details: generateMutationDetails("a.txt", "old\n", "new\n", versions, "PUBLISHED"),
+      },
       { isPartial: false, expanded: false },
       theme,
       context,
@@ -45,8 +55,8 @@ test("mutation headers refresh in place and retain isolated per-call counts", ()
 
 test("mutation card owns stale-anchor notices without internal status", () => {
   initTheme("dark");
-  const tool = withMutationStatus(makeEditOverride(process.cwd()) as any);
-  const args = { path: "a.txt", edits: [{ op: "append", body: ["new"] }] };
+  const tool = withMutationStatus(makeEditOverride(process.cwd()));
+  const args = { path: "a.txt", edits: [{ op: "append" as const, body: ["new"] }] };
   const context: any = { args, state: {}, isPartial: false, isError: false, invalidate() {} };
   const card = tool.renderCall!(args, theme, context);
   tool.renderResult!(
@@ -55,9 +65,11 @@ test("mutation card owns stale-anchor notices without internal status", () => {
         { type: "text", text: "Edit saved." },
         { type: "text", text: "command diagnostic" },
       ],
-      details: {
-        actionFusion: { publication: "PUBLISHED", freshness: "changed", command: "failed" },
-      },
+      details: mutationDetails({
+        publication: "PUBLISHED",
+        freshness: "changed",
+        command: "failed",
+      }),
     },
     { isPartial: false, expanded: false },
     theme,
@@ -73,20 +85,18 @@ test("mutation card owns stale-anchor notices without internal status", () => {
 
 test("mutation card omits status when then_run was not requested", () => {
   initTheme("dark");
-  const tool = withMutationStatus(makeEditOverride(process.cwd()) as any);
-  const args = { path: "a.txt", edits: [{ op: "append", body: ["new"] }] };
+  const tool = withMutationStatus(makeEditOverride(process.cwd()));
+  const args = { path: "a.txt", edits: [{ op: "append" as const, body: ["new"] }] };
   const context: any = { args, state: {}, isPartial: false, isError: false, invalidate() {} };
   const card = tool.renderCall!(args, theme, context);
   tool.renderResult!(
     {
       content: [{ type: "text", text: "Edited a.txt." }],
-      details: {
-        actionFusion: {
-          publication: "PUBLISHED",
-          freshness: "unchanged",
-          command: "not_requested",
-        },
-      },
+      details: mutationDetails({
+        publication: "PUBLISHED",
+        freshness: "unchanged",
+        command: "not_requested",
+      }),
     },
     { isPartial: false, expanded: false },
     theme,
@@ -99,9 +109,11 @@ test("mutation card omits status when then_run was not requested", () => {
   tool.renderResult!(
     {
       content: [{ type: "text", text: "Edited a.txt." }],
-      details: {
-        actionFusion: { publication: "PUBLISHED", freshness: "changed", command: "not_requested" },
-      },
+      details: mutationDetails({
+        publication: "PUBLISHED",
+        freshness: "changed",
+        command: "not_requested",
+      }),
     },
     { isPartial: false, expanded: false },
     theme,
@@ -121,7 +133,13 @@ test("unfused write errors retain the native full diagnostic", () => {
   tool.renderResult!(
     {
       content: [{ type: "text", text: "write failed\nimportant detail" }],
-      details: undefined as never,
+      details: {
+        path: "a.txt",
+        created: false,
+        publication: "NOT_PUBLISHED",
+        publishedRevision: "r",
+        observedRevision: "r",
+      },
     },
     { isPartial: false, expanded: false },
     theme,
@@ -177,10 +195,10 @@ test("diff previews retain standalone CR and literal control-picture characters"
       { expanded: true, isPartial: false },
       theme,
       {
-        args: { path: "a.txt" },
+        args: { path: "a.txt", edits: [{ op: "append", body: ["new"] }] },
         state: {},
         isError: false,
-      } as any,
+      } as Parameters<typeof tool.renderResult>[3],
     );
     assert.match(result.render(160).join("\n"), /␍/);
   }
@@ -189,18 +207,16 @@ test("diff previews retain standalone CR and literal control-picture characters"
 
 test("withMutationStatus renderResult initializes mutationShell defensively", () => {
   initTheme("dark");
-  const tool = withMutationStatus(makeEditOverride(process.cwd()) as any);
+  const tool = withMutationStatus(makeEditOverride(process.cwd()));
   const context: any = { args: { path: "a.txt" }, state: {}, isError: false };
   const container = tool.renderResult!(
     {
       content: [{ type: "text", text: "Edited a.txt." }],
-      details: {
-        actionFusion: {
-          publication: "PUBLISHED",
-          freshness: "unchanged",
-          command: "not_requested",
-        },
-      },
+      details: mutationDetails({
+        publication: "PUBLISHED",
+        freshness: "unchanged",
+        command: "not_requested",
+      }),
     },
     { isPartial: false, expanded: false },
     theme,
