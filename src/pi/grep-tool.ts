@@ -195,13 +195,13 @@ const grepOverrideSchema = Type.Object({
   path: Type.Optional(
     Type.Union([Type.String(), Type.Array(Type.String())], {
       description:
-        "Directory or file to search (string or array of paths; default: current directory)",
+        "Search an existing file or directory (string or array; default: current directory). Path wildcards are not expanded; use glob to filter filenames.",
     }),
   ),
   glob: Type.Optional(
     Type.Union([Type.String(), Type.Array(Type.String())], {
       description:
-        "Filter files by glob pattern; pass an array for multiple filters and prefix exclusions with `!`, e.g. ['*.ts', '!**/*.test.ts']",
+        "Filter filenames with a wildcard glob pattern; pass an array for multiple filters and prefix exclusions with `!`, e.g. ['*.ts', '!**/*.test.ts']",
     }),
   ),
   ignoreCase: Type.Optional(
@@ -965,6 +965,7 @@ export function makeGrepOverrideWithBackend(cwd: string, overrides: Partial<Grep
     promptSnippet: "Search file contents with ripgrep",
     promptGuidelines: [
       "Prefer the grep tool for file-content searches.",
+      "Set path to an existing directory and glob to a filename wildcard pattern; path does not expand wildcards.",
       "Set literal:true when searching code text containing regex punctuation (for example pi.on(, compact(, or \\0); use a pattern array for literal alternatives. Use literal:false only for intentional valid regex.",
       "Use returned grep anchors directly for edits; no re-read needed. When searching for code to edit, pass context (e.g. context: 3 or 5) to inspect surrounding code and get anchors for the whole block in one call, eliminating the need for a follow-up read.",
       "Use files/count when only paths or counts are needed; use matchMode all and excludePattern instead of shell pipelines.",
@@ -1093,8 +1094,17 @@ export function makeGrepOverrideWithBackend(cwd: string, overrides: Partial<Grep
       for (const searchPath of searchPaths) {
         try {
           pathInfo.push({ path: searchPath, isFile: (await stat(searchPath)).isFile() });
-        } catch {
-          throw new Error(`Path not found: ${searchPath}`);
+        } catch (error) {
+          const missing =
+            typeof error === "object" &&
+            error !== null &&
+            "code" in error &&
+            error.code === "ENOENT";
+          const hint =
+            missing && /[*?]/.test(searchPath)
+              ? " Use an existing directory as path and a filename wildcard as glob."
+              : "";
+          throw new Error(`Path not found: ${searchPath}${hint}`);
         }
       }
       scope = {

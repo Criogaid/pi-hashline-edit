@@ -123,6 +123,27 @@ test("grep guidance distinguishes literal code searches from regex and array alt
   );
   assert.match(JSON.stringify(tool.parameters.properties.pattern), /use an array for alternatives/);
   assert.match(JSON.stringify(tool.parameters.properties.literal), /entire input literally/);
+  assert.match(
+    JSON.stringify(tool.parameters.properties.path),
+    /existing file or directory.*wildcards/,
+  );
+  assert.match(JSON.stringify(tool.parameters.properties.glob), /filename.*wildcard/);
+  assert.match(tool.promptGuidelines.join("\n"), /path.*directory.*glob.*wildcard/);
+});
+
+test("grep points wildcard paths to glob without changing ordinary missing-path errors", async () => {
+  await withDir(async (dir) => {
+    const tool = makeGrepOverrideWithBackend(dir, fakeBackend().backend);
+    await assert.rejects(
+      call(tool, { pattern: "value", path: "src/fusion-card*" }),
+      /Path not found: .*fusion-card\*.*Use an existing directory as path and a filename wildcard as glob/,
+    );
+    await assert.rejects(
+      call(tool, { pattern: "value", path: "src/missing" }),
+      (error: Error) =>
+        error.message.endsWith("src\\missing") || error.message.endsWith("src/missing"),
+    );
+  });
 });
 
 async function withEnabled<T>(enabled: boolean, fn: () => Promise<T>): Promise<T> {

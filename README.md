@@ -145,7 +145,7 @@ When the line limit leaves more content, the result reports the shown range and 
 | Parameter | Default | Meaning |
 | --- | --- | --- |
 | `pattern` | Required | Non-empty string or array. |
-| `path` | Current directory | One path or an array of search roots. |
+| `path` | Current directory | One existing file or directory, or an array of search roots. Wildcards are not expanded; use `glob` to filter filenames. |
 | `matchMode` | `"any"` | OR across patterns; `"all"` requires every pattern on the same physical line, at most 16 patterns. |
 | `excludePattern` | None | String or array; remove lines matching any exclusion. |
 | `literal` | Automatic | Set `true` for code text containing regex punctuation, such as `pi.on(`, `compact(`, or a visible `\0`; use a `pattern` array for literal alternatives. Set `false` only for intentional valid regex. The setting also applies to exclusions. Automatic mode tries regex when it sees metacharacters; an invalid single pattern without exclusions falls back to searching the **entire string** literally, not interpreting `|` as alternatives. Invalid compound queries fail rather than changing their meaning. |
