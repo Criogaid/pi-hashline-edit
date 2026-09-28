@@ -729,8 +729,7 @@ test("tools share physical lines and anchors across text representations", async
       assert.equal(rows(edit)[0], rows(editedRead)[1].split("│")[0]);
       const replaced = await call(makeReplaceTool(directory), {
         path: file,
-        find: "new",
-        replace: "next",
+        replacements: [{ find: "new", replace: "next" }],
       });
       assert.equal(await readFile(file, "utf8"), before.replace("old", "next"));
       assert.equal(replaced.details.firstChangedLine, 2);
@@ -860,9 +859,13 @@ test("all text tools share logical CRLF matching, anchors, and mutation separato
           "replace",
           {
             path,
-            find: mode === "regex" ? "alpha\\nbeta" : "alpha\r\nbeta",
-            replace: "A\nB\nC",
-            regex: mode === "regex",
+            replacements: [
+              {
+                find: mode === "regex" ? "alpha\\nbeta" : "alpha\r\nbeta",
+                replace: "A\nB\nC",
+                regex: mode === "regex",
+              },
+            ],
           },
           undefined,
           undefined,
@@ -915,7 +918,7 @@ test("visible source escapes remain readable and searchable while real CRLF stay
     const replace = makeReplaceTool(directory);
     await replace.execute(
       "literal",
-      { path, find: String.raw`\r\n`, replace: String.raw`\n` },
+      { path, replacements: [{ find: String.raw`\r\n`, replace: String.raw`\n` }] },
       undefined,
       undefined,
       { cwd: directory } as ExtensionContext,
@@ -923,7 +926,7 @@ test("visible source escapes remain readable and searchable while real CRLF stay
     assert.equal(await readFile(path, "utf8"), 'const eol = "\\n";\r\n');
     await replace.execute(
       "regex",
-      { path, find: String.raw`\\n`, replace: String.raw`\r\n`, regex: true },
+      { path, replacements: [{ find: String.raw`\\n`, replace: String.raw`\r\n`, regex: true }] },
       undefined,
       undefined,
       { cwd: directory } as ExtensionContext,

@@ -213,8 +213,7 @@ test("E2E Dev D4: Bulk replace with Action Fusion then_run validation", async ()
     const replace = makeReplaceTool(dir, fusionExecutor);
     const res = await call(replace, {
       path: "api.ts",
-      find: "old_var",
-      replace: "new_var",
+      replacements: [{ find: "old_var", replace: "new_var" }],
       then_run: { command: "npm run check" },
     });
 

@@ -51,7 +51,7 @@ test("mutation cards use Fusion by default and explicit false removes command su
     const cases = [
       { name: "write", args: { content: "published\n" } },
       { name: "edit", args: { edits: [{ op: "append", body: ["appended"] }] } },
-      { name: "replace", args: { find: "published", replace: "published" } },
+      { name: "replace", args: { replacements: [{ find: "published", replace: "published" }] } },
     ];
     for (const { name, args } of cases) {
       const tool = tools.find((tool) => tool.name === name);

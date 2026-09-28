@@ -104,7 +104,7 @@ When no candidate is found, diagnostics show the current cited line as a complet
 For a rename across a file:
 
 ```json
-{ "path": "src/foo.ts", "find": "oldName", "replace": "newName" }
+{ "path": "src/foo.ts", "replacements": [{ "find": "oldName", "replace": "newName" }] }
 ```
 
 Literal mode keeps `$` text verbatim. Both literal and regex modes match the shared LF view: actual CRLF in the file and `find` normalizes to LF; standalone CR remains content. Match ranges map back to the original text before replacement, preserving bytes and separators outside each match, including an unmatched BOM or final newline.
@@ -114,7 +114,7 @@ Replacement text also normalizes CRLF to LF, then reuses matched separators in o
 Regex patterns run on LF text, so use `\n` for a line boundary. Captures and replacement templates also use the LF snapshot; the result then restores original separators. Use `write` for explicit line-ending conversion. Source-code escapes are ordinary text: JSON `"find": "\\r\\n"` finds the visible four-character sequence in literal mode, while `"find": "\r\n"` contains an actual CRLF boundary. Set `regex: true` for JavaScript capture groups and replacement templates:
 
 ```json
-{ "path": "src/foo.ts", "find": "get([A-Z]\\w*)", "replace": "fetch$1", "regex": true }
+{ "path": "src/foo.ts", "replacements": [{ "find": "get([A-Z]\\w*)", "replace": "fetch$1", "regex": true }] }
 ```
 
 To apply several rules against the same original content:
@@ -170,7 +170,7 @@ Long lines show a labeled partial preview of up to 500 UTF-16 units around a rip
 
 ### Replace
 
-Required: `path` and either top-level `find` / `replace`, or a non-empty `replacements` array. These forms are mutually exclusive: batch calls cannot include top-level `find`, `replace`, `regex`, or `flags`. Each rule requires `find` and `replace`, with these optional fields:
+Required: `path` and a non-empty `replacements` array. Use one item for a single rule; top-level `find`, `replace`, `regex`, and `flags` are not accepted. Each rule requires `find` and `replace`, with these optional fields:
 
 - `regex`: defaults to `false`; both modes match the shared LF view. Regex mode supports capture groups, the full match, and prefix/suffix substitutions.
 - `flags`: applies in both modes; `g` is always added. Supported flags: `g i m s u y d`.

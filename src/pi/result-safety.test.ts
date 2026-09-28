@@ -70,8 +70,7 @@ test("replace withholds anchors in progress and after commands change or remove 
           "replace",
           {
             path,
-            find: "before",
-            replace: "after",
+            replacements: [{ find: "before", replace: "after" }],
             then_run: { command: "check" },
           },
           undefined,
@@ -213,7 +212,7 @@ test("mutation anchor output and aggregate anchor diagnostics have byte budgets"
             )
           : await makeReplaceTool(dir).execute(
               name,
-              { path, find: "before", replace: long },
+              { path, replacements: [{ find: "before", replace: long }] },
               undefined,
               undefined,
               ctx(dir),
@@ -236,7 +235,7 @@ test("mutation anchor output and aggregate anchor diagnostics have byte budgets"
             )
           : await makeReplaceTool(dir).execute(
               name,
-              { path, find: "remove\n", replace: "" },
+              { path, replacements: [{ find: "remove\n", replace: "" }] },
               undefined,
               undefined,
               ctx(dir),
@@ -290,7 +289,11 @@ test("every mutation entry rejects unpaired surrogates without running then_run"
       () =>
         makeReplaceTool(dir, fusion).execute(
           "unicode",
-          { path, find: "original", replace: "\udfff", then_run: { command: "check" } },
+          {
+            path,
+            replacements: [{ find: "original", replace: "\udfff" }],
+            then_run: { command: "check" },
+          },
           undefined,
           undefined,
           ctx(dir),
@@ -370,7 +373,11 @@ test("all mutation tools report NUL rejection through the shared Fusion lifecycl
       (fusion: ReturnType<typeof createActionFusionExecutor>) =>
         makeReplaceTool(dir, fusion).execute(
           "nul",
-          { path, find: "original", replace: "\0", then_run: { command: "check" } },
+          {
+            path,
+            replacements: [{ find: "original", replace: "\0" }],
+            then_run: { command: "check" },
+          },
           undefined,
           undefined,
           ctx(dir),
@@ -446,7 +453,7 @@ const noOpCases = [
       edits: [{ op: "replace", anchor: `1#${computeLineHash(1, "same")}`, body: ["same"] }],
     },
   },
-  { makeTool: makeReplaceTool, params: { find: "same", replace: "same" } },
+  { makeTool: makeReplaceTool, params: { replacements: [{ find: "same", replace: "same" }] } },
   { makeTool: makeWriteOverride, params: { content: "same\n" } },
 ];
 
@@ -646,7 +653,7 @@ test("mutation anchors retain a deletion successor but omit stable rows and dele
               )
             : await makeReplaceTool(dir).execute(
                 name,
-                { path, find: "remove\n", replace: "" },
+                { path, replacements: [{ find: "remove\n", replace: "" }] },
                 undefined,
                 undefined,
                 ctx(dir),
@@ -707,7 +714,7 @@ test("compact mutation anchors exceed forty rows while respecting the byte budge
               )
             : await makeReplaceTool(dir).execute(
                 name,
-                { path, find: "before", replace: inserted.join("\n") },
+                { path, replacements: [{ find: "before", replace: inserted.join("\n") }] },
                 undefined,
                 undefined,
                 ctx(dir),

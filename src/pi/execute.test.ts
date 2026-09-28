@@ -811,7 +811,10 @@ test("failed commands preserve mutation results and stay out of all main card re
         path: "replace.txt",
         run: async () => {
           const tool = makeReplaceTool(dir, fusion);
-          const args = { path: "replace.txt", find: "before", replace: "after" };
+          const args = {
+            path: "replace.txt",
+            replacements: [{ find: "before", replace: "after" }],
+          };
           const result = await tool.execute(
             args.path,
             { ...args, then_run: { command: "check" } },
@@ -902,7 +905,10 @@ test("text tools reject malformed UTF-8 and NUL bytes without rewriting source b
       /UNSUPPORTED_ENCODING/,
     );
     await assert.rejects(
-      call(makeReplaceTool(dir), { path: "invalid-utf8.txt", find: "a", replace: "b" }),
+      call(makeReplaceTool(dir), {
+        path: "invalid-utf8.txt",
+        replacements: [{ find: "a", replace: "b" }],
+      }),
       /UNSUPPORTED_ENCODING/,
     );
     assert.deepEqual(await readFile(target), original);
@@ -915,7 +921,7 @@ test("text tools reject malformed UTF-8 and NUL bytes without rewriting source b
       /UNSUPPORTED_TEXT/,
     );
     await assert.rejects(
-      call(makeReplaceTool(dir), { path: "nul.txt", find: "a", replace: "b" }),
+      call(makeReplaceTool(dir), { path: "nul.txt", replacements: [{ find: "a", replace: "b" }] }),
       /UNSUPPORTED_TEXT/,
     );
     assert.deepEqual(await readFile(nulTarget), nulOriginal);
@@ -981,7 +987,10 @@ test("edit and replace reject NUL output without rewriting source bytes", async 
     );
     assert.deepEqual(await readFile(target), original);
     await assert.rejects(
-      call(makeReplaceTool(dir), { path: "output.txt", find: "before", replace: "bad\0text" }),
+      call(makeReplaceTool(dir), {
+        path: "output.txt",
+        replacements: [{ find: "before", replace: "bad\0text" }],
+      }),
       /UNSUPPORTED_TEXT/,
     );
     assert.deepEqual(await readFile(target), original);
@@ -1304,9 +1313,7 @@ test("standalone CR replacements remain visible in diffs and exact in patches", 
       await writeFile(file, before);
       const result = await call(makeReplaceTool(dir), {
         path: file,
-        find,
-        replace: replacement,
-        regex: true,
+        replacements: [{ find, replace: replacement, regex: true }],
       });
       assert.equal(await readFile(file, "utf8"), before.replaceAll(find, replacement));
       assert.equal(result.details.firstChangedLine, 1);

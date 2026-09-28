@@ -73,8 +73,7 @@ test("edit and replace share one embedded executor and preserve mutation results
       "replace-1",
       {
         path: "replace.txt",
-        find: "before",
-        replace: "after",
+        replacements: [{ find: "before", replace: "after" }],
         then_run: { command: "check replace" },
       },
       undefined,
@@ -342,8 +341,7 @@ test("all mutation tools forward command progress before completion in RPC mode"
           "replace",
           {
             path: "progress.txt",
-            find: "before",
-            replace: "after",
+            replacements: [{ find: "before", replace: "after" }],
             then_run: { command: "check" },
           },
           undefined,
@@ -420,8 +418,7 @@ test("progress reports skipped mutations and failed commands without rolling bac
         "replace-skip",
         {
           path: "replace.txt",
-          find: "missing",
-          replace: "changed",
+          replacements: [{ find: "missing", replace: "changed" }],
           then_run: { command: "check" },
         },
         undefined,

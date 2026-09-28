@@ -86,40 +86,37 @@ const replacementSchema = Type.Object({
 });
 type Replacement = Static<typeof replacementSchema>;
 
-const replaceSchema = Type.Object({
-  path: Type.String({ description: "Path to the file to edit (relative or absolute)" }),
-  ...Type.Partial(replacementSchema).properties,
-  replacements: Type.Optional(
-    Type.Array(replacementSchema, {
+const replaceSchema = Type.Object(
+  {
+    path: Type.String({ description: "Path to the file to edit (relative or absolute)" }),
+    replacements: Type.Array(replacementSchema, {
       minItems: 1,
       description:
-        "Rules matched against one original snapshot. Mutually exclusive with top-level find/replace/regex/flags. Overlaps reject the entire batch.",
+        "Rules matched against one original snapshot. Overlaps or any zero-match rule reject the entire call.",
     }),
-  ),
-});
+  },
+  { additionalProperties: false },
+);
 
 function createReplaceSchema(actionFusion: boolean) {
   return actionFusion
-    ? Type.Object({
-        ...replaceSchema.properties,
-        then_run: createThenRunSchema(
-          "Command to run once after all replacements succeed; failure does not roll back the replacement.",
-        ),
-      })
+    ? Type.Object(
+        {
+          ...replaceSchema.properties,
+          then_run: createThenRunSchema(
+            "Command to run once after all replacements succeed; failure does not roll back the replacement.",
+          ),
+        },
+        { additionalProperties: false },
+      )
     : replaceSchema;
 }
 type ReplaceParams = Static<typeof replaceSchema> & { then_run?: ThenRunInput };
 
 function replacementRules(params: ReplaceParams): Replacement[] {
-  if (
-    params.replacements !== undefined &&
-    Object.keys(replacementSchema.properties).some(
-      (key) => params[key as keyof Replacement] !== undefined,
-    )
-  ) {
-    throw new Error("replacements cannot be combined with top-level replacement fields");
-  }
-  const rules = params.replacements ?? [params];
+  if (Object.keys(replacementSchema.properties).some((key) => key in params))
+    throw new Error("top-level replacement fields are not supported; use replacements");
+  const rules = params.replacements;
   if (!Array.isArray(rules) || rules.length === 0)
     throw new Error("replacements must be a non-empty array");
   for (const [index, rule] of rules.entries()) {
@@ -131,7 +128,7 @@ function replacementRules(params: ReplaceParams): Replacement[] {
     if (rule.flags !== undefined && typeof rule.flags !== "string")
       throw new Error(`rule ${index}: flags must be a string`);
   }
-  return rules as Replacement[];
+  return rules;
 }
 
 const REGEX_TIMEOUT_MS = 5_000;
@@ -235,46 +232,14 @@ function formatSpanAnchors(
   );
 }
 
-/** Truncate a string for one-line display, folding newlines into a marker. */
-function show(s: string, n = 30): string {
-  const folded = s.replace(/\n/g, "⏎");
-  return folded.length > n ? folded.slice(0, n) + "…" : folded;
-}
-
-/** Call-header line: `replace path — mode "find" → "replace"`, plus `+N -N` once the result's diff counts are known. */
+/** Call-header line: `replace path — N rules`, plus `+N -N` once diff counts are known. */
 function replaceHeader(args: ReplaceParams, theme: Theme, counts?: DiffCounts): string {
   let t = theme.fg("toolTitle", theme.bold("replace "));
   t += theme.fg("accent", args.path);
-  if (args.replacements) {
-    t += theme.fg("dim", ` — ${args.replacements.length} rules`);
-  } else {
-    const mode = args.regex ? "regex" : "lit";
-    const f = args.flags ? `/${args.flags}` : "";
-    t += theme.fg(
-      "dim",
-      ` — ${mode}${f} "${show(args.find ?? "")}" → "${show(args.replace ?? "")}"`,
-    );
-  }
+  const count = args.replacements?.length ?? 0;
+  t += theme.fg("dim", ` — ${count} rule${count === 1 ? "" : "s"}`);
   if (counts && (counts.added || counts.removed)) t += formatDiffCounts(counts, theme);
   return t;
-}
-
-export function prepareReplaceArguments(input: unknown): unknown {
-  if (!input || typeof input !== "object" || Array.isArray(input)) {
-    return input;
-  }
-  const args = { ...(input as Record<string, unknown>) };
-  if (typeof args.replacements === "string") {
-    try {
-      const parsed = JSON.parse(args.replacements);
-      if (Array.isArray(parsed)) {
-        args.replacements = parsed;
-      } else if (parsed && typeof parsed === "object") {
-        args.replacements = [parsed];
-      }
-    } catch {}
-  }
-  return args;
 }
 
 export function makeReplaceTool(
@@ -286,14 +251,13 @@ export function makeReplaceTool(
     name: "replace" as const,
     label: "replace",
     description:
-      "Replace all matching text across a file with one rule or a replacements batch. All rules match the original snapshot; overlaps or any zero-match rule reject the entire call. Supports literal strings and JavaScript regex. Returns a diff and fresh anchors.",
+      "Replace all matching text across a file using one or more replacement rules. All rules match the original snapshot; overlaps or any zero-match rule reject the entire call. Supports literal strings and JavaScript regex. Returns a diff and fresh anchors.",
     promptSnippet: "Replace matching text across a file",
     promptGuidelines: [
       "Use replace for bulk changes; prefer edit for a specific, anchor-verified location.",
       ...(fusion ? ACTION_FUSION_GUIDELINES : []),
     ],
     parameters,
-    prepareArguments: (input: unknown) => prepareReplaceArguments(input) as ReplaceParams,
     renderShell: "default" as const,
 
     renderCall(args: ReplaceParams, theme: Theme, context: ReplaceRenderContext) {
@@ -324,10 +288,7 @@ export function makeReplaceTool(
       onUpdate: AgentToolUpdateCallback<ReplaceDetails> | undefined,
       ctx: ExtensionContext,
     ) {
-      const prepared = prepareReplaceArguments(params) as ReplaceParams & {
-        then_run?: ThenRunInput;
-      };
-      const { then_run, ...mutationParams } = prepared;
+      const { then_run, ...mutationParams } = params;
       if (!fusion && then_run !== undefined)
         throw new Error("then_run is unavailable because hashlineEdit.actionFusion is disabled");
       const path = mutationParams.path;

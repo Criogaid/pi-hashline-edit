@@ -22,8 +22,7 @@ test("mutation headers refresh in place and retain isolated per-call counts", ()
     const args = {
       path: "a.txt",
       edits: [{ op: "append" as const, body: ["new"] }],
-      find: "old",
-      replace: "new",
+      replacements: [{ find: "old", replace: "new" }],
     };
     const context: any = {
       args,
