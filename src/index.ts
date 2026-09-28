@@ -12,7 +12,8 @@
  * @module pi-hashline-edit
  */
 
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-agent";
+import type { TSchema } from "typebox";
 import { loadConfig } from "./pi/config.ts";
 import { getState } from "./pi/state.ts";
 import { makeEditOverride } from "./pi/edit-tool.ts";
@@ -37,13 +38,12 @@ export default function (pi: ExtensionAPI) {
     const fusion = state.config.actionFusion
       ? createActionFusionExecutor(undefined, reportProgress)
       : undefined;
-    for (const tool of [
-      makeWriteOverride(cwd, fusion),
-      makeEditOverride(cwd, fusion),
-      makeReplaceTool(cwd, fusion),
-    ]) {
-      pi.registerTool(fusion ? withMutationStatus(tool) : tool);
-    }
+    const registerMutation = <TParams extends TSchema, TDetails>(
+      tool: ToolDefinition<TParams, TDetails>,
+    ) => pi.registerTool(fusion ? withMutationStatus(tool) : tool);
+    registerMutation(makeWriteOverride(cwd, fusion));
+    registerMutation(makeEditOverride(cwd, fusion));
+    registerMutation(makeReplaceTool(cwd, fusion));
 
     pi.registerTool(makeReadOverride(cwd));
     pi.registerTool(makeGrepOverride(cwd));

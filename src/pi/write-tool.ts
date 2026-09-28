@@ -1,51 +1,63 @@
 import { Type, type Static } from "typebox";
-import { createWriteToolDefinition, withFileMutationQueue } from "@earendil-works/pi-coding-agent";
+import type { AgentToolResult, AgentToolUpdateCallback } from "@earendil-works/pi-agent-core";
+import {
+  createWriteToolDefinition,
+  withFileMutationQueue,
+  type ExtensionContext,
+  type Theme,
+  type ToolRenderResultOptions,
+} from "@earendil-works/pi-coding-agent";
 import {
   ACTION_FUSION_GUIDELINES,
   createActionFusionExecutor,
   createThenRunSchema,
   type ThenRunInput,
+  type ActionFusionDetails,
 } from "./action-fusion.ts";
-import { commitFile, type CommitMode } from "./file-commit.ts";
+import { commitFile, type CommitMode, type CommitResult } from "./file-commit.ts";
 import { postProcessMutation } from "./mutation-result.ts";
 import { canonicalPath } from "./path.ts";
 
-function createWriteSchema(actionFusion: boolean) {
-  return Type.Object({
-    path: Type.String({ description: "Path to the file to write" }),
-    content: Type.String({
+const writeSchema = Type.Object({
+  path: Type.String({ description: "Path to the file to write" }),
+  content: Type.String({
+    description:
+      "Complete file content, including the exact desired line endings. Source-code escape sequences remain literal text.",
+  }),
+  mode: Type.Optional(
+    Type.Union([
+      Type.Literal("create", { description: "Fail if the target already exists" }),
+      Type.Literal("overwrite", { description: "Fail if the target does not exist" }),
+    ]),
+  ),
+  expectedRevision: Type.Optional(
+    Type.String({
       description:
-        "Complete file content, including the exact desired line endings. Source-code escape sequences remain literal text.",
+        "Optional expected SHA-256 revision for optimistic locking (programmatic callers only; text-only models should not guess or compute manually).",
     }),
-    mode: Type.Optional(
-      Type.Union([
-        Type.Literal("create", { description: "Fail if the target already exists" }),
-        Type.Literal("overwrite", { description: "Fail if the target does not exist" }),
-      ]),
-    ),
-    expectedRevision: Type.Optional(
-      Type.String({
-        description:
-          "Optional expected SHA-256 revision for optimistic locking (programmatic callers only; text-only models should not guess or compute manually).",
-      }),
-    ),
-    ...(actionFusion
-      ? {
-          then_run: createThenRunSchema(
-            "Command to run after write succeeds; failure does not roll back the write.",
-          ),
-        }
-      : {}),
-  });
-}
+  ),
+});
 
-const writeSchema = createWriteSchema(false);
-type WriteParams = Omit<Static<typeof writeSchema>, "then_run"> & { then_run?: ThenRunInput };
+function createWriteSchema(actionFusion: boolean) {
+  return actionFusion
+    ? Type.Object({
+        ...writeSchema.properties,
+        then_run: createThenRunSchema(
+          "Command to run after write succeeds; failure does not roll back the write.",
+        ),
+      })
+    : writeSchema;
+}
+type WriteParams = Static<typeof writeSchema> & { then_run?: ThenRunInput };
+type WriteDetails = CommitResult & { path: string; actionFusion?: ActionFusionDetails };
+type WriteRenderContext = Parameters<
+  NonNullable<ReturnType<typeof createWriteToolDefinition>["renderCall"]>
+>[2];
 
 export function makeWriteOverride(
   cwd: string,
   fusion?: ReturnType<typeof createActionFusionExecutor>,
-): any {
+) {
   const parameters = createWriteSchema(fusion !== undefined);
   const builtin = createWriteToolDefinition(cwd);
   return {
@@ -60,20 +72,29 @@ export function makeWriteOverride(
     ],
     parameters,
     renderShell: "default" as const,
-    renderCall: builtin.renderCall,
-    renderResult: builtin.renderResult,
+    renderCall(args: WriteParams, theme: Theme, context: WriteRenderContext) {
+      return builtin.renderCall!(args, theme, context);
+    },
+    renderResult(
+      result: AgentToolResult<WriteDetails>,
+      options: ToolRenderResultOptions,
+      theme: Theme,
+      context: WriteRenderContext,
+    ) {
+      return builtin.renderResult!({ ...result, details: undefined }, options, theme, context);
+    },
     async execute(
       toolCallId: string,
       params: WriteParams,
       signal: AbortSignal | undefined,
-      onUpdate: any,
-      ctx: any,
+      onUpdate: AgentToolUpdateCallback<WriteDetails> | undefined,
+      ctx: ExtensionContext,
     ) {
       const { then_run, ...mutationParams } = params;
       if (!fusion && then_run !== undefined)
         throw new Error("then_run is unavailable because hashlineEdit.actionFusion is disabled");
       const absolutePath = canonicalPath(cwd, mutationParams.path);
-      const mutate = () =>
+      const mutate = (): Promise<AgentToolResult<WriteDetails>> =>
         withFileMutationQueue(absolutePath, async () => {
           signal?.throwIfAborted();
           const result = await commitFile(absolutePath, mutationParams.content, {

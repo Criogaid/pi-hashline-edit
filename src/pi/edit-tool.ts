@@ -19,13 +19,22 @@
  * @module pi-hashline-edit/pi
  */
 
-import { truncateHead, withFileMutationQueue } from "@earendil-works/pi-coding-agent";
+import {
+  truncateHead,
+  withFileMutationQueue,
+  type ExtensionContext,
+  type Theme,
+  type ToolDefinition,
+  type ToolRenderResultOptions,
+} from "@earendil-works/pi-coding-agent";
+import type { AgentToolResult, AgentToolUpdateCallback } from "@earendil-works/pi-agent-core";
 import { Type, type Static } from "typebox";
 import {
   ACTION_FUSION_GUIDELINES,
   createActionFusionExecutor,
   createThenRunSchema,
   type ThenRunInput,
+  type ActionFusionDetails,
 } from "./action-fusion.ts";
 import { readEditableSnapshot, commitReplacement } from "./file-commit.ts";
 import { applyEdits } from "../core/index.ts";
@@ -52,6 +61,12 @@ import {
   generateMutationDetails,
   postProcessMutation,
 } from "./mutation-result.ts";
+type EditDetails = ReturnType<typeof generateMutationDetails> & {
+  actionFusion?: ActionFusionDetails;
+};
+type EditRenderContext = Parameters<
+  NonNullable<ToolDefinition<typeof editSchema>["renderCall"]>
+>[2];
 
 /** Keep independent byte budgets for failure details and input-anchor checks. */
 function boundDiagnostic(message: string, notice: string): string {
@@ -110,25 +125,25 @@ const editOpSchema = Type.Object({
   ),
 });
 
-function createEditSchema(actionFusion: boolean) {
-  return Type.Object({
-    path: Type.String({ description: "Path to the file to edit (relative or absolute)" }),
-    edits: Type.Array(editOpSchema, {
-      description:
-        "Hashline ops; ops requiring anchors use LINE#HASH from your latest read, grep, or mutation result (append/prepend omit anchors)",
-    }),
-    ...(actionFusion
-      ? {
-          then_run: createThenRunSchema(
-            "Command to run after the edit succeeds; failure does not roll back the edit.",
-          ),
-        }
-      : {}),
-  });
-}
+const editSchema = Type.Object({
+  path: Type.String({ description: "Path to the file to edit (relative or absolute)" }),
+  edits: Type.Array(editOpSchema, {
+    description:
+      "Hashline ops; ops requiring anchors use LINE#HASH from your latest read, grep, or mutation result (append/prepend omit anchors)",
+  }),
+});
 
-const editSchema = createEditSchema(false);
-type EditParams = Omit<Static<typeof editSchema>, "then_run"> & { then_run?: ThenRunInput };
+function createEditSchema(actionFusion: boolean) {
+  return actionFusion
+    ? Type.Object({
+        ...editSchema.properties,
+        then_run: createThenRunSchema(
+          "Command to run after the edit succeeds; failure does not roll back the edit.",
+        ),
+      })
+    : editSchema;
+}
+type EditParams = Static<typeof editSchema> & { then_run?: ThenRunInput };
 
 type EditOpInput = Static<typeof editOpSchema>;
 
@@ -310,7 +325,7 @@ function toCoreEdits(
       default:
         return {
           ok: false,
-          error: `unknown or missing operation \`${(o as any).op}\`; must be replace, delete, insert_after, insert_before, append, or prepend`,
+          error: `unknown or missing operation \`${String((o as { op: unknown }).op)}\`; must be replace, delete, insert_after, insert_before, append, or prepend`,
         };
     }
   }
@@ -391,7 +406,7 @@ function formatUpdatedAnchors(
 }
 
 /** Call-header line: `edit path — N ops: op`, plus `+N -N` once the result's diff counts are known. */
-function editHeader(args: any, theme: any, counts?: DiffCounts): string {
+function editHeader(args: EditParams, theme: Theme, counts?: DiffCounts): string {
   let t = theme.fg("toolTitle", theme.bold("edit "));
   t += theme.fg("accent", args.path);
   const n = args.edits?.length ?? 0;
@@ -403,7 +418,7 @@ function editHeader(args: any, theme: any, counts?: DiffCounts): string {
 export function makeEditOverride(
   cwd: string,
   fusion?: ReturnType<typeof createActionFusionExecutor>,
-): any {
+) {
   const parameters = createEditSchema(fusion !== undefined);
 
   return {
@@ -420,14 +435,19 @@ export function makeEditOverride(
       ...(fusion ? ACTION_FUSION_GUIDELINES : []),
     ],
     parameters,
-    prepareArguments: prepareEditArguments,
+    prepareArguments: (input: unknown) => prepareEditArguments(input) as EditParams,
     renderShell: "default" as const,
 
-    renderCall(args: EditParams, theme: any, context: any) {
+    renderCall(args: EditParams, theme: Theme, context: EditRenderContext) {
       return renderMutationCall(args, theme, context, editHeader);
     },
 
-    renderResult(result: any, options: any, theme: any, context: any) {
+    renderResult(
+      result: AgentToolResult<EditDetails>,
+      options: ToolRenderResultOptions,
+      theme: Theme,
+      context: EditRenderContext,
+    ) {
       return renderMutationResult(
         result,
         options,
@@ -443,8 +463,8 @@ export function makeEditOverride(
       toolCallId: string,
       params: EditParams,
       signal: AbortSignal | undefined,
-      onUpdate: any,
-      ctx: any,
+      onUpdate: AgentToolUpdateCallback<EditDetails> | undefined,
+      ctx: ExtensionContext,
     ) {
       const prepared = prepareEditArguments(params) as EditParams;
       const { then_run, ...mutationParams } = prepared;
@@ -452,7 +472,7 @@ export function makeEditOverride(
         throw new Error("then_run is unavailable because hashlineEdit.actionFusion is disabled");
       const absolutePath = canonicalPath(cwd, mutationParams.path);
       let mutationAnchors = "";
-      const mutate = () => {
+      const mutate = (): Promise<AgentToolResult<EditDetails>> => {
         const path = mutationParams.path;
         if (
           !mutationParams.edits ||
@@ -467,7 +487,7 @@ export function makeEditOverride(
           }),
         );
       };
-      const finalizeMutation = (result: any, publishAnchors: boolean) =>
+      const finalizeMutation = (result: AgentToolResult<EditDetails>, publishAnchors: boolean) =>
         appendMutationAnchors(result, mutationAnchors, publishAnchors);
       if (!fusion) return finalizeMutationResult(await mutate(), finalizeMutation);
       return fusion({

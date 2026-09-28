@@ -366,7 +366,7 @@ test("edit success: renderResult renders the diff without throwing", async () =>
     const f = join(dir, "f.txt");
     const text = "a\nb\nc\n";
     await writeFile(f, text);
-    const edit = makeEditOverride(dir);
+    const edit: any = makeEditOverride(dir);
     const r: any = await call(edit, {
       path: "f.txt",
       edits: [{ op: "replace", anchor: h(text, 2), body: ["B"] }],
@@ -389,7 +389,7 @@ test("edit header: renderResult refreshes the call header in place — no invali
     const text = "a\nb\nc\nd\ne\n";
     await writeFile(f, text);
     await call(makeReadOverride(dir), { path: "f.txt" });
-    const edit = makeEditOverride(dir);
+    const edit: any = makeEditOverride(dir);
     const r: any = await call(edit, {
       path: "f.txt",
       edits: [
@@ -437,7 +437,7 @@ test("edit header: renderResult refreshes the call header in place — no invali
 test("edit error: renderResult renders the error line without throwing", async () => {
   await withDir(async (dir) => {
     await writeFile(join(dir, "f.txt"), "a\n");
-    const edit = makeEditOverride(dir);
+    const edit: any = makeEditOverride(dir);
     let thrown: any;
     await call(edit, {
       path: "f.txt",
@@ -594,15 +594,18 @@ test("native read and write renderers preserve resource titles, previews, and fu
     const write = makeWriteOverride(dir);
     const writeCall = write.renderCall(
       { path: "preview.txt", content: "native content preview\n" },
-      stubTheme,
-      context,
+      stubTheme as any,
+      context as any,
     );
     assert.match(writeCall.render(120).join("\n"), /native content preview/);
     const error = write.renderResult(
-      { content: [{ type: "text", text: "first error\nsecond error" }] },
+      {
+        content: [{ type: "text", text: "first error\nsecond error" }],
+        details: undefined as never,
+      },
       { isPartial: false, expanded: false },
-      stubTheme,
-      { ...context, isError: true },
+      stubTheme as any,
+      { ...context, isError: true } as any,
     );
     assert.match(error.render(120).join("\n"), /first error[\s\S]*second error/);
   }));
@@ -757,7 +760,7 @@ test("failed commands preserve mutation results and stay out of all main card re
     );
     const cases = [
       {
-        tool: makeEditOverride(dir, fusion),
+        tool: makeEditOverride(dir, fusion) as any,
         args: { path: "edit.txt", edits: [{ op: "append", body: ["after"] }] },
         expected: "before\nafter\n",
       },
@@ -936,7 +939,7 @@ test("failed edits expose input status and candidate code for a verified fused r
         },
         undefined,
         undefined,
-        { cwd: dir },
+        { cwd: dir } as Parameters<ReturnType<typeof makeEditOverride>["execute"]>[4],
       ),
       (error: Error) => {
         message = error.message;
@@ -965,7 +968,7 @@ test("failed edits expose input status and candidate code for a verified fused r
       },
       undefined,
       undefined,
-      { cwd: dir },
+      { cwd: dir } as Parameters<ReturnType<typeof makeEditOverride>["execute"]>[4],
     );
     const expected = splitLines(before);
     expected[11] = "changed";

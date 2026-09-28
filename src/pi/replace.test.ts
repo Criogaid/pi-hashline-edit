@@ -174,6 +174,7 @@ test("replace aborts catastrophic regex without blocking the event loop or publi
           { path: file, find: "^(a+)+$", replace: "x", regex: true },
           controller.signal,
           undefined,
+          { cwd: dir } as Parameters<ReturnType<typeof makeReplaceTool>["execute"]>[4],
         ),
         /aborted/,
       );
@@ -383,7 +384,7 @@ test("replace renderResult: renders the diff without throwing", async () => {
   await withDir(async (dir) => {
     const f = join(dir, "f.txt");
     await writeFile(f, "a\nb\nc\n");
-    const tool = makeReplaceTool(dir);
+    const tool: any = makeReplaceTool(dir);
     const r: any = await call(tool, { path: "f.txt", find: "b", replace: "B" });
     // @ts-ignore — drive the renderer with a stub theme
     const comp: any = tool.renderResult(
@@ -401,7 +402,7 @@ test("replace renderResult: renders the error line without throwing", async () =
   await withDir(async (dir) => {
     const f = join(dir, "f.txt");
     await writeFile(f, "a\n");
-    const tool = makeReplaceTool(dir);
+    const tool: any = makeReplaceTool(dir);
     let thrown: any;
     const r: any = await call(tool, { path: "f.txt", find: "zzz", replace: "y" }).catch(
       (e: any) => {
@@ -425,7 +426,7 @@ test("replace header: renderResult refreshes the call header in place — no inv
   await withDir(async (dir) => {
     const f = join(dir, "f.txt");
     await writeFile(f, "a\nb\nc\n");
-    const tool = makeReplaceTool(dir);
+    const tool: any = makeReplaceTool(dir);
     const args = { path: "f.txt", find: "b", replace: "B1\nB2" };
     const r: any = await call(tool, args);
     let invalidated = false;
@@ -455,7 +456,7 @@ test("replace header: renderResult refreshes the call header in place — no inv
 test("replacement batches use one snapshot and return anchors for the final content", async () =>
   withDir(async (dir) => {
     const file = join(dir, "batch.txt");
-    const tool = makeReplaceTool(dir);
+    const tool: any = makeReplaceTool(dir);
     const args = {
       path: file,
       replacements: [
@@ -509,10 +510,12 @@ test("invalid batches reject every change and skip the fused command", async () 
       await assert.rejects(
         tool.execute(
           "0",
-          { path: file, ...args, then_run: { command: "check" } },
+          { path: file, ...args, then_run: { command: "check" } } as Parameters<
+            typeof tool.execute
+          >[1],
           undefined,
           undefined,
-          { cwd: dir },
+          { cwd: dir } as Parameters<typeof tool.execute>[4],
         ),
         /then_run:skipped/,
       );
@@ -628,10 +631,12 @@ test("successful batches run one command against the complete result", async () 
       },
       undefined,
       undefined,
-      { cwd: dir },
+      { cwd: dir } as Parameters<typeof tool.execute>[4],
     );
     assert.equal(commands, 1);
+    assert.ok(result.details.actionFusion);
     assert.equal(result.details.actionFusion.command, "succeeded");
+    assert.ok(result.content[0].type === "text");
     assert.match(result.content[0].text, /Updated anchors/);
   }));
 

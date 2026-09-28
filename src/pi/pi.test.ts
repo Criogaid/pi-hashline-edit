@@ -68,7 +68,7 @@ test("file tools share Pi-style URL and @ path resolution", async () => {
   try {
     const file = join(dir, "target.txt");
     const url = pathToFileURL(file).href;
-    const ctx = { cwd: dir };
+    const ctx = { cwd: dir } as Parameters<ReturnType<typeof makeReadOverride>["execute"]>[4];
     await makeWriteOverride(dir).execute(
       "write",
       { path: `@${url}`, content: "before\n" },
@@ -126,6 +126,7 @@ test("file tools share Pi-style URL and @ path resolution", async () => {
       undefined,
       ctx,
     );
+    assert.ok(fused.details.actionFusion);
     assert.equal(fused.details.actionFusion.command, "succeeded");
     assert.equal(commands, 1);
   } finally {

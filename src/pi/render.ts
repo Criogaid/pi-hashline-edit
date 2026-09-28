@@ -11,6 +11,7 @@
 
 import { renderDiff, type ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Box, Container, Text } from "@earendil-works/pi-tui";
+import type { TSchema } from "typebox";
 
 const HASHLINE_RE = /^(\d+)#[A-Za-z0-9]+│(.*)$/;
 
@@ -152,9 +153,9 @@ export function renderMutationResult(
 }
 
 /** Keep the mutation card's background independent of the fused command's lifetime. */
-export function withMutationStatus(
-  tool: ToolDefinition<any, any, any>,
-): ToolDefinition<any, any, any> {
+export function withMutationStatus<TParams extends TSchema, TDetails>(
+  tool: ToolDefinition<TParams, TDetails, any>,
+): ToolDefinition<TParams, TDetails, any> {
   return {
     ...tool,
     renderShell: "self",
@@ -173,8 +174,10 @@ export function withMutationStatus(
     },
     renderResult(result, options, theme, context) {
       const shell = (context.state.mutationShell ??= { box: new Box(1, 1) });
-      const isPartial =
-        options.isPartial && result.details?.actionFusion?.mutationCompleted !== true;
+      const details = result.details as
+        | { actionFusion?: { mutationCompleted?: boolean; freshness?: string } }
+        | undefined;
+      const isPartial = options.isPartial && details?.actionFusion?.mutationCompleted !== true;
       // Fused errors retain combined details for the model; show the mutation's summary here.
       const fusedError = context.isError && (context.args as { then_run?: unknown })?.then_run;
       shell.result = fusedError
@@ -186,7 +189,7 @@ export function withMutationStatus(
           });
       // Pi runs renderCall first; update its box in place without invalidating the tool row.
       shell.box.addChild(shell.result);
-      const file = result.details?.actionFusion ?? shell.fileState;
+      const file = details?.actionFusion ?? shell.fileState;
       if (file) {
         shell.fileState = { freshness: file.freshness };
         if (file.freshness === "changed" || file.freshness === "missing") {

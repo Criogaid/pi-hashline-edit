@@ -29,6 +29,7 @@ import {
   formatSize,
   DEFAULT_MAX_BYTES,
   type ToolDefinition,
+  type Theme,
 } from "@earendil-works/pi-coding-agent";
 import { rgPath as bundledRgPath } from "@vscode/ripgrep";
 import { Type, type Static } from "typebox";
@@ -260,6 +261,16 @@ interface RgMatch {
   matchedText?: string;
 }
 
+interface RgJsonEvent {
+  type: string;
+  data?: {
+    path?: Parameters<typeof rgText>[0];
+    lines?: Parameters<typeof rgBytes>[0];
+    line_number?: number;
+    submatches?: RgSubmatch[];
+  };
+}
+
 /** @internal — injectable process boundary for deterministic tests. */
 export interface GrepBackend {
   runRg: typeof runRg;
@@ -405,7 +416,7 @@ async function scanPatternRanges(
   ];
   const result = new Map<string, LineRange[]>();
   const run = await backend.runRg(rgPath, args, signal, async (line) => {
-    let event: any;
+    let event: RgJsonEvent;
     try {
       event = JSON.parse(line);
     } catch {
@@ -413,7 +424,12 @@ async function scanPatternRanges(
     }
     if (event.type !== "match") return true;
     const data = event.data;
-    if (!data?.path || !data?.lines || !Number.isSafeInteger(data.line_number)) {
+    if (
+      !data?.path ||
+      !data.lines ||
+      typeof data.line_number !== "number" ||
+      !Number.isSafeInteger(data.line_number)
+    ) {
       throw new Error("Invalid rg match event");
     }
     const filePath = resolve(rgText(data.path));
@@ -427,7 +443,7 @@ async function scanPatternRanges(
     let submatches: RgSubmatch[];
     if (!Array.isArray(data.submatches)) throw new Error("Invalid rg submatch protocol");
     if (data.submatches.length === 0) submatches = [{ start: bytes.length, end: bytes.length }];
-    else submatches = data.submatches.map((match: any) => ({ start: match.start, end: match.end }));
+    else submatches = data.submatches.map((match) => ({ start: match.start, end: match.end }));
     const fileColumns = columns?.get(filePath) ?? new Map<number, number>();
     const ranges = submatchesToLineRanges(
       bytes,
@@ -594,7 +610,7 @@ function countLeading(s: string): number {
   return m ? m[0].length : 0;
 }
 
-function toDisplayLines(raw: string, theme: any): string[] {
+function toDisplayLines(raw: string, theme: Theme): string[] {
   const out: string[] = [];
   const lines = raw.split("\n");
   const lineNoWidth = lines.reduce(
@@ -721,7 +737,7 @@ async function simpleSearch(options: SimpleSearchOptions) {
   const seenMatches = new Set<string>();
   const run = await backend.runRg(rgPath, args, signal, async (line) => {
     if (raw.length >= limit) return false;
-    let event: any;
+    let event: RgJsonEvent;
     try {
       event = JSON.parse(line);
     } catch {
@@ -729,7 +745,13 @@ async function simpleSearch(options: SimpleSearchOptions) {
     }
     if (event.type !== "match") return true;
     const data = event.data;
-    if (!data?.path || !data?.lines || !Number.isSafeInteger(data.line_number)) return true;
+    if (
+      !data?.path ||
+      !data.lines ||
+      typeof data.line_number !== "number" ||
+      !Number.isSafeInteger(data.line_number)
+    )
+      return true;
     const reportedPath = resolve(rgText(data.path));
     let filePath = reportedPath;
     if (scope.follow) {

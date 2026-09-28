@@ -238,7 +238,7 @@ test("Windows shared access failure preserves the target, skips then_run, and re
           },
           undefined,
           undefined,
-          { cwd: dir },
+          { cwd: dir } as Parameters<ReturnType<typeof makeWriteOverride>["execute"]>[4],
         ),
         (error: unknown) =>
           error instanceof Error &&
@@ -274,7 +274,7 @@ test("Windows shared access failure preserves the target, skips then_run, and re
       { path: target, content: "replacement\n", then_run: { command: "deterministic-command" } },
       undefined,
       undefined,
-      { cwd: dir },
+      { cwd: dir } as Parameters<ReturnType<typeof makeWriteOverride>["execute"]>[4],
     );
     assert.match(
       result.content.map((item: any) => (item.type === "text" ? item.text : "")).join("\n"),

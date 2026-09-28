@@ -292,6 +292,7 @@ test("edit omits Updated anchors when then_run changes the target", async () => 
       ctx(dir),
     );
     const output = result.content.map((block: any) => block.text ?? "").join("\n");
+    assert.ok(result.details.actionFusion);
     assert.equal(result.details.actionFusion.freshness, "changed");
     assert.match(output, /Pre-command anchors are omitted/);
     assert.doesNotMatch(output, /Updated anchors|\b1#[0-9A-Z]+│/);
@@ -318,7 +319,7 @@ test("all mutation tools forward command progress before completion in RPC mode"
     );
     const cases = [
       {
-        tool: makeEditOverride(dir, fusion),
+        tool: makeEditOverride(dir, fusion) as any,
         input: { edits: [{ op: "append", body: ["after"] }] },
       },
       { tool: makeReplaceTool(dir, fusion), input: { find: "before", replace: "after" } },
@@ -415,6 +416,7 @@ test("progress reports skipped mutations and failed commands without rolling bac
       undefined,
       ctx(dir),
     );
+    assert.ok(failed.details.actionFusion);
     assert.equal(failed.details.actionFusion.command, "failed");
     assert.deepEqual(
       events.map((event) => event.command),

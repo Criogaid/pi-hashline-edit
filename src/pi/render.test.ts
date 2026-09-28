@@ -11,7 +11,7 @@ import { generateMutationDetails } from "./mutation-result.ts";
 
 test("mutation headers refresh in place and retain isolated per-call counts", () => {
   initTheme("dark");
-  for (const tool of [makeEditOverride(process.cwd()), makeReplaceTool(process.cwd())]) {
+  for (const tool of [makeEditOverride(process.cwd()), makeReplaceTool(process.cwd())] as any[]) {
     const args = {
       path: "a.txt",
       edits: [{ op: "append", body: ["new"] }],
@@ -45,7 +45,7 @@ test("mutation headers refresh in place and retain isolated per-call counts", ()
 
 test("mutation card owns stale-anchor notices without internal status", () => {
   initTheme("dark");
-  const tool = withMutationStatus(makeEditOverride(process.cwd()));
+  const tool = withMutationStatus(makeEditOverride(process.cwd()) as any);
   const args = { path: "a.txt", edits: [{ op: "append", body: ["new"] }] };
   const context: any = { args, state: {}, isPartial: false, isError: false, invalidate() {} };
   const card = tool.renderCall!(args, theme, context);
@@ -73,7 +73,7 @@ test("mutation card owns stale-anchor notices without internal status", () => {
 
 test("mutation card omits status when then_run was not requested", () => {
   initTheme("dark");
-  const tool = withMutationStatus(makeEditOverride(process.cwd()));
+  const tool = withMutationStatus(makeEditOverride(process.cwd()) as any);
   const args = { path: "a.txt", edits: [{ op: "append", body: ["new"] }] };
   const context: any = { args, state: {}, isPartial: false, isError: false, invalidate() {} };
   const card = tool.renderCall!(args, theme, context);
@@ -119,7 +119,10 @@ test("unfused write errors retain the native full diagnostic", () => {
   const context: any = { args, state: {}, isPartial: false, isError: true, invalidate() {} };
   const card = tool.renderCall!(args, theme, context);
   tool.renderResult!(
-    { content: [{ type: "text", text: "write failed\nimportant detail" }], details: {} },
+    {
+      content: [{ type: "text", text: "write failed\nimportant detail" }],
+      details: undefined as never,
+    },
     { isPartial: false, expanded: false },
     theme,
     context,
@@ -169,11 +172,16 @@ test("diff previews retain standalone CR and literal control-picture characters"
       "PUBLISHED",
     );
     const tool = makeEditOverride(process.cwd());
-    const result = tool.renderResult({ content: [], details }, { expanded: true }, theme, {
-      args: { path: "a.txt" },
-      state: {},
-      isError: false,
-    });
+    const result = tool.renderResult(
+      { content: [], details },
+      { expanded: true, isPartial: false },
+      theme,
+      {
+        args: { path: "a.txt" },
+        state: {},
+        isError: false,
+      } as any,
+    );
     assert.match(result.render(160).join("\n"), /␍/);
   }
   assert.match(renderDiffPreview("-1 old␍\n+1 new␍", true, theme), /␍/);
@@ -181,7 +189,7 @@ test("diff previews retain standalone CR and literal control-picture characters"
 
 test("withMutationStatus renderResult initializes mutationShell defensively", () => {
   initTheme("dark");
-  const tool = withMutationStatus(makeEditOverride(process.cwd()));
+  const tool = withMutationStatus(makeEditOverride(process.cwd()) as any);
   const context: any = { args: { path: "a.txt" }, state: {}, isError: false };
   const container = tool.renderResult!(
     {

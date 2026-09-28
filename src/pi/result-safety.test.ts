@@ -74,8 +74,9 @@ test("replace withholds anchors in progress and after commands change or remove 
           },
           undefined,
           (update: any) => updates.push(update),
-          { cwd: dir },
+          { cwd: dir } as Parameters<ReturnType<typeof makeReplaceTool>["execute"]>[4],
         );
+        assert.ok(result.details.actionFusion);
         assert.equal(result.details.actionFusion.freshness, state);
         assert.equal(result.details.publication, "PUBLISHED");
         assert.doesNotMatch(text(result), /Updated anchors|\d+#[0-9A-Z]+│/);
@@ -115,10 +116,11 @@ test("progress callback failures preserve publication and do not prevent the com
         },
         undefined,
         callback === "update" ? fail : undefined,
-        { cwd: dir },
+        { cwd: dir } as Parameters<ReturnType<typeof makeWriteOverride>["execute"]>[4],
       );
       assert.equal(commands, 1);
       assert.equal(await readFile(path, "utf8"), "saved\n");
+      assert.ok(result.details.actionFusion);
       assert.equal(result.details.actionFusion.publication, "PUBLISHED");
       assert.equal(result.details.actionFusion.command, "succeeded");
       assert.match(text(result), /display unavailable/);
@@ -198,7 +200,7 @@ test("mutation anchor output and aggregate anchor diagnostics have byte budgets"
     const long = "界".repeat(100000);
     for (const name of ["edit", "replace"]) {
       await writeFile(path, "before\n");
-      const tool = name === "edit" ? makeEditOverride(dir) : makeReplaceTool(dir);
+      const tool: any = name === "edit" ? makeEditOverride(dir) : makeReplaceTool(dir);
       const args =
         name === "edit"
           ? { edits: [{ op: "append", body: [long] }] }
@@ -234,7 +236,7 @@ test("mutation anchor output and aggregate anchor diagnostics have byte budgets"
         },
         undefined,
         undefined,
-        { cwd: dir },
+        { cwd: dir } as Parameters<ReturnType<typeof makeEditOverride>["execute"]>[4],
       ),
       (error: Error) => {
         assertFailureByteBudgets(error.message);
@@ -258,7 +260,7 @@ test("every mutation entry rejects unpaired surrogates without running then_run"
     const path = join(dir, "file.txt");
     await writeFile(path, "original\n");
     for (const [tool, args] of [
-      [makeEditOverride(dir, fusion), { edits: [{ op: "append", body: ["\ud800"] }] }],
+      [makeEditOverride(dir, fusion) as any, { edits: [{ op: "append", body: ["\ud800"] }] }],
       [makeReplaceTool(dir, fusion), { find: "original", replace: "\udfff" }],
       [makeWriteOverride(dir, fusion), { content: "\ud800" }],
     ] as const) {
@@ -300,7 +302,7 @@ test("ambiguous recovery bounds candidate lists and never claims content identit
         },
         undefined,
         undefined,
-        { cwd: dir },
+        { cwd: dir } as Parameters<ReturnType<typeof makeEditOverride>["execute"]>[4],
       ),
       (error: Error) => {
         assertFailureByteBudgets(error.message);
@@ -321,7 +323,7 @@ test("all mutation tools report NUL rejection through the shared Fusion lifecycl
     const path = join(dir, "file.txt");
     await writeFile(path, "original\n");
     let commands = 0;
-    for (const makeTool of [makeEditOverride, makeReplaceTool, makeWriteOverride]) {
+    for (const makeTool of [makeEditOverride, makeReplaceTool, makeWriteOverride] as any[]) {
       const events: string[] = [];
       const fusion = createActionFusionExecutor(
         async () => {
@@ -508,7 +510,7 @@ test("mutation anchors omit unchanged positions across distant changes", async (
     for (const name of ["edit", "replace"]) {
       const path = join(dir, `${name}.txt`);
       await writeFile(path, before.join("\r\n") + "\r\n");
-      const tool = name === "edit" ? makeEditOverride(dir) : makeReplaceTool(dir);
+      const tool: any = name === "edit" ? makeEditOverride(dir) : makeReplaceTool(dir);
       const params =
         name === "edit"
           ? {
@@ -552,7 +554,7 @@ test("mutation anchors omit unchanged positions across distant changes", async (
         },
         undefined,
         undefined,
-        { cwd: dir },
+        { cwd: dir } as Parameters<ReturnType<typeof makeEditOverride>["execute"]>[4],
       );
       const final = (await readFile(path, "utf8")).split("\r\n");
       assert.equal(final[49], "stable anchor reused");
@@ -571,7 +573,7 @@ test("mutation anchors retain a deletion successor but omit stable rows and dele
         const path = join(dir, `${name}.txt`);
         const lines = atEnd ? ["a", "c", "remove"] : ["a", "remove", "c", "d"];
         await writeFile(path, lines.join("\n") + "\n");
-        const tool = name === "edit" ? makeEditOverride(dir) : makeReplaceTool(dir);
+        const tool: any = name === "edit" ? makeEditOverride(dir) : makeReplaceTool(dir);
         const line = atEnd ? 3 : 2;
         const params =
           name === "edit"
@@ -606,7 +608,7 @@ test("mutation anchors retain deletion successor even when deleted line content 
       },
       undefined,
       undefined,
-      { cwd: dir },
+      { cwd: dir } as Parameters<ReturnType<typeof makeEditOverride>["execute"]>[4],
     );
     const rows = text(result)
       .split("\n")
@@ -625,7 +627,7 @@ test("compact mutation anchors exceed forty rows while respecting the byte budge
         const path = join(dir, `${name}.txt`);
         await writeFile(path, "before\n");
         const inserted = Array.from({ length: count }, (_, i) => `changed ${i}`);
-        const tool = name === "edit" ? makeEditOverride(dir) : makeReplaceTool(dir);
+        const tool: any = name === "edit" ? makeEditOverride(dir) : makeReplaceTool(dir);
         const params =
           name === "edit"
             ? { edits: [{ op: "append", body: inserted }] }
@@ -674,6 +676,7 @@ test("oversized deletion successors do not suppress later editable anchors", asy
       },
       undefined,
       undefined,
+      { cwd: dir } as Parameters<ReturnType<typeof makeEditOverride>["execute"]>[4],
     );
     const output = text(result);
     assert.doesNotMatch(output, /^1#[0-9A-Z]+/m);
@@ -686,6 +689,7 @@ test("oversized deletion successors do not suppress later editable anchors", asy
       { path, edits: [{ op: "replace", anchor, body: ["verified"] }] },
       undefined,
       undefined,
+      { cwd: dir } as Parameters<ReturnType<typeof makeEditOverride>["execute"]>[4],
     );
     assert.equal(await readFile(path, "utf8"), `${long}\nverified\n`);
   } finally {

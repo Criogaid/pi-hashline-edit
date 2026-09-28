@@ -205,6 +205,7 @@ test("write reports missing freshness when then_run removes the target", async (
       context(dir),
     );
     const text = result.content.map((block: any) => block.text).join("\n");
+    assert.ok(result.details.actionFusion);
     assert.equal(result.details.actionFusion.freshness, "missing");
     assert.match(text, /Re-read/);
     assert.doesNotMatch(text, /Fresh anchors:/);
@@ -225,6 +226,7 @@ test("write preserves command failure and changed freshness", async () =>
       context(dir),
     );
     const text = result.content.map((block: any) => block.text).join("\n");
+    assert.ok(result.details.actionFusion);
     assert.equal(result.details.actionFusion.freshness, "changed");
     assert.equal(result.details.actionFusion.command, "failed");
     assert.match(text, /Re-read/);

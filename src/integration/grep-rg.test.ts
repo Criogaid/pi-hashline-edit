@@ -18,6 +18,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { rgPath } from "@vscode/ripgrep";
+import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { makeGrepOverrideWithBackend } from "../pi/grep-tool.ts";
 import { makeEditOverride } from "../pi/edit-tool.ts";
 import { makeReadOverride } from "../pi/read-tool.ts";
@@ -781,9 +782,13 @@ test("all text tools share logical CRLF matching, anchors, and mutation separato
     const write = makeWriteOverride(directory);
     const read = makeReadOverride(directory);
     const grep = makeGrepOverrideWithBackend(directory, {});
-    await write.execute("write", { path, content: before }, undefined, undefined);
+    await write.execute("write", { path, content: before }, undefined, undefined, {
+      cwd: directory,
+    } as ExtensionContext);
     assert.equal(await readFile(path, "utf8"), before);
-    const observed = await read.execute("read", { path }, undefined, undefined);
+    const observed = await read.execute("read", { path }, undefined, undefined, {
+      cwd: directory,
+    } as ExtensionContext);
     assert.ok(observed.content[0].type === "text");
     const rows = observed.content[0].text
       .split("\n")
@@ -829,7 +834,9 @@ test("all text tools share logical CRLF matching, anchors, and mutation separato
 
     const expected = "\uFEFFhead\r\nA\r\nB\r\nC\nstand\rCR\r\r\nlast";
     for (const mode of ["edit", "literal", "regex"]) {
-      await write.execute("reset", { path, content: before }, undefined, undefined);
+      await write.execute("reset", { path, content: before }, undefined, undefined, {
+        cwd: directory,
+      } as ExtensionContext);
       if (mode === "edit") {
         await makeEditOverride(directory).execute(
           "edit",
@@ -846,6 +853,7 @@ test("all text tools share logical CRLF matching, anchors, and mutation separato
           },
           undefined,
           undefined,
+          { cwd: directory } as ExtensionContext,
         );
       } else {
         await makeReplaceTool(directory).execute(
@@ -858,12 +866,15 @@ test("all text tools share logical CRLF matching, anchors, and mutation separato
           },
           undefined,
           undefined,
+          { cwd: directory } as ExtensionContext,
         );
       }
       assert.equal(await readFile(path, "utf8"), expected, mode);
     }
     // Whole-file write remains the explicit representation boundary, including EOL conversion.
-    await write.execute("convert", { path, content: "alpha\nbeta\n" }, undefined, undefined);
+    await write.execute("convert", { path, content: "alpha\nbeta\n" }, undefined, undefined, {
+      cwd: directory,
+    } as ExtensionContext);
     assert.equal(await readFile(path, "utf8"), "alpha\nbeta\n");
   } finally {
     await rm(directory, { recursive: true, force: true });
@@ -880,8 +891,11 @@ test("visible source escapes remain readable and searchable while real CRLF stay
       { path, content: code },
       undefined,
       undefined,
+      { cwd: directory } as ExtensionContext,
     );
-    const read = await makeReadOverride(directory).execute("read", { path }, undefined, undefined);
+    const read = await makeReadOverride(directory).execute("read", { path }, undefined, undefined, {
+      cwd: directory,
+    } as ExtensionContext);
     assert.ok(read.content[0].type === "text");
     assert.ok(read.content[0].text.includes(String.raw`const eol = "\r\n";`));
     const grep = makeGrepOverrideWithBackend(directory, {});
@@ -904,6 +918,7 @@ test("visible source escapes remain readable and searchable while real CRLF stay
       { path, find: String.raw`\r\n`, replace: String.raw`\n` },
       undefined,
       undefined,
+      { cwd: directory } as ExtensionContext,
     );
     assert.equal(await readFile(path, "utf8"), 'const eol = "\\n";\r\n');
     await replace.execute(
@@ -911,6 +926,7 @@ test("visible source escapes remain readable and searchable while real CRLF stay
       { path, find: String.raw`\\n`, replace: String.raw`\r\n`, regex: true },
       undefined,
       undefined,
+      { cwd: directory } as ExtensionContext,
     );
     assert.equal(await readFile(path, "utf8"), code);
   } finally {

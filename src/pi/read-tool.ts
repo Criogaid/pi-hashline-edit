@@ -14,7 +14,12 @@ import {
   detectSupportedImageMimeTypeFromFile,
   getLanguageFromPath,
   highlightCode,
+  type ReadToolInput,
+  type ReadToolDetails,
+  type ExtensionContext,
+  type Theme,
 } from "@earendil-works/pi-coding-agent";
+import type { AgentToolUpdateCallback } from "@earendil-works/pi-agent-core";
 import { Text } from "@earendil-works/pi-tui";
 import { scanTextLines } from "./text-stream.ts";
 import { createAnchorFormatter, displayCarriageReturns } from "./anchor-format.ts";
@@ -32,7 +37,7 @@ const MAX_BYTES = 256 * 1024;
  * line count diverges). Trailing notices (e.g. truncation) are shown in
  * `warning`.
  */
-function renderReadBody(raw: string, path: string, theme: any): string {
+function renderReadBody(raw: string, path: string, theme: Theme): string {
   const lines = raw.split("\n");
   if (lines.length === 0) return "";
   const out: string[] = [];
@@ -84,7 +89,7 @@ function renderReadBody(raw: string, path: string, theme: any): string {
 }
 
 /** Build the read override (a ToolDefinition fragment for registerTool). */
-export function makeReadOverride(cwd: string) {
+export function makeReadOverride(cwd: string): ReturnType<typeof createReadToolDefinition> {
   const builtin = createReadToolDefinition(cwd);
   const parameters = {
     ...builtin.parameters,
@@ -113,7 +118,7 @@ export function makeReadOverride(cwd: string) {
 
     renderCall: builtin.renderCall,
 
-    renderResult(result: any, { isPartial, expanded }: any, theme: any, context: any) {
+    renderResult(result, { isPartial, expanded }, theme, context) {
       if (isPartial) return new Text(theme.fg("warning", "Reading…"), 0, 0);
       const content = result.content?.[0];
       if (context?.isError) return renderToolError(result, theme);
@@ -126,10 +131,10 @@ export function makeReadOverride(cwd: string) {
 
     async execute(
       toolCallId: string,
-      params: any,
+      params: ReadToolInput,
       signal: AbortSignal | undefined,
-      onUpdate: any,
-      ctx?: any,
+      onUpdate: AgentToolUpdateCallback<ReadToolDetails | undefined> | undefined,
+      ctx: ExtensionContext,
     ) {
       // User cancelled → delegate to the built-in (builtin handles abort itself)
       if (signal?.aborted) return builtin.execute(toolCallId, params, signal, onUpdate, ctx);

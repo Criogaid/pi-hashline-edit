@@ -23,7 +23,14 @@
  * @module pi-hashline-edit/pi
  */
 
-import { withFileMutationQueue } from "@earendil-works/pi-coding-agent";
+import {
+  withFileMutationQueue,
+  type ExtensionContext,
+  type Theme,
+  type ToolDefinition,
+  type ToolRenderResultOptions,
+} from "@earendil-works/pi-coding-agent";
+import type { AgentToolResult, AgentToolUpdateCallback } from "@earendil-works/pi-agent-core";
 import { Type, type Static } from "typebox";
 import { Worker } from "node:worker_threads";
 import { splitLines } from "../core/lines.ts";
@@ -33,6 +40,7 @@ import {
   createActionFusionExecutor,
   createThenRunSchema,
   type ThenRunInput,
+  type ActionFusionDetails,
 } from "./action-fusion.ts";
 import { readEditableSnapshot, commitReplacement } from "./file-commit.ts";
 import { createAnchorFormatter, type AnchorFormatter } from "./anchor-format.ts";
@@ -50,6 +58,12 @@ import {
   generateMutationDetails,
   postProcessMutation,
 } from "./mutation-result.ts";
+type ReplaceDetails = ReturnType<typeof generateMutationDetails> & {
+  actionFusion?: ActionFusionDetails;
+};
+type ReplaceRenderContext = Parameters<
+  NonNullable<ToolDefinition<typeof replaceSchema>["renderCall"]>
+>[2];
 
 const replacementSchema = Type.Object({
   find: Type.String({
@@ -72,29 +86,29 @@ const replacementSchema = Type.Object({
 });
 type Replacement = Static<typeof replacementSchema>;
 
-function createReplaceSchema(actionFusion: boolean) {
-  return Type.Object({
-    path: Type.String({ description: "Path to the file to edit (relative or absolute)" }),
-    ...Type.Partial(replacementSchema).properties,
-    replacements: Type.Optional(
-      Type.Array(replacementSchema, {
-        minItems: 1,
-        description:
-          "Rules matched against one original snapshot. Mutually exclusive with top-level find/replace/regex/flags. Overlaps reject the entire batch.",
-      }),
-    ),
-    ...(actionFusion
-      ? {
-          then_run: createThenRunSchema(
-            "Command to run once after all replacements succeed; failure does not roll back the replacement.",
-          ),
-        }
-      : {}),
-  });
-}
+const replaceSchema = Type.Object({
+  path: Type.String({ description: "Path to the file to edit (relative or absolute)" }),
+  ...Type.Partial(replacementSchema).properties,
+  replacements: Type.Optional(
+    Type.Array(replacementSchema, {
+      minItems: 1,
+      description:
+        "Rules matched against one original snapshot. Mutually exclusive with top-level find/replace/regex/flags. Overlaps reject the entire batch.",
+    }),
+  ),
+});
 
-const replaceSchema = createReplaceSchema(false);
-type ReplaceParams = Omit<Static<typeof replaceSchema>, "then_run"> & { then_run?: ThenRunInput };
+function createReplaceSchema(actionFusion: boolean) {
+  return actionFusion
+    ? Type.Object({
+        ...replaceSchema.properties,
+        then_run: createThenRunSchema(
+          "Command to run once after all replacements succeed; failure does not roll back the replacement.",
+        ),
+      })
+    : replaceSchema;
+}
+type ReplaceParams = Static<typeof replaceSchema> & { then_run?: ThenRunInput };
 
 function replacementRules(params: ReplaceParams): Replacement[] {
   if (
@@ -228,7 +242,7 @@ function show(s: string, n = 30): string {
 }
 
 /** Call-header line: `replace path — mode "find" → "replace"`, plus `+N -N` once the result's diff counts are known. */
-function replaceHeader(args: ReplaceParams, theme: any, counts?: DiffCounts): string {
+function replaceHeader(args: ReplaceParams, theme: Theme, counts?: DiffCounts): string {
   let t = theme.fg("toolTitle", theme.bold("replace "));
   t += theme.fg("accent", args.path);
   if (args.replacements) {
@@ -266,7 +280,7 @@ export function prepareReplaceArguments(input: unknown): unknown {
 export function makeReplaceTool(
   cwd: string,
   fusion?: ReturnType<typeof createActionFusionExecutor>,
-): any {
+) {
   const parameters = createReplaceSchema(fusion !== undefined);
   return {
     name: "replace" as const,
@@ -279,14 +293,19 @@ export function makeReplaceTool(
       ...(fusion ? ACTION_FUSION_GUIDELINES : []),
     ],
     parameters,
-    prepareArguments: prepareReplaceArguments,
+    prepareArguments: (input: unknown) => prepareReplaceArguments(input) as ReplaceParams,
     renderShell: "default" as const,
 
-    renderCall(args: ReplaceParams & { then_run?: ThenRunInput }, theme: any, context: any) {
+    renderCall(args: ReplaceParams, theme: Theme, context: ReplaceRenderContext) {
       return renderMutationCall(args, theme, context, replaceHeader);
     },
 
-    renderResult(result: any, options: any, theme: any, context: any) {
+    renderResult(
+      result: AgentToolResult<ReplaceDetails>,
+      options: ToolRenderResultOptions,
+      theme: Theme,
+      context: ReplaceRenderContext,
+    ) {
       return renderMutationResult(
         result,
         options,
@@ -302,8 +321,8 @@ export function makeReplaceTool(
       toolCallId: string,
       params: ReplaceParams & { then_run?: ThenRunInput },
       signal: AbortSignal | undefined,
-      onUpdate: any,
-      ctx: any,
+      onUpdate: AgentToolUpdateCallback<ReplaceDetails> | undefined,
+      ctx: ExtensionContext,
     ) {
       const prepared = prepareReplaceArguments(params) as ReplaceParams & {
         then_run?: ThenRunInput;
@@ -314,13 +333,13 @@ export function makeReplaceTool(
       const path = mutationParams.path;
       const absolutePath = canonicalPath(cwd, path);
       let mutationAnchors = "";
-      const mutate = () =>
+      const mutate = (): Promise<AgentToolResult<ReplaceDetails>> =>
         withFileMutationQueue(absolutePath, () =>
           runReplace(absolutePath, path, mutationParams, signal, (value) => {
             mutationAnchors = value;
           }),
         );
-      const finalizeMutation = (result: any, publishAnchors: boolean) =>
+      const finalizeMutation = (result: AgentToolResult<ReplaceDetails>, publishAnchors: boolean) =>
         appendMutationAnchors(result, mutationAnchors, publishAnchors);
       if (!fusion) return finalizeMutationResult(await mutate(), finalizeMutation);
       return fusion({
