@@ -32,7 +32,6 @@ for (const [name, before, after] of [
       patch: generateUnifiedPatch("file.txt", before, after),
       publication,
       ...versions,
-      revision: versions.publishedRevision,
     });
   });
 }

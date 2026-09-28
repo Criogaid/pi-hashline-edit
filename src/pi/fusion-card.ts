@@ -9,7 +9,7 @@ const RESULT_TYPE = "hashline-then-run-result";
 type CommandCardData = Pick<
   ActionFusionProgress,
   "toolCallId" | "commandText" | "command" | "output" | "reason"
-> & { version: 1 };
+>;
 
 function commandCardData({
   toolCallId,
@@ -18,7 +18,7 @@ function commandCardData({
   output,
   reason,
 }: ActionFusionProgress): CommandCardData {
-  return { version: 1, toolCallId, commandText, command, output, ...(reason ? { reason } : {}) };
+  return { toolCallId, commandText, command, output, ...(reason ? { reason } : {}) };
 }
 
 /** Render one durable transcript card per fused command without adding model context. */
@@ -38,38 +38,14 @@ export function registerFusionCards(pi: ExtensionAPI) {
         (entry.customType !== CARD_TYPE && entry.customType !== RESULT_TYPE)
       )
         continue;
-      const data = entry.data as (ActionFusionProgress & { version?: number }) | undefined;
+      const data = entry.data as ActionFusionProgress | undefined;
       if (
         data &&
         typeof data.toolCallId === "string" &&
         typeof data.commandText === "string" &&
         typeof data.output === "string"
       ) {
-        const restored = commandCardData(data);
-        // Older snapshots stored the compound error in output. Recover only a known command wrapper.
-        if (
-          data.version !== 1 &&
-          ["skipped", "cancelled", "failed", "timeout"].includes(data.command)
-        ) {
-          const marker = data.command === "cancelled" ? "[then_run:skipped]" : "[then_run:failed]";
-          const fileState =
-            data.publication === "PUBLISHED"
-              ? "File changes are saved."
-              : data.publication === "NOT_PUBLISHED"
-                ? "No file changes were published."
-                : "File state is uncertain.";
-          const prefix = `mutation completed; then_run did not complete successfully ${marker}\n${fileState} Command ${data.command}.\n`;
-          if (data.command !== "skipped" && data.output.startsWith(prefix))
-            restored.output = data.output.slice(prefix.length);
-          else {
-            restored.output = "";
-            restored.reason =
-              data.command === "skipped"
-                ? "Command was not run."
-                : "Legacy failure details are available in the original tool result.";
-          }
-        }
-        states.set(data.toolCallId, restored);
+        states.set(data.toolCallId, commandCardData(data));
       }
     }
   };

@@ -320,7 +320,7 @@ test("commit result binds base, published, and observed revisions", async () =>
     assert.equal(result.baseRevision, baseRevision);
     assert.equal(result.publishedRevision, byteRevision("after\n"));
     assert.equal(result.observedRevision, result.publishedRevision);
-    assert.equal(result.revision, result.publishedRevision);
+    assert.equal("revision" in result, false);
   }));
 
 test("commit rejects lossy UTF-8 output before modifying or creating files", async () =>
@@ -359,7 +359,6 @@ test("identical commits preserve the file and still enforce mode, revision, and 
         baseRevision: revision,
         publishedRevision: revision,
         observedRevision: revision,
-        revision,
         publication: "NOT_PUBLISHED",
       });
     }

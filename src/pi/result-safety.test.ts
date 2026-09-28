@@ -424,8 +424,9 @@ test("all mutation tools succeed without rewriting on no-op, with and without Fu
         assert.match(text(result), /no net change/);
         assert.equal(result.details.publication, "NOT_PUBLISHED");
         const revision = byteRevision(Buffer.from("same\n"));
-        for (const key of ["baseRevision", "publishedRevision", "observedRevision", "revision"])
+        for (const key of ["baseRevision", "publishedRevision", "observedRevision"])
           assert.equal(result.details[key], revision);
+        assert.equal("revision" in result.details, false);
         assert.doesNotMatch(text(result), /Updated anchors|\d+#[0-9A-Z]+│/);
         assert.equal(commands, mode === "command" ? 1 : 0);
         if (mode !== "standalone") {

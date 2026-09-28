@@ -34,8 +34,6 @@ export interface MutationVersions {
 
 export interface CommitResult extends MutationVersions {
   created: boolean;
-  /** Backward-compatible alias for publishedRevision. */
-  revision: string;
   publication: "NOT_PUBLISHED" | "PUBLISHED";
 }
 
@@ -315,7 +313,6 @@ export async function commitFile(
         baseRevision: target.beforeRevision,
         publishedRevision,
         observedRevision: currentRevision,
-        revision: publishedRevision,
         publication: "NOT_PUBLISHED",
       };
     }
@@ -364,7 +361,6 @@ export async function commitFile(
         baseRevision: target.beforeRevision,
         publishedRevision,
         observedRevision,
-        revision: publishedRevision,
         publication: "PUBLISHED",
       };
     } catch (error) {

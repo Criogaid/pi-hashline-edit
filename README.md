@@ -297,13 +297,13 @@ The shared commit layer validates the target and skips publication when the requ
 | --- | --- |
 | `publication` | `NOT_PUBLISHED`, `PUBLISHED`, or `UNKNOWN`. Fusion also reports it in `actionFusion.publication`. |
 | `baseRevision` | SHA-256 of bytes read before mutation, when available. |
-| `publishedRevision` | SHA-256 of intended published bytes; `revision` is its compatibility alias. |
+| `publishedRevision` | SHA-256 of intended published bytes. |
 | `observedRevision` | SHA-256 observed by the commit layer after publication, or at the no-op check. |
 | `actionFusion.command` | `not_requested`, `skipped`, `succeeded`, `failed`, `timeout`, or `cancelled`. |
 | `actionFusion.freshness` | `unchanged`, `changed`, `missing`, or `unknown`, relative to the published revision. |
 | `actionFusion.mutationCompleted` | Progress flag set after mutation execution and result generation succeed; publication alone is not mutation success. |
 
-Streaming mutation summaries omit anchors. Result-generation failures preserve publication status and any completed command outcome; progress callback failures are reported separately from mutation/command outcomes. Command progress `output` contains only command output or execution errors, with an optional `reason` for commands that never started. Command cards persist only their own state and use native Bash output rendering. Final cards survive reloads without adding model-context messages; unfinished saved commands show an interrupted/unknown outcome. Older mixed failure snapshots expose only recognized command diagnostics, leaving other details in the original tool result.
+Streaming mutation summaries omit anchors. Result-generation failures preserve publication status and any completed command outcome; progress callback failures are reported separately from mutation/command outcomes. Command progress `output` contains only command output or execution errors, with an optional `reason` for commands that never started. Command cards persist only their own state and use native Bash output rendering. Final cards survive reloads without adding model-context messages; unfinished saved commands show an interrupted/unknown outcome.
 
 </details>
 

@@ -26,7 +26,6 @@ export function generateMutationDetails(
     patch: generateUnifiedPatch(path, before, after),
     publication,
     ...versions,
-    revision: versions.publishedRevision,
   };
 }
 

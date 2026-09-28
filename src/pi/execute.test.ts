@@ -882,7 +882,7 @@ test("edit preserves a UTF-8 BOM and reports bound mutation revisions", async ()
     assert.equal(result.details.baseRevision, byteRevision(original));
     assert.equal(result.details.publishedRevision, byteRevision(expected));
     assert.equal(result.details.observedRevision, result.details.publishedRevision);
-    assert.equal(result.details.revision, result.details.publishedRevision);
+    assert.equal("revision" in result.details, false);
   }));
 
 test("edit and replace reject NUL output without rewriting source bytes", async () =>

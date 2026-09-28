@@ -37,7 +37,7 @@ test("write preserves native default create/overwrite behavior", async () =>
     );
     assert.doesNotMatch(created.content[0].text, /Revision:|[0-9a-f]{64}/);
     assert.equal(created.details.publishedRevision, await fileRevision(target));
-    assert.equal(created.details.revision, created.details.publishedRevision);
+    assert.equal("revision" in created.details, false);
     assert.equal(await readFile(target, "utf8"), "one\n");
     await write.execute(
       "overwrite",

@@ -139,29 +139,3 @@ test("skips and cancellations stay neutral and restore their own reason", () => 
     }
   }
 });
-
-test("legacy snapshots separate known command failures and suppress mutation diagnostics", () => {
-  for (const command of ["skipped", "failed", "cancelled"] as const) {
-    const output =
-      command === "skipped"
-        ? "mutation failed; the command was not run [then_run:skipped]\nNo file changes were published. Command skipped.\nAnchor mismatch: 1 shifted.\nInput-anchor checks"
-        : `mutation completed; then_run did not complete successfully [then_run:${command === "cancelled" ? "skipped" : "failed"}]\nFile changes are saved. Command ${command}.\nactual command diagnostic`;
-    const entries = [
-      { type: "custom", customType: "hashline-then-run", data: waiting },
-      {
-        type: "custom",
-        customType: "hashline-then-run-result",
-        data: { ...waiting, command, publication: "PUBLISHED", output },
-      },
-    ];
-    const h = harness(entries);
-    h.restore();
-    const text = h.card(entries[0], true).render(160).join("\n");
-    assert.doesNotMatch(
-      text,
-      /Anchor mismatch|Input-anchor|publication=|freshness=|File changes are saved|mutation completed/,
-    );
-    assert.match(text, command === "skipped" ? /Command was not run/ : /actual command diagnostic/);
-    assert.equal(entries[1].data.output, output, "restoring must not rewrite persisted evidence");
-  }
-});
