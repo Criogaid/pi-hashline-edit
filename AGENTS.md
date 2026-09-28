@@ -37,7 +37,7 @@ pi 扩展 `@criogaid/pi-hashline-edit`，注册入口为 `src/index.ts`。
 
 ## 提交与发布
 
-- Commit scope 使用 `pi-hashline-edit`。
+- Derive the commit scope from the affected feature or owning module (for example, `grep`, `edit`, `replace`, `file-commit`, `fusion`). For cross-cutting changes, use the narrowest shared capability; never use the package name as scope.
 - AI 辅助提交附加 `Co-Authored-By: <PI_MODEL 的值> <noreply@pi.dev>`。提交前读取 `PI_MODEL`；环境未提供时说明缺失。
 - push、版本、tag 和发布动作按用户授权及实际 workflow 执行。
 - `.github/workflows/publish.yml` 由 `v*` 标签推送触发；依次运行类型检查与完整测试、校验标签与包版本一致，再通过 npm provenance 发布。
