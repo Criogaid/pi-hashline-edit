@@ -8,7 +8,6 @@ import { splitLines, createLfTextView } from "../src/core/lines.ts";
 import { computeLineHash, hashFileLines } from "../src/core/hash.ts";
 import { applyEdits } from "../src/core/apply.ts";
 import type { Edit } from "../src/core/types.ts";
-import { submatchesToLineRanges } from "../src/pi/rg-line-ranges.ts";
 
 function bench(name: string, iterations: number, fn: () => void): void {
 	// Warm up
@@ -70,15 +69,6 @@ for (let i = 100; i < 200; i += 5) {
 console.log("\n[4. Edit Application (5,000 lines, 20 edits)]");
 bench("applyEdits batch verification and application", 50, () => {
 	applyEdits(file5k, edits, 4);
-});
-
-// 5. Prefix hits must not scan the remainder of a long physical line.
-const longLine = Buffer.alloc(4 * 1024 * 1024, 120);
-longLine.write("a ".repeat(100));
-const prefixHits = Array.from({ length: 100 }, (_, i) => ({ start: i * 2, end: i * 2 + 1 }));
-console.log("\n[5. Long-line Range Mapping (4 MiB, 100 prefix hits)]");
-bench("submatchesToLineRanges", 100, () => {
-	submatchesToLineRanges(longLine, 1, prefixHits, 1);
 });
 
 console.log("\nAll benchmarks completed successfully.");

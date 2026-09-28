@@ -9,7 +9,7 @@ import { computeLineHash } from "../core/hash.ts";
 
 const call = (tool: any, params: any) => tool.execute("large-text", params, undefined, undefined);
 
-test("read and both grep engines retain anchors on LF and CRLF files over 100 MiB", async () => {
+test("read and line-based grep retain anchors on LF and CRLF files over 100 MiB", async () => {
   const directory = await mkdtemp(join(tmpdir(), "hashline-large-text-"));
   try {
     const read = makeReadOverride(directory);
@@ -31,7 +31,7 @@ test("read and both grep engines retain anchors on LF and CRLF files over 100 Mi
       assert.ok(first.content[0].text.includes(`1#${computeLineHash(1, "needle")}│needle`));
       const last: any = await call(read, { path, offset: 103426, limit: 1 });
       assert.ok(last.content[0].text.includes(`103426#${computeLineHash(103426, "tail")}│tail`));
-      for (const modes of [{ literal: true }, { pcre2: true }]) {
+      for (const modes of [{}, { literal: true }]) {
         const result: any = await call(grep, { path, pattern: "needle", ...modes });
         assert.ok(result.content[0].text.includes(`1#${computeLineHash(1, "needle")}│needle`));
         assert.doesNotMatch(result.content[0].text, /Search incomplete/);
@@ -50,8 +50,8 @@ test("CRLF snapshots normalize terminators split across read chunks and preserve
     const grep = makeGrepOverrideWithBackend(directory, {});
     const result: any = await call(grep, {
       path,
-      pattern: "needle\nstandalone\r",
-      multiline: true,
+      pattern: ["needle", "standalone\r"],
+      literal: true,
     });
     assert.ok(result.content[0].text.includes(`2#${computeLineHash(2, "needle")}│needle`));
     assert.ok(result.content[0].text.includes(`3#${computeLineHash(3, "standalone\r")}│`));

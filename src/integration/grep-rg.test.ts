@@ -10,7 +10,6 @@ import {
   mkdtemp,
   readFile,
   readlink,
-  realpath,
   rm,
   symlink,
   writeFile,
@@ -24,15 +23,8 @@ import { makeEditOverride } from "../pi/edit-tool.ts";
 import { makeReadOverride } from "../pi/read-tool.ts";
 import { makeWriteOverride } from "../pi/write-tool.ts";
 import { makeReplaceTool } from "../pi/replace-tool.ts";
-import {
-  COMMON_RG_ARGS,
-  createLinePredicate,
-  resolveIgnoreCase,
-  runRg,
-} from "../pi/rg-line-filter.ts";
+import { COMMON_RG_ARGS, resolveIgnoreCase, runRg } from "../pi/rg-line-filter.ts";
 import { computeLineHash } from "../core/hash.ts";
-
-const REGEX_MODE = { engine: "default", multiline: false, literal: false } as const;
 
 test("real rg emits anchored matches from a temporary directory", async () => {
   const directory = await mkdtemp(join(tmpdir(), "hl-grep-integration-"));
@@ -51,56 +43,67 @@ test("real rg emits anchored matches from a temporary directory", async () => {
   }
 });
 
-test("real rg and line filters share case and Unicode semantics", async () => {
+test("real rg uses smart-case across OR patterns and Unicode matches", async () => {
   const directory = await mkdtemp(join(tmpdir(), "hl-grep-case-"));
   try {
     await writeFile(join(directory, "fixture.ts"), "FOO abc\nfoo BAR\nfoo bar\nK zip\nk zip\n");
     const tool = makeGrepOverrideWithBackend(directory, {});
-    for (const ignoreCase of [undefined, true, false]) {
-      const expectedCount = ignoreCase === false ? 2 : 3;
-      for (const query of [
-        { pattern: "foo\\S*" },
-        { pattern: ["foo\\S*", "\\S+"], matchMode: "all" as const },
-      ]) {
-        const result: any = await tool.execute("0", { ...query, ignoreCase }, undefined, undefined);
-        assert.match(result.content[0].text, new RegExp(`fixture\\.ts · ${expectedCount} matches`));
-        assert.equal(result.content[0].text.includes("FOO abc"), ignoreCase !== false);
-      }
-      const excluded: any = await tool.execute(
-        "0",
-        {
-          pattern: "foo\\S*",
-          excludePattern: "bar",
-          ignoreCase,
-        },
-        undefined,
-        undefined,
-      );
-      assert.match(excluded.content[0].text, /fixture\.ts · 1 match/);
-      assert.ok(excluded.content[0].text.includes(ignoreCase === false ? "foo BAR" : "FOO abc"));
-    }
-    const unicodeAll: any = await tool.execute(
-      "0",
-      {
-        pattern: ["k", "zip"],
-        matchMode: "all",
-      },
-      undefined,
-      undefined,
-    );
-    assert.match(unicodeAll.content[0].text, /fixture\.ts · 2 matches/);
-    assert.ok(unicodeAll.content[0].text.includes("K zip"));
+    const lower = await tool.execute("0", { pattern: ["foo", "bar"] }, undefined, undefined);
+    assert.match(lower.content[0].text, /fixture\.ts · 3 matches/);
+    assert.match(lower.content[0].text, /│FOO abc/);
+    const mixed = await tool.execute("0", { pattern: ["foo", "BAR"] }, undefined, undefined);
+    assert.match(mixed.content[0].text, /fixture\.ts · 2 matches/);
+    assert.doesNotMatch(mixed.content[0].text, /│FOO abc/);
+    const unicode = await tool.execute("0", { pattern: "k" }, undefined, undefined);
+    assert.match(unicode.content[0].text, /fixture\.ts · 2 matches/);
+    assert.match(unicode.content[0].text, /│K zip/);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
 
-    const unicodeExcluded: any = await tool.execute(
+test("explicit ignoreCase overrides smart-case for regex and literal queries", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "hl-grep-case-override-"));
+  try {
+    const file = join(directory, "fixture.txt");
+    await writeFile(file, "FOO\nfoo\n");
+    const tool = makeGrepOverrideWithBackend(directory, {});
+    const sensitive = await tool.execute(
       "0",
-      {
-        pattern: "zip",
-        excludePattern: "k",
-      },
+      { pattern: "foo", path: file, ignoreCase: false },
       undefined,
       undefined,
     );
-    assert.equal(unicodeExcluded.content[0].text, "No matches found");
+    assert.match(sensitive.content[0].text, /fixture\.txt · 1 match/);
+    assert.match(sensitive.content[0].text, /2#[0-9A-Z]+│foo/);
+    const insensitive = await tool.execute(
+      "0",
+      { pattern: "FOO", path: file, ignoreCase: true, literal: true },
+      undefined,
+      undefined,
+    );
+    assert.match(insensitive.content[0].text, /fixture\.txt · 2 matches/);
+    const regex = await tool.execute(
+      "0",
+      { pattern: "^FOO$", path: file, ignoreCase: true, literal: false },
+      undefined,
+      undefined,
+    );
+    assert.match(regex.content[0].text, /fixture\.txt · 2 matches/);
+    const inlineSensitive = await tool.execute(
+      "0",
+      { pattern: "(?-i:^FOO$)", path: file, ignoreCase: true, literal: false },
+      undefined,
+      undefined,
+    );
+    assert.match(inlineSensitive.content[0].text, /fixture\.txt · 1 match/);
+    const inlineInsensitive = await tool.execute(
+      "0",
+      { pattern: "(?i:^FOO$)", path: file, ignoreCase: false, literal: false },
+      undefined,
+      undefined,
+    );
+    assert.match(inlineInsensitive.content[0].text, /fixture\.txt · 2 matches/);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
@@ -123,46 +126,44 @@ test("real rg resolves regex-aware smart-case decisions", async () => {
   ]);
   for (const [pattern, expected] of cases) {
     assert.equal(
-      await resolveIgnoreCase(rgPath!, [pattern], REGEX_MODE, undefined),
+      await resolveIgnoreCase(rgPath!, [pattern], { literal: false, multiline: false }, undefined),
       expected,
       pattern,
     );
   }
   assert.equal(
-    await resolveIgnoreCase(rgPath!, ["foo\\S*"], { ...REGEX_MODE, literal: true }, undefined),
+    await resolveIgnoreCase(rgPath!, ["foo\\S*"], { literal: true, multiline: false }, undefined),
     false,
   );
-  assert.equal(await resolveIgnoreCase(rgPath!, ["(a)", "Foo"], REGEX_MODE, undefined), false);
+  assert.equal(
+    await resolveIgnoreCase(
+      rgPath!,
+      ["(a)", "Foo"],
+      { literal: false, multiline: false },
+      undefined,
+    ),
+    false,
+  );
+  assert.equal(
+    await resolveIgnoreCase(rgPath!, ["foo\\nbar"], { literal: false, multiline: true }, undefined),
+    true,
+  );
 });
 
-test("real rg owns AND and exclusion regex semantics", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "hl-grep-filter-"));
+test("real rg accepts Rust regex syntax and rejects unsupported lookarounds", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "hl-grep-regex-engine-"));
   try {
     await writeFile(join(directory, "fixture.ts"), "FOO abc\nfoo BAR\nfoo bar\n");
     const tool = makeGrepOverrideWithBackend(directory, {});
-    const rustSyntax: any = await tool.execute(
+    const result = await tool.execute(
       "0",
-      {
-        pattern: ["(?P<name>foo)\\S*", "BAR"],
-        matchMode: "all",
-      },
+      { pattern: "(?P<name>foo)\\S*", literal: false },
       undefined,
       undefined,
     );
-    assert.match(rustSyntax.content[0].text, /│foo BAR/);
-    assert.doesNotMatch(rustSyntax.content[0].text, /│foo bar/);
-
+    assert.match(result.content[0].text, /│foo BAR/);
     await assert.rejects(
-      tool.execute(
-        "0",
-        {
-          pattern: "missing",
-          excludePattern: "queueTool(",
-          literal: false,
-        },
-        undefined,
-        undefined,
-      ),
+      tool.execute("0", { pattern: "foo(?= BAR)", literal: false }, undefined, undefined),
       /regex parse error/,
     );
   } finally {
@@ -175,7 +176,10 @@ test("owned rg processes ignore RIPGREP_CONFIG_PATH", async () => {
   const previous = process.env.RIPGREP_CONFIG_PATH;
   try {
     const config = join(directory, "ripgreprc");
-    await writeFile(config, "--ignore-case\n--fixed-strings\n--invert-match\n--pcre2\n");
+    await writeFile(
+      config,
+      "--ignore-case\n--fixed-strings\n--invert-match\n--pcre2\n--multiline\n",
+    );
     await writeFile(join(directory, "fixture.ts"), "FOO\nfoo\nbar\n");
     process.env.RIPGREP_CONFIG_PATH = config;
     const tool = makeGrepOverrideWithBackend(directory, {});
@@ -183,7 +187,6 @@ test("owned rg processes ignore RIPGREP_CONFIG_PATH", async () => {
       "0",
       {
         pattern: ["^foo$", "foo"],
-        matchMode: "all",
       },
       undefined,
       undefined,
@@ -192,6 +195,17 @@ test("owned rg processes ignore RIPGREP_CONFIG_PATH", async () => {
     assert.match(result.content[0].text, /│foo/);
     assert.match(result.content[0].text, /│FOO/);
     assert.doesNotMatch(result.content[0].text, /│bar/);
+    await assert.rejects(
+      tool.execute("0", { pattern: "foo\\nbar", literal: false }, undefined, undefined),
+      /not allowed in a regex/,
+    );
+    const multiline = await tool.execute(
+      "0",
+      { pattern: "foo\\nbar", literal: false, multiline: true },
+      undefined,
+      undefined,
+    );
+    assert.match(multiline.content[0].text, /fixture\.ts · 2 matches/);
   } finally {
     if (previous === undefined) delete process.env.RIPGREP_CONFIG_PATH;
     else process.env.RIPGREP_CONFIG_PATH = previous;
@@ -228,75 +242,49 @@ test("real rg validates its own regex syntax and limits automatic literal fallba
     );
     assert.match(explicit.content[0].text, /│queueTool\(/);
     assert.doesNotMatch(explicit.content[0].text, /Invalid regex/);
-    for (const params of [
-      { pattern: ["queueTool(", "\\bfoo\\b"] },
-      { pattern: "queueTool(", excludePattern: "^\\s*//" },
-    ]) {
-      await assert.rejects(
-        tool.execute("0", params, undefined, undefined),
-        /Invalid regex in compound query/,
-      );
-    }
+    await assert.rejects(
+      tool.execute("0", { pattern: ["queueTool(", "\\bfoo\\b"] }, undefined, undefined),
+      /Invalid regex in compound query/,
+    );
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
 });
 
-test("real rg preserves CRLF end anchors in main searches, AND filters, and exclusions", async () => {
+test("real rg keeps CRLF line-end anchors with fixed OR matching", async () => {
   const directory = await mkdtemp(join(tmpdir(), "hl-grep-crlf-"));
   try {
     await writeFile(join(directory, "fixture.ts"), "alpha beta drop\r\nalpha beta\r\nalpha only");
     const tool = makeGrepOverrideWithBackend(directory, {});
-    for (const pattern of [["alpha", "beta$"], ["beta$", "alpha"], ["beta$"]]) {
-      const result = await tool.execute("0", { pattern, matchMode: "all" }, undefined, undefined);
-      assert.match(result.content[0].text, /fixture\.ts · 1 match/);
-      assert.match(result.content[0].text, /2#[0-9A-Z]+│alpha beta$/);
-    }
-    const excluded = await tool.execute(
+    const ending = await tool.execute("0", { pattern: "beta$" }, undefined, undefined);
+    assert.match(ending.content[0].text, /fixture\.ts · 1 match/);
+    assert.match(ending.content[0].text, /2#[0-9A-Z]+│alpha beta$/);
+    const alternatives = await tool.execute(
       "0",
-      {
-        pattern: "alpha",
-        excludePattern: "beta$",
-      },
+      { pattern: ["beta$", "alpha only"] },
       undefined,
       undefined,
     );
-    assert.match(excluded.content[0].text, /fixture\.ts · 2 matches/);
-    assert.doesNotMatch(excluded.content[0].text, /2#[0-9A-Z]+│/);
-    assert.match(excluded.content[0].text, /3#[0-9A-Z]+│alpha only$/);
+    assert.match(alternatives.content[0].text, /fixture\.ts · 2 matches/);
+    assert.match(alternatives.content[0].text, /3#[0-9A-Z]+│alpha only$/);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
 });
 
-test("real rg reaches a late survivor with two bounded filter invocations", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "hl-grep-batches-"));
+test("real rg finds a late OR match and respects the line limit", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "hl-grep-limit-"));
   try {
     await writeFile(join(directory, "fixture.ts"), "foo skip\n".repeat(4096) + "foo keep\n");
-    let invocations = 0;
-    const tool = makeGrepOverrideWithBackend(directory, {
-      createLinePredicate(...args) {
-        const predicate = createLinePredicate(...args);
-        return async (lines) => {
-          invocations++;
-          return predicate(lines);
-        };
-      },
-    });
+    const tool = makeGrepOverrideWithBackend(directory, {});
     const result = await tool.execute(
       "0",
-      {
-        pattern: "foo",
-        excludePattern: "skip",
-        literal: true,
-        ignoreCase: false,
-        limit: 1,
-      },
+      { pattern: ["foo keep", "missing"], literal: true, limit: 1 },
       undefined,
       undefined,
     );
     assert.match(result.content[0].text, /4097#[0-9A-Z]+│foo keep/);
-    assert.equal(invocations, 2);
+    assert.match(result.content[0].text, /1 matches limit reached/);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
@@ -342,28 +330,33 @@ test("shared rg runner stops and cleans up after limits, callback failures, and 
   }
 });
 
-test("noIgnore searches ignored files while explicit excluding globs still apply", async () => {
+test("directory searches respect ignores but explicit files and hidden files remain searchable", async () => {
   const directory = await mkdtemp(join(tmpdir(), "hl-grep-ignore-"));
   try {
     await writeFile(join(directory, ".ignore"), "ignored.txt\n");
-    await writeFile(join(directory, "ignored.txt"), "needle\n");
+    const ignored = join(directory, "ignored.txt");
+    await writeFile(ignored, "needle\n");
     const tool = makeGrepOverrideWithBackend(directory, {});
-    const normal: any = await tool.execute("0", { pattern: "needle" }, undefined, undefined);
+    const normal = await tool.execute("0", { pattern: "needle" }, undefined, undefined);
     assert.equal(normal.content[0].text, "No matches found");
-    const included: any = await tool.execute(
+    const explicit = await tool.execute(
       "0",
-      { pattern: "needle", noIgnore: true },
+      { pattern: "needle", path: ignored },
       undefined,
       undefined,
     );
-    assert.match(included.content[0].text, /ignored\.txt · 1 match/);
-    const excluded: any = await tool.execute(
+    assert.match(explicit.content[0].text, /ignored\.txt · 1 match/);
+    const excluded = await tool.execute(
       "0",
-      { pattern: "needle", noIgnore: true, glob: "!ignored.txt" },
+      { pattern: "needle", path: ignored, glob: "!ignored.txt" },
       undefined,
       undefined,
     );
     assert.equal(excluded.content[0].text, "No matches found");
+    await writeFile(join(directory, ".hidden.txt"), "needle\n");
+    const hidden = await tool.execute("0", { pattern: "needle" }, undefined, undefined);
+    assert.match(hidden.content[0].text, /\.hidden\.txt · 1 match/);
+    assert.doesNotMatch(hidden.content[0].text, /ignored\.txt · 1 match/);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
@@ -408,7 +401,7 @@ test("explicit file paths obey ordered glob filters without inheriting ignore ru
   }
 });
 
-test("follow returns a resolved target path that edit can update without replacing the link", async (t) => {
+test("directory traversal skips symlinks but explicitly named linked files remain searchable", async (t) => {
   const directory = await mkdtemp(join(tmpdir(), "hl-grep-follow-"));
   try {
     const root = join(directory, "root");
@@ -432,13 +425,13 @@ test("follow returns a resolved target path that edit can update without replaci
     assert.equal(hidden.content[0].text, "No matches found");
     const found: any = await grep.execute(
       "0",
-      { pattern: "needle", follow: true },
+      { pattern: "needle", path: join(link, "linked.txt") },
       undefined,
       undefined,
     );
     const [header, anchored] = found.content[0].text.split("\n");
     const resultPath = header.slice(0, header.lastIndexOf(" · "));
-    assert.equal(resultPath, await realpath(targetFile));
+    assert.equal(resultPath.replace(/\\/g, "/"), "link/linked.txt");
     assert.equal(found.content[0].text.match(/ · 1 match/g)?.length, 1);
     const anchor = anchored.slice(0, anchored.indexOf("│"));
     const edit: any = makeEditOverride(root);
@@ -457,154 +450,312 @@ test("follow returns a resolved target path that edit can update without replaci
   }
 });
 
-test("PCRE2 applies to main, AND, exclusion, backreference, and inherited smart-case matches", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "hl-grep-pcre2-"));
+test("real rg reports unsupported lookarounds and backreferences under Rust regex", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "hl-grep-rust-boundary-"));
   try {
-    await writeFile(join(directory, "fixture.txt"), "FOO abc\nfoo BAR\nfoobar\nfoofoo\n");
+    await writeFile(join(directory, "fixture.txt"), "foobar\nfoofoo\n");
     const tool = makeGrepOverrideWithBackend(directory, {});
-    const main: any = await tool.execute(
+    const valid = await tool.execute(
       "0",
-      { pattern: "foo(?=bar)", pcre2: true },
+      { pattern: "foo(?:bar|foo)", literal: false },
       undefined,
       undefined,
     );
-    assert.match(main.content[0].text, /│foobar/);
-    const all: any = await tool.execute(
-      "0",
-      { pattern: ["foo", "(?<=foo)bar"], matchMode: "all", pcre2: true },
-      undefined,
-      undefined,
-    );
-    assert.match(all.content[0].text, /fixture\.txt · 1 match/);
-    assert.match(all.content[0].text, /│foobar/);
-    const excluded: any = await tool.execute(
-      "0",
-      { pattern: "foo", excludePattern: "(?<=foo)bar", pcre2: true },
-      undefined,
-      undefined,
-    );
-    assert.doesNotMatch(excluded.content[0].text, /│foobar/);
-    const backreference: any = await tool.execute(
-      "0",
-      { pattern: "(foo)\\1", pcre2: true },
-      undefined,
-      undefined,
-    );
-    assert.match(backreference.content[0].text, /│foofoo/);
-    const inherited: any = await tool.execute(
-      "0",
-      { pattern: "foo\\S*", excludePattern: "bar", pcre2: true },
-      undefined,
-      undefined,
-    );
-    assert.match(inherited.content[0].text, /│FOO abc/);
-    assert.doesNotMatch(inherited.content[0].text, /│foo BAR/);
-    await assert.rejects(
-      tool.execute("0", { pattern: "(", pcre2: true }, undefined, undefined),
-      /PCRE2: error compiling pattern/,
-    );
-    await assert.rejects(
-      tool.execute("0", { pattern: "foo", pcre2: true, literal: true }, undefined, undefined),
-      /cannot be combined/,
+    assert.match(valid.content[0].text, /fixture\.txt · 2 matches/);
+    for (const pattern of ["foo(?=bar)", "(foo)\\1"]) {
+      await assert.rejects(
+        tool.execute("0", { pattern, literal: false }, undefined, undefined),
+        /regex parse error/,
+      );
+    }
+    const fallback = await tool.execute("0", { pattern: "foo(?=bar)" }, undefined, undefined);
+    assert.match(
+      fallback.content[0].text,
+      /No matches found.*Invalid regex; searched the pattern as literal text/s,
     );
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
 });
 
-test("multiline combines physical line sets for all, exclusion, limit, and PCRE2", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "hl-grep-multiline-"));
+test("line-based grep uses context for display but never matches across CRLF", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "hl-grep-lines-"));
   try {
     await writeFile(join(directory, "fixture.txt"), "alpha\r\nbeta\r\ngamma\r\n");
-    await writeFile(join(directory, "eof.txt"), "last line");
     const tool = makeGrepOverrideWithBackend(directory, {});
-    const match: any = await tool.execute(
+    const context = await tool.execute("0", { pattern: "alpha", context: 1 }, undefined, undefined);
+    assert.match(context.content[0].text, /fixture\.txt · 1 match/);
+    assert.match(context.content[0].text, /1#[0-9A-Z]+│alpha/);
+    assert.match(context.content[0].text, /2#[0-9A-Z]+│beta/);
+    assert.doesNotMatch(context.content[0].text, /3#[0-9A-Z]+│gamma/);
+    await assert.rejects(
+      tool.execute("0", { pattern: "alpha\\nbeta", literal: false }, undefined, undefined),
+      /not allowed in a regex/,
+    );
+    await assert.rejects(
+      tool.execute("0", { pattern: "alpha\nbeta", literal: true }, undefined, undefined),
+      /not allowed/,
+    );
+    const limited = await tool.execute(
       "0",
-      { pattern: "alpha\\r?\\nbeta", multiline: true, literal: false },
+      { pattern: ["alpha", "beta"], outputMode: "count", limit: 1 },
       undefined,
       undefined,
     );
-    assert.match(match.content[0].text, /fixture\.txt · 2 matches/);
-    assert.match(match.content[0].text, /1#[0-9A-Z]+│alpha/);
-    assert.match(match.content[0].text, /2#[0-9A-Z]+│beta/);
-    const all: any = await tool.execute(
-      "0",
-      {
-        pattern: ["alpha\\r?\\nbeta", "beta\\r?\\ngamma"],
-        matchMode: "all",
-        multiline: true,
-        literal: false,
-      },
-      undefined,
-      undefined,
-    );
-    assert.match(all.content[0].text, /fixture\.txt · 1 match/);
-    assert.match(all.content[0].text, /2#[0-9A-Z]+│beta/);
-    const excluded: any = await tool.execute(
-      "0",
-      {
-        pattern: "alpha\\r?\\nbeta",
-        excludePattern: "beta",
-        multiline: true,
-        literal: false,
-      },
-      undefined,
-      undefined,
-    );
-    assert.match(excluded.content[0].text, /fixture\.txt · 1 match/);
-    assert.match(excluded.content[0].text, /1#[0-9A-Z]+│alpha/);
-    const limited: any = await tool.execute(
-      "0",
-      {
-        pattern: "(?s)alpha.*gamma",
-        multiline: true,
-        pcre2: true,
-        limit: 2,
-        outputMode: "count",
-      },
-      undefined,
-      undefined,
-    );
-    assert.match(limited.content[0].text, /fixture\.txt: 2/);
-    assert.match(limited.content[0].text, /2 matches limit reached/);
-    const eof: any = await tool.execute(
-      "0",
-      { pattern: "\\z", path: "eof.txt", multiline: true, pcre2: true },
-      undefined,
-      undefined,
-    );
-    assert.match(eof.content[0].text, /1#[0-9A-Z]+│last line/);
+    assert.match(limited.content[0].text, /fixture\.txt: 1/);
+    assert.match(limited.content[0].text, /1 matches limit reached/);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
 });
 
-test("complex searches reject file changes and propagate cancellation", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "hl-grep-complex-state-"));
+test("multiline grep anchors CRLF spans and counts overlapping physical lines once", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "hl-grep-multiline-"));
   try {
     const file = join(directory, "fixture.txt");
-    await writeFile(file, "foo bar\n");
-    let scans = 0;
+    await writeFile(file, "alpha\r\nbeta\r\ngamma\r\n");
+    const tool = makeGrepOverrideWithBackend(directory, {});
+    const regex = await tool.execute(
+      "0",
+      { pattern: "alpha\\nbeta", path: file, literal: false, multiline: true },
+      undefined,
+      undefined,
+    );
+    assert.match(regex.content[0].text, /fixture\.txt · 2 matches/);
+    assert.match(regex.content[0].text, /1#[0-9A-Z]+│alpha/);
+    assert.match(regex.content[0].text, /2#[0-9A-Z]+│beta/);
+    const literal = await tool.execute(
+      "0",
+      { pattern: "alpha\nbeta", path: file, literal: true, multiline: true },
+      undefined,
+      undefined,
+    );
+    assert.match(literal.content[0].text, /fixture\.txt · 2 matches/);
+    const overlapping = await tool.execute(
+      "0",
+      { pattern: ["alpha\\nbeta", "beta\\ngamma"], path: file, multiline: true, literal: false },
+      undefined,
+      undefined,
+    );
+    assert.match(overlapping.content[0].text, /fixture\.txt · 3 matches/);
+    const bounded = await tool.execute(
+      "0",
+      { pattern: "(?s)alpha.*gamma", path: file, multiline: true, outputMode: "count", limit: 2 },
+      undefined,
+      undefined,
+    );
+    assert.match(bounded.content[0].text, /fixture\.txt: 2/);
+    assert.match(bounded.content[0].text, /Total: 2 matches in 1 file/);
+    assert.match(bounded.content[0].text, /2 matches limit reached/);
+    const files = await tool.execute(
+      "0",
+      { pattern: "alpha\\nbeta", path: file, multiline: true, outputMode: "files", limit: 1 },
+      undefined,
+      undefined,
+    );
+    assert.match(files.content[0].text, /^fixture\.txt\n\n\[1 matches limit reached/);
+    const boundary = await tool.execute(
+      "0",
+      { pattern: "alpha\\n", path: file, multiline: true, literal: false },
+      undefined,
+      undefined,
+    );
+    assert.match(boundary.content[0].text, /fixture\.txt · 1 match/);
+    const edit: any = makeEditOverride(directory);
+    const anchor = regex.content[0].text.match(/(2#[0-9A-Z]+)│beta/)?.[1];
+    assert.ok(anchor);
+    await edit.execute(
+      "0",
+      { path: file, edits: [{ op: "replace", anchor, body: ["updated"] }] },
+      undefined,
+      undefined,
+    );
+    assert.equal(await readFile(file, "utf8"), "alpha\r\nupdated\r\ngamma\r\n");
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("multiline grep preserves BOM and standalone CR while normalizing CRLF", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "hl-grep-multiline-cr-"));
+  try {
+    const file = join(directory, "fixture.txt");
+    await writeFile(file, "\uFEFFalpha\rsolo\r\nbeta\r\n");
+    const tool = makeGrepOverrideWithBackend(directory, {});
+    const result = await tool.execute(
+      "0",
+      { pattern: "alpha\\rsolo\\nbeta", path: file, multiline: true, literal: false },
+      undefined,
+      undefined,
+    );
+    assert.match(result.content[0].text, /fixture\.txt · 2 matches/);
+    assert.match(result.content[0].text, /1#[0-9A-Z]+│\uFEFFalpha␍solo/);
+    assert.match(result.content[0].text, /2#[0-9A-Z]+│beta/);
+    const literal = await tool.execute(
+      "0",
+      { pattern: "alpha\rsolo\r\nbeta", path: file, multiline: true, literal: true },
+      undefined,
+      undefined,
+    );
+    assert.match(literal.content[0].text, /fixture\.txt · 2 matches/);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("multiline grep anchors empty lines and line-start zero-width matches", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "hl-grep-multiline-empty-"));
+  try {
+    const file = join(directory, "fixture.txt");
+    await writeFile(file, "alpha\r\n\r\nbeta\r\n");
+    const tool = makeGrepOverrideWithBackend(directory, {});
+    const span = await tool.execute(
+      "0",
+      { pattern: "alpha\\n\\nbeta", path: file, multiline: true, literal: false },
+      undefined,
+      undefined,
+    );
+    assert.match(span.content[0].text, /fixture\.txt · 3 matches/);
+    assert.match(span.content[0].text, /2#[0-9A-Z]+│\n3#[0-9A-Z]+│beta/);
+    const starts = await tool.execute(
+      "0",
+      { pattern: "(?m)^", path: file, multiline: true, literal: false },
+      undefined,
+      undefined,
+    );
+    assert.match(starts.content[0].text, /fixture\.txt · 3 matches/);
+    assert.match(starts.content[0].text, /1#[0-9A-Z]+│alpha/);
+    assert.match(starts.content[0].text, /3#[0-9A-Z]+│beta/);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("multiline zero-width EOF stays on the last existing physical line", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "hl-grep-multiline-eof-"));
+  try {
+    const file = join(directory, "fixture.txt");
+    const tool = makeGrepOverrideWithBackend(directory, {});
+    for (const content of ["last line", "last line\n"]) {
+      await writeFile(file, content);
+      const result = await tool.execute(
+        "0",
+        { pattern: "\\z", path: file, multiline: true, literal: false },
+        undefined,
+        undefined,
+      );
+      if (content.endsWith("\n")) {
+        assert.equal(result.content[0].text, "No matches found");
+      } else {
+        assert.match(result.content[0].text, /fixture\.txt · 1 match/);
+        assert.match(result.content[0].text, /1#[0-9A-Z]+│last line/);
+      }
+    }
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("multiline grep detects changed files and propagates cancellation", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "hl-grep-multiline-state-"));
+  try {
+    const file = join(directory, "fixture.txt");
+    await writeFile(file, "alpha\nbeta\n");
     const changing = makeGrepOverrideWithBackend(directory, {
       async runRg(path, args, signal, onLine) {
         const result = await runRg(path, args, signal, onLine);
-        if (args.includes("--threads=1") && scans++ === 0)
-          await writeFile(file, "changed content\n");
+        if (args.includes("--json")) await writeFile(file, "alpha\nchanged\n");
         return result;
       },
     });
     await assert.rejects(
       changing.execute(
         "0",
-        {
-          pattern: ["foo", "bar"],
-          matchMode: "all",
-          pcre2: true,
-          ignoreCase: false,
-        },
+        { pattern: "alpha\\nbeta", path: file, multiline: true, literal: false },
         undefined,
         undefined,
       ),
+      /File changed during search/,
+    );
+    await writeFile(file, "alpha\nbeta\n");
+    const controller = new AbortController();
+    const cancelling = makeGrepOverrideWithBackend(directory, {
+      runRg(path, args, signal, onLine) {
+        if (args.includes("--json")) controller.abort();
+        return runRg(path, args, signal, onLine);
+      },
+    });
+    await assert.rejects(
+      cancelling.execute(
+        "0",
+        { pattern: "alpha\\nbeta", path: file, multiline: true, literal: false },
+        controller.signal,
+        undefined,
+      ),
+      /Operation aborted/,
+    );
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("files and count modes aggregate only matching lines inside the limit", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "hl-grep-output-modes-"));
+  try {
+    const first = join(directory, "a.txt");
+    const second = join(directory, "b.txt");
+    await writeFile(first, "needle needle\nneedle\n");
+    await writeFile(second, "needle\n");
+    const tool = makeGrepOverrideWithBackend(directory, {});
+    const query = { pattern: "needle", path: [first, second], limit: 1 };
+    const files = await tool.execute(
+      "files",
+      { ...query, outputMode: "files" },
+      undefined,
+      undefined,
+    );
+    assert.match(files.content[0].text, /^(?:a|b)\.txt\n\n\[1 matches limit reached/);
+    const limited = await tool.execute(
+      "count",
+      { ...query, outputMode: "count" },
+      undefined,
+      undefined,
+    );
+    assert.match(limited.content[0].text, /Total: 1 match in 1 file/);
+    const complete = await tool.execute(
+      "count-all",
+      { ...query, outputMode: "count", limit: 10 },
+      undefined,
+      undefined,
+    );
+    assert.match(complete.content[0].text, /Total: 3 matches in 2 files/);
+    const contextual = await tool.execute(
+      "content",
+      { ...query, path: first, outputMode: "content", context: 1 },
+      undefined,
+      undefined,
+    );
+    assert.match(contextual.content[0].text, /a\.txt · 1 match/);
+    assert.match(contextual.content[0].text, /2#[0-9A-Z]+│needle/);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("default grep rejects file changes and propagates cancellation", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "hl-grep-default-state-"));
+  try {
+    const file = join(directory, "fixture.txt");
+    await writeFile(file, "foo bar\n");
+    const changing = makeGrepOverrideWithBackend(directory, {
+      async runRg(path, args, signal, onLine) {
+        const result = await runRg(path, args, signal, onLine);
+        if (args.includes("--json")) await writeFile(file, "changed content\n");
+        return result;
+      },
+    });
+    await assert.rejects(
+      changing.execute("0", { pattern: "foo", path: file }, undefined, undefined),
       /File changed during search/,
     );
 
@@ -612,21 +763,12 @@ test("complex searches reject file changes and propagate cancellation", async ()
     const controller = new AbortController();
     const cancelling = makeGrepOverrideWithBackend(directory, {
       runRg(path, args, signal, onLine) {
-        if (args.includes("--threads=1")) controller.abort();
+        if (args.includes("--json")) controller.abort();
         return runRg(path, args, signal, onLine);
       },
     });
     await assert.rejects(
-      cancelling.execute(
-        "0",
-        {
-          pattern: "foo(?= bar)",
-          pcre2: true,
-          ignoreCase: false,
-        },
-        controller.signal,
-        undefined,
-      ),
+      cancelling.execute("0", { pattern: "foo", path: file }, controller.signal, undefined),
       /Operation aborted/,
     );
   } finally {
@@ -741,7 +883,7 @@ test("tools share physical lines and anchors across text representations", async
   }
 });
 
-test("long-line previews expose real rg hits across engines and preserve full-line anchors", async () => {
+test("long-line previews preserve full-line anchors across literal and Rust regex queries", async () => {
   const directory = await mkdtemp(join(tmpdir(), "hl-grep-preview-"));
   try {
     const long = "😀界".repeat(220) + "NEEDLE" + "tail".repeat(200);
@@ -750,9 +892,8 @@ test("long-line previews expose real rg hits across engines and preserve full-li
     const tool = makeGrepOverrideWithBackend(directory, {});
     for (const params of [
       { pattern: "NEEDLE" },
-      { pattern: ["NEEDLE", "tail"], matchMode: "all" as const, excludePattern: "absent" },
-      { pattern: "NEEDLE(?=tail)", pcre2: true },
-      { pattern: "NEEDLE(?:tail)+\\r?\\nfollow", multiline: true },
+      { pattern: ["NEEDLE", "tail"], literal: true },
+      { pattern: "NEEDLE(?:tail)+", literal: false },
     ]) {
       const result: any = await tool.execute(
         "preview",
@@ -793,28 +934,22 @@ test("all text tools share logical CRLF matching, anchors, and mutation separato
       .split("\n")
       .filter((line: string) => /^\d+#[0-9A-Z]+│/.test(line));
     for (const query of [
-      { pattern: "alpha\r\nbeta", literal: true },
-      { pattern: "alpha\\nbeta", literal: false },
-      { pattern: "alpha\\nbeta", literal: false, pcre2: true },
-      { pattern: ["alpha\\nbeta", "alpha|beta"], matchMode: "all" as const, literal: false },
+      { pattern: ["alpha", "beta"], literal: true },
+      { pattern: "alpha|beta", literal: false },
     ]) {
-      const found = await grep.execute(
-        "grep",
-        { path, multiline: true, ignoreCase: false, ...query },
-        undefined,
-        undefined,
-      );
+      const found = await grep.execute("grep", { path, ...query }, undefined, undefined);
       assert.ok(found.content[0].text.includes(rows[1]), JSON.stringify(query));
       assert.ok(found.content[0].text.includes(rows[2]), JSON.stringify(query));
     }
-    const excluded = await grep.execute(
+    const contextual = await grep.execute(
       "grep",
-      { path, pattern: "alpha\\nbeta", excludePattern: "alpha", multiline: true, literal: false },
+      { path, pattern: "alpha", context: 1 },
       undefined,
       undefined,
     );
-    assert.ok(!excluded.content[0].text.includes(rows[1]));
-    assert.ok(excluded.content[0].text.includes(rows[2]));
+    assert.match(contextual.content[0].text, /mixed\.txt · 1 match/);
+    assert.ok(contextual.content[0].text.includes(rows[1]));
+    assert.ok(contextual.content[0].text.includes(rows[2]));
     const carriage = await grep.execute(
       "grep",
       { path, pattern: "\\r", literal: false },
@@ -905,14 +1040,8 @@ test("visible source escapes remain readable and searchable while real CRLF stay
     for (const query of [
       { pattern: String.raw`\r\n`, literal: true },
       { pattern: String.raw`\\r\\n`, literal: false },
-      { pattern: String.raw`\\r\\n`, literal: false, pcre2: true },
     ]) {
-      const result = await grep.execute(
-        "grep",
-        { path, ...query, ignoreCase: false },
-        undefined,
-        undefined,
-      );
+      const result = await grep.execute("grep", { path, ...query }, undefined, undefined);
       assert.ok(result.content[0].text.includes(String.raw`const eol = "\r\n";`));
     }
     const replace = makeReplaceTool(directory);
@@ -1001,17 +1130,6 @@ test("NUL files are rejected on a confirmed hit, not reported as no match", asyn
       undefined,
     );
     assert.match(filesMode.content[0].text, /binary\.txt/);
-    const pcre2FilesMode: any = await grep.execute(
-      "grep",
-      { path: binary, pattern: "needle", pcre2: true, outputMode: "files" },
-      undefined,
-      undefined,
-    );
-    assert.match(pcre2FilesMode.content[0].text, /binary\.txt/);
-    await assert.rejects(
-      grep.execute("grep", { path: binary, pattern: "needle", pcre2: true }, undefined, undefined),
-      /UNSUPPORTED_TEXT/,
-    );
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

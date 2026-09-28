@@ -1,105 +1,29 @@
 import { mergeRanges, type HalfOpenRange } from "../core/ranges.ts";
 
-export type LineRange = HalfOpenRange;
-
-export interface RgSubmatch {
+interface RgSubmatch {
   start: number;
   end: number;
 }
 
-function assertRange(range: LineRange): void {
-  if (
-    !Number.isSafeInteger(range[0]) ||
-    !Number.isSafeInteger(range[1]) ||
-    range[0] < 1 ||
-    range[1] <= range[0]
-  ) {
-    throw new Error("Invalid physical line range");
+function countLfBefore(lineBreaks: readonly number[], offset: number): number {
+  let low = 0;
+  let high = lineBreaks.length;
+  while (low < high) {
+    const middle = Math.floor((low + high) / 2);
+    if (lineBreaks[middle] < offset) low = middle + 1;
+    else high = middle;
   }
+  return low;
 }
 
-export function normalizeRanges(ranges: readonly LineRange[]): LineRange[] {
-  for (const range of ranges) assertRange(range);
-  return mergeRanges(ranges);
-}
-
-export function unionRanges(left: readonly LineRange[], right: readonly LineRange[]): LineRange[] {
-  return normalizeRanges([...left, ...right]);
-}
-
-export function intersectRanges(
-  left: readonly LineRange[],
-  right: readonly LineRange[],
-): LineRange[] {
-  const a = normalizeRanges(left);
-  const b = normalizeRanges(right);
-  const result: LineRange[] = [];
-  let i = 0;
-  let j = 0;
-  while (i < a.length && j < b.length) {
-    const start = Math.max(a[i][0], b[j][0]);
-    const end = Math.min(a[i][1], b[j][1]);
-    if (start < end) result.push([start, end]);
-    if (a[i][1] < b[j][1]) i++;
-    else j++;
-  }
-  return result;
-}
-
-export function subtractRanges(
-  left: readonly LineRange[],
-  right: readonly LineRange[],
-): LineRange[] {
-  const source = normalizeRanges(left);
-  const removed = normalizeRanges(right);
-  const result: LineRange[] = [];
-  let j = 0;
-  for (const [start, end] of source) {
-    let cursor = start;
-    while (j < removed.length && removed[j][1] <= cursor) j++;
-    let k = j;
-    while (k < removed.length && removed[k][0] < end) {
-      if (removed[k][0] > cursor) result.push([cursor, Math.min(removed[k][0], end)]);
-      cursor = Math.max(cursor, removed[k][1]);
-      if (cursor >= end) break;
-      k++;
-    }
-    if (cursor < end) result.push([cursor, end]);
-  }
-  return result;
-}
-
-function countLfBefore(bytes: Buffer, offset: number): number {
-  // Limit the native scan too: a prefix match must not scan a long trailing line.
-  const prefix = bytes.subarray(0, offset);
-  let count = 0;
-  let pos = 0;
-  while ((pos = prefix.indexOf(10, pos)) !== -1) {
-    count++;
-    pos++;
-  }
-  return count;
-}
-
-function zeroWidthLine(
-  bytes: Buffer,
-  offset: number,
-  eventStartLine: number,
-  fileLineCount: number,
-): number | undefined {
-  if (fileLineCount === 0) return undefined;
-  const candidate = eventStartLine + countLfBefore(bytes, offset);
-  return Math.min(candidate, fileLineCount);
-}
-
-/** Convert rg byte offsets to physical line ranges; optionally record a match's UTF-16 column on its starting line. */
+/** Map rg's byte offsets in a multiline JSON event to existing physical lines. */
 export function submatchesToLineRanges(
   bytes: Buffer,
   eventStartLine: number,
   submatches: readonly RgSubmatch[],
   fileLineCount: number,
   columns?: Map<number, number>,
-): LineRange[] {
+): HalfOpenRange[] {
   if (
     !Number.isSafeInteger(eventStartLine) ||
     eventStartLine < 1 ||
@@ -108,14 +32,19 @@ export function submatchesToLineRanges(
   ) {
     throw new Error("Invalid rg physical line metadata");
   }
-  const ranges: LineRange[] = [];
+  const ranges: HalfOpenRange[] = [];
+  const lineBreaks: number[] = [];
+  let at = 0;
+  while ((at = bytes.indexOf(10, at)) !== -1) {
+    lineBreaks.push(at);
+    at++;
+  }
   const recordColumn = (line: number, offset: number) => {
     if (!columns || columns.has(line)) return;
     const lineStart = offset === 0 ? 0 : bytes.lastIndexOf(10, offset - 1) + 1;
     columns.set(line, bytes.subarray(lineStart, offset).toString("utf8").length);
   };
-  for (const submatch of submatches) {
-    const { start, end } = submatch;
+  for (const { start, end } of submatches) {
     if (
       !Number.isSafeInteger(start) ||
       !Number.isSafeInteger(end) ||
@@ -126,23 +55,20 @@ export function submatchesToLineRanges(
       throw new Error("Invalid rg submatch byte offsets");
     }
     if (start === end) {
-      const line = zeroWidthLine(bytes, start, eventStartLine, fileLineCount);
-      if (line !== undefined) {
-        ranges.push([line, line + 1]);
-        const offset =
-          eventStartLine + countLfBefore(bytes, start) > fileLineCount
-            ? Math.max(0, start - 1)
-            : start;
-        recordColumn(line, offset);
-      }
+      if (fileLineCount === 0) continue;
+      const candidate = eventStartLine + countLfBefore(lineBreaks, start);
+      const line = Math.min(candidate, fileLineCount);
+      ranges.push([line, line + 1]);
+      recordColumn(line, candidate > fileLineCount ? Math.max(0, start - 1) : start);
       continue;
     }
-    const first = eventStartLine + countLfBefore(bytes, start);
-    const last = eventStartLine + countLfBefore(bytes, end - 1);
-    if (first <= fileLineCount) {
-      ranges.push([first, Math.min(last, fileLineCount) + 1]);
-      recordColumn(first, start);
+    const first = eventStartLine + countLfBefore(lineBreaks, start);
+    const last = eventStartLine + countLfBefore(lineBreaks, end - 1);
+    if (first > fileLineCount || last > fileLineCount) {
+      throw new Error("File changed during search; rerun the query.");
     }
+    ranges.push([first, last + 1]);
+    recordColumn(first, start);
   }
-  return normalizeRanges(ranges);
+  return mergeRanges(ranges);
 }

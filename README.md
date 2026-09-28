@@ -144,29 +144,27 @@ When the line limit leaves more content, the result reports the shown range and 
 
 | Parameter | Default | Meaning |
 | --- | --- | --- |
-| `pattern` | Required | Non-empty string or array. |
+| `pattern` | Required | Non-empty string or array; arrays match any pattern (OR). When `ignoreCase` is omitted, smart-case is resolved for the entire query, not separately for each array item. |
 | `path` | Current directory | One existing file or directory, or an array of search roots. Wildcards are not expanded; use `glob` to filter filenames. |
-| `matchMode` | `"any"` | OR across patterns; `"all"` requires every pattern on the same physical line, at most 16 patterns. |
-| `excludePattern` | None | String or array; remove lines matching any exclusion. |
-| `literal` | Automatic | Set `true` for code text containing regex punctuation, such as `pi.on(`, `compact(`, or a visible `\0`; use a `pattern` array for literal alternatives. Set `false` only for intentional valid regex. The setting also applies to exclusions. Automatic mode tries regex when it sees metacharacters; an invalid single pattern without exclusions falls back to searching the **entire string** literally, not interpreting `|` as alternatives. Invalid compound queries fail rather than changing their meaning. |
-| `ignoreCase` | Smart-case | Explicit `true`/`false` overrides case handling; the query-level decision also applies to exclusions. |
-| `wordMatch` | `false` | Whole-word matches. |
 | `glob` | None | One glob or an ordered array; prefix exclusions with `!`. |
-| `noIgnore` | `false` | Include ignored files; explicit globs still apply. |
-| `follow` | `false` | Traverse symlinks and return resolved target paths. |
-| `context` | `0` | Include 0–20 anchored lines before and after matches (pass 3–5 to inspect and edit code blocks directly without a separate read). |
-| `limit` | `100` | Maximum matching physical lines, counted after filtering. |
-| `outputMode` | `"content"` | `"files"` returns paths; `"count"` returns per-file counts and a total. Both use the same limited match set. |
-| `pcre2` | `false` | Enable PCRE2 lookarounds/backreferences; strict regex, incompatible with `literal: true`. |
-| `multiline` | `false` | Allow cross-line matches; `.` crosses newlines only with inline `(?s)`. |
+| `literal` | Automatic | Set `true` for literal code text, including regex punctuation such as `pi.on(`; this does not force case-sensitive matching. Set `false` for intentional ripgrep Rust regex. Automatic mode tries regex for metacharacters; an invalid single-pattern query falls back to searching the **entire string** literally and reports the fallback. Invalid pattern arrays fail instead of changing their meaning; invalid regex with `literal: false` fails. |
+| `ignoreCase` | Smart-case | Query-level case override: `true` ignores case; `false` distinguishes case. Inline regex case flags may override either setting. |
+| `multiline` | `false` | Allow matches across physical lines. CRLF is searched as LF; each distinct matched physical line counts toward `limit` and receives an anchor in content mode. `context` alone does not enable cross-line matching. |
+| `context` | `0` | Include 0–20 anchored lines before and after each match (pass 3–5 to inspect code blocks without another read). Context lines do not count toward `limit`. |
+| `limit` | `100` | Maximum number of distinct matching physical lines, across all files and patterns. Reaching the limit produces a notice; it does not prove that another match exists. |
+| `outputMode` | `"content"` | `"content"` returns anchored matching lines plus context, `"files"` returns distinct paths, and `"count"` returns matching-line counts per file and a total. All modes use the same limited match set: files and counts may be incomplete when the limit or output byte cap is reached. |
 
-Context is rebuilt from surviving matches. Multiline filtering, counting, and limits remain line-based. Wildcard-only regexes such as `.*` and `^.+$` are accepted; use `literal: true` to search those characters verbatim.
+The six former grep fields (`matchMode`, `excludePattern`, `wordMatch`, `pcre2`, `follow`, `noIgnore`) are no longer supported. Calls that contain them, including `false` or `null`, fail before searching; saved session history remains readable, but replaying an old call with these fields requires a new query. They are not silently converted to a different search.
 
-Text inclusion/exclusion matching uses bundled ripgrep on the shared LF view, independent of system `rg` or `PATH`. NUL-containing files are searched as raw bytes; confirmed content-mode hits are rejected before anchoring. File selection uses original paths, ignore rules, globs, and link settings. Files without CRLF are searched at their original paths; CRLF text is normalized into temporary snapshots using bounded reads and writes. Batches contain up to 64 files or 8 MiB of source data (one large file can exceed that threshold); snapshots are removed after each batch and on failure/cancellation. Match paths refer to original files; text line and column positions refer to logical text. Searches include hidden files and pass `--no-config`, `--no-crlf`, and `--encoding=none` so standalone CR and BOM remain content. The default engine is Rust regex; PCRE2 never silently falls back to another engine or literal matching.
+Grep defaults to line-based code searches. With `multiline: true`, OR patterns are scanned separately to retain overlapping spans, and matching physical lines are deduplicated before counting. There is no built-in content exclusion, same-line AND, whole-word switch, or PCRE2. Displaying neighboring lines with `context` does not itself match across lines. More specialized searches require another tool (for example, Bash when available); an empty grep result does not establish that ignored files or linked directories contain no matches.
 
-Search diagnostics are preserved even when a result limit stops ripgrep. Readable, confirmed matches remain available with a `Search incomplete` notice and `details.incomplete: true`; counts then cover only confirmed matches. If no results can be returned, the tool reports an error rather than claiming there are no matches. Exclusion-scan failures still reject the query, because incomplete exclusions could admit incorrect results. Search diagnostics have a separate 4 KiB display budget.
+Directory traversal respects ignore rules, does not follow symbolic links, and includes hidden files. Explicitly named files can still be read through a link or from an ignored directory; ordered `glob` filters still apply to explicit file paths. These rules have different priorities for explicit paths and directory traversal and are not simply intersected.
 
-Long lines show a labeled partial preview of up to 500 UTF-16 units around a ripgrep match; context-only lines show their beginning. Labels report 1-based UTF-16 column ranges, and slicing preserves surrogate pairs. The anchor hashes the entire current line, not the preview; use `read` before reconstructing a line from its content.
+Searches use bundled ripgrep on the shared LF view, independent of system `rg` or `PATH`. The tool disables external ripgrep configuration with `--no-config` and clears `RIPGREP_CONFIG_PATH`, and uses `--no-crlf` and `--encoding=none` so standalone CR and BOM remain content. NUL-containing files are searched as raw bytes; confirmed content-mode hits are rejected before anchoring, and multiline hits are rejected before mapping physical lines. Files without CRLF are searched at their original paths; CRLF text is normalized into temporary snapshots using bounded reads and writes. Batches contain up to 64 files or 8 MiB of source data (one large file can exceed that threshold); snapshots are removed after each batch and on failure/cancellation. Match paths refer to original files; text line and column positions refer to logical text. Regexes use ripgrep's default Rust-style engine, not PCRE2.
+
+Search diagnostics are preserved even when a result limit stops ripgrep. Readable, confirmed matches remain available with a `Search incomplete` notice and `details.incomplete: true`; counts then cover only confirmed matches. If no results can be returned, the tool reports an error rather than claiming there are no matches. Search diagnostics have a separate 4 KiB display budget.
+
+Long lines show a labeled partial preview of up to 500 UTF-16 units near a reported match column when available; context-only lines and matches without a recorded column show their beginning. Labels report 1-based UTF-16 column ranges, and slicing preserves surrogate pairs. The anchor hashes the entire current line, not the preview; use `read` before reconstructing a line from its content.
 
 ### Replace
 

@@ -6,13 +6,10 @@ export const COMMON_RG_ARGS = ["--no-config", "--color=never", "--no-crlf"];
 export const MAX_RG_RECORD_BYTES = 16 * 1024 * 1024;
 
 export interface SearchModes {
-  engine: "default" | "pcre2";
-  multiline: boolean;
   literal: boolean;
   ignoreCase: boolean;
+  multiline: boolean;
 }
-
-export type LinePredicate = (lines: readonly Buffer[]) => Promise<boolean[]>;
 
 interface ExitResult {
   code: number | null;
@@ -200,75 +197,36 @@ export const runText: RunText = async (rgPath, args, input, signal) => {
   };
 };
 
-function modeArgs(modes: Pick<SearchModes, "engine" | "multiline">): string[] {
-  return [
-    ...COMMON_RG_ARGS,
-    `--engine=${modes.engine}`,
-    modes.multiline ? "--multiline" : "--no-multiline",
-  ];
-}
+const DEFAULT_RG_MODE_ARGS = [...COMMON_RG_ARGS, "--engine=default"];
 
-export function matcherArgs(modes: SearchModes, word: boolean): string[] {
+export function matcherArgs(modes: SearchModes): string[] {
   return [
-    ...modeArgs(modes),
+    ...DEFAULT_RG_MODE_ARGS,
+    modes.multiline ? "--multiline" : "--no-multiline",
     modes.ignoreCase ? "--ignore-case" : "--case-sensitive",
     ...(modes.literal ? ["--fixed-strings"] : []),
-    ...(word ? ["--word-regexp"] : []),
   ];
-}
-
-function pcre2CaseCarrier(patterns: readonly string[]): string {
-  return [
-    "(?x)",
-    ...patterns.flatMap((pattern) => pattern.split("\n").map((line) => `#${line}`)),
-    "\\x{41}",
-    "",
-  ].join("\n");
 }
 
 /** Resolve rg's query-level default case flag; inline regex flags still apply normally. */
 export async function resolveIgnoreCase(
   rgPath: string,
   patterns: readonly string[],
-  modes: Pick<SearchModes, "engine" | "multiline" | "literal">,
+  modes: Pick<SearchModes, "literal" | "multiline">,
   explicit: boolean | undefined,
   signal?: AbortSignal,
   run: RunText = runText,
 ): Promise<boolean> {
   checkAbort(signal);
-  if (explicit !== undefined) return explicit;
   if (patterns.length === 0) throw new Error("pattern is required (got an empty array)");
-
-  if (modes.engine === "pcre2") {
-    const version = await run(rgPath, ["--version"], Buffer.alloc(0), signal);
-    if (
-      version.code !== 0 ||
-      !/^ripgrep 15\.0\.0\b/m.test(version.stdout) ||
-      !/^features:\+pcre2$/m.test(version.stdout) ||
-      !/^PCRE2 10\.45 is available/m.test(version.stdout)
-    ) {
-      throw new Error(
-        "PCRE2 smart-case is not validated for this bundled ripgrep build; set ignoreCase explicitly",
-      );
-    }
-    const result = await run(
-      rgPath,
-      [...modeArgs(modes), "--smart-case", "--quiet", "-e", pcre2CaseCarrier(patterns), "--", "-"],
-      Buffer.from("a\n"),
-      signal,
-    );
-    checkAbort(signal);
-    if (result.code !== 0 && result.code !== 1) {
-      throw new Error(result.stderr.trim() || `ripgrep exited with code ${result.code}`);
-    }
-    return result.code === 0;
-  }
+  if (explicit !== undefined) return explicit;
 
   const sources = patterns.map((pattern) => (modes.literal ? escapeRegex(pattern) : pattern));
   const result = await run(
     rgPath,
     [
-      ...modeArgs(modes),
+      ...DEFAULT_RG_MODE_ARGS,
+      modes.multiline ? "--multiline" : "--no-multiline",
       "--smart-case",
       "--encoding=none",
       "--no-heading",
@@ -294,27 +252,6 @@ export async function resolveIgnoreCase(
   return lines.includes("a");
 }
 
-export async function validatePatterns(
-  rgPath: string,
-  patterns: readonly string[],
-  modes: SearchModes,
-  word: boolean,
-  signal?: AbortSignal,
-  run: RunText = runText,
-): Promise<void> {
-  if (modes.literal) return;
-  for (const pattern of patterns) {
-    const result = await run(
-      rgPath,
-      [...matcherArgs(modes, word), "--quiet", "-e", pattern, "--", "-"],
-      Buffer.alloc(0),
-      signal,
-    );
-    checkAbort(signal);
-    assertRgSucceeded(result);
-  }
-}
-
 interface RgString {
   text?: string;
   bytes?: string;
@@ -329,54 +266,4 @@ export function rgBytes(value: RgString): Buffer {
 export function rgText(value: RgString): string {
   if (typeof value.text === "string") return value.text;
   throw new Error("Non-UTF-8 search paths are not supported");
-}
-
-export function createLinePredicate(
-  rgPath: string,
-  patterns: readonly string[],
-  modes: SearchModes,
-  word: boolean,
-  signal?: AbortSignal,
-): LinePredicate {
-  const args = [
-    ...matcherArgs(modes, word),
-    "--json",
-    "--line-number",
-    "--passthru",
-    "--text",
-    "--encoding=none",
-    ...patterns.flatMap((pattern) => ["-e", pattern]),
-    "--",
-    "-",
-  ];
-  return async (lines) => {
-    checkAbort(signal);
-    if (lines.length === 0) return [];
-    const records = lines.map((line) => {
-      const firstLf = line.indexOf(10);
-      if (firstLf >= 0 && firstLf !== line.length - 1)
-        throw new Error("Expected exactly one physical candidate line");
-      return firstLf >= 0 ? line : Buffer.concat([line, Buffer.from("\n")]);
-    });
-    const matches: boolean[] = [];
-    const result = await runDelimited(
-      rgPath,
-      args,
-      Buffer.concat(records),
-      10,
-      signal,
-      (record) => {
-        if (record.length === 0) return true;
-        const event = JSON.parse(record.toString("utf8"));
-        if (event.type !== "match" && event.type !== "context") return true;
-        if (event.data.line_number !== matches.length + 1)
-          throw new Error("rg predicate line-number protocol mismatch");
-        matches.push(event.type === "match");
-        return true;
-      },
-    );
-    assertRgSucceeded(result);
-    if (matches.length !== lines.length) throw new Error("rg predicate ended before all responses");
-    return matches;
-  };
 }

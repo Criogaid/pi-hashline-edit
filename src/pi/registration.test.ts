@@ -41,6 +41,23 @@ test("mutation cards use Fusion by default and explicit false removes command su
       tools.map((tool) => tool.name),
       ["write", "edit", "replace", "read", "grep"],
     );
+    const grep = tools.find((tool) => tool.name === "grep");
+    assert.deepEqual(Object.keys(grep.parameters.properties).sort(), [
+      "context",
+      "glob",
+      "ignoreCase",
+      "limit",
+      "literal",
+      "multiline",
+      "outputMode",
+      "path",
+      "pattern",
+    ]);
+    assert.equal(grep.parameters.additionalProperties, false);
+    await assert.rejects(
+      grep.execute("grep-old", { pattern: "needle", noIgnore: false }, undefined, undefined),
+      /grep parameters not supported: noIgnore/,
+    );
     for (const tool of tools.filter((tool) => ["edit", "replace", "write"].includes(tool.name))) {
       assert.ok(
         tool.parameters.properties.then_run,
