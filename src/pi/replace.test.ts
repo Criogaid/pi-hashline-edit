@@ -527,6 +527,20 @@ test("replace header: renderResult refreshes the call header in place — no inv
   });
 });
 
+test("replace header retains the rule count when a long path wraps", () => {
+  const tool = makeReplaceTool(process.cwd());
+  const args = {
+    path: "x".repeat(68),
+    replacements: [
+      { find: "first", replace: "second" },
+      { find: "third", replace: "fourth" },
+    ],
+  };
+  const header = tool.renderCall(args, stubTheme, {} as Parameters<typeof tool.renderCall>[2]);
+  assert.match(header.render(120).join("\n"), /2 rules/);
+  assert.match(header.render(80).join("\n"), /2\s+rules/);
+});
+
 test("replacement batches use one snapshot and return anchors for the final content", async () =>
   withDir(async (dir) => {
     const file = join(dir, "batch.txt");
@@ -549,13 +563,6 @@ test("replacement batches use one snapshot and return anchors for the final cont
       edits: [{ op: "replace", anchor: anchorLine(result.content[0].text, 2), body: ["chained"] }],
     });
     assert.equal(await readFile(file, "utf8"), "\uFEFFbar\r\nchained\nbar");
-    assert.match(
-      tool
-        .renderCall(args, stubTheme, {} as Parameters<typeof tool.renderCall>[2])
-        .render(80)
-        .join("\n"),
-      /2 rules/,
-    );
   }));
 
 test("invalid batches reject every change and skip the fused command", async () =>
