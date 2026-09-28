@@ -30,12 +30,6 @@ const writeSchema = Type.Object({
       Type.Literal("overwrite", { description: "Fail if the target does not exist" }),
     ]),
   ),
-  expectedRevision: Type.Optional(
-    Type.String({
-      description:
-        "Optional expected SHA-256 revision for optimistic locking (programmatic callers only; text-only models should not guess or compute manually).",
-    }),
-  ),
 });
 
 function createWriteSchema(actionFusion: boolean) {
@@ -90,6 +84,8 @@ export function makeWriteOverride(
       onUpdate: AgentToolUpdateCallback<WriteDetails> | undefined,
       ctx: ExtensionContext,
     ) {
+      if ("expectedRevision" in params)
+        throw new Error("expectedRevision is not supported by write");
       const { then_run, ...mutationParams } = params;
       if (!fusion && then_run !== undefined)
         throw new Error("then_run is unavailable because hashlineEdit.actionFusion is disabled");
@@ -99,7 +95,6 @@ export function makeWriteOverride(
           signal?.throwIfAborted();
           const result = await commitFile(absolutePath, mutationParams.content, {
             mode: mutationParams.mode as CommitMode | undefined,
-            expectedRevision: mutationParams.expectedRevision,
             signal,
           });
           return postProcessMutation("write", result.publication, () => ({

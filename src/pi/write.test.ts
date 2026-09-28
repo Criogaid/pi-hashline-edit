@@ -19,9 +19,13 @@ async function withTemp<T>(run: (dir: string) => Promise<T>): Promise<T> {
 }
 
 test("write schema follows the shared actionFusion switch", () => {
-  assert.equal((makeWriteOverride("/tmp") as any).parameters.properties.then_run, undefined);
+  const plain = makeWriteOverride("/tmp");
+  assert.equal(Object.hasOwn(plain.parameters.properties, "then_run"), false);
+  assert.equal(Object.hasOwn(plain.parameters.properties, "expectedRevision"), false);
   const fusion = createActionFusionExecutor();
-  assert.ok((makeWriteOverride("/tmp", fusion) as any).parameters.properties.then_run);
+  const withFusion = makeWriteOverride("/tmp", fusion);
+  assert.equal(Object.hasOwn(withFusion.parameters.properties, "then_run"), true);
+  assert.equal(Object.hasOwn(withFusion.parameters.properties, "expectedRevision"), false);
 });
 
 test("write preserves native default create/overwrite behavior", async () =>
@@ -49,7 +53,7 @@ test("write preserves native default create/overwrite behavior", async () =>
     assert.equal(await readFile(target, "utf8"), "two\n");
   }));
 
-test("write supports create-only, overwrite-only, and expectedRevision", async () =>
+test("write supports create-only and overwrite-only modes", async () =>
   withTemp(async (dir) => {
     const write = makeWriteOverride(dir) as any;
     await write.execute(
@@ -79,48 +83,33 @@ test("write supports create-only, overwrite-only, and expectedRevision", async (
       ),
       /does not exist/,
     );
-    const revision = await fileRevision(join(dir, "new.txt"));
     await write.execute(
-      "revision",
-      { path: "new.txt", content: "updated\n", expectedRevision: revision },
+      "overwrite",
+      { path: "new.txt", content: "updated\n", mode: "overwrite" },
       undefined,
       undefined,
       context(dir),
     );
-    await assert.rejects(
-      write.execute(
-        "stale",
-        { path: "new.txt", content: "bad\n", expectedRevision: revision },
-        undefined,
-        undefined,
-        context(dir),
-      ),
-      /expectedRevision/,
-    );
     assert.equal(await readFile(join(dir, "new.txt"), "utf8"), "updated\n");
   }));
 
-test("concurrent writes cannot both consume the same expectedRevision", async () =>
+test("write rejects obsolete expectedRevision without overwriting", async () =>
   withTemp(async (dir) => {
     const target = join(dir, "concurrent.txt");
     await writeFile(target, "original\n");
-    const expectedRevision = await fileRevision(target);
-    const write = makeWriteOverride(dir);
-    const results = await Promise.allSettled(
-      ["first\n", "second\n"].map((content) =>
-        write.execute(
-          "concurrent",
-          { path: target, content, expectedRevision },
-          undefined,
-          undefined,
-          context(dir),
-        ),
-      ),
-    );
-    assert.equal(results.filter((result) => result.status === "fulfilled").length, 1);
-    const rejected = results.find((result) => result.status === "rejected");
-    assert.ok(rejected && rejected.status === "rejected");
-    assert.match(rejected.reason.message, /expectedRevision/);
+    const params = {
+      path: target,
+      content: "changed\n",
+      expectedRevision: await fileRevision(target),
+    };
+    for (const fusion of [undefined, createActionFusionExecutor()]) {
+      const write = makeWriteOverride(dir, fusion);
+      await assert.rejects(
+        write.execute("obsolete", params, undefined, undefined, context(dir)),
+        /expectedRevision is not supported/,
+      );
+      assert.equal(await readFile(target, "utf8"), "original\n");
+    }
   }));
 
 test("write returns only a summary for empty, short, and long content", async () =>

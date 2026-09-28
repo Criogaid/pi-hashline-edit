@@ -186,15 +186,14 @@ Required: `path`, `content`. By default, create missing files and overwrite exis
 
 - `mode: "create"`: refuse an existing target.
 - `mode: "overwrite"`: require an existing target.
-- `expectedRevision`: strictly check the current file's SHA-256; cannot be combined with create mode. Intended for programmatic callers; text-only models should not guess or compute it manually.
 
 Write results report the write outcome without returning line anchors. Use `read` or content-mode `grep` to obtain anchors for a later `edit`.
 
-Normal write result text omits the revision. Programmatic callers can read `details.publishedRevision`; text-only callers needing `expectedRevision` must obtain a SHA-256 of the file bytes separately. Revision checks and structured revision fields remain active.
+Normal write result text omits the revision. Programmatic callers can read `details.publishedRevision`; edit and replace use source revisions internally to reject stale writes.
 
 With Action Fusion enabled, `edit`, `replace`, and `write` also accept `then_run`.
 
-All three mutation tools treat identical final content as a successful no-op: report `no net change`, leave the existing file untouched, and return `publication: "NOT_PUBLISHED"`. A requested `then_run` still runs after freshness checks. Input, anchor, match, target-type, mode, revision, and cancellation checks still apply; zero matches, stale anchors/revisions, and an existing target in create mode remain errors. Creating a missing empty file is a publication, not a no-op.
+All three mutation tools treat identical final content as a successful no-op: report `no net change`, leave the existing file untouched, and return `publication: "NOT_PUBLISHED"`. A requested `then_run` still runs after freshness checks. Input, anchor, match, target-type, mode, and cancellation checks still apply; edit/replace reject stale source revisions, while zero matches and an existing target in create mode remain errors. Creating a missing empty file is a publication, not a no-op.
 
 </details>
 
