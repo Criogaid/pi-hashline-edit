@@ -413,8 +413,10 @@ export function makeEditOverride(
       "Edit file lines using content-verified anchors. Returns fresh anchors for subsequent edits. Anchor failures report input-anchor status and bounded current-file context. Inspect recovery candidates before retrying; retries always revalidate anchors and never run automatically.",
     promptSnippet: "Edit file lines using verified anchors",
     promptGuidelines: [
-      "Batch related changes to the same file in one edit call — all operations in a batch are verified against the same snapshot simultaneously.",
-      "Reuse prior anchors when their line number and content are unchanged. For sequential edits, use the returned Updated anchors for changed lines; inspect failure diagnostics for recovery candidates before resorting to read or grep.",
+      "Batch related edits to the same file in one call; the batch checks anchors against one snapshot.",
+      "Reuse anchors while their line numbers and content remain unchanged.",
+      "After an edit, use Updated anchors for changed lines.",
+      "On anchor failure, inspect recovery candidates before retrying or re-reading with read or grep.",
       ...(fusion ? ACTION_FUSION_GUIDELINES : []),
     ],
     parameters,

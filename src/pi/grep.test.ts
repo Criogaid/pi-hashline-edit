@@ -117,10 +117,12 @@ const call = (tool: any, params: any, signal?: AbortSignal) =>
 
 test("grep guidance distinguishes literal code searches from regex and array alternatives", () => {
   const tool = makeGrepOverrideWithBackend(process.cwd(), {});
-  assert.match(
-    tool.promptGuidelines.join("\n"),
-    /literal:true.*pi\.on\(.*pattern array.*literal alternatives/,
+  assert.ok(
+    tool.promptGuidelines.some(
+      (rule: string) => rule.includes("literal:true") && rule.includes("literal:false"),
+    ),
   );
+  assert.ok(tool.promptGuidelines.some((rule: string) => rule.includes("pattern array")));
   assert.match(JSON.stringify(tool.parameters.properties.pattern), /use an array for alternatives/);
   assert.match(JSON.stringify(tool.parameters.properties.literal), /entire input literally/);
   assert.match(
@@ -128,7 +130,11 @@ test("grep guidance distinguishes literal code searches from regex and array alt
     /existing file or directory.*wildcards/,
   );
   assert.match(JSON.stringify(tool.parameters.properties.glob), /filename.*wildcard/);
-  assert.match(tool.promptGuidelines.join("\n"), /path.*directory.*glob.*wildcard/);
+  assert.ok(
+    tool.promptGuidelines.some(
+      (rule: string) => rule.includes("in path") && rule.includes("in glob"),
+    ),
+  );
 });
 
 test("grep points wildcard paths to glob without changing ordinary missing-path errors", async () => {
