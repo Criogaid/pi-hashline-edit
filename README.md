@@ -144,14 +144,14 @@ When the line limit leaves more content, the result reports the shown range and 
 
 | Parameter | Default | Meaning |
 | --- | --- | --- |
-| `pattern` | Required | Non-empty string or array; arrays match any pattern (OR). When `ignoreCase` is omitted, smart-case is resolved for the entire query, not separately for each array item. |
+| `pattern` | Required | Non-empty string (including whitespace-only text) or array of non-empty strings; arrays match any pattern (OR). When `ignoreCase` is omitted, smart-case is resolved for the entire query, not separately for each array item. |
 | `path` | Current directory | One existing file or directory, or an array of search roots. Wildcards are not expanded; use `glob` to filter filenames. |
 | `glob` | None | One glob or an ordered array; prefix exclusions with `!`. |
 | `literal` | Automatic | Set `true` for literal code text, including regex punctuation such as `pi.on(`; this does not force case-sensitive matching. Set `false` for intentional ripgrep Rust regex. Automatic mode tries regex for metacharacters; an invalid single-pattern query falls back to searching the **entire string** literally and reports the fallback. Invalid pattern arrays fail instead of changing their meaning; invalid regex with `literal: false` fails. |
 | `ignoreCase` | Smart-case | Query-level case override: `true` ignores case; `false` distinguishes case. Inline regex case flags may override either setting. |
 | `multiline` | `false` | Allow matches across physical lines. CRLF is searched as LF; each distinct matched physical line counts toward `limit` and receives an anchor in content mode. `context` alone does not enable cross-line matching. |
 | `context` | `0` | Include 0–20 anchored lines before and after each match (pass 3–5 to inspect code blocks without another read). Context lines do not count toward `limit`. |
-| `limit` | `100` | Maximum number of distinct matching physical lines, across all files and patterns. Reaching the limit produces a notice; it does not prove that another match exists. |
+| `limit` | `100` | Positive integer maximum of distinct matching physical lines, across all files and patterns. Reaching the limit produces a notice; it does not prove that another match exists. |
 | `outputMode` | `"content"` | `"content"` returns anchored matching lines plus context, `"files"` returns distinct paths, and `"count"` returns matching-line counts per file and a total. All modes use the same limited match set: files and counts may be incomplete when the limit or output byte cap is reached. |
 
 The six former grep fields (`matchMode`, `excludePattern`, `wordMatch`, `pcre2`, `follow`, `noIgnore`) are no longer supported. Calls that contain them, including `false` or `null`, fail before searching; saved session history remains readable, but replaying an old call with these fields requires a new query. They are not silently converted to a different search.

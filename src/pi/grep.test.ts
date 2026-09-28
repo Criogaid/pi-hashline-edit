@@ -8,6 +8,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { rgPath } from "@vscode/ripgrep";
+import { validateToolArguments } from "@earendil-works/pi-ai";
 import { computeLineHash } from "../core/hash.ts";
 import { makeGrepOverrideWithBackend, type GrepBackend } from "./grep-tool.ts";
 import { makeEditOverride } from "./edit-tool.ts";
@@ -94,6 +95,12 @@ test("grep guidance covers literal, case, and multiline searches", () => {
     ),
   );
   assert.ok(tool.promptGuidelines.some((rule: string) => rule.includes("pattern array")));
+  assert.ok(
+    tool.promptGuidelines.some(
+      (rule: string) =>
+        rule.includes("grep anchors") && rule.includes("partial") && rule.includes("full"),
+    ),
+  );
   assert.match(JSON.stringify(tool.parameters.properties.pattern), /use an array for alternatives/);
   assert.match(JSON.stringify(tool.parameters.properties.literal), /entire input literally/);
   assert.match(
@@ -151,6 +158,37 @@ test("grep exposes nine parameters and rejects only the six removed fields", asy
       call(tool, { pattern: "needle", follow: false, noIgnore: null }),
       (error: Error) => error.message.includes("follow") && error.message.includes("noIgnore"),
     );
+    assert.equal(fake.calls.length, 0);
+  });
+});
+
+test("grep limit accepts only positive integers through schema and direct execution", async () => {
+  await withDir(async (dir) => {
+    const fake = fakeBackend();
+    const tool = makeGrepOverrideWithBackend(dir, fake.backend);
+    const limitSchema = tool.parameters.properties.limit;
+    assert.equal(limitSchema.type, "number");
+    assert.equal("minimum" in limitSchema ? limitSchema.minimum : undefined, 1);
+    assert.equal("multipleOf" in limitSchema ? limitSchema.multipleOf : undefined, 1);
+    const validate = (limit: number) =>
+      validateToolArguments(tool, {
+        type: "toolCall",
+        id: "0",
+        name: "grep",
+        arguments: { pattern: "needle", limit },
+      });
+    assert.doesNotThrow(() => validate(1));
+    for (const limit of [0, -3, 0.5, 2.5]) {
+      assert.throws(
+        () => validate(limit),
+        /Validation failed/,
+        `schema must reject limit ${limit}`,
+      );
+      await assert.rejects(
+        call(tool, { pattern: "needle", limit }),
+        /limit must be a positive integer/,
+      );
+    }
     assert.equal(fake.calls.length, 0);
   });
 });
@@ -587,7 +625,7 @@ test("rejects empty patterns while allowing wildcard, literal, and empty-line se
     const fake = fakeBackend();
     const tool = makeGrepOverrideWithBackend(dir, fake.backend);
 
-    for (const pattern of ["", "  ", []]) {
+    for (const pattern of ["", [], ["valid", ""]]) {
       await assert.rejects(call(tool, { pattern }), /pattern (?:is required|must not be empty)/);
     }
     assert.equal(fake.calls.length, 0);
@@ -599,6 +637,17 @@ test("rejects empty patterns while allowing wildcard, literal, and empty-line se
     assert.equal(text(await call(tool, { pattern: "^$" })), "No matches found");
     assert.equal(fake.calls.filter(({ args }) => !args.includes("--quiet")).length, 5);
     assert.equal(fake.calls.filter(({ args }) => args.includes("--quiet")).length, 4);
+  });
+});
+
+test("grep accepts nonempty whitespace literals", async () => {
+  await withDir(async (dir) => {
+    const fake = fakeBackend();
+    const tool = makeGrepOverrideWithBackend(dir, fake.backend);
+    for (const pattern of ["  ", "\t", ["word", " "]]) {
+      assert.equal(text(await call(tool, { pattern, literal: true })), "No matches found");
+    }
+    assert.equal(fake.calls.length, 3);
   });
 });
 

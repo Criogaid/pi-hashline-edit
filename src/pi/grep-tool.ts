@@ -144,7 +144,7 @@ const grepOverrideSchema = Type.Object(
   {
     pattern: Type.Union([Type.String(), Type.Array(Type.String())], {
       description:
-        "Non-empty string or array (OR across patterns). For code snippets with regex punctuation, set literal:true; use an array for alternatives instead of joining literals with |.",
+        "Non-empty string or array of non-empty strings (OR across patterns; whitespace-only strings are valid). For code snippets with regex punctuation, set literal:true; use an array for alternatives instead of joining literals with |.",
     }),
     path: Type.Optional(
       Type.Union([Type.String(), Type.Array(Type.String())], {
@@ -183,8 +183,13 @@ const grepOverrideSchema = Type.Object(
         description: `Number of lines to show before and after each match (0-${GREP_CONTEXT_MAX}; default: 0). Set to 3-5 when searching code to edit so surrounding lines and anchors are included without needing a separate read; context lines are anchored too`,
       }),
     ),
+    // Pi converts Type.Integer arguments with Math.trunc before schema validation.
     limit: Type.Optional(
-      Type.Number({ description: "Maximum number of matching lines to return (default: 100)" }),
+      Type.Number({
+        minimum: 1,
+        multipleOf: 1,
+        description: "Positive integer maximum of matching lines to return (default: 100)",
+      }),
     ),
     outputMode: Type.Optional(
       Type.Union([Type.Literal("content"), Type.Literal("files"), Type.Literal("count")], {
@@ -623,7 +628,7 @@ export function makeGrepOverrideWithBackend(cwd: string, overrides: Partial<Grep
       "Use existing files or directories in path; put filename wildcards in glob.",
       "Use literal:true for code containing regex punctuation; use literal:false only for intentional regex.",
       "Use a pattern array for OR alternatives.",
-      "Copy grep anchors directly into edit without re-reading.",
+      "Copy grep anchors directly into edit; inspect the full line before rewriting from a partial preview.",
       "Use context:3-5 when searching code to edit so surrounding lines are anchored.",
       "Use files/count when only paths or counts are needed.",
       "Use multiline:true for cross-line matches.",
@@ -692,10 +697,14 @@ export function makeGrepOverrideWithBackend(cwd: string, overrides: Partial<Grep
 
       const patterns = toArray(params.pattern).map(normalizeLineEndings);
       if (patterns.length === 0) throw new Error("pattern is required (got an empty array)");
-      if (patterns.some((pattern) => pattern.trim() === "")) {
+      if (patterns.some((pattern) => pattern.length === 0)) {
         throw new Error("pattern must not be empty");
       }
 
+      const effectiveLimit = params.limit ?? DEFAULT_LIMIT;
+      if (!Number.isSafeInteger(effectiveLimit) || effectiveLimit < 1) {
+        throw new Error("limit must be a positive integer");
+      }
       const rgPath = bundledRgPath;
       const outputMode: "content" | "files" | "count" = params.outputMode ?? "content";
       const multiline = params.multiline ?? false;
@@ -762,7 +771,6 @@ export function makeGrepOverrideWithBackend(cwd: string, overrides: Partial<Grep
         ),
       };
 
-      const effectiveLimit = Math.max(1, params.limit ?? DEFAULT_LIMIT);
       const result =
         scope.searchPaths.length === 0
           ? { raw: [], matchLimitReached: false, revisions: new Map<string, string>() }

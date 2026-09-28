@@ -43,6 +43,37 @@ test("real rg emits anchored matches from a temporary directory", async () => {
   }
 });
 
+test("real rg finds whitespace-only literal queries and OR alternatives", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "hl-grep-whitespace-"));
+  try {
+    const file = join(directory, "fixture.txt");
+    await writeFile(file, "plain word\nfirst\tsecond\nboth \tforms\n");
+    const tool = makeGrepOverrideWithBackend(directory, {});
+    for (const { pattern, expected } of [
+      { pattern: " ", expected: 2 },
+      { pattern: "\t", expected: 2 },
+      { pattern: [" ", "\t"], expected: 3 },
+    ]) {
+      const result = await tool.execute(
+        "0",
+        { pattern, path: file, literal: true, outputMode: "count" },
+        undefined,
+        undefined,
+      );
+      assert.match(result.content[0].text, new RegExp(`Total: ${expected} matches in 1 file`));
+    }
+    const lineBreaks = await tool.execute(
+      "0",
+      { pattern: "\n", path: file, literal: true, multiline: true, outputMode: "count" },
+      undefined,
+      undefined,
+    );
+    assert.match(lineBreaks.content[0].text, /Total: 3 matches in 1 file/);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("real rg uses smart-case across OR patterns and Unicode matches", async () => {
   const directory = await mkdtemp(join(tmpdir(), "hl-grep-case-"));
   try {
