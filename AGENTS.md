@@ -46,10 +46,6 @@ pi 扩展 `@criogaid/pi-hashline-edit`，注册入口为 `src/index.ts`。
 
 独立测试进程读取磁盘源码；通过当前 Pi 会话验证已加载的扩展行为时，需要用户 `/reload` 或重启。等待重载期间继续完成独立检查。纯文档改动核对事实、路径和 diff 即可。
 
-## Communication
-
-- In commit subjects and work reports, describe the delivered change and verified outcome directly in neutral, factual terms. Avoid unnecessary contrasts or labels that imply earlier code, documentation, wording, or decisions were inferior. Use before/after comparisons only when a concrete technical difference matters, and describe both sides without judgment. Check this wording before committing or reporting completion.
-
 ## 提交与发布
 
 - Derive the commit scope from the affected feature or owning module (for example, `grep`, `edit`, `replace`, `file-commit`, `fusion`). For cross-cutting changes, use the narrowest shared capability; never use the package name as scope.
