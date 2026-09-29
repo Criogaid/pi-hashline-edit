@@ -402,7 +402,9 @@ test("edit header: renderResult refreshes the call header in place — no invali
         { op: "insert_after", anchor: h(text, 5), body: ["f", "g"] },
       ],
     });
-    const args = { path: "f.txt", edits: [{ op: "replace" as const }] };
+    const args = { path: "f.txt", edits: [{ op: "replace" as const }] } as Parameters<
+      typeof edit.renderCall
+    >[0];
     let invalidated = false;
     const context: any = {
       args,
@@ -683,6 +685,49 @@ test("native read and write renderers preserve resource titles, previews, and fu
       { ...context, isError: true } as Parameters<typeof write.renderResult>[3],
     );
     assert.match(error.render(120).join("\n"), /first error[\s\S]*second error/);
+  }));
+
+test("edit schema rejects misspelled range fields and invalid operation shapes", async () =>
+  withDir(async (dir) => {
+    const original = "a\nb\nc\n";
+    await writeFile(join(dir, "range.txt"), original);
+    const edit = makeEditOverride(dir);
+    const anchor = h(original, 2);
+    const callArgs = {
+      path: "range.txt",
+      edits: [{ op: "replace", anchor, endd: h(original, 3), body: ["merged"] }],
+    };
+    const check = (args: Parameters<typeof validateToolArguments>[1]["arguments"]) =>
+      validateToolArguments(edit as any, {
+        type: "toolCall",
+        id: "schema-check",
+        name: "edit",
+        arguments: args,
+      });
+    assert.throws(() => check(callArgs), /Validation failed/);
+    await assert.rejects(call(edit, callArgs), /not supported|unknown/i);
+    assert.equal(await readFile(join(dir, "range.txt"), "utf8"), original);
+    for (const edits of [
+      [],
+      [{ op: "replace", anchor }],
+      [{ op: "delete", anchor, body: ["bad"] }],
+      [{ op: "insert_after", body: ["bad"] }],
+      [{ op: "append", anchor, body: ["bad"] }],
+    ]) {
+      assert.throws(() => check({ path: "range.txt", edits }), /Validation failed/);
+    }
+    for (const single of [
+      { path: "range.txt", op: "replace", anchor, body: ["ok"] },
+      { path: "range.txt", edits: JSON.stringify({ op: "replace", anchor, body: ["ok"] }) },
+    ]) {
+      assert.doesNotThrow(() =>
+        check(
+          edit.prepareArguments(single) as unknown as Parameters<
+            typeof validateToolArguments
+          >[1]["arguments"],
+        ),
+      );
+    }
   }));
 
 test("copied string anchors validate and replace an inclusive range", async () =>

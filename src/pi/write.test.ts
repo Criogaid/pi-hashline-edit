@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { validateToolArguments } from "@earendil-works/pi-ai";
 import { makeWriteOverride } from "./write-tool.ts";
 import { createActionFusionExecutor } from "./action-fusion.ts";
 import { fileRevision } from "./file-commit.ts";
@@ -27,6 +28,31 @@ test("write schema follows the shared actionFusion switch", () => {
   assert.equal(Object.hasOwn(withFusion.parameters.properties, "then_run"), true);
   assert.equal(Object.hasOwn(withFusion.parameters.properties, "expectedRevision"), false);
 });
+
+test("write rejects unknown fields rather than ignoring a misspelled create mode", async () =>
+  withTemp(async (dir) => {
+    const file = join(dir, "file.txt");
+    await writeFile(file, "original\n");
+    for (const fusion of [undefined, createActionFusionExecutor()]) {
+      const tool = makeWriteOverride(dir, fusion);
+      const args = { path: "file.txt", content: "new\n", modee: "create" };
+      assert.throws(
+        () =>
+          validateToolArguments(tool, {
+            type: "toolCall",
+            id: "mode-typo",
+            name: "write",
+            arguments: args,
+          }),
+        /Validation failed/,
+      );
+      await assert.rejects(
+        tool.execute("mode-typo", args, undefined, undefined, context(dir)),
+        /not supported|unknown/i,
+      );
+      assert.equal(await readFile(file, "utf8"), "original\n");
+    }
+  }));
 
 test("write preserves native default create/overwrite behavior", async () =>
   withTemp(async (dir) => {

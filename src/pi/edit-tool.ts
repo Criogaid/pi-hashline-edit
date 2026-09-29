@@ -90,62 +90,86 @@ function parseAnchor(value: string | undefined) {
   return { line: Number(match[1]), hash: match[2] };
 }
 
-const editOpSchema = Type.Object({
-  op: Type.Union(
-    [
-      Type.Literal("replace", { description: "Replace the cited line(s) with `body`." }),
-      Type.Literal("delete", {
-        description:
-          "Delete the cited line(s). Do NOT provide body; specify lines only via anchor and optional end.",
-      }),
-      Type.Literal("insert_after", {
-        description:
-          "Insert `body` immediately after the anchor line — the anchor line is kept as-is; do NOT copy it into `body`.",
-      }),
-      Type.Literal("insert_before", {
-        description:
-          "Insert `body` immediately before the anchor line — the anchor line is kept as-is; do NOT copy it into `body`.",
-      }),
-      Type.Literal("append", { description: "Append `body` at the end of the file." }),
-      Type.Literal("prepend", { description: "Prepend `body` at the start of the file." }),
-    ],
-    { description: "Operation kind" },
+const requiredAnchor = Type.String({
+  pattern: ANCHOR_PATTERN,
+  description: 'Copy "LINE#HASH" from the latest read, grep, or mutation result.',
+});
+const optionalEnd = anchorRef(
+  'Inclusive last "LINE#HASH" for replace/delete ranges; omitted means only the anchor line.',
+);
+const bodyLines = Type.Array(Type.String({ pattern: "^[^\\r\\n]*$" }), {
+  description: "New content lines; each element must be one logical line without CR/LF.",
+});
+const editOpSchema = Type.Union([
+  Type.Object(
+    {
+      op: Type.Literal("replace", { description: "Replace the cited line(s) with `body`." }),
+      anchor: requiredAnchor,
+      end: optionalEnd,
+      body: bodyLines,
+    },
+    { additionalProperties: false },
   ),
-  anchor: anchorRef(
-    'Copy "LINE#HASH" from the latest read, grep, or mutation result. Required for replace/delete/insert; omit for append/prepend.',
+  Type.Object(
+    {
+      op: Type.Literal("delete", { description: "Delete the cited line(s)." }),
+      anchor: requiredAnchor,
+      end: optionalEnd,
+    },
+    { additionalProperties: false },
   ),
-  end: anchorRef(
-    'Inclusive last "LINE#HASH" for replace/delete ranges. Required to change multiple existing lines; omitted means only the anchor line. Omit for insert/append/prepend.',
+  Type.Object(
+    {
+      op: Type.Union([Type.Literal("insert_after"), Type.Literal("insert_before")]),
+      anchor: requiredAnchor,
+      body: bodyLines,
+    },
+    { additionalProperties: false },
   ),
-  body: Type.Optional(
-    Type.Array(Type.String({ pattern: "^[^\\r\\n]*$" }), {
-      description:
-        "New content lines (required for replace/insert/append/prepend; each element must be one logical line without CR/LF; omit for delete)",
+  Type.Object(
+    {
+      op: Type.Union([Type.Literal("append"), Type.Literal("prepend")]),
+      body: bodyLines,
+    },
+    { additionalProperties: false },
+  ),
+]);
+const editSchema = Type.Object(
+  {
+    path: Type.String({
+      minLength: 1,
+      description: "Path to the file to edit (relative or absolute)",
     }),
-  ),
-});
-
-const editSchema = Type.Object({
-  path: Type.String({ description: "Path to the file to edit (relative or absolute)" }),
-  edits: Type.Array(editOpSchema, {
-    description:
-      "Hashline ops; ops requiring anchors use LINE#HASH from your latest read, grep, or mutation result (append/prepend omit anchors)",
-  }),
-});
+    edits: Type.Array(editOpSchema, {
+      minItems: 1,
+      description:
+        "Hashline ops; ops requiring anchors use LINE#HASH from your latest read, grep, or mutation result (append/prepend omit anchors)",
+    }),
+  },
+  { additionalProperties: false },
+);
 
 function createEditSchema(actionFusion: boolean) {
   return actionFusion
-    ? Type.Object({
-        ...editSchema.properties,
-        then_run: createThenRunSchema(
-          "Command to run after the edit succeeds; failure does not roll back the edit.",
-        ),
-      })
+    ? Type.Object(
+        {
+          ...editSchema.properties,
+          then_run: createThenRunSchema(
+            "Command to run after the edit succeeds; failure does not roll back the edit.",
+          ),
+        },
+        { additionalProperties: false },
+      )
     : editSchema;
 }
 type EditParams = Static<typeof editSchema> & { then_run?: ThenRunInput };
 
-type EditOpInput = Static<typeof editOpSchema>;
+type EditOpInput = {
+  op: Static<typeof editOpSchema>["op"];
+  anchor?: string;
+  end?: string;
+  body?: string[];
+};
 
 /** Format failure mappings and complete unique-candidate rows within the detail budget. */
 function formatFailureDetails(
@@ -293,6 +317,14 @@ function toCoreEdits(
           "legacy oldText/newText is not supported; use structured hashline ops with LINE#HASH anchors",
       };
     }
+    const unsupported = Object.keys(o).filter(
+      (key) => !["op", "anchor", "end", "body"].includes(key),
+    );
+    if (unsupported.length)
+      return {
+        ok: false,
+        error: `edit operation parameters not supported: ${unsupported.join(", ")}`,
+      };
     const anchor = parseAnchor(o.anchor);
     const end = parseAnchor(o.end);
     if (o.op !== "replace" && o.op !== "delete" && end)
@@ -378,6 +410,10 @@ export function prepareEditArguments(input: unknown): unknown {
     if (end !== undefined) singleEdit.end = end;
     if (body !== undefined) singleEdit.body = body;
     args.edits = [singleEdit];
+    delete args.op;
+    delete args.anchor;
+    delete args.end;
+    delete args.body;
   }
 
   return args;
@@ -480,6 +516,11 @@ export function makeEditOverride(
       const { then_run, ...mutationParams } = prepared;
       if (!fusion && then_run !== undefined)
         throw new Error("then_run is unavailable because hashlineEdit.actionFusion is disabled");
+      const unsupported = Object.keys(prepared).filter(
+        (key) => !Object.hasOwn(parameters.properties, key),
+      );
+      if (unsupported.length)
+        throw new Error(`edit parameters not supported: ${unsupported.join(", ")}`);
       const absolutePath = canonicalPath(cwd, mutationParams.path);
       let mutationAnchors = "";
       const mutate = (): Promise<AgentToolResult<EditDetails>> => {

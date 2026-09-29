@@ -18,28 +18,34 @@ import { commitFile, type CommitMode, type CommitResult } from "./file-commit.ts
 import { postProcessMutation } from "./mutation-result.ts";
 import { canonicalPath } from "./path.ts";
 
-const writeSchema = Type.Object({
-  path: Type.String({ description: "Path to the file to write" }),
-  content: Type.String({
-    description:
-      "Complete file content, including the exact desired line endings. Source-code escape sequences remain literal text.",
-  }),
-  mode: Type.Optional(
-    Type.Union([
-      Type.Literal("create", { description: "Fail if the target already exists" }),
-      Type.Literal("overwrite", { description: "Fail if the target does not exist" }),
-    ]),
-  ),
-});
+const writeSchema = Type.Object(
+  {
+    path: Type.String({ minLength: 1, description: "Path to the file to write" }),
+    content: Type.String({
+      description:
+        "Complete file content, including the exact desired line endings. Source-code escape sequences remain literal text.",
+    }),
+    mode: Type.Optional(
+      Type.Union([
+        Type.Literal("create", { description: "Fail if the target already exists" }),
+        Type.Literal("overwrite", { description: "Fail if the target does not exist" }),
+      ]),
+    ),
+  },
+  { additionalProperties: false },
+);
 
 function createWriteSchema(actionFusion: boolean) {
   return actionFusion
-    ? Type.Object({
-        ...writeSchema.properties,
-        then_run: createThenRunSchema(
-          "Command to run after write succeeds; failure does not roll back the write.",
-        ),
-      })
+    ? Type.Object(
+        {
+          ...writeSchema.properties,
+          then_run: createThenRunSchema(
+            "Command to run after write succeeds; failure does not roll back the write.",
+          ),
+        },
+        { additionalProperties: false },
+      )
     : writeSchema;
 }
 type WriteParams = Static<typeof writeSchema> & { then_run?: ThenRunInput };
@@ -89,6 +95,11 @@ export function makeWriteOverride(
       const { then_run, ...mutationParams } = params;
       if (!fusion && then_run !== undefined)
         throw new Error("then_run is unavailable because hashlineEdit.actionFusion is disabled");
+      const unsupported = Object.keys(params).filter(
+        (key) => !Object.hasOwn(parameters.properties, key),
+      );
+      if (unsupported.length)
+        throw new Error(`write parameters not supported: ${unsupported.join(", ")}`);
       const absolutePath = canonicalPath(cwd, mutationParams.path);
       const mutate = (): Promise<AgentToolResult<WriteDetails>> =>
         withFileMutationQueue(absolutePath, async () => {

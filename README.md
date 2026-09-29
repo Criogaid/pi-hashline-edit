@@ -85,7 +85,7 @@ All text inspection and matching uses one logical representation: CRLF boundarie
 
 An empty `body: []` deletes the cited range for `replace` and leaves the file unchanged for insertion, `append`, or `prepend`. Anchors and batch validation still apply.
 
-All operations in a batch use the same snapshot. Validation failure rejects the whole batch. Conflicting fields and overlapping operations are rejected; some touching operations also conflict and need separate calls with fresh anchors. For insertion, **do not repeat the anchor line in `body`**. `edit` uses structured operations, not `oldText`/`newText` pairs.
+All operations in a batch use the same snapshot. Validation failure rejects the whole batch. Unknown fields, conflicting fields, and overlapping operations are rejected; some touching operations also conflict and need separate calls with fresh anchors. For insertion, **do not repeat the anchor line in `body`**. `edit` uses structured operations, not `oldText`/`newText` pairs.
 
 For multi-operation batches, rejected edits report each supplied anchor's status from that validation snapshot: `matched`, `mismatched`, or `not_checked` when body validation stopped the batch before hashing. Single-operation edits omit this summary table and report the failure directly. Entries identify the zero-based operation index, `anchor` or `end`, and the cited token. The bounded list reports omitted entries explicitly. These statuses do not establish range/overlap validity, semantic intent, publication, command success, or validity on a later retry.
 
@@ -180,7 +180,7 @@ Regex batches run in a worker and are terminated on cancellation or after 5 seco
 
 ### Write
 
-Required: `path`, `content`. By default, create missing files and overwrite existing ones. Content is used exactly as supplied; anchor-looking prefixes are not stripped.
+Required: `path`, `content`. By default, create missing files and overwrite existing ones. Content is used exactly as supplied; anchor-looking prefixes are not stripped. Unknown fields, including misspelled modes, are rejected before writing.
 
 - `mode: "create"`: refuse an existing target.
 - `mode: "overwrite"`: require an existing target.
