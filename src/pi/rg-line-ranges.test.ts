@@ -23,7 +23,7 @@ test("multiline submatches map to distinct physical lines without inventing boun
 });
 
 test("zero-width EOF and UTF-8 offsets retain real lines and UTF-16 columns", () => {
-  const bytes = Buffer.from("\u{1F600}\u754Cneedle\ntail\n");
+  const bytes = Buffer.from("\u{1F600}\u754Cneedle\ntail");
   const columns = new Map<number, number>();
   assert.deepEqual(
     submatchesToLineRanges(
@@ -57,6 +57,10 @@ test("invalid multiline match offsets fail before anchoring", () => {
   );
   assert.throws(
     () => submatchesToLineRanges(Buffer.from("alpha\nbeta\n"), 1, [{ start: 0, end: 10 }], 1),
+    /File changed during search/,
+  );
+  assert.throws(
+    () => submatchesToLineRanges(Buffer.from("last\n"), 1, [{ start: 5, end: 5 }], 1),
     /File changed during search/,
   );
 });

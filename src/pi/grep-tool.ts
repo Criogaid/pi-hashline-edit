@@ -352,12 +352,22 @@ interface SearchMatchesOptions {
   warnings: string[];
 }
 
+function fileReadWarning(
+  filePath: string,
+  error: unknown,
+  signal?: AbortSignal,
+): string | undefined {
+  if (signal?.aborted || !(error instanceof Error) || !("code" in error)) return undefined;
+  return `Could not read ${filePath}: ${error.message}`;
+}
+
 async function searchMatches(options: SearchMatchesOptions) {
   const { backend, rgPath, scope, patterns, modes, limit, outputMode, signal, warnings } = options;
   const raw: RgMatch[] = [];
   const revisions = new Map<string, string>();
   const lineCounts = new Map<string, number>();
   let matchLimitReached = false;
+  const unreadableFiles = new Set<string>();
   const seenMatches = new Set<string>();
   // rg reports non-overlapping spans, so overlapping multiline OR patterns need separate scans.
   const patternGroups = modes.multiline ? patterns.map((pattern) => [pattern]) : [patterns];
@@ -392,11 +402,20 @@ async function searchMatches(options: SearchMatchesOptions) {
       const startLine = data.line_number;
       const bytes = rgBytes(data.lines);
       const addMatch = async (match: RgMatch) => {
+        if (unreadableFiles.has(filePath)) return true;
         const matchKey = `${filePath}\0${match.lineNumber}`;
         if (seenMatches.has(matchKey)) return true;
         seenMatches.add(matchKey);
         if (outputMode === "content" && !revisions.has(filePath)) {
-          revisions.set(filePath, await fileRevision(filePath));
+          try {
+            revisions.set(filePath, await fileRevision(filePath));
+          } catch (error) {
+            const warning = fileReadWarning(filePath, error, signal);
+            if (!warning) throw error;
+            warnings.push(warning);
+            unreadableFiles.add(filePath);
+            return true;
+          }
         }
         raw.push(match);
         if (raw.length >= limit) {
@@ -413,13 +432,22 @@ async function searchMatches(options: SearchMatchesOptions) {
           matchedText: bytes.toString("utf8").replace(/\n$/, ""),
         });
       }
+      if (unreadableFiles.has(filePath)) return true;
       if (!Array.isArray(data.submatches)) throw new Error("Invalid rg multiline match event");
       let lineCount = lineCounts.get(filePath);
       if (lineCount === undefined) {
-        const stats = await scanTextFile(filePath, undefined, signal);
-        if (stats.hasNul) throw new Error("UNSUPPORTED_TEXT: NUL bytes are not editable.");
-        lineCount = stats.totalLines;
-        lineCounts.set(filePath, lineCount);
+        try {
+          const stats = await scanTextFile(filePath, undefined, signal);
+          if (stats.hasNul) throw new Error("UNSUPPORTED_TEXT: NUL bytes are not editable.");
+          lineCount = stats.totalLines;
+          lineCounts.set(filePath, lineCount);
+        } catch (error) {
+          const warning = fileReadWarning(filePath, error, signal);
+          if (!warning) throw error;
+          warnings.push(warning);
+          unreadableFiles.add(filePath);
+          return true;
+        }
       }
       const columns = new Map<number, number>();
       const submatches = data.submatches.length ? data.submatches : [{ start: 0, end: 0 }];
@@ -496,9 +524,9 @@ async function formatMatches(options: FormatMatchesOptions) {
               windowSet.add(n);
           }
           const rows: string[] = [];
-          let stats: Awaited<ReturnType<typeof scanTextLines>>;
+          const matchedRows = new Set<number>();
           try {
-            stats = await scanTextLines(
+            const stats = await scanTextLines(
               filePath,
               (number) => windowSet.has(number),
               (line) => {
@@ -507,6 +535,7 @@ async function formatMatches(options: FormatMatchesOptions) {
                 if (matchedText !== undefined && matchedText !== line.text) {
                   throw new Error("File changed during search; rerun the query.");
                 }
+                if (matchedTexts.has(line.number)) matchedRows.add(line.number);
                 const { text: display, wasTruncated } = previewLine(
                   displayCarriageReturns(line.text),
                   columns.get(line.number),
@@ -516,18 +545,21 @@ async function formatMatches(options: FormatMatchesOptions) {
               },
               { signal },
             );
+            if (stats.hasNul) throw new Error("UNSUPPORTED_TEXT: NUL bytes are not editable.");
+            if (matchLines.some(({ lineNumber }) => !matchedRows.has(lineNumber))) {
+              throw new Error("File changed during search; rerun the query.");
+            }
+            const searchRevision = searchRevisions.get(filePath);
+            if (searchRevision && searchRevision !== (await fileRevision(filePath))) {
+              throw new Error("File changed during search; rerun the query.");
+            }
+            const header = `${formatPath(filePath)} · ${matchLines.length} match${matchLines.length !== 1 ? "es" : ""}\n`;
+            fileResults[current] = { block: header + rows.join("\n") };
           } catch (error) {
-            if (signal?.aborted || !(error instanceof Error) || !("code" in error)) throw error;
-            fileResults[current] = { warning: `Could not read ${filePath}: ${error.message}` };
-            continue;
+            const warning = fileReadWarning(filePath, error, signal);
+            if (!warning) throw error;
+            fileResults[current] = { warning };
           }
-          if (stats.hasNul) throw new Error("UNSUPPORTED_TEXT: NUL bytes are not editable.");
-          const searchRevision = searchRevisions.get(filePath);
-          if (searchRevision && searchRevision !== (await fileRevision(filePath))) {
-            throw new Error("File changed during search; rerun the query.");
-          }
-          const header = `${formatPath(filePath)} · ${matchLines.length} match${matchLines.length !== 1 ? "es" : ""}\n`;
-          fileResults[current] = { block: header + rows.join("\n") };
         }
       },
     );

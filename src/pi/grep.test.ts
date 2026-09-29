@@ -310,6 +310,61 @@ test("grep rejects a file changed between a match and anchor formatting", async 
   });
 });
 
+test("grep rejects matches missing from the current file before anchoring context", async () =>
+  withDir(async (dir) => {
+    const file = join(dir, "grep.txt");
+    await writeFile(file, "line1\nline2\nline3\nneedle\nline5\n");
+    const fake = fakeBackend({ lines: [rgMatch(file, 5, "needle\n")] });
+    const backend: GrepBackend = {
+      ...fake.backend,
+      async runRg(...args) {
+        await writeFile(file, "line1\nline2\nline3\n");
+        return fake.backend.runRg(...args);
+      },
+    };
+    await assert.rejects(
+      call(makeGrepOverrideWithBackend(dir, backend), { pattern: "needle", context: 2 }),
+      /File changed during search/,
+    );
+  }));
+
+test("multiline grep rejects a zero-width match beyond the current EOF", async () =>
+  withDir(async (dir) => {
+    const file = join(dir, "grep.txt");
+    await writeFile(file, "one\ntwo\nthree\nfour\nfive\n");
+    const fake = fakeBackend({
+      lines: [
+        JSON.stringify({
+          type: "match",
+          data: {
+            path: { text: file },
+            line_number: 5,
+            lines: { text: "" },
+            submatches: [{ start: 0, end: 0 }],
+          },
+        }),
+      ],
+    });
+    const backend: GrepBackend = {
+      ...fake.backend,
+      async runRg(...args) {
+        await writeFile(file, "one\ntwo\n");
+        return fake.backend.runRg(...args);
+      },
+    };
+    for (const outputMode of ["content", "files", "count"]) {
+      await assert.rejects(
+        call(makeGrepOverrideWithBackend(dir, backend), {
+          pattern: "(?m)^",
+          multiline: true,
+          literal: false,
+          outputMode,
+        }),
+        /File changed during search/,
+      );
+    }
+  }));
+
 test("multiline grep rejects spans beyond a truncated file", async () => {
   await withDir(async (dir) => {
     const file = join(dir, "grep.txt");
@@ -798,6 +853,30 @@ test("partial searches retain matches and surface stderr across output modes", a
     );
   });
 });
+
+test("first-match revision read errors retain results from other files", async () =>
+  withDir(async (dir) => {
+    const good = join(dir, "good.txt");
+    const gone = join(dir, "gone.txt");
+    await writeFile(good, "needle\n");
+    await writeFile(gone, "needle\n");
+    const fake = fakeBackend({
+      lines: [rgMatch(good, 1, "needle\n"), rgMatch(gone, 1, "needle\n")],
+    });
+    const backend: GrepBackend = {
+      ...fake.backend,
+      async runRg(...args) {
+        await rm(gone);
+        return fake.backend.runRg(...args);
+      },
+    };
+    const result = await call(makeGrepOverrideWithBackend(dir, backend), { pattern: "needle" });
+    assert.match(text(result), /good\.txt · 1 match/);
+    assert.doesNotMatch(text(result), /gone\.txt · 1 match/);
+    assert.match(text(result), /Search incomplete/);
+    assert.match(text(result), /Could not read.*gone\.txt/);
+    assert.equal(result.details.incomplete, true);
+  }));
 
 test("failed result reads report incomplete coverage while retaining readable files", async () => {
   await withDir(async (dir) => {

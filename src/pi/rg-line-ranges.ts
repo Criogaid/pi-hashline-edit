@@ -56,10 +56,10 @@ export function submatchesToLineRanges(
     }
     if (start === end) {
       if (fileLineCount === 0) continue;
-      const candidate = eventStartLine + countLfBefore(lineBreaks, start);
-      const line = Math.min(candidate, fileLineCount);
+      const line = eventStartLine + countLfBefore(lineBreaks, start);
+      if (line > fileLineCount) throw new Error("File changed during search; rerun the query.");
       ranges.push([line, line + 1]);
-      recordColumn(line, candidate > fileLineCount ? Math.max(0, start - 1) : start);
+      recordColumn(line, start);
       continue;
     }
     const first = eventStartLine + countLfBefore(lineBreaks, start);
