@@ -89,7 +89,7 @@ test("ambiguous context preserves complete rows at the byte budget", () => {
   const exact = "x".repeat(16 * 1024 - Buffer.byteLength("1#XXXX│\n"));
   const lines = [exact, "target", "last"];
   const byteLimited = format(lines.join("\n"), [ambiguous(lines, [2, 3])]).text;
-  assert.ok(byteLimited.includes(`1#${computeLineHash(1, exact)}│${exact}\n`));
+  assert.ok(byteLimited.includes(`1#${computeLineHash(1, exact, 4)}│${exact}\n`));
   assert.match(byteLimited, /Candidate-neighborhood rows: 1\/3; 2 omitted/);
   assert.match(byteLimited, /truncated: byte limit/);
   assert.doesNotMatch(byteLimited, /^2#[0-9A-Z]+│/m);
@@ -131,7 +131,12 @@ test("unique candidates inside ambiguous neighborhoods retain the candidate row 
   const lines = ["prefix", "x".repeat(4096), "match", "match"];
   const output = format(lines.join("\n"), [
     ambiguous(lines, [3, 4]),
-    failure({ kind: "found", scope: "local", newLine: 2, newHash: computeLineHash(2, lines[1]) }),
+    failure({
+      kind: "found",
+      scope: "local",
+      newLine: 2,
+      newHash: computeLineHash(2, lines[1], 4),
+    }),
   ]).text;
   assert.match(output, /truncated: candidate row limit/);
   assert.doesNotMatch(output, /^2#[0-9A-Z]+│/m);

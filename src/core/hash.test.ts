@@ -13,16 +13,16 @@ test("computeLineHash is stable and base32", () => {
 });
 
 test("different line number → different hash (even for identical content)", () => {
-  assert.notEqual(computeLineHash(2, ""), computeLineHash(5, ""));
-  assert.notEqual(computeLineHash(1, "}"), computeLineHash(2, "}"));
+  assert.notEqual(computeLineHash(2, "", 4), computeLineHash(5, "", 4));
+  assert.notEqual(computeLineHash(1, "}", 4), computeLineHash(2, "}", 4));
 });
 
 test("different content → different hash", () => {
-  assert.notEqual(computeLineHash(1, "a"), computeLineHash(1, "b"));
+  assert.notEqual(computeLineHash(1, "a", 4), computeLineHash(1, "b", 4));
 });
 
 test("same (line, content) → same hash", () => {
-  assert.equal(computeLineHash(7, "x"), computeLineHash(7, "x"));
+  assert.equal(computeLineHash(7, "x", 4), computeLineHash(7, "x", 4));
 });
 
 test("base32 alphabet (without I/L/O/U) in bulk", () => {
@@ -33,16 +33,16 @@ test("base32 alphabet (without I/L/O/U) in bulk", () => {
 });
 
 test("hashFileLines length equals line count", () => {
-  assert.equal(hashFileLines(["a", "b", "c"]).length, 3);
+  assert.equal(hashFileLines(["a", "b", "c"], 4).length, 3);
 });
 
 test("hashFileLines empty file", () => {
-  assert.deepEqual(hashFileLines([]), []);
+  assert.deepEqual(hashFileLines([], 4), []);
 });
 
 test("hashFileLines normally disambiguates repeated content without changing hash length", () => {
   const lines = ["", "", "", "", "", "}", "}", "}", "return", "return", ",", ","];
-  const hashes = hashFileLines(lines);
+  const hashes = hashFileLines(lines, 4);
   assert.equal(new Set(hashes).size, hashes.length, "unexpected collision in fixture");
   for (const h of hashes) assert.equal(h.length, 4, `hash ${h} is not 4 chars`);
 });
@@ -66,7 +66,7 @@ test("hashLen 8 has a leading zero due to the 32-bit hash limit", () => {
 });
 
 test("computeLineHash produces output identical to hashing full interpolated string", () => {
-  function referenceHash(line: number, content: string, len = 4): string {
+  function referenceHash(line: number, content: string, len: number): string {
     let h = 0x811c9dc5;
     const str = `${line}\n${content}`;
     for (let i = 0; i < str.length; i++) {

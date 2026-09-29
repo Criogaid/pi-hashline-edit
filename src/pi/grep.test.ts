@@ -312,7 +312,7 @@ test("formats parsed rg matches with full-line hash anchors", async () => {
       const output = text(result);
       assert.match(output, /a\.ts · 2 matches/);
       assert.match(output, /b\.ts · 1 match/);
-      assert.match(output, new RegExp(`1#${computeLineHash(1, "alpha beta")}│alpha beta`));
+      assert.match(output, new RegExp(`1#${computeLineHash(1, "alpha beta", 4)}│alpha beta`));
       assert.match(output, /3#[0-9A-Z]+│alpha only/);
       assert.deepEqual(fake.calls[0], {
         path: rgPath,
@@ -482,7 +482,7 @@ test("grep in a subdirectory returns a path that edits the matching file", async
         edits: [
           {
             op: "replace",
-            anchor: `1#${computeLineHash(1, original.trimEnd())}`,
+            anchor: `1#${computeLineHash(1, original.trimEnd(), 4)}`,
             body: ["export const status = 2;"],
           },
         ],
@@ -514,9 +514,9 @@ test("context preserves logical CRLF anchors around a matched line", async () =>
         text(result),
         [
           "a.ts · 1 match",
-          `3#${computeLineHash(3, "before survivor")}│before survivor`,
-          `4#${computeLineHash(4, "alpha beta")}│alpha beta`,
-          `5#${computeLineHash(5, "after survivor")}│after survivor`,
+          `3#${computeLineHash(3, "before survivor", 4)}│before survivor`,
+          `4#${computeLineHash(4, "alpha beta", 4)}│alpha beta`,
+          `5#${computeLineHash(5, "after survivor", 4)}│after survivor`,
         ].join("\n"),
       );
     }),

@@ -31,7 +31,7 @@ async function withDir<T>(fn: (dir: string) => Promise<T>): Promise<T> {
 const call = (tool: any, params: any) => callTool(tool, params, { toolCallId: "0" });
 
 function h(text: string, line: number) {
-  return `${line}#${computeLineHash(line, splitLines(text)[line - 1])}`;
+  return `${line}#${computeLineHash(line, splitLines(text)[line - 1], 4)}`;
 }
 
 function anchorLine(block: string, line: number) {

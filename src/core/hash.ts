@@ -81,13 +81,13 @@ export const HASH_LEN_MAX = 8;
  *
  * @param line    1-based line number
  * @param content the line's content (no line terminator)
- * @param len     hash length (default 4, 20 bits ≈ 1M values)
+ * @param len     caller-selected hash length
  */
-export function computeLineHash(line: number, content: string, len = 4): string {
+export function computeLineHash(line: number, content: string, len: number): string {
   return toBase32(fnv1a32Line(line, content), len);
 }
 
 /** Compute compact per-line checksums; callers must treat collisions as possible. */
-export function hashFileLines(lines: readonly string[], len = 4): string[] {
+export function hashFileLines(lines: readonly string[], len: number): string[] {
   return lines.map((content, i) => computeLineHash(i + 1, content, len));
 }

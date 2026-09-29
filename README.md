@@ -217,7 +217,7 @@ Add `hashlineEdit` to Pi's global settings (`~/.pi/agent/settings.json` by defau
 | `hashLen` | `4` | Integer checksum length, 2–8 characters. `edit` accepts only anchors of this length; anchors produced under another setting must be read again. |
 | `shiftRadius` | `15` | Integer first-pass recovery-search radius, 0–100 lines. With no local candidates, recovery searches the rest of the file; `0` disables both searches. |
 
-The project's `hashlineEdit` object replaces the global object as a whole; missing or invalid fields use defaults. Reload Pi after changes.
+The project's `hashlineEdit` object replaces the global object as a whole; missing or invalid fields use defaults. Defaults are defined in `src/pi/config.ts`; tools pass the resolved values to the core. Reload Pi after changes.
 
 ## Action Fusion
 
@@ -305,6 +305,8 @@ Streaming mutation summaries omit anchors. Result-generation failures preserve p
 </details>
 
 ## Verification
+
+The standalone core API does not load Pi configuration or supply configuration defaults. Direct callers must pass `hashLen` to `computeLineHash(line, content, hashLen)` and `hashFileLines(lines, hashLen)`, and both `hashLen` and `shiftRadius` to `applyEdits(text, edits, hashLen, shiftRadius)`.
 
 - `npm run typecheck` checks source, test, and benchmark types in `src/` and `bench/`.
 - `npm run format:check` checks formatting in both directories.

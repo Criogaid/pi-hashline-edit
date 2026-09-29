@@ -52,9 +52,6 @@ interface SpanOp {
   newLines: string[];
 }
 
-/** Default first-pass ±line radius before full-file recovery. */
-export const DEFAULT_SHIFT_RADIUS = 15;
-
 /**
  * Verify an anchor against the live content; on mismatch, attempt shifted
  * recovery. Returns null when the anchor matches, otherwise an
@@ -225,14 +222,14 @@ function hasInvalidBodyLine(edits: readonly Edit[]): boolean {
  *
  * @param text        current full file text
  * @param edits       parsed edit operations
- * @param hashLen     hash length used to verify anchors (default 4)
- * @param shiftRadius first-pass ±line radius before full-file recovery (default 15; 0 disables recovery)
+ * @param hashLen     hash length used to verify anchors
+ * @param shiftRadius first-pass ±line radius before full-file recovery; 0 disables recovery
  */
 export function applyEdits(
   text: string,
   edits: Edit[],
-  hashLen = 4,
-  shiftRadius = DEFAULT_SHIFT_RADIUS,
+  hashLen: number,
+  shiftRadius: number,
 ): ApplyResult {
   if (hasInvalidBodyLine(edits)) {
     return {

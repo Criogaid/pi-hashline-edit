@@ -18,6 +18,7 @@ import { makeWriteOverride } from "./write-tool.ts";
 import { makeReplaceTool } from "./replace-tool.ts";
 import { createActionFusionExecutor } from "./action-fusion.ts";
 import { getState } from "./state.ts";
+import { loadConfig } from "./config.ts";
 import { computeLineHash } from "../core/hash.ts";
 import { splitLines } from "../core/lines.ts";
 import { byteRevision } from "./file-commit.ts";
@@ -38,7 +39,7 @@ const call = (tool: any, params: any) => callTool(tool, params, { toolCallId: "0
 
 /** Anchor a model would copy from read output for `line` of `text` (1-based). */
 function h(text: string, line: number) {
-  return `${line}#${computeLineHash(line, splitLines(text)[line - 1])}`;
+  return `${line}#${computeLineHash(line, splitLines(text)[line - 1], 4)}`;
 }
 
 /** Extract a `LINE#HASH` anchor from a read/edit result text block. */
@@ -1520,7 +1521,7 @@ test("read bounds oversized selected lines while preserving truncation metadata 
     assert.equal(result.details.truncation.firstLineExceedsLimit, false);
     assert.equal(result.details.truncation.outputLines, 1);
     const expectedRows = ["first", long, "last"].map(
-      (text, index) => `${index + 1}#${computeLineHash(index + 1, text)}│${text}`,
+      (text, index) => `${index + 1}#${computeLineHash(index + 1, text, 4)}│${text}`,
     );
     assert.equal(result.details.truncation.totalBytes, Buffer.byteLength(expectedRows.join("\n")));
     const oversized = await call(read, { path: "long.txt", offset: 2, limit: 1 });
@@ -1540,7 +1541,7 @@ test("read budgets visible standalone CR characters using rendered UTF-8 bytes",
     assert.equal(result.details.truncation.outputBytes, 0);
     assert.equal(
       result.details.truncation.totalBytes,
-      Buffer.byteLength(`1#${computeLineHash(1, content)}│${"␍".repeat(content.length)}`),
+      Buffer.byteLength(`1#${computeLineHash(1, content, 4)}│${"␍".repeat(content.length)}`),
     );
   }));
 
@@ -1757,7 +1758,7 @@ test("ambiguous failure lists and neighborhoods select the same first eight cand
     await assert.rejects(
       call(tool, {
         path: "candidates.txt",
-        edits: [{ op: "delete", anchor: `200#${computeLineHash(200, "target")}` }],
+        edits: [{ op: "delete", anchor: `200#${computeLineHash(200, "target", 4)}` }],
       }),
       (error: Error) => {
         const list = error.message
@@ -1775,4 +1776,38 @@ test("ambiguous failure lists and neighborhoods select the same first eight cand
       },
     );
     assert.equal(await readFile(join(dir, "candidates.txt"), "utf8"), text);
+  }));
+
+test("loaded configuration controls hash length and recovery radius", async () =>
+  withDir(async (dir) => {
+    const state = getState();
+    const previous = state.config;
+    const text = "changed\ntarget\npadding\ntarget\n";
+    await mkdir(join(dir, ".pi"));
+    await writeFile(join(dir, "configured.txt"), text);
+    try {
+      for (const [hashLen, shiftRadius, expected] of [
+        [6, 0, /no checksum-matching candidate found/],
+        [6, 1, /checksum-matching candidate 2#/],
+        [8, 3, /ambiguous checksum matches/],
+      ] as const) {
+        await writeFile(
+          join(dir, ".pi", "settings.json"),
+          JSON.stringify({ hashlineEdit: { hashLen, shiftRadius } }),
+        );
+        state.config = loadConfig(dir);
+        const read = await call(makeReadOverride(dir), { path: "configured.txt" });
+        assert.equal(anchorLine(read.content[0].text, 1).split("#")[1].length, hashLen);
+        await assert.rejects(
+          call(makeEditOverride(dir), {
+            path: "configured.txt",
+            edits: [{ op: "delete", anchor: `1#${computeLineHash(1, "target", hashLen)}` }],
+          }),
+          expected,
+        );
+        assert.equal(await readFile(join(dir, "configured.txt"), "utf8"), text);
+      }
+    } finally {
+      state.config = previous;
+    }
   }));

@@ -243,7 +243,7 @@ test("mutation anchor output and aggregate anchor diagnostics have byte budgets"
           ? await invoke(
               makeEditOverride(dir),
               name,
-              { path, edits: [{ op: "delete", anchor: `1#${computeLineHash(1, "remove")}` }] },
+              { path, edits: [{ op: "delete", anchor: `1#${computeLineHash(1, "remove", 4)}` }] },
               undefined,
               undefined,
               ctx(dir),
@@ -351,7 +351,7 @@ test("ambiguous recovery bounds candidate lists and never claims content identit
           path,
           edits: Array.from({ length: 1000 }, () => ({
             op: "delete",
-            anchor: `50#${computeLineHash(50, "same")}`,
+            anchor: `50#${computeLineHash(50, "same", 4)}`,
           })),
         },
         undefined,
@@ -495,7 +495,7 @@ const noOpCases = [
   {
     makeTool: makeEditOverride,
     params: {
-      edits: [{ op: "replace", anchor: `1#${computeLineHash(1, "same")}`, body: ["same"] }],
+      edits: [{ op: "replace", anchor: `1#${computeLineHash(1, "same", 4)}`, body: ["same"] }],
     },
   },
   { makeTool: makeReplaceTool, params: { replacements: [{ find: "same", replace: "same" }] } },
@@ -622,8 +622,8 @@ test("mutation anchors omit unchanged positions across distant changes", async (
                 edits: [
                   {
                     op: "replace",
-                    anchor: `1#${computeLineHash(1, before[0])}`,
-                    end: `100#${computeLineHash(100, before[99])}`,
+                    anchor: `1#${computeLineHash(1, before[0], 4)}`,
+                    end: `100#${computeLineHash(100, before[99], 4)}`,
                     body: after,
                   },
                 ],
@@ -648,8 +648,8 @@ test("mutation anchors omit unchanged positions across distant changes", async (
             );
       const returned = [...text(result).matchAll(/^(\d+#[0-9A-Z]+)/gm)].map((match) => match[1]);
       assert.deepEqual(returned, [
-        `1#${computeLineHash(1, after[0])}`,
-        `100#${computeLineHash(100, after[99])}`,
+        `1#${computeLineHash(1, after[0], 4)}`,
+        `100#${computeLineHash(100, after[99], 4)}`,
       ]);
       assert.doesNotMatch(text(result), /omitted/);
       // An omitted stable row keeps its old anchor; a changed row uses the returned anchor.
@@ -661,7 +661,7 @@ test("mutation anchors omit unchanged positions across distant changes", async (
           edits: [
             {
               op: "replace",
-              anchor: `50#${computeLineHash(50, before[49])}`,
+              anchor: `50#${computeLineHash(50, before[49], 4)}`,
               body: ["stable anchor reused"],
             },
             { op: "replace", anchor: returned[1], body: ["fresh anchor reused"] },
@@ -696,7 +696,9 @@ test("mutation anchors retain a deletion successor but omit stable rows and dele
                 name,
                 {
                   path,
-                  edits: [{ op: "delete", anchor: `${line}#${computeLineHash(line, "remove")}` }],
+                  edits: [
+                    { op: "delete", anchor: `${line}#${computeLineHash(line, "remove", 4)}` },
+                  ],
                 },
                 undefined,
                 undefined,
@@ -713,7 +715,7 @@ test("mutation anchors retain a deletion successor but omit stable rows and dele
         const rows = text(result)
           .split("\n")
           .filter((row) => /^\d+#/.test(row));
-        assert.deepEqual(rows, atEnd ? [] : [`2#${computeLineHash(2, "c")}│c`]);
+        assert.deepEqual(rows, atEnd ? [] : [`2#${computeLineHash(2, "c", 4)}│c`]);
       }
     }
   } finally {
@@ -733,7 +735,7 @@ test("mutation anchors retain deletion successor even when deleted line content 
       "edit",
       {
         path,
-        edits: [{ op: "delete", anchor: `2#${computeLineHash(2, "duplicate")}` }],
+        edits: [{ op: "delete", anchor: `2#${computeLineHash(2, "duplicate", 4)}` }],
       },
       undefined,
       undefined,
@@ -742,7 +744,7 @@ test("mutation anchors retain deletion successor even when deleted line content 
     const rows = text(result)
       .split("\n")
       .filter((row) => /^\d+#/.test(row));
-    assert.deepEqual(rows, [`2#${computeLineHash(2, "duplicate")}│duplicate`]);
+    assert.deepEqual(rows, [`2#${computeLineHash(2, "duplicate", 4)}│duplicate`]);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
@@ -789,7 +791,7 @@ test("compact mutation anchors exceed forty rows while respecting the byte budge
         }
         const finalLines = (await readFile(path, "utf8")).trimEnd().split("\n");
         for (const [, line, hash] of rows)
-          assert.equal(hash, computeLineHash(Number(line), finalLines[Number(line) - 1]));
+          assert.equal(hash, computeLineHash(Number(line), finalLines[Number(line) - 1], 4));
       }
     }
   } finally {
@@ -810,8 +812,8 @@ test("oversized deletion successors do not suppress later editable anchors", asy
       {
         path,
         edits: [
-          { op: "delete", anchor: `1#${computeLineHash(1, "remove")}` },
-          { op: "replace", anchor: `3#${computeLineHash(3, "old")}`, body: ["new"] },
+          { op: "delete", anchor: `1#${computeLineHash(1, "remove", 4)}` },
+          { op: "replace", anchor: `3#${computeLineHash(3, "old", 4)}`, body: ["new"] },
         ],
       },
       undefined,
@@ -821,7 +823,7 @@ test("oversized deletion successors do not suppress later editable anchors", asy
     const output = text(result);
     assert.doesNotMatch(output, /^1#[0-9A-Z]+/m);
     const anchor = output.match(/^2#[0-9A-Z]+$/m)?.[0];
-    assert.equal(anchor, `2#${computeLineHash(2, "new")}`);
+    assert.equal(anchor, `2#${computeLineHash(2, "new", 4)}`);
     assert.match(output, /additional anchors omitted: 16 KiB limit/);
     assert.ok(Buffer.byteLength(output.slice(output.indexOf("\nUpdated anchors:"))) <= 16 * 1024);
     await invoke(

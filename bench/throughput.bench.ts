@@ -68,7 +68,7 @@ for (let i = 100; i < 200; i += 5) {
 }
 console.log("\n[4. Edit Application (5,000 lines, 20 edits)]");
 bench("applyEdits batch verification and application", 50, () => {
-  applyEdits(file5k, edits, 4);
+  applyEdits(file5k, edits, 4, 15);
 });
 
 console.log("\nAll benchmarks completed successfully.");

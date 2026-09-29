@@ -213,7 +213,7 @@ test("mutation cards use Fusion by default and explicit false removes command su
     const edit = tools.find((tool) => tool.name === "edit");
     const stale = {
       path: "stale.txt",
-      edits: [{ op: "replace", anchor: `1#${computeLineHash(1, "target")}`, body: ["changed"] }],
+      edits: [{ op: "replace", anchor: `1#${computeLineHash(1, "target", 4)}`, body: ["changed"] }],
       then_run: { command: "exit 99" },
     };
     const staleCard = new ToolExecutionComponent(

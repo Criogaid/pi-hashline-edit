@@ -322,7 +322,7 @@ test("edit omits Updated anchors when then_run changes the target", async () => 
       "edit-stale",
       {
         path: "edit-stale.txt",
-        edits: [{ op: "replace", anchor: `1#${computeLineHash(1, "before")}`, body: ["after"] }],
+        edits: [{ op: "replace", anchor: `1#${computeLineHash(1, "before", 4)}`, body: ["after"] }],
         then_run: { command: "change target" },
       },
       undefined,

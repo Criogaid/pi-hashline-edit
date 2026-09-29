@@ -993,10 +993,10 @@ test("long-line previews preserve full-line anchors across literal and Rust rege
       );
       const output = result.content[0].text;
       const row = output.split("\n").find((line: string) => line.startsWith("1#"));
-      assert.ok(row.startsWith(`1#${computeLineHash(1, long)}│[partial, columns `));
+      assert.ok(row.startsWith(`1#${computeLineHash(1, long, 4)}│[partial, columns `));
       assert.ok(row.includes("NEEDLE"));
       assert.equal(Buffer.from(row).toString("utf8"), row);
-      assert.ok(output.includes(`3#${computeLineHash(3, context)}│[partial, columns 1-499]`));
+      assert.ok(output.includes(`3#${computeLineHash(3, context, 4)}│[partial, columns 1-499]`));
       assert.match(output, /anchors hash full lines/);
     }
   } finally {

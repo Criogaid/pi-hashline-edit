@@ -29,12 +29,12 @@ test("read and line-based grep retain anchors on LF and CRLF files over 100 MiB"
       }
       const first: any = await call(read, { path, limit: 1 });
       assert.match(first.content[0].text, /103426 lines/);
-      assert.ok(first.content[0].text.includes(`1#${computeLineHash(1, "needle")}│needle`));
+      assert.ok(first.content[0].text.includes(`1#${computeLineHash(1, "needle", 4)}│needle`));
       const last: any = await call(read, { path, offset: 103426, limit: 1 });
-      assert.ok(last.content[0].text.includes(`103426#${computeLineHash(103426, "tail")}│tail`));
+      assert.ok(last.content[0].text.includes(`103426#${computeLineHash(103426, "tail", 4)}│tail`));
       for (const modes of [{}, { literal: true }]) {
         const result: any = await call(grep, { path, pattern: "needle", ...modes });
-        assert.ok(result.content[0].text.includes(`1#${computeLineHash(1, "needle")}│needle`));
+        assert.ok(result.content[0].text.includes(`1#${computeLineHash(1, "needle", 4)}│needle`));
         assert.doesNotMatch(result.content[0].text, /Search incomplete/);
       }
     }
@@ -54,8 +54,8 @@ test("CRLF snapshots normalize terminators split across read chunks and preserve
       pattern: ["needle", "standalone\r"],
       literal: true,
     });
-    assert.ok(result.content[0].text.includes(`2#${computeLineHash(2, "needle")}│needle`));
-    assert.ok(result.content[0].text.includes(`3#${computeLineHash(3, "standalone\r")}│`));
+    assert.ok(result.content[0].text.includes(`2#${computeLineHash(2, "needle", 4)}│needle`));
+    assert.ok(result.content[0].text.includes(`3#${computeLineHash(3, "standalone\r", 4)}│`));
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
