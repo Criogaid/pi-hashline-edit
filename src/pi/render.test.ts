@@ -52,6 +52,25 @@ test("mutation headers refresh in place and retain isolated per-call counts", ()
   }
 });
 
+test("edit call titles treat JSON-string edits like structured edits and tolerate invalid JSON", () => {
+  initTheme("dark");
+  const tool = makeEditOverride(process.cwd());
+  const edits = [
+    { op: "replace" as const, anchor: "1#AB", body: ["new"] },
+    { op: "append" as const, body: ["more"] },
+  ];
+  const render = (value: unknown) =>
+    tool
+      .renderCall({ path: "f.txt", edits: value } as Parameters<typeof tool.renderCall>[0], theme, {
+        state: {},
+      } as Parameters<typeof tool.renderCall>[2])
+      .render(120)
+      .join("\n");
+  assert.equal(render(JSON.stringify(edits)), render(edits));
+  assert.match(render(edits), /2 ops: replace/);
+  assert.doesNotMatch(render("[{bad"), /ops: undefined/);
+});
+
 test("mutation card owns stale-anchor notices without internal status", () => {
   initTheme("dark");
   const tool = withMutationStatus(makeEditOverride(process.cwd()));

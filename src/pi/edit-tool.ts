@@ -409,8 +409,18 @@ function formatUpdatedAnchors(
 function editHeader(args: EditParams, theme: Theme, counts?: DiffCounts): string {
   let t = theme.fg("toolTitle", theme.bold("edit "));
   t += theme.fg("accent", args.path);
-  const n = args.edits?.length ?? 0;
-  if (n) t += theme.fg("dim", ` — ${n} op${n > 1 ? "s" : ""}: ${args.edits[0].op}`);
+  let edits: EditParams["edits"] = [];
+  try {
+    const prepared = prepareEditArguments(args) as EditParams;
+    if (Array.isArray(prepared.edits)) edits = prepared.edits;
+  } catch {
+    // Invalid arguments still need a renderable title; execution reports the error.
+  }
+  const n = edits.length;
+  if (n) {
+    const kind = typeof edits[0]?.op === "string" ? edits[0].op : "unknown";
+    t += theme.fg("dim", ` — ${n} op${n > 1 ? "s" : ""}: ${kind}`);
+  }
   if (counts && (counts.added || counts.removed)) t += formatDiffCounts(counts, theme);
   return t;
 }
@@ -425,7 +435,7 @@ export function makeEditOverride(
     name: "edit" as const,
     label: "edit",
     description:
-      "Edit file lines using content-verified anchors. Returns fresh anchors for subsequent edits. Anchor failures report input-anchor status and bounded current-file context. Inspect recovery candidates before retrying; retries always revalidate anchors and never run automatically.",
+      "Edit file lines using content-verified anchors. Returns fresh anchors for subsequent edits. Anchor failures show bounded current-file context; batches also report input-anchor checks. Inspect recovery candidates before retrying; retries revalidate anchors and never run automatically.",
     promptSnippet: "Edit file lines using verified anchors",
     promptGuidelines: [
       "Batch related edits to the same file in one call; the batch checks anchors against one snapshot.",
