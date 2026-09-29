@@ -454,8 +454,9 @@ test("progress reports skipped mutations and failed commands without rolling bac
   }
 });
 
-test("concurrent mutations on case-differing paths serialize on Windows", async () => {
-  if (process.platform !== "win32") return;
+test("concurrent mutations on case-differing paths serialize on Windows", {
+  skip: process.platform !== "win32",
+}, async () => {
   const dir = await tempDir();
   try {
     const fusion = createActionFusionExecutor();
