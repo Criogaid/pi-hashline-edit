@@ -18,8 +18,8 @@
     "LICENSE"
   ],
   "scripts": {
-    "format": "biome format --write src/",
-    "format:check": "biome format src/",
+    "format": "biome format --write src/ bench/",
+    "format:check": "biome format src/ bench/",
     "typecheck": "tsc --noEmit",
     "test": "node --test src/core/*.test.ts src/pi/*.test.ts",
     "test:integration": "node --test src/integration/*.test.ts",

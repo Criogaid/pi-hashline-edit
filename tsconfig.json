@@ -13,6 +13,6 @@
     "allowImportingTsExtensions": true,
     "declaration": false
   },
-  "include": ["src/**/*.ts"],
+  "include": ["src/**/*.ts", "bench/**/*.ts"],
   "exclude": ["node_modules"]
 }

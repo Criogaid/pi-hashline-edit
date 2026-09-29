@@ -66,7 +66,7 @@ Successful `edit` and `replace` results omit candidate rows whose full content a
 | `replace` | Replace every occurrence of a literal string or JavaScript regex across one file. |
 | `write` | Create a file or replace its complete contents. |
 
-All tools accept relative and absolute paths, `file://` URLs, a leading `@` prefix, and a leading `~` (including `~\` on Windows). As in Pi's built-in file tools, supported Unicode spaces in paths become regular spaces, and Windows shell drive paths such as `/c/file`, `/mnt/c/file`, and `/cygdrive/c/file` resolve to native drive paths. Mutation tools share the file-mutation queue and commit layer.
+All tools accept relative and absolute paths, `file://` URLs, a leading `@` prefix, and a leading `~` (including `~\` on Windows). As in Pi's built-in file tools, supported Unicode spaces in paths become regular spaces, and Windows shell drive paths using only forward slashes, such as `/c/file`, `/mnt/c/file`, and `/cygdrive/c/file`, resolve to native drive paths. Mixed-separator forms such as `/c/dir\file` do not undergo this drive conversion, matching Pi's built-in tools. Mutation tools share the file-mutation queue and commit layer.
 
 All text inspection and matching uses one logical representation: CRLF boundaries become LF; standalone CR and source-code escape sequences such as the four characters `\r\n` remain content. `read` and `grep` hash the same logical lines that `edit` verifies; literal and regex `replace` both match this LF view. Mutation offsets map back to the original text. `edit` and `replace` share separator restoration: reuse internal separators positionally, repeat the last for extra gaps, or use the file style (CRLF if present, otherwise LF) when none exist. Boundaries outside the replacement stay unchanged.
 
@@ -306,7 +306,8 @@ Streaming mutation summaries omit anchors. Result-generation failures preserve p
 
 ## Verification
 
-- `npm run typecheck` checks source and test types.
+- `npm run typecheck` checks source, test, and benchmark types in `src/` and `bench/`.
+- `npm run format:check` checks formatting in both directories.
 - `npm test` runs core and tool tests.
 - `npm run test:integration` exercises bundled ripgrep and files over 100 MiB, including LF and CRLF text.
 - `npm run bench` measures core throughput and long-line match mapping.
