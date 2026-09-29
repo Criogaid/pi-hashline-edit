@@ -95,10 +95,19 @@ export function makeReadOverride(cwd: string): ReturnType<typeof createReadToolD
     ...builtin.parameters,
     properties: {
       ...builtin.parameters.properties,
+      offset: {
+        ...builtin.parameters.properties.offset,
+        minimum: 1,
+        multipleOf: 1,
+        maximum: Number.MAX_SAFE_INTEGER,
+        description: "Positive integer line number to start reading from (1-indexed; default: 1).",
+      },
       limit: {
         ...builtin.parameters.properties.limit,
-        description:
-          "Maximum number of lines to read. Text reads default to 500 lines when omitted.",
+        minimum: 1,
+        multipleOf: 1,
+        maximum: Number.MAX_SAFE_INTEGER,
+        description: "Positive integer maximum number of lines to read (default: 500).",
       },
     },
   };
@@ -138,6 +147,14 @@ export function makeReadOverride(cwd: string): ReturnType<typeof createReadToolD
     ) {
       // User cancelled → delegate to the built-in (builtin handles abort itself)
       if (signal?.aborted) return builtin.execute(toolCallId, params, signal, onUpdate, ctx);
+      const offset = (params.offset as number | undefined) ?? 1;
+      const limit = (params.limit as number | undefined) ?? MAX_LINES;
+      if (!Number.isSafeInteger(offset) || offset < 1) {
+        throw new Error("Invalid read offset: expected a positive integer (1-based).");
+      }
+      if (!Number.isSafeInteger(limit) || limit < 1) {
+        throw new Error("Invalid read limit: expected a positive integer.");
+      }
       const anchors = createAnchorFormatter();
 
       const absPath = canonicalPath(cwd, params.path as string);
@@ -149,12 +166,7 @@ export function makeReadOverride(cwd: string): ReturnType<typeof createReadToolD
         return builtin.execute(toolCallId, params, signal, onUpdate, ctx);
       }
 
-      const offset = (params.offset as number | undefined) ?? 1;
-      const limit = (params.limit as number | undefined) ?? MAX_LINES;
-      if (!Number.isFinite(offset) || !Number.isSafeInteger(Math.ceil(offset))) {
-        throw new Error("Invalid read offset: expected a finite line number.");
-      }
-      const start = Math.max(1, Math.ceil(offset));
+      const start = offset;
       const end = start + limit;
       const rows: string[] = [];
       const crExpansion = Buffer.byteLength(displayCarriageReturns("\r")) - 1;

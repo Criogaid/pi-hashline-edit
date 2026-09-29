@@ -578,25 +578,60 @@ test("read pagination supports offset windows and stops suggesting continuation 
     }
   }));
 
-test("read uses the displayed line for fractional and clamped offsets", async () =>
+test("read rejects noninteger and nonpositive offsets and limits before reading", async () =>
   withDir(async (dir) => {
     await writeFile(join(dir, "pages.txt"), "first\nsecond\nthird\n");
     const read = makeReadOverride(dir);
-    const page = await call(read, { path: "pages.txt", offset: 1.5, limit: 1 });
+    for (const key of ["offset", "limit"] as const) {
+      const schema = read.parameters.properties[key];
+      assert.equal(schema.type, "number");
+      assert.equal("minimum" in schema ? schema.minimum : undefined, 1);
+      assert.equal("multipleOf" in schema ? schema.multipleOf : undefined, 1);
+      assert.equal("maximum" in schema ? schema.maximum : undefined, Number.MAX_SAFE_INTEGER);
+      for (const invalid of [
+        0,
+        -4,
+        0.5,
+        1.5,
+        NaN,
+        Infinity,
+        -Infinity,
+        Number.MAX_SAFE_INTEGER + 1,
+      ]) {
+        const params = { path: "pages.txt", [key]: invalid };
+        assert.throws(
+          () =>
+            validateToolArguments(read as any, {
+              type: "toolCall",
+              id: "0",
+              name: "read",
+              arguments: params,
+            }),
+          /Validation failed/,
+          `schema must reject ${key} ${invalid}`,
+        );
+        await assert.rejects(call(read, params), new RegExp(`Invalid read ${key}`));
+      }
+    }
+    assert.deepEqual(
+      validateToolArguments(read as any, {
+        type: "toolCall",
+        id: "valid",
+        name: "read",
+        arguments: { path: "pages.txt", offset: 2, limit: 550 },
+      }),
+      { path: "pages.txt", offset: 2, limit: 550 },
+    );
+    await assert.rejects(call(read, { path: "missing.txt", offset: 1.5 }), /Invalid read offset/);
+    const page = await call(read, { path: "pages.txt", offset: 2, limit: 1 });
     assert.match(page.content[0].text, /\n2#[0-9A-Z]+│second/);
     assert.match(page.content[0].text, /showing lines 2-2 of 3; use offset 3 to continue/);
     assert.deepEqual(page.details, {
       pagination: { start: 2, end: 2, totalLines: 3, nextOffset: 3 },
     });
     await writeFile(join(dir, "long.txt"), "x".repeat(300 * 1024));
-    for (const offset of [0, -4, 0.5]) {
-      const result = await call(read, { path: "long.txt", offset, limit: 1 });
-      assert.match(result.content[0].text, /line 1 exceeds 256KB/);
-      assert.doesNotMatch(result.content[0].text, /line (?:0|-4|0\.5) exceeds/);
-    }
-    for (const offset of [NaN, Infinity, -Infinity, Number.MAX_SAFE_INTEGER + 1]) {
-      await assert.rejects(call(read, { path: "pages.txt", offset }), /Invalid read offset/);
-    }
+    const long = await call(read, { path: "long.txt", offset: 1, limit: 1 });
+    assert.match(long.content[0].text, /line 1 exceeds 256KB/);
   }));
 
 test("read byte truncation takes precedence over line pagination", async () =>
