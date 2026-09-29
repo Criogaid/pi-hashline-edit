@@ -27,13 +27,13 @@ import {
 import { rgPath as bundledRgPath } from "@vscode/ripgrep";
 import { Type, type Static } from "typebox";
 import { Text } from "@earendil-works/pi-tui";
+import { createHash } from "node:crypto";
 import { stat } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { normalizeLineEndings } from "../core/lines.ts";
 import { scanTextFile, scanTextLines } from "./text-stream.ts";
 import { createAnchorFormatter, displayCarriageReturns } from "./anchor-format.ts";
 import { canonicalPath } from "./path.ts";
-import { fileRevision } from "./file-commit.ts";
 import { parseHashline, renderToolError } from "./render.ts";
 import {
   COMMON_RG_ARGS,
@@ -352,6 +352,12 @@ interface SearchMatchesOptions {
   warnings: string[];
 }
 
+async function scanFileRevision(filePath: string, signal?: AbortSignal) {
+  const hash = createHash("sha256");
+  const stats = await scanTextFile(filePath, undefined, signal, (bytes) => hash.update(bytes));
+  return { ...stats, revision: hash.digest("hex") };
+}
+
 function fileReadWarning(
   filePath: string,
   error: unknown,
@@ -408,7 +414,9 @@ async function searchMatches(options: SearchMatchesOptions) {
         seenMatches.add(matchKey);
         if (outputMode === "content" && !revisions.has(filePath)) {
           try {
-            revisions.set(filePath, await fileRevision(filePath));
+            const stats = await scanFileRevision(filePath, signal);
+            if (stats.hasNul) throw new Error("UNSUPPORTED_TEXT: NUL bytes are not editable.");
+            revisions.set(filePath, stats.revision);
           } catch (error) {
             const warning = fileReadWarning(filePath, error, signal);
             if (!warning) throw error;
@@ -437,10 +445,16 @@ async function searchMatches(options: SearchMatchesOptions) {
       let lineCount = lineCounts.get(filePath);
       if (lineCount === undefined) {
         try {
-          const stats = await scanTextFile(filePath, undefined, signal);
+          const stats =
+            outputMode === "content"
+              ? await scanFileRevision(filePath, signal)
+              : await scanTextFile(filePath, undefined, signal);
           if (stats.hasNul) throw new Error("UNSUPPORTED_TEXT: NUL bytes are not editable.");
           lineCount = stats.totalLines;
           lineCounts.set(filePath, lineCount);
+          if ("revision" in stats && typeof stats.revision === "string") {
+            revisions.set(filePath, stats.revision);
+          }
         } catch (error) {
           const warning = fileReadWarning(filePath, error, signal);
           if (!warning) throw error;
@@ -508,62 +522,76 @@ async function formatMatches(options: FormatMatchesOptions) {
     const fileEntries = [...byFile.entries()];
     const fileResults = new Array<{ block?: string; warning?: string }>(fileEntries.length);
     let nextIndex = 0;
+    const workerAbort = new AbortController();
+    const scanSignal = signal ? AbortSignal.any([signal, workerAbort.signal]) : workerAbort.signal;
+    let failed = false;
+    let failure: unknown;
     const workers = Array.from(
       { length: Math.min(MAX_CONCURRENT_FILE_READS, fileEntries.length) },
       async () => {
-        while (nextIndex < fileEntries.length) {
-          const current = nextIndex++;
-          const [filePath, matchLines] = fileEntries[current];
-          const columns = new Map(matchLines.map((match) => [match.lineNumber, match.column]));
-          const matchedTexts = new Map(
-            matchLines.map((match) => [match.lineNumber, match.matchedText]),
-          );
-          const windowSet = new Set<number>();
-          for (const { lineNumber } of matchLines) {
-            for (let n = Math.max(1, lineNumber - context); n <= lineNumber + context; n++)
-              windowSet.add(n);
-          }
-          const rows: string[] = [];
-          const matchedRows = new Set<number>();
-          try {
-            const stats = await scanTextLines(
-              filePath,
-              (number) => windowSet.has(number),
-              (line) => {
-                if (line.text === undefined) return;
-                const matchedText = matchedTexts.get(line.number);
-                if (matchedText !== undefined && matchedText !== line.text) {
-                  throw new Error("File changed during search; rerun the query.");
-                }
-                if (matchedTexts.has(line.number)) matchedRows.add(line.number);
-                const { text: display, wasTruncated } = previewLine(
-                  displayCarriageReturns(line.text),
-                  columns.get(line.number),
-                );
-                if (wasTruncated) linesTruncated = true;
-                rows.push(anchors.row(line.number, line.text, display));
-              },
-              { signal },
+        try {
+          while (!workerAbort.signal.aborted && nextIndex < fileEntries.length) {
+            const current = nextIndex++;
+            const [filePath, matchLines] = fileEntries[current];
+            const columns = new Map(matchLines.map((match) => [match.lineNumber, match.column]));
+            const matchedTexts = new Map(
+              matchLines.map((match) => [match.lineNumber, match.matchedText]),
             );
-            if (stats.hasNul) throw new Error("UNSUPPORTED_TEXT: NUL bytes are not editable.");
-            if (matchLines.some(({ lineNumber }) => !matchedRows.has(lineNumber))) {
-              throw new Error("File changed during search; rerun the query.");
+            const windowSet = new Set<number>();
+            for (const { lineNumber } of matchLines) {
+              for (let n = Math.max(1, lineNumber - context); n <= lineNumber + context; n++)
+                windowSet.add(n);
             }
-            const searchRevision = searchRevisions.get(filePath);
-            if (searchRevision && searchRevision !== (await fileRevision(filePath))) {
-              throw new Error("File changed during search; rerun the query.");
+            const rows: string[] = [];
+            const matchedRows = new Set<number>();
+            const hash = createHash("sha256");
+            try {
+              const stats = await scanTextLines(
+                filePath,
+                (number) => windowSet.has(number),
+                (line) => {
+                  if (line.text === undefined) return;
+                  const matchedText = matchedTexts.get(line.number);
+                  if (matchedText !== undefined && matchedText !== line.text) {
+                    throw new Error("File changed during search; rerun the query.");
+                  }
+                  if (matchedTexts.has(line.number)) matchedRows.add(line.number);
+                  const { text: display, wasTruncated } = previewLine(
+                    displayCarriageReturns(line.text),
+                    columns.get(line.number),
+                  );
+                  if (wasTruncated) linesTruncated = true;
+                  rows.push(anchors.row(line.number, line.text, display));
+                },
+                { signal: scanSignal, onBytes: (bytes) => hash.update(bytes) },
+              );
+              if (stats.hasNul) throw new Error("UNSUPPORTED_TEXT: NUL bytes are not editable.");
+              if (matchLines.some(({ lineNumber }) => !matchedRows.has(lineNumber))) {
+                throw new Error("File changed during search; rerun the query.");
+              }
+              const searchRevision = searchRevisions.get(filePath);
+              if (searchRevision && searchRevision !== hash.digest("hex")) {
+                throw new Error("File changed during search; rerun the query.");
+              }
+              const header = `${formatPath(filePath)} · ${matchLines.length} match${matchLines.length !== 1 ? "es" : ""}\n`;
+              fileResults[current] = { block: header + rows.join("\n") };
+            } catch (error) {
+              const warning = fileReadWarning(filePath, error, scanSignal);
+              if (!warning) throw error;
+              fileResults[current] = { warning };
             }
-            const header = `${formatPath(filePath)} · ${matchLines.length} match${matchLines.length !== 1 ? "es" : ""}\n`;
-            fileResults[current] = { block: header + rows.join("\n") };
-          } catch (error) {
-            const warning = fileReadWarning(filePath, error, signal);
-            if (!warning) throw error;
-            fileResults[current] = { warning };
+          }
+        } catch (error) {
+          if (!failed) {
+            failed = true;
+            failure = error;
+            workerAbort.abort();
           }
         }
       },
     );
     await Promise.all(workers);
+    if (failed) throw failure;
     for (const result of fileResults) {
       if (result.warning) warnings.push(result.warning);
       else if (result.block) blocks.push(result.block);

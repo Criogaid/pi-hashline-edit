@@ -4,6 +4,9 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
+import { setTimeout as delay } from "node:timers/promises";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -962,3 +965,34 @@ test("concurrent file reads preserve discovery order across multiple matched fil
     }
   });
 });
+
+test("fatal format errors stop workers from starting new file reads after rejection", async () =>
+  withDir(async (dir) => {
+    const events: string[] = [];
+    for (let i = 0; i < 60; i++) {
+      const file = join(dir, `file_${i}.txt`);
+      await writeFile(file, i === 0 ? "changed\n" : `needle\n${"x".repeat(256 * 1024)}\n`);
+      events.push(rgMatch(file, 1, "needle\n"));
+    }
+    const original = fs.createReadStream;
+    let started = 0;
+    fs.createReadStream = ((...args: Parameters<typeof original>) => {
+      if (typeof args[0] === "string" && args[0].startsWith(dir)) started++;
+      return original(...args);
+    }) as typeof original;
+    syncBuiltinESMExports();
+    try {
+      const fake = fakeBackend({ lines: events });
+      await assert.rejects(
+        call(makeGrepOverrideWithBackend(dir, fake.backend), { pattern: "needle" }),
+        /File changed during search/,
+      );
+      const atRejection = started;
+      assert.ok(atRejection > 60, "expected to observe format-stage streams");
+      await delay(350);
+      assert.equal(started, atRejection, "file reads started after the tool rejected");
+    } finally {
+      fs.createReadStream = original;
+      syncBuiltinESMExports();
+    }
+  }));

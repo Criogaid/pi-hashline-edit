@@ -1,7 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
+import { byteRevision } from "./file-commit.ts";
 import { join } from "node:path";
 import { scanTextFile, scanTextLines } from "./text-stream.ts";
 import { splitLines } from "../core/lines.ts";
@@ -44,6 +46,26 @@ test("streamed lines preserve BOM, standalone CR, and boundaries split across ch
       assert.equal(stats.hasCrLf, text.includes("\r\n"));
       assert.equal(stats.byteLength, Buffer.byteLength(text));
     }
+  }));
+
+test("streamed byte digests preserve the source revision across BOM, CRLF, and chunk boundaries", async () =>
+  withFile(async (path) => {
+    const source = Buffer.from(`\uFEFFfirst\r\n${"a".repeat(65536)}\r\nlast\r`);
+    await writeFile(path, source);
+    const first = createHash("sha256");
+    const stats = await scanTextFile(path, undefined, undefined, (bytes) => first.update(bytes));
+    assert.equal(stats.hasCrLf, true);
+    assert.equal(first.digest("hex"), byteRevision(source));
+    const second = createHash("sha256");
+    await scanTextLines(
+      path,
+      (number) => number === 1,
+      () => {},
+      {
+        onBytes: (bytes) => second.update(bytes),
+      },
+    );
+    assert.equal(second.digest("hex"), byteRevision(source));
   }));
 
 test("streamed selection discards oversized content and still counts and reads subsequent lines", async () =>

@@ -6,6 +6,7 @@ export async function scanTextFile(
   path: string,
   onChunk?: (text: string) => void | Promise<void>,
   signal?: AbortSignal,
+  onBytes?: (bytes: Buffer) => void,
 ) {
   const decode = createUtf8Decoder();
   let byteLength = 0;
@@ -17,6 +18,7 @@ export async function scanTextFile(
   const stream = createReadStream(path, { highWaterMark: 64 * 1024, signal });
   for await (const chunk of stream) {
     const bytes = chunk as Buffer;
+    onBytes?.(bytes);
     byteLength += bytes.length;
     hasNul ||= bytes.includes(0);
     hasCrLf ||= (lastByte === 13 && bytes[0] === 10) || bytes.includes("\r\n");
@@ -65,7 +67,7 @@ export async function scanTextLines(
   path: string,
   select: (number: number) => boolean,
   onLine: (line: ScannedLine) => void,
-  options: { signal?: AbortSignal; maxLineBytes?: number } = {},
+  options: { signal?: AbortSignal; maxLineBytes?: number; onBytes?: (bytes: Buffer) => void } = {},
 ) {
   const maxBytes = options.maxLineBytes ?? Infinity;
   let number = 1;
@@ -120,6 +122,7 @@ export async function scanTextLines(
       }
     },
     options.signal,
+    options.onBytes,
   );
   if (!stats.hasNul && byteLength > 0) finish(false);
   return stats;
