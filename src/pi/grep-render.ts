@@ -1,5 +1,6 @@
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import { parseHashline } from "./anchor-format.ts";
+import { isNoticeLine, parseFileHeader } from "./grep-output.ts";
 
 /**
  * Convert the anchored grep output (grouped, `LINE#HASH│`) into a human-readable
@@ -24,9 +25,9 @@ export function toDisplayLines(raw: string, theme: Theme): string[] {
   let i = 0;
   while (i < lines.length) {
     const line = lines[i];
-    const h = line.match(/^(.+?) · (\d+ match(?:es)?)$/);
-    if (h) {
-      out.push(theme.fg("success", h[1]) + theme.fg("dim", ` · ${h[2]}`));
+    const header = parseFileHeader(line);
+    if (header) {
+      out.push(theme.fg("success", header.path) + theme.fg("dim", ` · ${header.summary}`));
       // collect the anchor lines in this file group
       const group: { lineNo: string; content: string }[] = [];
       let j = i + 1;
@@ -50,7 +51,7 @@ export function toDisplayLines(raw: string, theme: Theme): string[] {
       i = j;
       continue;
     }
-    if (line.startsWith("[")) out.push(theme.fg("warning", line));
+    if (isNoticeLine(line)) out.push(theme.fg("warning", line));
     else out.push(theme.fg("toolOutput", line));
     i++;
   }

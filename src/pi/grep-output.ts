@@ -14,6 +14,22 @@ const GREP_MAX_LINE_LENGTH = 500;
 const GREP_PREVIEW_LEAD = 100;
 const MAX_CONCURRENT_FILE_READS = 16;
 
+/** Content-mode file header: `<path> · <N> match(es)`. parseFileHeader is its TUI parser. */
+function formatFileHeader(path: string, matches: number): string {
+  return `${path} · ${matches} match${matches !== 1 ? "es" : ""}`;
+}
+const FILE_HEADER = /^(.+?) · (\d+ match(?:es)?)$/;
+
+export function parseFileHeader(line: string): { path: string; summary: string } | undefined {
+  const match = FILE_HEADER.exec(line);
+  return match ? { path: match[1], summary: match[2] } : undefined;
+}
+
+/** Notices and search diagnostics open with `[` (see assembleGrepOutput and formatSearchWarnings). */
+export function isNoticeLine(line: string): boolean {
+  return line.startsWith("[");
+}
+
 export function formatSearchWarnings(warnings: readonly string[]): string {
   if (!warnings.length) return "";
   const summary = truncateHead([...new Set(warnings)].join("\n"), {
@@ -119,7 +135,7 @@ export async function formatMatches(options: FormatMatchesOptions) {
               if (searchRevision && searchRevision !== hash.digest("hex")) {
                 throw searchChangedError();
               }
-              const header = `${formatPath(filePath)} · ${matchLines.length} match${matchLines.length !== 1 ? "es" : ""}\n`;
+              const header = `${formatFileHeader(formatPath(filePath), matchLines.length)}\n`;
               fileResults[current] = { block: header + rows.join("\n") };
             } catch (error) {
               const warning = fileReadWarning(filePath, error, scanSignal);

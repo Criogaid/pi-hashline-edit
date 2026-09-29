@@ -36,6 +36,23 @@ const DEFAULT_OFFSET = 1;
 type ReadDetails = ReadToolDetails & { nativeRead?: true };
 
 /**
+ * First result line: `<path> · <N> lines`, optionally ` (from line <offset>)` and
+ * ` · no trailing newline`. A missing final newline is a byte-level fact the
+ * numbered rows cannot show, so the header, which the model never copies into an
+ * edit `body`, states it. READ_HEADER is the TUI's parser for this exact line.
+ */
+function formatReadHeader(
+  path: string,
+  totalLines: number,
+  start: number,
+  finalNewline: boolean,
+): string {
+  const shownFrom = start > DEFAULT_OFFSET ? ` (from line ${start})` : "";
+  return `${path} · ${totalLines} lines${shownFrom}${finalNewline ? "" : " · no trailing newline"}`;
+}
+const READ_HEADER = /^(.+?) · (\d+ lines(?: \(from line \d+\))?(?: · no trailing newline)?)$/;
+
+/**
  * Render the expanded read body for the TUI: color the header, strip the
  * `LINE#HASH│` prefix from every anchor line to `   N: content`, and
  * syntax-highlight the code block by the file's language (falls back to a
@@ -51,9 +68,7 @@ function renderReadBody(raw: string, path: string, theme: Theme): string {
   // Header: "<path> · <N> lines", optionally followed by " (from line <offset>)"
   // and/or " · no trailing newline".
   let bodyStart = 0;
-  const h = lines[0].match(
-    /^(.+?) · (\d+ lines(?: \(from line \d+\))?(?: · no trailing newline)?)$/,
-  );
+  const h = lines[0].match(READ_HEADER);
   if (h) {
     out.push(theme.fg("success", h[1]) + theme.fg("dim", ` · ${h[2]}`));
     bodyStart = 1;
@@ -240,11 +255,6 @@ export function makeReadOverride(
         maxBytes,
       };
 
-      const shownFrom = start > 1 ? ` (from line ${start})` : "";
-      // A file whose last line carries no terminator is a byte-level fact that the
-      // numbered rows cannot show; state it in the header, the one line the model
-      // never copies into an edit `body`.
-      const noFinalNewline = stats.finalNewline ? "" : " · no trailing newline";
       const tail = truncation.firstLineExceedsLimit
         ? `\n… (line ${start} exceeds ${formatKiB(maxBytes)}; cannot return a complete anchor row. Reducing limit cannot split a physical line; use bash to inspect it in chunks, or replace for a known literal/regex change)`
         : truncation.truncated
@@ -252,7 +262,7 @@ export function makeReadOverride(
           : pagination
             ? `\n… (showing lines ${pagination.start}-${pagination.end} of ${pagination.totalLines}; use offset ${pagination.nextOffset} to continue)`
             : "";
-      const header = `${params.path} · ${stats.totalLines} lines${shownFrom}${noFinalNewline}\n`;
+      const header = `${formatReadHeader(params.path, stats.totalLines, start, stats.finalNewline)}\n`;
       const body = truncation.content;
 
       return {
