@@ -9,6 +9,7 @@ import { initTheme } from "@earendil-works/pi-coding-agent";
 import { ToolExecutionComponent } from "../../node_modules/@earendil-works/pi-coding-agent/dist/modes/interactive/components/tool-execution.js";
 import { theme } from "../../node_modules/@earendil-works/pi-coding-agent/dist/modes/interactive/theme/theme.js";
 import { computeLineHash } from "../core/hash.ts";
+import { callTool } from "./tool-call.testing.ts";
 
 test("mutation cards use Fusion by default and explicit false removes command support", async () => {
   const dir = await mkdtemp(join(tmpdir(), "hashline-registration-"));
@@ -55,8 +56,8 @@ test("mutation cards use Fusion by default and explicit false removes command su
     ]);
     assert.equal(grep.parameters.additionalProperties, false);
     await assert.rejects(
-      grep.execute("grep-old", { pattern: "needle", noIgnore: false }, undefined, undefined),
-      /Validation failed for tool "grep".*noIgnore/,
+      callTool(grep, { pattern: "needle", noIgnore: false }),
+      /Validation failed for tool "grep":\n {2}- noIgnore: schema is false/,
     );
     for (const tool of tools.filter((tool) => ["edit", "replace", "write"].includes(tool.name))) {
       assert.ok(
@@ -270,15 +271,14 @@ test("mutation cards use Fusion by default and explicit false removes command su
     )) {
       assert.equal(tool.parameters.properties.then_run, undefined);
       assert.equal(tool.renderShell, "default");
+      // Without Action Fusion the schema has no then_run, so Pi rejects it before execute.
       await assert.rejects(
-        tool.execute(
-          "disabled",
+        callTool(
+          tool,
           { path: "published.txt", then_run: { command: "exit 0" } },
-          undefined,
-          undefined,
-          { cwd: dir },
+          { ctx: { cwd: dir } },
         ),
-        /then_run is unavailable/,
+        /Validation failed for tool "(edit|replace|write)":[\s\S]*- then_run: schema is false/,
       );
     }
   } finally {

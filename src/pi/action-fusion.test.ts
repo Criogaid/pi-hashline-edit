@@ -3,8 +3,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { validateToolArguments } from "@earendil-works/pi-ai";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { callTool } from "./tool-call.testing.ts";
 import { makeEditOverride } from "./edit-tool.ts";
 import { makeReplaceTool } from "./replace-tool.ts";
 import { makeWriteOverride } from "./write-tool.ts";
@@ -66,36 +66,9 @@ test("then_run schemas reject invalid commands, unknown keys, and excessive time
         { command: "echo ok", timeot: 1 },
         { command: "echo ok", timeout: 2_147_483.648 },
       ]) {
-        const args = { path, ...mutation, then_run };
-        assert.throws(
-          () =>
-            validateToolArguments(tool as any, {
-              type: "toolCall",
-              id: "invalid-then-run",
-              name: tool.name,
-              arguments: args as unknown as Parameters<
-                typeof validateToolArguments
-              >[1]["arguments"],
-            }),
-          /Validation failed/,
-        );
         await assert.rejects(
-          (tool as any).execute("invalid-then-run", args, undefined, undefined, ctx(dir)),
-          /then_run|timeout|not supported/i,
-        );
-        assert.equal(await readFile(join(dir, path), "utf8"), "old\n");
-      }
-      // Pi drops optional nulls and converts scalars before validation; direct execute does neither.
-      for (const then_run of [null, { command: null }, { command: 123 }]) {
-        await assert.rejects(
-          (tool as any).execute(
-            "invalid-then-run",
-            { path, ...mutation, then_run },
-            undefined,
-            undefined,
-            ctx(dir),
-          ),
-          new RegExp(`Validation failed for tool "${tool.name}": /then_run`),
+          callTool(tool, { path, ...mutation, then_run }, { ctx: ctx(dir) }),
+          new RegExp(`Validation failed for tool "${tool.name}":[\\s\\S]*- then_run`),
         );
         assert.equal(await readFile(join(dir, path), "utf8"), "old\n");
       }

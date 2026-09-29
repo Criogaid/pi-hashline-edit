@@ -16,6 +16,7 @@ import { computeLineHash } from "../core/hash.ts";
 import { makeGrepOverrideWithBackend, type GrepBackend } from "./grep-tool.ts";
 import { makeEditOverride } from "./edit-tool.ts";
 import { getState } from "./state.ts";
+import { callTool } from "./tool-call.testing.ts";
 
 type FakeOptions = {
   lines?: string[];
@@ -88,7 +89,7 @@ function fakeBackend(options: FakeOptions = {}) {
 
 const text = (result: any): string => result.content[0].text;
 const call = (tool: any, params: any, signal?: AbortSignal) =>
-  tool.execute("0", params, signal, undefined);
+  callTool(tool, params, { toolCallId: "0", signal });
 
 test("grep guidance covers literal, case, and multiline searches", () => {
   const tool = makeGrepOverrideWithBackend(process.cwd(), {});
@@ -152,21 +153,22 @@ test("grep exposes nine parameters and rejects only the six removed fields", asy
     };
     for (const [key, value] of Object.entries(removed)) {
       for (const input of [value, false, null]) {
-        await assert.rejects(
-          call(tool, { pattern: "needle", [key]: input }),
-          (error: Error) => error.message.includes(key) && error.message.includes("not supported"),
+        await assert.rejects(call(tool, { pattern: "needle", [key]: input }), (error: Error) =>
+          error.message.includes(`- ${key}: schema is false`),
         );
       }
     }
     await assert.rejects(
       call(tool, { pattern: "needle", follow: false, noIgnore: null }),
-      (error: Error) => error.message.includes("follow") && error.message.includes("noIgnore"),
+      (error: Error) =>
+        error.message.includes("- follow: schema is false") &&
+        error.message.includes("- noIgnore: schema is false"),
     );
     assert.equal(fake.calls.length, 0);
   });
 });
 
-test("grep limit accepts only positive integers through schema and direct execution", async () => {
+test("grep limit accepts only positive integers", async () => {
   await withDir(async (dir) => {
     const fake = fakeBackend();
     const tool = makeGrepOverrideWithBackend(dir, fake.backend);
@@ -190,7 +192,7 @@ test("grep limit accepts only positive integers through schema and direct execut
       );
       await assert.rejects(
         call(tool, { pattern: "needle", limit }),
-        /Validation failed for tool "grep".*limit/,
+        /Validation failed for tool "grep":\n {2}- limit: /,
       );
     }
     assert.equal(fake.calls.length, 0);
@@ -227,7 +229,7 @@ test("grep schema rejects empty search inputs and fractional context", async () 
     }
     await assert.rejects(
       call(tool, { pattern: "needle", context: 1.5 }),
-      /Validation failed for tool "grep".*context/,
+      /Validation failed for tool "grep":\n {2}- context: /,
     );
     assert.equal(fake.calls.length, 0);
   }));

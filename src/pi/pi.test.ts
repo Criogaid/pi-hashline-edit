@@ -12,6 +12,7 @@ import { makeWriteOverride } from "./write-tool.ts";
 import { canonicalPath } from "./path.ts";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import { callTool } from "./tool-call.testing.ts";
 
 test("canonicalPath resolves relative and absolute", () => {
   const cwd = resolve("/cwd");
@@ -69,44 +70,34 @@ test("file tools share Pi-style URL and @ path resolution", async () => {
     const file = join(dir, "target.txt");
     const url = pathToFileURL(file).href;
     const ctx = { cwd: dir } as Parameters<ReturnType<typeof makeReadOverride>["execute"]>[4];
-    await makeWriteOverride(dir).execute(
-      "write",
+    await callTool(
+      makeWriteOverride(dir),
       { path: `@${url}`, content: "before\n" },
-      undefined,
-      undefined,
-      ctx,
+      {
+        toolCallId: "write",
+        ctx,
+      },
     );
-    const read = await makeReadOverride(dir).execute(
-      "read",
-      { path: url },
-      undefined,
-      undefined,
-      ctx,
-    );
+    const read = await callTool(makeReadOverride(dir), { path: url }, { toolCallId: "read", ctx });
     if (read.content[0]?.type !== "text") throw new Error("Expected a text read result");
     assert.match(read.content[0].text, /before/);
-    await makeReplaceTool(dir).execute(
-      "replace",
+    await callTool(
+      makeReplaceTool(dir),
       { path: url, replacements: [{ find: "before", replace: "after" }] },
-      undefined,
-      undefined,
-      ctx,
+      { toolCallId: "replace", ctx },
     );
-    await makeEditOverride(dir).execute(
-      "edit",
+    await callTool(
+      makeEditOverride(dir),
       {
         path: `@${url}`,
         edits: [{ op: "replace", anchor: `1#${computeLineHash(1, "after")}`, body: ["edited"] }],
       },
-      undefined,
-      undefined,
-      ctx,
+      { toolCallId: "edit", ctx },
     );
-    const matches = await makeGrepOverride(dir).execute(
-      "grep",
+    const matches = await callTool(
+      makeGrepOverride(dir),
       { path: `@${url}`, pattern: "edited" },
-      undefined,
-      undefined,
+      { toolCallId: "grep" },
     );
     assert.match(matches.content[0].text, /edited/);
     assert.equal(await readFile(file, "utf8"), "edited\n");
@@ -115,16 +106,14 @@ test("file tools share Pi-style URL and @ path resolution", async () => {
       commands++;
       return "checked";
     });
-    const fused = await makeWriteOverride(dir, fusion).execute(
-      "fused",
+    const fused = await callTool(
+      makeWriteOverride(dir, fusion),
       {
         path: `@${url}`,
         content: "edited\n",
         then_run: { command: "check" },
       },
-      undefined,
-      undefined,
-      ctx,
+      { toolCallId: "fused", ctx },
     );
     assert.ok(fused.details.actionFusion);
     assert.equal(fused.details.actionFusion.command, "succeeded");

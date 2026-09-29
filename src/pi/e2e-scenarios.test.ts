@@ -17,6 +17,7 @@ import { makeReplaceTool } from "./replace-tool.ts";
 import { createActionFusionExecutor } from "./action-fusion.ts";
 import { computeLineHash } from "../core/hash.ts";
 import { splitLines } from "../core/lines.ts";
+import { callTool } from "./tool-call.testing.ts";
 
 async function withDir<T>(fn: (dir: string) => Promise<T>): Promise<T> {
   const dir = await mkdtemp(join(tmpdir(), "hl-e2e-"));
@@ -27,7 +28,7 @@ async function withDir<T>(fn: (dir: string) => Promise<T>): Promise<T> {
   }
 }
 
-const call = (tool: any, params: any) => tool.execute("0", params, undefined, undefined);
+const call = (tool: any, params: any) => callTool(tool, params, { toolCallId: "0" });
 
 function h(text: string, line: number) {
   return `${line}#${computeLineHash(line, splitLines(text)[line - 1])}`;

@@ -3,10 +3,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { validateToolArguments } from "@earendil-works/pi-ai";
 import { makeWriteOverride } from "./write-tool.ts";
 import { createActionFusionExecutor } from "./action-fusion.ts";
 import { fileRevision } from "./file-commit.ts";
+import { callTool } from "./tool-call.testing.ts";
 
 const context = (cwd: string) => ({ cwd }) as any;
 
@@ -36,19 +36,9 @@ test("write rejects unknown fields rather than ignoring a misspelled create mode
     for (const fusion of [undefined, createActionFusionExecutor()]) {
       const tool = makeWriteOverride(dir, fusion);
       const args = { path: "file.txt", content: "new\n", modee: "create" };
-      assert.throws(
-        () =>
-          validateToolArguments(tool, {
-            type: "toolCall",
-            id: "mode-typo",
-            name: "write",
-            arguments: args,
-          }),
-        /Validation failed/,
-      );
       await assert.rejects(
-        tool.execute("mode-typo", args, undefined, undefined, context(dir)),
-        /not supported|unknown/i,
+        callTool(tool, args, { ctx: context(dir) }),
+        /Validation failed for tool "write":\n {2}- modee: schema is false/,
       );
       assert.equal(await readFile(file, "utf8"), "original\n");
     }
@@ -131,8 +121,8 @@ test("write rejects obsolete expectedRevision without overwriting", async () =>
     for (const fusion of [undefined, createActionFusionExecutor()]) {
       const write = makeWriteOverride(dir, fusion);
       await assert.rejects(
-        write.execute("obsolete", params, undefined, undefined, context(dir)),
-        /Validation failed for tool "write".*expectedRevision/,
+        callTool(write, params, { ctx: context(dir) }),
+        /Validation failed for tool "write":\n {2}- expectedRevision: schema is false/,
       );
       assert.equal(await readFile(target, "utf8"), "original\n");
     }

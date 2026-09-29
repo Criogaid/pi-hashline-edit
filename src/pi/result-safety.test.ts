@@ -17,10 +17,20 @@ import {
   finalizeMutationResult,
   postProcessMutation,
 } from "./mutation-result.ts";
+import { callTool } from "./tool-call.testing.ts";
 
 const text = (result: Pick<AgentToolResult<unknown>, "content">): string =>
   result.content.map((block) => (block.type === "text" ? block.text : "")).join("\n");
 const ctx = (cwd: string) => ({ cwd }) as ExtensionContext;
+
+const invoke = (
+  tool: any,
+  toolCallId: string,
+  args: unknown,
+  signal?: AbortSignal,
+  onUpdate?: unknown,
+  context?: unknown,
+) => callTool(tool, args, { toolCallId, signal, onUpdate, ctx: context });
 
 function assertFailureByteBudgets(message: string): void {
   const checksAt = message.indexOf("\nInput-anchor checks (this snapshot):\n");
@@ -66,7 +76,8 @@ test("replace withholds anchors in progress and after commands change or remove 
           if (fails) throw new Error("command failed");
           return "done";
         });
-        const result = await makeReplaceTool(dir, fusion).execute(
+        const result = await invoke(
+          makeReplaceTool(dir, fusion),
           "replace",
           {
             path,
@@ -108,7 +119,8 @@ test("progress callback failures preserve publication and do not prevent the com
         callback === "reporter" ? fail : undefined,
       );
       const path = join(dir, callback);
-      const result = await makeWriteOverride(dir, fusion).execute(
+      const result = await invoke(
+        makeWriteOverride(dir, fusion),
         "write",
         {
           path,
@@ -203,14 +215,16 @@ test("mutation anchor output and aggregate anchor diagnostics have byte budgets"
       await writeFile(path, "before\n");
       const result =
         name === "edit"
-          ? await makeEditOverride(dir).execute(
+          ? await invoke(
+              makeEditOverride(dir),
               name,
               { path, edits: [{ op: "append", body: [long] }] },
               undefined,
               undefined,
               ctx(dir),
             )
-          : await makeReplaceTool(dir).execute(
+          : await invoke(
+              makeReplaceTool(dir),
               name,
               { path, replacements: [{ find: "before", replace: long }] },
               undefined,
@@ -226,14 +240,16 @@ test("mutation anchor output and aggregate anchor diagnostics have byte budgets"
       await writeFile(path, `remove\n${long}\n`);
       const deleted =
         name === "edit"
-          ? await makeEditOverride(dir).execute(
+          ? await invoke(
+              makeEditOverride(dir),
               name,
               { path, edits: [{ op: "delete", anchor: `1#${computeLineHash(1, "remove")}` }] },
               undefined,
               undefined,
               ctx(dir),
             )
-          : await makeReplaceTool(dir).execute(
+          : await invoke(
+              makeReplaceTool(dir),
               name,
               { path, replacements: [{ find: "remove\n", replace: "" }] },
               undefined,
@@ -246,7 +262,8 @@ test("mutation anchor output and aggregate anchor diagnostics have byte budgets"
     }
     await writeFile(path, "current\n");
     await assert.rejects(
-      makeEditOverride(dir).execute(
+      invoke(
+        makeEditOverride(dir),
         "errors",
         {
           path,
@@ -279,7 +296,8 @@ test("every mutation entry rejects unpaired surrogates without running then_run"
     await writeFile(path, "original\n");
     const cases = [
       () =>
-        makeEditOverride(dir, fusion).execute(
+        invoke(
+          makeEditOverride(dir, fusion),
           "unicode",
           { path, edits: [{ op: "append", body: ["\ud800"] }], then_run: { command: "check" } },
           undefined,
@@ -287,7 +305,8 @@ test("every mutation entry rejects unpaired surrogates without running then_run"
           ctx(dir),
         ),
       () =>
-        makeReplaceTool(dir, fusion).execute(
+        invoke(
+          makeReplaceTool(dir, fusion),
           "unicode",
           {
             path,
@@ -299,7 +318,8 @@ test("every mutation entry rejects unpaired surrogates without running then_run"
           ctx(dir),
         ),
       () =>
-        makeWriteOverride(dir, fusion).execute(
+        invoke(
+          makeWriteOverride(dir, fusion),
           "unicode",
           { path, content: "\ud800", then_run: { command: "check" } },
           undefined,
@@ -329,7 +349,8 @@ test("ambiguous recovery bounds candidate lists and never claims content identit
     lines[49] = "different";
     await writeFile(path, lines.join("\n"));
     await assert.rejects(
-      makeEditOverride(dir).execute(
+      invoke(
+        makeEditOverride(dir),
         "ambiguous",
         {
           path,
@@ -363,7 +384,8 @@ test("all mutation tools report NUL rejection through the shared Fusion lifecycl
     let commands = 0;
     const cases = [
       (fusion: ReturnType<typeof createActionFusionExecutor>) =>
-        makeEditOverride(dir, fusion).execute(
+        invoke(
+          makeEditOverride(dir, fusion),
           "nul",
           { path, edits: [{ op: "append", body: ["\0"] }], then_run: { command: "check" } },
           undefined,
@@ -371,7 +393,8 @@ test("all mutation tools report NUL rejection through the shared Fusion lifecycl
           ctx(dir),
         ),
       (fusion: ReturnType<typeof createActionFusionExecutor>) =>
-        makeReplaceTool(dir, fusion).execute(
+        invoke(
+          makeReplaceTool(dir, fusion),
           "nul",
           {
             path,
@@ -383,7 +406,8 @@ test("all mutation tools report NUL rejection through the shared Fusion lifecycl
           ctx(dir),
         ),
       (fusion: ReturnType<typeof createActionFusionExecutor>) =>
-        makeWriteOverride(dir, fusion).execute(
+        invoke(
+          makeWriteOverride(dir, fusion),
           "nul",
           { path, content: "\0", then_run: { command: "check" } },
           undefined,
@@ -471,7 +495,8 @@ test("all mutation tools succeed without rewriting on no-op, with and without Fu
           return "checked";
         });
         const tool: any = makeTool(dir, mode === "standalone" ? undefined : fusion);
-        const result = await tool.execute(
+        const result = await invoke(
+          tool,
           tool.name,
           { path, ...params, ...(mode === "command" ? { then_run: { command: "check" } } : {}) },
           undefined,
@@ -531,7 +556,8 @@ test("no-op Fusion still detects external changes and reports command failures",
           },
         );
         const tool: any = makeTool(dir, fusion);
-        const result = await tool.execute(
+        const result = await invoke(
+          tool,
           tool.name,
           { path, ...params, then_run: { command: "check" } },
           undefined,
@@ -567,7 +593,8 @@ test("mutation anchors omit unchanged positions across distant changes", async (
       await writeFile(path, before.join("\r\n") + "\r\n");
       const result =
         name === "edit"
-          ? await makeEditOverride(dir).execute(
+          ? await invoke(
+              makeEditOverride(dir),
               name,
               {
                 path,
@@ -584,7 +611,8 @@ test("mutation anchors omit unchanged positions across distant changes", async (
               undefined,
               ctx(dir),
             )
-          : await makeReplaceTool(dir).execute(
+          : await invoke(
+              makeReplaceTool(dir),
               name,
               {
                 path,
@@ -604,7 +632,8 @@ test("mutation anchors omit unchanged positions across distant changes", async (
       ]);
       assert.doesNotMatch(text(result), /omitted/);
       // An omitted stable row keeps its old anchor; a changed row uses the returned anchor.
-      await makeEditOverride(dir).execute(
+      await invoke(
+        makeEditOverride(dir),
         "chain",
         {
           path,
@@ -641,7 +670,8 @@ test("mutation anchors retain a deletion successor but omit stable rows and dele
         const line = atEnd ? 3 : 2;
         const result =
           name === "edit"
-            ? await makeEditOverride(dir).execute(
+            ? await invoke(
+                makeEditOverride(dir),
                 name,
                 {
                   path,
@@ -651,7 +681,8 @@ test("mutation anchors retain a deletion successor but omit stable rows and dele
                 undefined,
                 ctx(dir),
               )
-            : await makeReplaceTool(dir).execute(
+            : await invoke(
+                makeReplaceTool(dir),
                 name,
                 { path, replacements: [{ find: "remove\n", replace: "" }] },
                 undefined,
@@ -676,7 +707,8 @@ test("mutation anchors retain deletion successor even when deleted line content 
     const lines = ["a", "duplicate", "duplicate", "d"];
     await writeFile(path, lines.join("\n") + "\n");
     const tool = makeEditOverride(dir);
-    const result = await tool.execute(
+    const result = await invoke(
+      tool,
       "edit",
       {
         path,
@@ -705,14 +737,16 @@ test("compact mutation anchors exceed forty rows while respecting the byte budge
         const inserted = Array.from({ length: count }, (_, i) => `changed ${i}`);
         const result =
           name === "edit"
-            ? await makeEditOverride(dir).execute(
+            ? await invoke(
+                makeEditOverride(dir),
                 name,
                 { path, edits: [{ op: "append", body: inserted }] },
                 undefined,
                 undefined,
                 ctx(dir),
               )
-            : await makeReplaceTool(dir).execute(
+            : await invoke(
+                makeReplaceTool(dir),
                 name,
                 { path, replacements: [{ find: "before", replace: inserted.join("\n") }] },
                 undefined,
@@ -749,7 +783,8 @@ test("oversized deletion successors do not suppress later editable anchors", asy
     const long = "x".repeat(17000);
     await writeFile(path, `remove\n${long}\nold\n`);
     const tool = makeEditOverride(dir);
-    const result = await tool.execute(
+    const result = await invoke(
+      tool,
       "skip",
       {
         path,
@@ -768,7 +803,8 @@ test("oversized deletion successors do not suppress later editable anchors", asy
     assert.equal(anchor, `2#${computeLineHash(2, "new")}`);
     assert.match(output, /additional anchors omitted: 16 KiB limit/);
     assert.ok(Buffer.byteLength(output.slice(output.indexOf("\nUpdated anchors:"))) <= 16 * 1024);
-    await tool.execute(
+    await invoke(
+      tool,
       "retry",
       { path, edits: [{ op: "replace", anchor, body: ["verified"] }] },
       undefined,

@@ -15,6 +15,7 @@ import { initTheme, type Theme } from "@earendil-works/pi-coding-agent";
 import { makeReplaceTool } from "./replace-tool.ts";
 import { makeEditOverride } from "./edit-tool.ts";
 import { validateToolArguments } from "@earendil-works/pi-ai";
+import { callTool } from "./tool-call.testing.ts";
 import { createActionFusionExecutor } from "./action-fusion.ts";
 import { generateMutationDetails } from "./mutation-result.ts";
 
@@ -101,12 +102,12 @@ test("replace rejects top-level rules without publishing", async () =>
     const file = join(dir, "f.txt");
     await writeFile(file, "old\n");
     await assert.rejects(
-      call(makeReplaceTool(dir), {
+      callTool(makeReplaceTool(dir), {
         path: file,
         find: "old",
         replace: "new",
       }),
-      /Validation failed for tool "replace".*replacements/,
+      /Validation failed for tool "replace"[\s\S]*replacements/,
     );
     assert.equal(await readFile(file, "utf8"), "old\n");
   }));
@@ -119,8 +120,8 @@ test("replace rejects unsupported per-rule fields before publishing", async () =
     const tool = makeReplaceTool(dir);
     for (const maxMatches of [1, null, false]) {
       await assert.rejects(
-        call(tool, { path: file, replacements: [{ find: "foo", replace: "bar", maxMatches }] }),
-        /Validation failed for tool "replace".*maxMatches/,
+        callTool(tool, { path: file, replacements: [{ find: "foo", replace: "bar", maxMatches }] }),
+        /Validation failed for tool "replace"[\s\S]*maxMatches/,
       );
       assert.equal(await readFile(file, "utf8"), before);
     }
@@ -351,8 +352,8 @@ test("replace: empty find throws", async () => {
   await withDir(async (dir) => {
     await writeFile(join(dir, "f.txt"), "a\n");
     await assert.rejects(
-      call(makeReplaceTool(dir), { path: "f.txt", replacements: [{ find: "", replace: "x" }] }),
-      /Validation failed for tool "replace".*find/,
+      callTool(makeReplaceTool(dir), { path: "f.txt", replacements: [{ find: "", replace: "x" }] }),
+      /Validation failed for tool "replace"[\s\S]*find/,
     );
   });
 });
@@ -387,11 +388,11 @@ test("replace: invalid flag char throws", async () => {
   await withDir(async (dir) => {
     await writeFile(join(dir, "f.txt"), "a\n");
     await assert.rejects(
-      call(makeReplaceTool(dir), {
+      callTool(makeReplaceTool(dir), {
         path: "f.txt",
         replacements: [{ find: "a", replace: "x", flags: "z" }],
       }),
-      /Validation failed for tool "replace".*flags/,
+      /Validation failed for tool "replace"[\s\S]*flags/,
     );
   });
 });
@@ -650,14 +651,12 @@ test("invalid batches reject every change and never run a fused command", async 
     for (const [expected, inputs] of cases) {
       for (const args of inputs) {
         await assert.rejects(
-          tool.execute(
-            "0",
-            { path: file, ...args, then_run: { command: "check" } } as Parameters<
-              typeof tool.execute
-            >[1],
-            undefined,
-            undefined,
-            { cwd: dir } as Parameters<typeof tool.execute>[4],
+          callTool(
+            tool,
+            { path: file, ...args, then_run: { command: "check" } },
+            {
+              ctx: { cwd: dir },
+            },
           ),
           expected,
         );
@@ -806,11 +805,11 @@ test("replace rejects JSON-string rules without publishing", async () =>
     await writeFile(file, "hello foo world");
     const tool = makeReplaceTool(dir);
     await assert.rejects(
-      call(tool, {
+      callTool(tool, {
         path: "f.txt",
         replacements: JSON.stringify([{ find: "foo", replace: "bar" }]),
       }),
-      /Validation failed for tool "replace".*replacements/,
+      /Validation failed for tool "replace"[\s\S]*replacements/,
     );
     assert.equal(await readFile(file, "utf8"), "hello foo world");
   }));

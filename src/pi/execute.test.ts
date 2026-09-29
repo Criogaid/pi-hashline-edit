@@ -22,6 +22,7 @@ import { computeLineHash } from "../core/hash.ts";
 import { splitLines } from "../core/lines.ts";
 import { byteRevision } from "./file-commit.ts";
 import { generateMutationDetails } from "./mutation-result.ts";
+import { callTool } from "./tool-call.testing.ts";
 
 async function withDir<T>(fn: (dir: string) => Promise<T>): Promise<T> {
   const dir = await mkdtemp(join(tmpdir(), "hl-"));
@@ -32,7 +33,8 @@ async function withDir<T>(fn: (dir: string) => Promise<T>): Promise<T> {
   }
 }
 
-const call = (tool: any, params: any) => tool.execute("0", params, undefined, undefined);
+/** Call a tool through Pi's argument preparation and schema validation, as production does. */
+const call = (tool: any, params: any) => callTool(tool, params, { toolCallId: "0" });
 
 /** Anchor a model would copy from read output for `line` of `text` (1-based). */
 function h(text: string, line: number) {
@@ -614,7 +616,7 @@ test("read rejects noninteger and nonpositive offsets and limits before reading"
         );
         await assert.rejects(
           call(read, params),
-          new RegExp(`Validation failed for tool "read".*${key}`),
+          new RegExp(`Validation failed for tool "read":\\n {2}- ${key}: `),
         );
       }
     }
@@ -733,7 +735,7 @@ test("edit schema rejects misspelled range fields and invalid operation shapes",
         arguments: args,
       });
     assert.throws(() => check(callArgs), /Validation failed/);
-    await assert.rejects(call(edit, callArgs), /\/edits\/0\/endd/);
+    await assert.rejects(call(edit, callArgs), /edits\.0\.endd: schema is false/);
     assert.equal(await readFile(join(dir, "range.txt"), "utf8"), original);
     for (const edits of [
       [],
@@ -746,12 +748,9 @@ test("edit schema rejects misspelled range fields and invalid operation shapes",
     }
     const alternates: Parameters<typeof validateToolArguments>[1]["arguments"][] = [
       { path: "range.txt", op: "replace", anchor, body: ["ok"] },
-      { path: "range.txt", edits: { op: "replace", anchor, body: ["ok"] } },
       { path: "range.txt", edits: JSON.stringify([{ op: "replace", anchor, body: ["ok"] }]) },
     ];
-    assert.throws(() => check(alternates[0]), /Validation failed/);
-    assert.deepEqual(check(alternates[1]).edits, [alternates[1].edits]);
-    assert.throws(() => check(alternates[2]), /Validation failed/);
+    for (const alternate of alternates) assert.throws(() => check(alternate), /Validation failed/);
     for (const alternate of alternates) {
       await assert.rejects(call(edit, alternate), /Validation failed/);
       assert.equal(await readFile(join(dir, "range.txt"), "utf8"), original);
@@ -912,12 +911,13 @@ test("failed commands preserve mutation results and stay out of all main card re
         run: async () => {
           const tool = makeEditOverride(dir, fusion);
           const args = { path: "edit.txt", edits: [{ op: "append" as const, body: ["after"] }] };
-          const result = await tool.execute(
-            args.path,
+          const result = await callTool(
+            tool,
             { ...args, then_run: { command: "check" } },
-            undefined,
-            undefined,
-            { cwd: dir } as Parameters<typeof tool.execute>[4],
+            {
+              toolCallId: args.path,
+              ctx: { cwd: dir },
+            },
           );
           return {
             result,
@@ -944,12 +944,13 @@ test("failed commands preserve mutation results and stay out of all main card re
             path: "replace.txt",
             replacements: [{ find: "before", replace: "after" }],
           };
-          const result = await tool.execute(
-            args.path,
+          const result = await callTool(
+            tool,
             { ...args, then_run: { command: "check" } },
-            undefined,
-            undefined,
-            { cwd: dir } as Parameters<typeof tool.execute>[4],
+            {
+              toolCallId: args.path,
+              ctx: { cwd: dir },
+            },
           );
           return {
             result,
@@ -973,12 +974,13 @@ test("failed commands preserve mutation results and stay out of all main card re
         run: async () => {
           const tool = makeWriteOverride(dir, fusion);
           const args = { path: "write.txt", content: "after\n" };
-          const result = await tool.execute(
-            args.path,
+          const result = await callTool(
+            tool,
             { ...args, then_run: { command: "check" } },
-            undefined,
-            undefined,
-            { cwd: dir } as Parameters<typeof tool.execute>[4],
+            {
+              toolCallId: args.path,
+              ctx: { cwd: dir },
+            },
           );
           return {
             result,
@@ -1144,8 +1146,8 @@ test("failed edits expose input status and candidate code for a verified fused r
     const candidate = h(before, 6);
     let message = "";
     await assert.rejects(
-      edit.execute(
-        "failed",
+      callTool(
+        edit,
         {
           path: file,
           edits: [
@@ -1154,9 +1156,7 @@ test("failed edits expose input status and candidate code for a verified fused r
           ],
           then_run: { command: "check" },
         },
-        undefined,
-        undefined,
-        { cwd: dir } as Parameters<ReturnType<typeof makeEditOverride>["execute"]>[4],
+        { toolCallId: "failed", ctx: { cwd: dir } },
       ),
       (error: Error) => {
         message = error.message;
@@ -1173,8 +1173,8 @@ test("failed edits expose input status and candidate code for a verified fused r
     assert.equal((message.match(/^\d+#[0-9A-Z]+│/gm) ?? []).length, 1);
     assert.equal(await readFile(file, "utf8"), before);
     assert.equal(commands, 0);
-    await edit.execute(
-      "retry",
+    await callTool(
+      edit,
       {
         path: file,
         edits: [
@@ -1183,9 +1183,7 @@ test("failed edits expose input status and candidate code for a verified fused r
         ],
         then_run: { command: "check" },
       },
-      undefined,
-      undefined,
-      { cwd: dir } as Parameters<ReturnType<typeof makeEditOverride>["execute"]>[4],
+      { toolCallId: "retry", ctx: { cwd: dir } },
     );
     const expected = splitLines(before);
     expected[11] = "changed";
@@ -1510,14 +1508,13 @@ test("read budgets visible standalone CR characters using rendered UTF-8 bytes",
     );
   }));
 
-test("edit execute accepts only structured edit arrays", async () =>
+test("edit tool rejects non-array formats Pi cannot convert", async () =>
   withDir(async (dir) => {
     const file = join(dir, "f.txt");
     await writeFile(file, "first\nsecond\n");
     const edit = makeEditOverride(dir);
     const anchor = h("first\nsecond\n", 2);
     for (const alternate of [
-      { path: "f.txt", edits: { op: "replace", anchor, body: ["SECOND"] } },
       { path: "f.txt", edits: JSON.stringify([{ op: "replace", anchor, body: ["SECOND"] }]) },
       { path: "f.txt", op: "replace", anchor, body: ["SECOND"] },
     ]) {

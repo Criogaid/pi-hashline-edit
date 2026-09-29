@@ -6,8 +6,9 @@ import { join } from "node:path";
 import { makeReadOverride } from "../pi/read-tool.ts";
 import { makeGrepOverrideWithBackend } from "../pi/grep-tool.ts";
 import { computeLineHash } from "../core/hash.ts";
+import { callTool } from "../pi/tool-call.testing.ts";
 
-const call = (tool: any, params: any) => tool.execute("large-text", params, undefined, undefined);
+const call = (tool: any, params: any) => callTool(tool, params, { toolCallId: "large-text" });
 
 test("read and line-based grep retain anchors on LF and CRLF files over 100 MiB", async () => {
   const directory = await mkdtemp(join(tmpdir(), "hashline-large-text-"));

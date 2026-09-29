@@ -27,6 +27,7 @@ import {
 } from "./file-commit.ts";
 import { createActionFusionExecutor } from "./action-fusion.ts";
 import { makeWriteOverride } from "./write-tool.ts";
+import { callTool } from "./tool-call.testing.ts";
 
 async function withTemp<T>(run: (dir: string) => Promise<T>): Promise<T> {
   const dir = await mkdtemp(join(tmpdir(), "hashline-commit-"));
@@ -229,16 +230,14 @@ test("Windows shared access failure preserves the target, skips then_run, and re
     );
     try {
       await assert.rejects(
-        tool.execute(
-          "shared-failure",
+        callTool(
+          tool,
           {
             path: target,
             content: "replacement\n",
             then_run: { command: "deterministic-command" },
           },
-          undefined,
-          undefined,
-          { cwd: dir } as Parameters<ReturnType<typeof makeWriteOverride>["execute"]>[4],
+          { toolCallId: "shared-failure", ctx: { cwd: dir } },
         ),
         (error: unknown) =>
           error instanceof Error &&
@@ -269,12 +268,10 @@ test("Windows shared access failure preserves the target, skips then_run, and re
     }
     assert.equal(unlocked, true, "Windows did not release the shared-access holder");
     assert.equal(await readFile(target, "utf8"), "original\n");
-    const result = await tool.execute(
-      "shared-retry",
+    const result = await callTool(
+      tool,
       { path: target, content: "replacement\n", then_run: { command: "deterministic-command" } },
-      undefined,
-      undefined,
-      { cwd: dir } as Parameters<ReturnType<typeof makeWriteOverride>["execute"]>[4],
+      { toolCallId: "shared-retry", ctx: { cwd: dir } },
     );
     assert.match(
       result.content.map((item: any) => (item.type === "text" ? item.text : "")).join("\n"),
