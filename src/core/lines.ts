@@ -84,61 +84,6 @@ export function splitLines(text: string): string[] {
   return lines;
 }
 
-/**
- * Extract a range of lines [startIdx, endIdx) without splitting the whole document.
- * Counts total lines accurately across CRLF, standalone CR, and missing final newline.
- */
-export function sliceLines(
-  text: string,
-  startIdx: number,
-  endIdx: number,
-): { lines: string[]; totalLines: number } {
-  if (text === "") return { lines: [], totalLines: 0 };
-
-  const len = text.length;
-  const lines: string[] = [];
-  let currentLine = 0;
-  let lineStart = 0;
-  let pos = 0;
-
-  while (pos < len) {
-    const nextLf = text.indexOf("\n", pos);
-    if (nextLf === -1) {
-      // Last line without trailing newline
-      if (currentLine >= startIdx && currentLine < endIdx) {
-        lines.push(text.slice(lineStart));
-      }
-      currentLine++;
-      break;
-    }
-
-    if (currentLine >= startIdx && currentLine < endIdx) {
-      const lineEnd =
-        nextLf > lineStart && text.charCodeAt(nextLf - 1) === 13 ? nextLf - 1 : nextLf;
-      lines.push(text.slice(lineStart, lineEnd));
-    }
-
-    currentLine++;
-    lineStart = nextLf + 1;
-    pos = nextLf + 1;
-
-    // Once we have collected all requested lines, count remaining newlines rapidly.
-    if (currentLine >= endIdx) {
-      let remainingLfs = 0;
-      let scan = pos;
-      while ((scan = text.indexOf("\n", scan)) !== -1) {
-        remainingLfs++;
-        scan++;
-      }
-      const hasTrailingTerminator = text.charCodeAt(len - 1) === 10;
-      currentLine += remainingLfs + (hasTrailingTerminator ? 0 : 1);
-      break;
-    }
-  }
-
-  return { lines, totalLines: currentLine };
-}
-
 /** Whether the text uses CRLF at all (any `\r\n` counts; mixed files report "crlf"). */
 export function detectLineEnding(text: string): LineEnding {
   return text.includes("\r\n") ? "crlf" : "lf";
