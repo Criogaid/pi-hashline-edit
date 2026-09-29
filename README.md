@@ -89,15 +89,31 @@ All operations in a batch use the same snapshot. Validation failure rejects the 
 
 For multi-operation batches that reach snapshot verification, rejected edits report each supplied anchor's status: `matched` or `mismatched`. Schema-invalid inputs fail before reading the file and have no anchor-status table. Single-operation edits omit the summary table and report the failure directly. Entries identify the zero-based operation index, `anchor` or `end`, and the cited token. The bounded list reports omitted entries explicitly. These statuses do not establish range/overlap validity, semantic intent, publication, command success, or validity on a later retry.
 
-Recovery first searches within `shiftRadius` of the cited line. If that search finds no candidates, it searches the rest of the file and collects all checksum matches before deciding whether the result is unique or ambiguous. Existing local candidates take priority; distant matches are not added when local candidates exist. `shiftRadius: 0` disables both searches. Candidate matching holds the original line number fixed when hashing current content; returned anchors use each candidate's actual line number.
+When an anchor no longer matches, `edit` looks for where the line went. Recovery only reports; it never edits or retries by itself:
 
-Candidate diagnostics identify the search as `Search: local` or `Search: full file`. Local results explicitly state that matches outside the window were not checked: a unique local candidate does not establish uniqueness across the file. The cited line and returned candidate anchor show the old and current positions.
+```mermaid
+flowchart TD
+  A["Cited anchor LINE#HASH"] --> B{"Hash of the cited line matches?"}
+  B -- yes --> OK["Verified"]
+  B -- no --> Z{"shiftRadius is 0?"}
+  Z -- yes --> NONE
+  Z -- no --> L["Search within ±shiftRadius lines"]
+  L --> LC{"Any local candidate?"}
+  LC -- yes --> COUNT{"How many candidates?"}
+  LC -- no --> F["Search the rest of the file"]
+  F --> COUNT
+  COUNT -- one --> ONE["Unique: new anchor and full row"]
+  COUNT -- several --> MANY["Ambiguous: first 8 anchors and ±3-line neighborhoods"]
+  COUNT -- none --> NONE["Unresolved: current cited row"]
+  ONE & MANY & NONE --> REJ["Whole batch rejected, nothing written; inspect and resubmit"]
+```
 
-A unique recovery candidate returns its new anchor and complete line content, without a neighborhood. Content is shown once per line and is limited to 4 KiB per candidate row; oversized content is omitted in full with a prompt to use `read` or `grep`.
+- Candidates are found by hashing each line's current content with the **cited** line number; each returned anchor uses the candidate's actual line number, so the details show both the old and current positions. Diagnostics say `Search: local` or `Search: full file`. A unique local candidate does not establish uniqueness across the file, because matches outside the window were not checked.
+- A unique candidate shows its new anchor and complete row once, without a neighborhood. Rows over 4 KiB are omitted in full with a prompt to use `read` or `grep`.
+- Ambiguous neighborhoods come from the same snapshot, are clipped to file boundaries, merged, and emitted in ascending line order within byte budgets. Their rows are observations, not suggested targets; candidate content already shown there is not repeated in the failure details.
+- With no candidate, the current cited row is shown as a complete `LINE#HASH│content` observation within the 4 KiB row limit. Confirm it is the intended target before reusing its anchor; use `read` or `grep` for more context, omitted rows, or out-of-range lines.
 
-Ambiguous failures list up to eight candidate anchors and include a bounded ±3-line neighborhood around each listed candidate from the same snapshot. Windows are clipped to file boundaries, merged, and emitted in ascending line order within byte budgets. Neighboring rows are observations, not recommended replacement targets. Candidate content already present in a neighborhood is not repeated in failure details. Inspect the code to choose the correct anchor and operation, then resubmit. No edit or retry is performed automatically, and every submitted anchor is verified again.
-
-When no candidate is found, diagnostics show the current cited line as a complete `LINE#HASH│content` observation within the 4 KiB row limit. Confirm it is the intended target before reusing its anchor directly. Use `read` or `grep` for additional context, omitted rows, or out-of-range references. Retries revalidate.
+Every submitted anchor is verified again on retry.
 
 ### Bulk replacement
 
@@ -241,11 +257,30 @@ Action Fusion is enabled by default. Set `"actionFusion": false` in `hashlineEdi
 }
 ```
 
-`command` is required and must contain a non-whitespace character; `timeout` is optional, in seconds greater than zero and at most 2147483.647, with no default. Unknown `then_run` fields are rejected. Invalid command parameters fail before mutation. Mutation failure skips the command. Command failure after mutation success **does not roll back the file**: it is returned separately in result text and `details.actionFusion`, rather than thrown as failure of the whole mutation.
+`command` is required and must contain a non-whitespace character; `timeout` is optional, in seconds greater than zero and at most 2147483.647, with no default. Unknown `then_run` fields are rejected.
+
+```mermaid
+flowchart TD
+  S["edit / replace / write with then_run"] --> V{"then_run valid?"}
+  V -- no --> E0["Rejected before the file is touched"]
+  V -- yes --> Q["Wait for this file's Fusion queue"]
+  Q --> M{"Mutation completes?"}
+  M -- "no, or cancelled first" --> E1["Mutation error; command skipped or cancelled"]
+  M -- yes --> C{"File still at the published revision?"}
+  C -- no --> K["Command skipped"]
+  C -- yes --> RUN["Run the command with Pi's built-in Bash"]
+  RUN --> O["succeeded / failed / timeout / cancelled"]
+  K --> FR{"File unchanged at the end?"}
+  O --> FR
+  FR -- yes --> FRESH["Mutation result (edit/replace include fresh anchors), then command outcome"]
+  FR -- no --> STALE["Mutation result with the [then_run:stale] notice, then command outcome"]
+```
+
+Once the mutation completes, it stays successful whatever happens to the command: command failure **does not roll back the file**. The command outcome is returned separately in result text and `details.actionFusion`, rather than thrown as failure of the whole mutation.
 
 In the TUI, the mutation card owns the mutation's result or error summary, publication status, and freshness warnings. It turns successful when mutation execution and result generation finish. The command card owns command output and execution status; skipped or cancelled commands are neutral and show a short reason when execution never started. Mutation diagnostics never become command output, and command failure leaves a successful mutation card intact. RPC hosts receive the same progress and choose their own rendering.
 
-Fusion serializes each mutation/command sequence for its target and checks the published revision before running the command. Commands invoke Pi's built-in Bash definition directly, without a separate Bash tool call; Bash-only approval/sandbox extensions must explicitly cover these tools' `then_run` inputs.
+The Fusion queue holds a file from mutation until its command finishes, so another fused call on the same file cannot change it in between. Commands invoke Pi's built-in Bash definition directly, without a separate Bash tool call; Bash-only approval/sandbox extensions must explicitly cover these tools' `then_run` inputs.
 
 ## Safety and design
 
@@ -284,7 +319,23 @@ The diagnostic blocks have independent budgets; their combined output can exceed
 
 ### Publication
 
-The shared commit layer validates the target and skips publication when the requested UTF-8 bytes have the current file's SHA-256. Otherwise, it prepares and syncs complete content in a sibling temporary directory. `edit`/`replace` bind this check and publication to the revision of the bytes they read.
+All three mutation tools publish through one commit layer. `edit`/`replace` bind it to the revision of the bytes they read:
+
+```mermaid
+flowchart TD
+  I["Validate content and target: regular file, single link, mode, expected revision"] -->|fails| NP["NOT_PUBLISHED"]
+  I --> SAME{"Same bytes as the current file?"}
+  SAME -- yes --> NOOP["No-op: NOT_PUBLISHED, target untouched"]
+  SAME -- no --> T["Write and fsync complete content in a sibling temporary directory"]
+  T -->|fails| NP
+  T --> RC{"edit/replace: file still at the revision read?"}
+  RC -- no --> NP
+  RC -- yes --> P["create: link(temp, target) · overwrite: rename(temp, target)"]
+  P -->|target appeared during create| NP
+  P -->|other failure| UNK["UNKNOWN"]
+  P --> POST["Sync directory (POSIX), read back the revision, remove the temp directory"]
+  POST --> PUB["PUBLISHED, even if a step here fails"]
+```
 
 | Case | Behavior |
 | --- | --- |
