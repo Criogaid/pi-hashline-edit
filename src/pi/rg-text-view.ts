@@ -10,7 +10,7 @@ import {
   runRg,
   runRgPaths,
   type RgRunResult,
-} from "./rg-line-filter.ts";
+} from "./rg-process.ts";
 import { errorMessage, throwIfCancelled } from "./error-text.ts";
 
 /** CRLF snapshot batches flush after this many files or source bytes (README: 64 files / 8 MiB). */

@@ -21,8 +21,7 @@ import { makeGrepOverride } from "./pi/grep-tool.ts";
 import { makeReplaceTool } from "./pi/replace-tool.ts";
 import { makeWriteOverride } from "./pi/write-tool.ts";
 import { createActionFusionExecutor } from "./pi/action-fusion.ts";
-import { registerFusionCards } from "./pi/fusion-card.ts";
-import { withMutationStatus } from "./pi/render.ts";
+import { registerFusionCards, withMutationStatus } from "./pi/fusion-card.ts";
 
 export default function (pi: ExtensionAPI) {
   const cwd = process.cwd();

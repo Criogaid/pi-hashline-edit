@@ -9,12 +9,10 @@
 import {
   renderDiff,
   type Theme,
-  type ToolDefinition,
   type ToolRenderResultOptions,
 } from "@earendil-works/pi-coding-agent";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
-import { Box, Container, Text, type Component } from "@earendil-works/pi-tui";
-import type { TSchema } from "typebox";
+import { Text, type Component } from "@earendil-works/pi-tui";
 
 /** Max diff lines shown when a result is rendered collapsed. */
 const MAX_COLLAPSED_DIFF_LINES = 24;
@@ -43,15 +41,10 @@ export interface DiffCounts {
   removed: number;
 }
 
-interface MutationRenderState {
+/** Row-local render state shared by the mutation call and result renderers. */
+export interface MutationRenderState {
   diffCounts?: DiffCounts;
   callText?: Text;
-  mutationShell?: {
-    box: Box;
-    call?: Component;
-    result?: Component;
-    fileState?: { freshness?: string };
-  };
 }
 
 /** Count added/removed lines in a pi-format diff (`+N content` / `-N content` / ` N content`). */
@@ -151,61 +144,4 @@ export function renderMutationResult<TArgs>(
     return new Text(theme.fg("success", summary), 0, 0);
   }
   return new Text(renderDiffPreview(diff, expanded, theme), 0, 0);
-}
-
-/** Keep the mutation card's background independent of the fused command's lifetime. */
-export function withMutationStatus<TParams extends TSchema, TDetails>(
-  tool: ToolDefinition<TParams, TDetails, MutationRenderState>,
-): ToolDefinition<TParams, TDetails, MutationRenderState> {
-  return {
-    ...tool,
-    renderShell: "self",
-    renderCall(args, theme, context) {
-      const shell = (context.state.mutationShell ??= { box: new Box(1, 1) });
-      shell.call = tool.renderCall!(args, theme, { ...context, lastComponent: shell.call });
-      shell.box.clear();
-      shell.box.addChild(shell.call);
-      shell.box.setBgFn((line: string) =>
-        theme.bg(
-          context.isPartial ? "toolPendingBg" : context.isError ? "toolErrorBg" : "toolSuccessBg",
-          line,
-        ),
-      );
-      return shell.box;
-    },
-    renderResult(result, options, theme, context) {
-      const shell = (context.state.mutationShell ??= { box: new Box(1, 1) });
-      const details = result.details as
-        | { actionFusion?: { mutationCompleted?: boolean; freshness?: string } }
-        | undefined;
-      const isPartial = options.isPartial && details?.actionFusion?.mutationCompleted !== true;
-      // Fused errors retain combined details for the model; show the mutation's summary here.
-      const fusedError = context.isError && (context.args as { then_run?: unknown })?.then_run;
-      shell.result = fusedError
-        ? renderToolError(result, theme)
-        : tool.renderResult!(result, { ...options, isPartial }, theme, {
-            ...context,
-            isPartial,
-            lastComponent: shell.result,
-          });
-      // Pi runs renderCall first; update its box in place without invalidating the tool row.
-      shell.box.addChild(shell.result);
-      const file = details?.actionFusion ?? shell.fileState;
-      if (file) {
-        shell.fileState = { freshness: file.freshness };
-        if (file.freshness === "changed" || file.freshness === "missing") {
-          shell.box.addChild(
-            new Text(theme.fg("warning", `Anchors are stale: target ${file.freshness}.`), 0, 0),
-          );
-        }
-      }
-      shell.box.setBgFn((line: string) =>
-        theme.bg(
-          isPartial ? "toolPendingBg" : context.isError ? "toolErrorBg" : "toolSuccessBg",
-          line,
-        ),
-      );
-      return new Container();
-    },
-  };
 }

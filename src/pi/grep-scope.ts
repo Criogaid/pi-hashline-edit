@@ -1,7 +1,7 @@
 import { stat } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { canonicalPath } from "./path.ts";
-import { COMMON_RG_ARGS } from "./rg-line-filter.ts";
+import { COMMON_RG_ARGS } from "./rg-process.ts";
 import {
   recordSearchDiagnostics,
   scopeArgs,

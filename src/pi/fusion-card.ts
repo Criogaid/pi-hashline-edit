@@ -1,7 +1,21 @@
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+/**
+ * Action Fusion presentation: the mutation card shell that keeps the file
+ * result's status independent of the fused command, and the separate
+ * transcript card for each then_run command.
+ *
+ * @module pi-hashline-edit/pi
+ */
+
+import type {
+  ExtensionAPI,
+  ExtensionContext,
+  ToolDefinition,
+} from "@earendil-works/pi-coding-agent";
 import { createBashToolDefinition } from "@earendil-works/pi-coding-agent";
-import { Box, Text, type Component } from "@earendil-works/pi-tui";
+import { Box, Container, Text, type Component } from "@earendil-works/pi-tui";
+import type { TSchema } from "typebox";
 import type { ActionFusionProgress } from "./action-fusion.ts";
+import { renderToolError, type MutationRenderState } from "./render.ts";
 
 const CARD_TYPE = "hashline-then-run";
 const RESULT_TYPE = "hashline-then-run-result";
@@ -133,5 +147,72 @@ export function registerFusionCards(pi: ExtensionAPI) {
     // Only endpoints are persisted; streaming snapshots reuse Bash's bounded output.
     if (first) pi.appendEntry(CARD_TYPE, data);
     if (!pending) pi.appendEntry(RESULT_TYPE, data);
+  };
+}
+
+/** Mutation render state plus the shell that keeps the card status independent of then_run. */
+interface FusedMutationRenderState extends MutationRenderState {
+  mutationShell?: {
+    box: Box;
+    call?: Component;
+    result?: Component;
+    fileState?: { freshness?: string };
+  };
+}
+
+/** Keep the mutation card's background independent of the fused command's lifetime. */
+export function withMutationStatus<TParams extends TSchema, TDetails>(
+  tool: ToolDefinition<TParams, TDetails, FusedMutationRenderState>,
+): ToolDefinition<TParams, TDetails, FusedMutationRenderState> {
+  return {
+    ...tool,
+    renderShell: "self",
+    renderCall(args, theme, context) {
+      const shell = (context.state.mutationShell ??= { box: new Box(1, 1) });
+      shell.call = tool.renderCall!(args, theme, { ...context, lastComponent: shell.call });
+      shell.box.clear();
+      shell.box.addChild(shell.call);
+      shell.box.setBgFn((line: string) =>
+        theme.bg(
+          context.isPartial ? "toolPendingBg" : context.isError ? "toolErrorBg" : "toolSuccessBg",
+          line,
+        ),
+      );
+      return shell.box;
+    },
+    renderResult(result, options, theme, context) {
+      const shell = (context.state.mutationShell ??= { box: new Box(1, 1) });
+      const details = result.details as
+        | { actionFusion?: { mutationCompleted?: boolean; freshness?: string } }
+        | undefined;
+      const isPartial = options.isPartial && details?.actionFusion?.mutationCompleted !== true;
+      // Fused errors retain combined details for the model; show the mutation's summary here.
+      const fusedError = context.isError && (context.args as { then_run?: unknown })?.then_run;
+      shell.result = fusedError
+        ? renderToolError(result, theme)
+        : tool.renderResult!(result, { ...options, isPartial }, theme, {
+            ...context,
+            isPartial,
+            lastComponent: shell.result,
+          });
+      // Pi runs renderCall first; update its box in place without invalidating the tool row.
+      shell.box.addChild(shell.result);
+      const file = details?.actionFusion ?? shell.fileState;
+      if (file) {
+        shell.fileState = { freshness: file.freshness };
+        if (file.freshness === "changed" || file.freshness === "missing") {
+          shell.box.addChild(
+            new Text(theme.fg("warning", `Anchors are stale: target ${file.freshness}.`), 0, 0),
+          );
+        }
+      }
+      shell.box.setBgFn((line: string) =>
+        theme.bg(
+          isPartial ? "toolPendingBg" : context.isError ? "toolErrorBg" : "toolSuccessBg",
+          line,
+        ),
+      );
+      return new Container();
+    },
   };
 }

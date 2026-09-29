@@ -25,7 +25,7 @@ import {
 import { searchMatches, type GrepBackend, type SearchScope } from "./grep-search.ts";
 export type { GrepBackend } from "./grep-search.ts";
 import { toDisplayLines } from "./grep-render.ts";
-import { resolveIgnoreCase, runRg, runRgPaths, type SearchModes } from "./rg-line-filter.ts";
+import { resolveIgnoreCase, runRg, runRgPaths, type SearchModes } from "./rg-process.ts";
 import { runRgTextView } from "./rg-text-view.ts";
 import { GREP_CONTEXT_RANGE, POSITIVE_SAFE_INTEGER } from "./schema.ts";
 import { throwIfCancelled } from "./error-text.ts";

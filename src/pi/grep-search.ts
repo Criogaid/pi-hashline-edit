@@ -11,7 +11,7 @@ import {
   runRg,
   runRgPaths,
   type SearchModes,
-} from "./rg-line-filter.ts";
+} from "./rg-process.ts";
 import { submatchesToLineRanges } from "./rg-line-ranges.ts";
 import { throwIfCancelled } from "./error-text.ts";
 

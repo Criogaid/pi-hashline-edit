@@ -1,3 +1,11 @@
+/**
+ * ripgrep process layer: spawning and cancelling rg, bounded record and
+ * stderr reading, shared arguments, matcher-mode probes, and rg JSON string
+ * decoding. Knows nothing about anchors or output formatting.
+ *
+ * @module pi-hashline-edit/pi
+ */
+
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import type { Readable } from "node:stream";
 import { escapeRegex } from "../core/text.ts";
