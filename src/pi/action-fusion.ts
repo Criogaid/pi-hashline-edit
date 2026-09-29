@@ -5,7 +5,7 @@ import { createBashToolDefinition, type ExtensionContext } from "@earendil-works
 import { Type, type Static, type TObject, type TProperties } from "typebox";
 import { fileRevision, FileMutationError, type PublicationStatus } from "./file-commit.ts";
 import { finalizeMutationResult, observedFreshness } from "./mutation-result.ts";
-import { errorMessage } from "./error-text.ts";
+import { errorMessage, OPERATION_ABORTED, throwIfCancelled } from "./error-text.ts";
 
 export const THEN_RUN_SUCCEEDED = "[then_run:succeeded]";
 export const THEN_RUN_FAILED = "[then_run:failed]";
@@ -320,11 +320,11 @@ export function createActionFusionExecutor(
     report("waiting", "NOT_PUBLISHED", "unknown");
     return withQueue(absolutePath, async () => {
       try {
-        signal?.throwIfAborted();
+        throwIfCancelled(signal);
       } catch (error) {
         if (thenRun !== undefined)
           throw new ActionFusionError(
-            "mutation was cancelled before it started; the command was not run",
+            `${OPERATION_ABORTED} before the mutation started; the command was not run`,
             { publication: "NOT_PUBLISHED", command: "cancelled", freshness: "unknown" },
             {
               cause: error,
@@ -383,9 +383,9 @@ export function createActionFusionExecutor(
         );
       }
       try {
-        signal?.throwIfAborted();
+        throwIfCancelled(signal);
         await assertUnchangedBeforeCommand(absolutePath, baseline);
-        signal?.throwIfAborted();
+        throwIfCancelled(signal);
       } catch (error) {
         const freshness = await readFreshness(absolutePath, baseline);
         throw new ActionFusionError(

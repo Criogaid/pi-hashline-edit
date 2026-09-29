@@ -14,7 +14,7 @@ import {
 import { dirname, join } from "node:path";
 import { createHash } from "node:crypto";
 import { decodeEditableText, INVALID_UNICODE, UNSUPPORTED_TEXT_NUL } from "../core/text.ts";
-import { errorMessage } from "./error-text.ts";
+import { errorMessage, OPERATION_ABORTED, throwIfCancelled } from "./error-text.ts";
 
 export type PublicationStatus = "NOT_PUBLISHED" | "PUBLISHED" | "UNKNOWN";
 export type CommitMode = "create" | "overwrite";
@@ -171,7 +171,7 @@ async function writeAndSyncTemp(
   modeBits: number | undefined,
   signal: AbortSignal | undefined,
 ): Promise<void> {
-  signal?.throwIfAborted();
+  throwIfCancelled(signal);
   const handle = await open(tempPath, "w", modeBits === undefined ? 0o600 : modeBits & 0o7777);
   try {
     await handle.writeFile(content);
@@ -188,7 +188,7 @@ async function publishCreate(
   signal: AbortSignal | undefined,
 ): Promise<void> {
   // link() creates an unclobberable directory entry on the same filesystem, avoiding create/replace races.
-  signal?.throwIfAborted();
+  throwIfCancelled(signal);
   try {
     await link(tempPath, targetPath);
   } catch (error) {
@@ -215,7 +215,7 @@ async function publishReplace(
   signal: AbortSignal | undefined,
 ): Promise<void> {
   // rename() replaces the directory entry atomically without deleting the old file first; readers observe old or new.
-  signal?.throwIfAborted();
+  throwIfCancelled(signal);
   try {
     await rename(tempPath, targetPath);
   } catch (error) {
@@ -265,9 +265,9 @@ export async function commitFile(
     throw prepareError("expectedRevision does not match the current file");
   }
   try {
-    options.signal?.throwIfAborted();
+    throwIfCancelled(options.signal);
   } catch (error) {
-    throw prepareError("mutation was cancelled before publication", error);
+    throw prepareError(`${OPERATION_ABORTED} before publication`, error);
   }
   const publishedRevision = byteRevision(bytes);
   // Mode, revision, target safety, and cancellation checks still apply to no-ops.
@@ -275,12 +275,12 @@ export async function commitFile(
     let currentRevision = target.beforeRevision;
     if (options.knownBeforeRevision !== undefined) {
       try {
-        options.signal?.throwIfAborted();
+        throwIfCancelled(options.signal);
         currentRevision = await fileRevision(target.publishPath);
-        options.signal?.throwIfAborted();
+        throwIfCancelled(options.signal);
       } catch (error) {
         if (options.signal?.aborted)
-          throw prepareError("mutation was cancelled before publication", error);
+          throw prepareError(`${OPERATION_ABORTED} before publication`, error);
         throw prepareError(`unable to read target revision: ${errorMessage(error)}`, error);
       }
       if (options.expectedRevision !== undefined && currentRevision !== options.expectedRevision) {

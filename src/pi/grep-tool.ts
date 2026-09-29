@@ -29,6 +29,7 @@ import { resolveIgnoreCase, runRg, runRgPaths, type SearchModes } from "./rg-lin
 import { runRgTextView } from "./rg-text-view.ts";
 import { parseToolInput } from "./tool-input.ts";
 import { integerRange, POSITIVE_SAFE_INTEGER } from "./schema.ts";
+import { throwIfCancelled } from "./error-text.ts";
 
 const DEFAULT_LIMIT = 100;
 const GREP_CONTEXT_MAX = 20;
@@ -182,7 +183,7 @@ export function makeGrepOverrideWithBackend(cwd: string, overrides: Partial<Grep
       signal: AbortSignal | undefined,
       _onUpdate: Parameters<GrepTool["execute"]>[3],
     ) {
-      if (signal?.aborted) throw new Error("Operation aborted");
+      throwIfCancelled(signal);
       params = parseToolInput("grep", grepOverrideSchema, params);
       const anchors = createAnchorFormatter();
       const warnings: string[] = [];

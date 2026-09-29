@@ -1,6 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import type { Readable } from "node:stream";
 import { escapeRegex } from "../core/text.ts";
+import { throwIfCancelled } from "./error-text.ts";
 
 export const COMMON_RG_ARGS = ["--no-config", "--color=never", "--no-crlf"];
 export const MAX_RG_RECORD_BYTES = 16 * 1024 * 1024;
@@ -33,12 +34,8 @@ export interface RgRunResult {
   stopped: boolean;
 }
 
-function checkAbort(signal?: AbortSignal): void {
-  if (signal?.aborted) throw new Error("Operation aborted");
-}
-
 function startRg(rgPath: string, args: readonly string[], signal?: AbortSignal): RunningProcess {
-  checkAbort(signal);
+  throwIfCancelled(signal);
   const env = { ...process.env };
   delete env.RIPGREP_CONFIG_PATH;
   const child = spawn(rgPath, [...args], {
@@ -117,7 +114,7 @@ async function runDelimited(
   process.child.stdin.end(input);
   try {
     for await (const record of delimitedRecords(process.child.stdout, delimiter)) {
-      checkAbort(signal);
+      throwIfCancelled(signal);
       if (!(await onRecord(record))) {
         stopped = true;
         process.kill();
@@ -125,7 +122,7 @@ async function runDelimited(
       }
     }
     const result = await process.done;
-    checkAbort(signal);
+    throwIfCancelled(signal);
     if (result.error) throw new Error(`Failed to run ripgrep: ${result.error.message}`);
     return { code: result.code, stderr: result.stderr, stopped };
   } finally {
@@ -192,7 +189,7 @@ export const runText: RunText = async (rgPath, args, input, signal) => {
   });
   process.child.stdin.end(input);
   const result = await process.done;
-  checkAbort(signal);
+  throwIfCancelled(signal);
   if (result.error) throw result.error;
   if (bytes > MAX_RG_PROBE_OUTPUT_BYTES)
     throw new Error("Unexpected ripgrep probe output overflow");
@@ -223,7 +220,7 @@ export async function resolveIgnoreCase(
   signal?: AbortSignal,
   run: RunText = runText,
 ): Promise<boolean> {
-  checkAbort(signal);
+  throwIfCancelled(signal);
   if (patterns.length === 0) throw new Error("pattern is required (got an empty array)");
   if (explicit !== undefined) return explicit;
 
@@ -250,7 +247,7 @@ export async function resolveIgnoreCase(
     Buffer.from("a\n"),
     signal,
   );
-  checkAbort(signal);
+  throwIfCancelled(signal);
   assertRgSucceeded(result);
   const lines = result.stdout.replace(/\r\n/g, "\n").split("\n");
   if (lines.some((line) => line !== "" && line !== "a"))

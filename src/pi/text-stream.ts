@@ -1,5 +1,6 @@
 import { createReadStream } from "node:fs";
 import { createUtf8Decoder } from "../core/text.ts";
+import { throwIfCancelled } from "./error-text.ts";
 
 /** Scan and validate the whole file with bounded chunks, preserving BOM and raw line endings. */
 export async function scanTextFile(
@@ -16,30 +17,36 @@ export async function scanTextFile(
   let hasCrLf = false;
   let decodingError: unknown;
   const stream = createReadStream(path, { highWaterMark: 64 * 1024, signal });
-  for await (const chunk of stream) {
-    const bytes = chunk as Buffer;
-    onBytes?.(bytes);
-    byteLength += bytes.length;
-    hasNul ||= bytes.includes(0);
-    hasCrLf ||= (lastByte === 13 && bytes[0] === 10) || bytes.includes("\r\n");
-    lastByte = bytes[bytes.length - 1];
-    let offset = 0;
-    while ((offset = bytes.indexOf(10, offset)) !== -1) {
-      lineFeeds++;
-      offset++;
+  try {
+    for await (const chunk of stream) {
+      const bytes = chunk as Buffer;
+      onBytes?.(bytes);
+      byteLength += bytes.length;
+      hasNul ||= bytes.includes(0);
+      hasCrLf ||= (lastByte === 13 && bytes[0] === 10) || bytes.includes("\r\n");
+      lastByte = bytes[bytes.length - 1];
+      let offset = 0;
+      while ((offset = bytes.indexOf(10, offset)) !== -1) {
+        lineFeeds++;
+        offset++;
+      }
+      // NUL takes precedence even when an earlier chunk contained malformed UTF-8.
+      if (hasNul || decodingError) continue;
+      let text: string;
+      try {
+        text = decode(bytes, true);
+      } catch (error) {
+        decodingError = error;
+        continue;
+      }
+      await onChunk?.(text);
     }
-    // NUL takes precedence even when an earlier chunk contained malformed UTF-8.
-    if (hasNul || decodingError) continue;
-    let text: string;
-    try {
-      text = decode(bytes, true);
-    } catch (error) {
-      decodingError = error;
-      continue;
-    }
-    await onChunk?.(text);
+  } catch (error) {
+    // Node's stream abort raises its own AbortError; report the shared cancellation text.
+    throwIfCancelled(signal);
+    throw error;
   }
-  signal?.throwIfAborted();
+  throwIfCancelled(signal);
   if (!hasNul) {
     if (decodingError) throw decodingError;
     const tail = decode();

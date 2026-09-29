@@ -11,7 +11,7 @@ import {
   runRgPaths,
   type RgRunResult,
 } from "./rg-line-filter.ts";
-import { errorMessage } from "./error-text.ts";
+import { errorMessage, throwIfCancelled } from "./error-text.ts";
 
 /** CRLF snapshot batches flush after this many files or source bytes (README: 64 files / 8 MiB). */
 const SNAPSHOT_BATCH_FILES = 64;
@@ -121,7 +121,7 @@ export const runRgTextView: typeof runRg = async (rgPath, args, signal, onLine) 
       ...args.slice(boundary + 1),
     ];
     const listed = await runRgPaths(rgPath, listArgs, signal, async (path) => {
-      signal?.throwIfAborted();
+      throwIfCancelled(signal);
       const original = resolve(path);
       if (directory && original.startsWith(directory + sep)) return true;
       try {
@@ -138,7 +138,7 @@ export const runRgTextView: typeof runRg = async (rgPath, args, signal, onLine) 
         }
         batchBytes += info.byteLength;
       } catch (error) {
-        signal?.throwIfAborted();
+        throwIfCancelled(signal);
         const message = errorMessage(error);
         record({ code: 2, stopped: false, stderr: `${original}: ${message}\n` });
         return true;

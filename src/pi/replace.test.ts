@@ -269,7 +269,8 @@ test("replace aborts catastrophic regex without blocking the event loop or publi
           { cwd: dir } as Parameters<ReturnType<typeof makeReplaceTool>["execute"]>[4],
         ),
         (error: unknown) =>
-          error instanceof Error && error.message === `Replace ${file}: aborted before apply.`,
+          error instanceof Error &&
+          error.message === `Operation aborted before apply; ${file} was not changed.`,
       );
       assert.ok(performance.now() - start < 2000);
       assert.equal(await readFile(file, "utf8"), before);

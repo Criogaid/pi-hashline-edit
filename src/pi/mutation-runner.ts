@@ -32,6 +32,7 @@ import {
 } from "./mutation-result.ts";
 import { canonicalPath } from "./path.ts";
 import { parseToolInput } from "./tool-input.ts";
+import { throwIfCancelled } from "./error-text.ts";
 
 export type ActionFusionExecutor = ReturnType<typeof createActionFusionExecutor>;
 export type MutationToolName = "edit" | "replace" | "write";
@@ -143,16 +144,15 @@ export async function runTextMutation(
   change: (currentText: string) => TextChange | Promise<TextChange>,
 ): Promise<MutationOutcome<TextMutationDetails>> {
   const { absolutePath, displayPath, signal } = target;
-  const verb = `${tool[0]!.toUpperCase()}${tool.slice(1)}`;
 
   const { text: currentText, baseRevision } = await readEditableSnapshot(absolutePath, displayPath);
   // Cancelled after read: don't transform; the file stays untouched.
-  if (signal?.aborted) throw new Error(`${verb} ${displayPath} aborted before apply.`);
+  throwIfCancelled(signal, `before apply; ${displayPath} was not changed.`);
 
   const next = await change(currentText);
 
   // Cancelled before write: don't touch the disk.
-  if (signal?.aborted) throw new Error(`${verb} ${displayPath} aborted before write.`);
+  throwIfCancelled(signal, `before write; ${displayPath} was not changed.`);
 
   const versions = await commitReplacement(
     absolutePath,

@@ -15,6 +15,7 @@ import {
 import { commitFile, type CommitMode, type CommitResult } from "./file-commit.ts";
 import { postProcessMutation } from "./mutation-result.ts";
 import { executeMutation, type ActionFusionExecutor } from "./mutation-runner.ts";
+import { throwIfCancelled } from "./error-text.ts";
 
 const writeSchema = Type.Object(
   {
@@ -88,7 +89,7 @@ export function makeWriteOverride(cwd: string, fusion?: ActionFusionExecutor) {
           // Write results carry no anchors; stale revisions are reported by then_run.
           reportsAnchors: false,
           async run(mutationParams, { absolutePath, displayPath, signal }) {
-            signal?.throwIfAborted();
+            throwIfCancelled(signal, `before write; ${displayPath} was not changed.`);
             const result = await commitFile(absolutePath, mutationParams.content, {
               mode: mutationParams.mode as CommitMode | undefined,
               signal,

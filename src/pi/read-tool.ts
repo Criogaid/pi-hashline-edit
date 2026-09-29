@@ -27,6 +27,7 @@ import { canonicalPath } from "./path.ts";
 import { parseHashline, renderToolError } from "./render.ts";
 import { parseToolInput } from "./tool-input.ts";
 import { POSITIVE_SAFE_INTEGER } from "./schema.ts";
+import { throwIfCancelled } from "./error-text.ts";
 
 const MAX_LINES = 500;
 const MAX_BYTES = 256 * 1024;
@@ -145,8 +146,7 @@ export function makeReadOverride(cwd: string): ReturnType<typeof createReadToolD
       onUpdate: AgentToolUpdateCallback<ReadToolDetails | undefined> | undefined,
       ctx: ExtensionContext,
     ) {
-      // User cancelled → delegate to the built-in (builtin handles abort itself)
-      if (signal?.aborted) return builtin.execute(toolCallId, params, signal, onUpdate, ctx);
+      throwIfCancelled(signal);
       params = parseToolInput("read", parameters, params);
       const offset = params.offset ?? 1;
       const limit = params.limit ?? MAX_LINES;

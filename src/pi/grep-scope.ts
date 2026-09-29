@@ -8,6 +8,7 @@ import {
   type GrepBackend,
   type SearchScope,
 } from "./grep-search.ts";
+import { throwIfCancelled } from "./error-text.ts";
 
 export const REGEX_SYNTAX = /[.*+?^${}()|[\]\\]/;
 const REGEX_PARSE_ERROR = /^(?:rg: )?regex parse error:/m;
@@ -63,7 +64,7 @@ export async function resolveLiteralMode(
     signal,
     () => true,
   );
-  if (signal?.aborted) throw new Error("Operation aborted");
+  throwIfCancelled(signal);
   if (result.code === 0 || result.code === 1) return false;
   if (result.code === 2 && REGEX_PARSE_ERROR.test(result.stderr)) {
     if (explicit === false) throw new Error(withDialectHint(result.stderr.trim(), patterns));

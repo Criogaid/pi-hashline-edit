@@ -50,7 +50,7 @@ import {
   type MutationTarget,
   type TextMutationDetails,
 } from "./mutation-runner.ts";
-import { errorMessage } from "./error-text.ts";
+import { cancellationError, errorMessage, throwIfCancelled } from "./error-text.ts";
 type ReplaceDetails = TextMutationDetails;
 type ReplaceRenderContext = Parameters<
   NonNullable<ToolDefinition<typeof replaceSchema>["renderCall"]>
@@ -112,7 +112,7 @@ async function applyRegexReplacements(
   rules: readonly Replacement[],
   signal: AbortSignal | undefined,
 ): Promise<{ text: string; count: number }> {
-  signal?.throwIfAborted();
+  throwIfCancelled(signal);
   const worker = new Worker(new URL("./replace-worker.mjs", import.meta.url), {
     workerData: { source, rules },
   });
@@ -127,7 +127,7 @@ async function applyRegexReplacements(
       if (terminate) void worker.terminate().then(complete, reject);
       else complete();
     };
-    const abort = () => finish(new Error("aborted before apply."), true);
+    const abort = () => finish(cancellationError(), true);
     const timer = setTimeout(
       () => finish(new Error(`regex evaluation timed out after ${REGEX_TIMEOUT_MS}ms`), true),
       REGEX_TIMEOUT_MS,
@@ -278,6 +278,7 @@ function runReplace(target: MutationTarget, rules: ReplaceParams["replacements"]
         ? await applyRegexReplacements(currentText, rules, target.signal)
         : applyReplacements(currentText, rules));
     } catch (error) {
+      throwIfCancelled(target.signal, `before apply; ${target.displayPath} was not changed.`);
       throw new Error(`Replace ${target.displayPath}: ${errorMessage(error)}`);
     }
     const changed = newText !== currentText;

@@ -13,6 +13,7 @@ import {
   type SearchModes,
 } from "./rg-line-filter.ts";
 import { submatchesToLineRanges } from "./rg-line-ranges.ts";
+import { throwIfCancelled } from "./error-text.ts";
 
 /** Surface incomplete search diagnostics without discarding confirmed matches. */
 export function recordSearchDiagnostics(result: RgRunResult, warnings?: string[]): void {
@@ -208,7 +209,7 @@ export async function searchMatches(options: SearchMatchesOptions) {
       }
       return true;
     });
-    if (signal?.aborted) throw new Error("Operation aborted");
+    throwIfCancelled(signal);
     recordSearchDiagnostics(run, warnings);
     if (matchLimitReached) break;
   }

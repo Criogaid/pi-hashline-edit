@@ -113,6 +113,6 @@ test("streamed reads propagate cancellation", async () =>
     const controller = new AbortController();
     await assert.rejects(
       scanTextFile(path, () => controller.abort(), controller.signal),
-      { name: "AbortError" },
+      { message: "Operation aborted" },
     );
   }));

@@ -286,6 +286,7 @@ The shared commit layer validates the target and skips publication when the requ
 | Permissions | Copy existing mode bits; new files use `0600`. No separate public permission setting. |
 | Post-publication failure | Directory-sync, result-generation, revision observation, or cleanup errors retain `PUBLISHED`; unconfirmed publication is `UNKNOWN`. Read before retrying uncertain mutations. |
 | Durability | Attempt directory synchronization on POSIX, including macOS; tolerate `EINVAL` / `ENOTSUP` from directory fsync and propagate other failures. Windows skips directory synchronization. |
+| Cancellation | Every tool reports cancellation as an error starting with `Operation aborted`, matching Pi's built-in tools. Mutation tools add where it stopped and whether the file changed, for example `Operation aborted before apply; src/foo.ts was not changed.` |
 
 ### Result and card states
 
