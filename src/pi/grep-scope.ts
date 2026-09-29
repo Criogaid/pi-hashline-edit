@@ -11,6 +11,30 @@ import {
 
 export const REGEX_SYNTAX = /[.*+?^${}()|[\]\\]/;
 const REGEX_PARSE_ERROR = /^(?:rg: )?regex parse error:/m;
+const LITERAL_FALLBACK_NOTICE = "Invalid regex; searched the pattern as literal text";
+/**
+ * Lookaround and backreferences: valid in JavaScript/PCRE, rejected by ripgrep's default engine.
+ * The construct must be unescaped: an even run of backslashes (escaped backslashes) may precede it.
+ */
+const NON_RUST_REGEX_SYNTAX = /(?:^|[^\\])(?:\\\\)*(?:\(\?<?[=!]|\\[1-9]|\\k<)/;
+
+/** Explain a parse failure caused by another regex dialect's syntax, if the query contains any. */
+function regexDialectHint(patterns: readonly string[]): string | undefined {
+  return patterns.some((pattern) => NON_RUST_REGEX_SYNTAX.test(pattern))
+    ? "ripgrep's Rust regex has no lookaround or backreferences; rewrite the pattern, or use replace for a JavaScript regex within one file"
+    : undefined;
+}
+
+/** Notice for an invalid single pattern that was searched literally. */
+export function literalFallbackNotice(patterns: readonly string[]): string {
+  const hint = regexDialectHint(patterns);
+  return hint ? `${LITERAL_FALLBACK_NOTICE}; ${hint}` : LITERAL_FALLBACK_NOTICE;
+}
+
+function withDialectHint(message: string, patterns: readonly string[]): string {
+  const hint = regexDialectHint(patterns);
+  return hint ? `${message}\n${hint}.` : message;
+}
 
 export async function resolveLiteralMode(
   patterns: readonly string[],
@@ -42,10 +66,13 @@ export async function resolveLiteralMode(
   if (signal?.aborted) throw new Error("Operation aborted");
   if (result.code === 0 || result.code === 1) return false;
   if (result.code === 2 && REGEX_PARSE_ERROR.test(result.stderr)) {
-    if (explicit === false) throw new Error(result.stderr.trim());
+    if (explicit === false) throw new Error(withDialectHint(result.stderr.trim(), patterns));
     if (!allowFallback)
       throw new Error(
-        `Invalid regex in compound query; automatic literal fallback is disabled. Fix the regex or set literal:true for all patterns.\n${result.stderr.trim()}`,
+        withDialectHint(
+          `Invalid regex in compound query; automatic literal fallback is disabled. Fix the regex or set literal:true for all patterns.\n${result.stderr.trim()}`,
+          patterns,
+        ),
       );
     return true;
   }

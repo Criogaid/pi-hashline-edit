@@ -13,14 +13,10 @@ import { Text } from "@earendil-works/pi-tui";
 import { normalizeLineEndings } from "../core/lines.ts";
 import { createAnchorFormatter } from "./anchor-format.ts";
 import { renderToolError } from "./render.ts";
-import {
-  assembleGrepOutput,
-  formatMatches,
-  formatSearchWarnings,
-  LITERAL_FALLBACK_NOTICE,
-} from "./grep-output.ts";
+import { assembleGrepOutput, formatMatches, formatSearchWarnings } from "./grep-output.ts";
 import {
   filterExplicitFilesByGlob,
+  literalFallbackNotice as formatLiteralFallbackNotice,
   REGEX_SYNTAX,
   resolveLiteralMode,
   toArray,
@@ -28,11 +24,11 @@ import {
 } from "./grep-scope.ts";
 import { searchMatches, type GrepBackend, type SearchScope } from "./grep-search.ts";
 export type { GrepBackend } from "./grep-search.ts";
-import { integerRange, POSITIVE_SAFE_INTEGER } from "./schema.ts";
 import { toDisplayLines } from "./grep-render.ts";
 import { resolveIgnoreCase, runRg, runRgPaths, type SearchModes } from "./rg-line-filter.ts";
 import { runRgTextView } from "./rg-text-view.ts";
 import { parseToolInput } from "./tool-input.ts";
+import { integerRange, POSITIVE_SAFE_INTEGER } from "./schema.ts";
 
 const DEFAULT_LIMIT = 100;
 const GREP_CONTEXT_MAX = 20;
@@ -43,7 +39,7 @@ const grepOverrideSchema = Type.Object(
       [Type.String({ minLength: 1 }), Type.Array(Type.String({ minLength: 1 }), { minItems: 1 })],
       {
         description:
-          "Non-empty string or array of non-empty strings (OR across patterns; whitespace-only strings are valid). For code snippets with regex punctuation, set literal:true; use an array for alternatives instead of joining literals with |.",
+          "Non-empty string or array of non-empty strings (OR across patterns; whitespace-only strings are valid). For code snippets with regex punctuation, set literal:true; use an array for alternatives instead of joining literals with |. Regex syntax is ripgrep's Rust regex, not JavaScript: no lookaround or backreferences; ^ and $ match at line boundaries.",
       },
     ),
     path: Type.Optional(
@@ -128,7 +124,7 @@ export function makeGrepOverrideWithBackend(cwd: string, overrides: Partial<Grep
     promptGuidelines: [
       "Prefer grep for file-content searches.",
       "Omit path for the working directory; never pass an empty path. Use glob for filename wildcards.",
-      "Use literal:true for code containing regex punctuation; use literal:false only for intentional regex.",
+      "Use literal:true for code containing regex punctuation; use literal:false only for intentional ripgrep (Rust) regex, which has no lookaround or backreferences.",
       "Use a pattern array for OR alternatives.",
       "Copy grep anchors directly into edit; inspect the full line before rewriting from a partial preview.",
       "Use context:3-5 when searching code to edit so surrounding lines are anchored.",
@@ -211,6 +207,9 @@ export function makeGrepOverrideWithBackend(cwd: string, overrides: Partial<Grep
         params.literal === undefined &&
         literal &&
         patterns.some((pattern) => REGEX_SYNTAX.test(pattern));
+      const literalFallbackNotice = literalFallback
+        ? formatLiteralFallbackNotice(patterns)
+        : undefined;
       const matcherIgnoreCase = await backend.resolveIgnoreCase(
         rgPath,
         patterns,
@@ -264,7 +263,8 @@ export function makeGrepOverrideWithBackend(cwd: string, overrides: Partial<Grep
             {
               type: "text" as const,
               text:
-                "No matches found" + (literalFallback ? `\n\n[${LITERAL_FALLBACK_NOTICE}]` : ""),
+                "No matches found" +
+                (literalFallbackNotice ? `\n\n[${literalFallbackNotice}]` : ""),
             },
           ],
           details: undefined,
@@ -285,7 +285,7 @@ export function makeGrepOverrideWithBackend(cwd: string, overrides: Partial<Grep
         blocks,
         warnings,
         outputMode,
-        literalFallback,
+        literalFallbackNotice,
         matchLimitReached,
         effectiveLimit,
         linesTruncated,

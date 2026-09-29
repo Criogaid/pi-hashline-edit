@@ -60,7 +60,7 @@ const replacementSchema = Type.Object(
     find: Type.String({
       minLength: 1,
       description:
-        "Text or JavaScript regex to find in the shared LF view. Actual CRLF in the file and query normalizes to LF; standalone CR stays content. In literal mode (default), an actual LF matches a line boundary, while backslash followed by n matches those two source characters. In regex mode, \\n in the pattern matches LF.",
+        "Text or JavaScript regex to find in the shared LF view. Actual CRLF in the file and query normalizes to LF; standalone CR stays content. In literal mode (default), an actual LF matches a line boundary, while backslash followed by n matches those two source characters. In regex mode, \\n in the pattern matches LF. Regex mode uses JavaScript syntax, not grep's ripgrep syntax: add the m flag for per-line ^ and $; \\d matches only ASCII digits; \\w and \\b are ASCII-based, except that with both i and u they also treat ſ (U+017F) and K (U+212A) as word characters.",
     }),
     replace: Type.String({
       description:

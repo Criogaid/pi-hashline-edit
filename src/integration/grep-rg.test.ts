@@ -496,13 +496,19 @@ test("real rg reports unsupported lookarounds and backreferences under Rust rege
     for (const pattern of ["foo(?=bar)", "(foo)\\1"]) {
       await assert.rejects(
         tool.execute("0", { pattern, literal: false }, undefined, undefined),
-        /regex parse error/,
+        /regex parse error[\s\S]*no lookaround or backreferences; rewrite the pattern, or use replace/,
       );
     }
     const fallback = await tool.execute("0", { pattern: "foo(?=bar)" }, undefined, undefined);
     assert.match(
       fallback.content[0].text,
-      /No matches found.*Invalid regex; searched the pattern as literal text/s,
+      /No matches found.*Invalid regex; searched the pattern as literal text; ripgrep's Rust regex has no lookaround or backreferences/s,
+    );
+    // A parse error without other-dialect syntax gets no dialect hint.
+    await assert.rejects(
+      tool.execute("0", { pattern: "foo(", literal: false }, undefined, undefined),
+      (error: Error) =>
+        /regex parse error/.test(error.message) && !/lookaround/.test(error.message),
     );
   } finally {
     await rm(directory, { recursive: true, force: true });

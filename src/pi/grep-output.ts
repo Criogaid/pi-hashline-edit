@@ -9,7 +9,6 @@ import { scanTextLines } from "./text-stream.ts";
 /** Maximum UTF-16 units in a line preview, excluding its partial-line label. */
 const GREP_MAX_LINE_LENGTH = 500;
 const MAX_CONCURRENT_FILE_READS = 16;
-export const LITERAL_FALLBACK_NOTICE = "Invalid regex; searched the pattern as literal text";
 
 export function formatSearchWarnings(warnings: readonly string[]): string {
   if (!warnings.length) return "";
@@ -156,7 +155,8 @@ interface AssembleGrepOutputOptions {
   blocks: readonly string[];
   warnings: readonly string[];
   outputMode: "content" | "files" | "count";
-  literalFallback: boolean;
+  /** Notice for an invalid regex that was searched literally; undefined when no fallback happened. */
+  literalFallbackNotice: string | undefined;
   matchLimitReached: boolean;
   effectiveLimit: number;
   linesTruncated: boolean;
@@ -170,7 +170,7 @@ export function assembleGrepOutput(options: AssembleGrepOutputOptions): {
     blocks,
     warnings,
     outputMode,
-    literalFallback,
+    literalFallbackNotice,
     matchLimitReached,
     effectiveLimit,
     linesTruncated,
@@ -183,7 +183,7 @@ export function assembleGrepOutput(options: AssembleGrepOutputOptions): {
   const truncation = truncateHead(output, { maxBytes: DEFAULT_MAX_BYTES });
   output = truncation.content;
 
-  const notices: string[] = literalFallback ? [LITERAL_FALLBACK_NOTICE] : [];
+  const notices: string[] = literalFallbackNotice ? [literalFallbackNotice] : [];
   if (matchLimitReached) {
     notices.push(
       `${effectiveLimit} matches limit reached. Use limit=${effectiveLimit * 2} for more, or refine pattern`,
