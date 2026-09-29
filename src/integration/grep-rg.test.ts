@@ -26,6 +26,7 @@ import { makeReplaceTool } from "../pi/replace-tool.ts";
 import { COMMON_RG_ARGS, resolveIgnoreCase, runRg } from "../pi/rg-line-filter.ts";
 import { computeLineHash } from "../core/hash.ts";
 import { callTool } from "../pi/tool-call.testing.ts";
+import { DEFAULT_CONFIG } from "../pi/config.ts";
 
 const invoke = (
   tool: any,
@@ -41,7 +42,7 @@ test("real rg emits anchored matches from a temporary directory", async () => {
   try {
     const file = join(directory, "fixture.ts");
     await writeFile(file, "needle\nother\n");
-    const tool = makeGrepOverrideWithBackend(directory, {});
+    const tool = makeGrepOverrideWithBackend(directory, DEFAULT_CONFIG, {});
 
     for (const pattern of ["needle", ["needle"]]) {
       const result: any = await invoke(tool, "0", { pattern }, undefined, undefined);
@@ -58,7 +59,7 @@ test("real rg finds whitespace-only literal queries and OR alternatives", async 
   try {
     const file = join(directory, "fixture.txt");
     await writeFile(file, "plain word\nfirst\tsecond\nboth \tforms\n");
-    const tool = makeGrepOverrideWithBackend(directory, {});
+    const tool = makeGrepOverrideWithBackend(directory, DEFAULT_CONFIG, {});
     for (const { pattern, expected } of [
       { pattern: " ", expected: 2 },
       { pattern: "\t", expected: 2 },
@@ -90,7 +91,7 @@ test("real rg uses smart-case across OR patterns and Unicode matches", async () 
   const directory = await mkdtemp(join(tmpdir(), "hl-grep-case-"));
   try {
     await writeFile(join(directory, "fixture.ts"), "FOO abc\nfoo BAR\nfoo bar\nK zip\nk zip\n");
-    const tool = makeGrepOverrideWithBackend(directory, {});
+    const tool = makeGrepOverrideWithBackend(directory, DEFAULT_CONFIG, {});
     const lower = await invoke(tool, "0", { pattern: ["foo", "bar"] }, undefined, undefined);
     assert.match(lower.content[0].text, /fixture\.ts · 3 matches/);
     assert.match(lower.content[0].text, /│FOO abc/);
@@ -110,7 +111,7 @@ test("explicit ignoreCase overrides smart-case for regex and literal queries", a
   try {
     const file = join(directory, "fixture.txt");
     await writeFile(file, "FOO\nfoo\n");
-    const tool = makeGrepOverrideWithBackend(directory, {});
+    const tool = makeGrepOverrideWithBackend(directory, DEFAULT_CONFIG, {});
     const sensitive = await invoke(
       tool,
       "0",
@@ -202,7 +203,7 @@ test("real rg accepts Rust regex syntax and rejects unsupported lookarounds", as
   const directory = await mkdtemp(join(tmpdir(), "hl-grep-regex-engine-"));
   try {
     await writeFile(join(directory, "fixture.ts"), "FOO abc\nfoo BAR\nfoo bar\n");
-    const tool = makeGrepOverrideWithBackend(directory, {});
+    const tool = makeGrepOverrideWithBackend(directory, DEFAULT_CONFIG, {});
     const result = await invoke(
       tool,
       "0",
@@ -231,7 +232,7 @@ test("owned rg processes ignore RIPGREP_CONFIG_PATH", async () => {
     );
     await writeFile(join(directory, "fixture.ts"), "FOO\nfoo\nbar\n");
     process.env.RIPGREP_CONFIG_PATH = config;
-    const tool = makeGrepOverrideWithBackend(directory, {});
+    const tool = makeGrepOverrideWithBackend(directory, DEFAULT_CONFIG, {});
     const result: any = await invoke(
       tool,
       "0",
@@ -268,7 +269,7 @@ test("real rg validates its own regex syntax and limits automatic literal fallba
   const directory = await mkdtemp(join(tmpdir(), "hl-grep-regex-"));
   try {
     await writeFile(join(directory, "fixture.ts"), "FOO\nfoo\nqueueTool(\nfoo(?=bar)\n");
-    const tool = makeGrepOverrideWithBackend(directory, {});
+    const tool = makeGrepOverrideWithBackend(directory, DEFAULT_CONFIG, {});
     for (const pattern of ["(?i)^foo$", "(?P<name>foo)$"]) {
       const result: any = await invoke(tool, "0", { pattern }, undefined, undefined);
       assert.match(result.content[0].text, /│foo/);
@@ -307,7 +308,7 @@ test("real rg keeps CRLF line-end anchors with fixed OR matching", async () => {
   const directory = await mkdtemp(join(tmpdir(), "hl-grep-crlf-"));
   try {
     await writeFile(join(directory, "fixture.ts"), "alpha beta drop\r\nalpha beta\r\nalpha only");
-    const tool = makeGrepOverrideWithBackend(directory, {});
+    const tool = makeGrepOverrideWithBackend(directory, DEFAULT_CONFIG, {});
     const ending = await invoke(tool, "0", { pattern: "beta$" }, undefined, undefined);
     assert.match(ending.content[0].text, /fixture\.ts · 1 match/);
     assert.match(ending.content[0].text, /2#[0-9A-Z]+│alpha beta$/);
@@ -329,7 +330,7 @@ test("real rg finds a late OR match and respects the line limit", async () => {
   const directory = await mkdtemp(join(tmpdir(), "hl-grep-limit-"));
   try {
     await writeFile(join(directory, "fixture.ts"), "foo skip\n".repeat(4096) + "foo keep\n");
-    const tool = makeGrepOverrideWithBackend(directory, {});
+    const tool = makeGrepOverrideWithBackend(directory, DEFAULT_CONFIG, {});
     const result = await invoke(
       tool,
       "0",
@@ -390,7 +391,7 @@ test("directory searches respect ignores but explicit files and hidden files rem
     await writeFile(join(directory, ".ignore"), "ignored.txt\n");
     const ignored = join(directory, "ignored.txt");
     await writeFile(ignored, "needle\n");
-    const tool = makeGrepOverrideWithBackend(directory, {});
+    const tool = makeGrepOverrideWithBackend(directory, DEFAULT_CONFIG, {});
     const normal = await invoke(tool, "0", { pattern: "needle" }, undefined, undefined);
     assert.equal(normal.content[0].text, "No matches found");
     const explicit = await invoke(
@@ -426,7 +427,7 @@ test("explicit file paths obey ordered glob filters without inheriting ignore ru
     const ignored = join(directory, "ignored.ts");
     await writeFile(join(directory, ".ignore"), "ignored.ts\n");
     await Promise.all([kept, excluded, ignored].map((path) => writeFile(path, "needle\n")));
-    const tool = makeGrepOverrideWithBackend(directory, {});
+    const tool = makeGrepOverrideWithBackend(directory, DEFAULT_CONFIG, {});
     const result: any = await invoke(
       tool,
       "0",
@@ -478,7 +479,7 @@ test("directory traversal skips symlinks but explicitly named linked files remai
         return t.skip("symbolic link creation unavailable");
       throw error;
     }
-    const grep = makeGrepOverrideWithBackend(root, {});
+    const grep = makeGrepOverrideWithBackend(root, DEFAULT_CONFIG, {});
     const hidden: any = await invoke(grep, "0", { pattern: "needle" }, undefined, undefined);
     assert.equal(hidden.content[0].text, "No matches found");
     const found: any = await invoke(
@@ -493,7 +494,7 @@ test("directory traversal skips symlinks but explicitly named linked files remai
     assert.equal(resultPath.replace(/\\/g, "/"), "link/linked.txt");
     assert.equal(found.content[0].text.match(/ · 1 match/g)?.length, 1);
     const anchor = anchored.slice(0, anchored.indexOf("│"));
-    const edit: any = makeEditOverride(root);
+    const edit: any = makeEditOverride(root, DEFAULT_CONFIG);
     await invoke(
       edit,
       "0",
@@ -514,7 +515,7 @@ test("real rg reports unsupported lookarounds and backreferences under Rust rege
   const directory = await mkdtemp(join(tmpdir(), "hl-grep-rust-boundary-"));
   try {
     await writeFile(join(directory, "fixture.txt"), "foobar\nfoofoo\n");
-    const tool = makeGrepOverrideWithBackend(directory, {});
+    const tool = makeGrepOverrideWithBackend(directory, DEFAULT_CONFIG, {});
     const valid = await invoke(
       tool,
       "0",
@@ -549,7 +550,7 @@ test("line-based grep uses context for display but never matches across CRLF", a
   const directory = await mkdtemp(join(tmpdir(), "hl-grep-lines-"));
   try {
     await writeFile(join(directory, "fixture.txt"), "alpha\r\nbeta\r\ngamma\r\n");
-    const tool = makeGrepOverrideWithBackend(directory, {});
+    const tool = makeGrepOverrideWithBackend(directory, DEFAULT_CONFIG, {});
     const context = await invoke(tool, "0", { pattern: "alpha", context: 1 }, undefined, undefined);
     assert.match(context.content[0].text, /fixture\.txt · 1 match/);
     assert.match(context.content[0].text, /1#[0-9A-Z]+│alpha/);
@@ -582,7 +583,7 @@ test("multiline grep anchors CRLF spans and counts overlapping physical lines on
   try {
     const file = join(directory, "fixture.txt");
     await writeFile(file, "alpha\r\nbeta\r\ngamma\r\n");
-    const tool = makeGrepOverrideWithBackend(directory, {});
+    const tool = makeGrepOverrideWithBackend(directory, DEFAULT_CONFIG, {});
     const regex = await invoke(
       tool,
       "0",
@@ -635,7 +636,7 @@ test("multiline grep anchors CRLF spans and counts overlapping physical lines on
       undefined,
     );
     assert.match(boundary.content[0].text, /fixture\.txt · 1 match/);
-    const edit: any = makeEditOverride(directory);
+    const edit: any = makeEditOverride(directory, DEFAULT_CONFIG);
     const anchor = regex.content[0].text.match(/(2#[0-9A-Z]+)│beta/)?.[1];
     assert.ok(anchor);
     await invoke(
@@ -656,7 +657,7 @@ test("multiline grep preserves BOM and standalone CR while normalizing CRLF", as
   try {
     const file = join(directory, "fixture.txt");
     await writeFile(file, "\uFEFFalpha\rsolo\r\nbeta\r\n");
-    const tool = makeGrepOverrideWithBackend(directory, {});
+    const tool = makeGrepOverrideWithBackend(directory, DEFAULT_CONFIG, {});
     const result = await invoke(
       tool,
       "0",
@@ -685,7 +686,7 @@ test("multiline grep anchors empty lines and line-start zero-width matches", asy
   try {
     const file = join(directory, "fixture.txt");
     await writeFile(file, "alpha\r\n\r\nbeta\r\n");
-    const tool = makeGrepOverrideWithBackend(directory, {});
+    const tool = makeGrepOverrideWithBackend(directory, DEFAULT_CONFIG, {});
     const span = await invoke(
       tool,
       "0",
@@ -714,7 +715,7 @@ test("multiline zero-width EOF stays on the last existing physical line", async 
   const directory = await mkdtemp(join(tmpdir(), "hl-grep-multiline-eof-"));
   try {
     const file = join(directory, "fixture.txt");
-    const tool = makeGrepOverrideWithBackend(directory, {});
+    const tool = makeGrepOverrideWithBackend(directory, DEFAULT_CONFIG, {});
     for (const content of ["last line", "last line\n"]) {
       await writeFile(file, content);
       const result = await invoke(
@@ -741,7 +742,7 @@ test("multiline grep detects changed files and propagates cancellation", async (
   try {
     const file = join(directory, "fixture.txt");
     await writeFile(file, "alpha\nbeta\n");
-    const changing = makeGrepOverrideWithBackend(directory, {
+    const changing = makeGrepOverrideWithBackend(directory, DEFAULT_CONFIG, {
       async runRg(path, args, signal, onLine) {
         const result = await runRg(path, args, signal, onLine);
         if (args.includes("--json")) await writeFile(file, "alpha\nchanged\n");
@@ -760,7 +761,7 @@ test("multiline grep detects changed files and propagates cancellation", async (
     );
     await writeFile(file, "alpha\nbeta\n");
     const controller = new AbortController();
-    const cancelling = makeGrepOverrideWithBackend(directory, {
+    const cancelling = makeGrepOverrideWithBackend(directory, DEFAULT_CONFIG, {
       runRg(path, args, signal, onLine) {
         if (args.includes("--json")) controller.abort();
         return runRg(path, args, signal, onLine);
@@ -788,7 +789,7 @@ test("files and count modes aggregate only matching lines inside the limit", asy
     const second = join(directory, "b.txt");
     await writeFile(first, "needle needle\nneedle\n");
     await writeFile(second, "needle\n");
-    const tool = makeGrepOverrideWithBackend(directory, {});
+    const tool = makeGrepOverrideWithBackend(directory, DEFAULT_CONFIG, {});
     const query = { pattern: "needle", path: [first, second], limit: 1 };
     const files = await invoke(
       tool,
@@ -833,7 +834,7 @@ test("default grep rejects file changes and propagates cancellation", async () =
   try {
     const file = join(directory, "fixture.txt");
     await writeFile(file, "foo bar\n");
-    const changing = makeGrepOverrideWithBackend(directory, {
+    const changing = makeGrepOverrideWithBackend(directory, DEFAULT_CONFIG, {
       async runRg(path, args, signal, onLine) {
         const result = await runRg(path, args, signal, onLine);
         if (args.includes("--json")) await writeFile(file, "changed content\n");
@@ -847,7 +848,7 @@ test("default grep rejects file changes and propagates cancellation", async () =
 
     await writeFile(file, "foo bar\n");
     const controller = new AbortController();
-    const cancelling = makeGrepOverrideWithBackend(directory, {
+    const cancelling = makeGrepOverrideWithBackend(directory, DEFAULT_CONFIG, {
       runRg(path, args, signal, onLine) {
         if (args.includes("--json")) controller.abort();
         return runRg(path, args, signal, onLine);
@@ -866,7 +867,7 @@ test("owned rg rejects an oversized JSONL record", async () => {
   const directory = await mkdtemp(join(tmpdir(), "hl-grep-record-limit-"));
   try {
     await writeFile(join(directory, "large.txt"), `needle${"x".repeat(17 * 1024 * 1024)}\n`);
-    const tool = makeGrepOverrideWithBackend(directory, {});
+    const tool = makeGrepOverrideWithBackend(directory, DEFAULT_CONFIG, {});
     await assert.rejects(
       invoke(tool, "0", { pattern: "needle", literal: true }, undefined, undefined),
       /record exceeds 16 MiB/,
@@ -880,7 +881,7 @@ test("real rg accepts wildcard-only regexes and preserves limits and literal mod
   const directory = await mkdtemp(join(tmpdir(), "hl-grep-wildcard-"));
   try {
     await writeFile(join(directory, "fixture.txt"), "first\n\n.*\n");
-    const tool = makeGrepOverrideWithBackend(directory, {});
+    const tool = makeGrepOverrideWithBackend(directory, DEFAULT_CONFIG, {});
     for (const [pattern, expected] of [
       [".*", 3],
       ["^.+$", 2],
@@ -937,8 +938,8 @@ test("tools share physical lines and anchors across text representations", async
     ]) {
       await call(makeWriteOverride(directory), { path: file, content: before });
       assert.equal(await readFile(file, "utf8"), before);
-      const read = await call(makeReadOverride(directory), { path: file });
-      const grep = await call(makeGrepOverrideWithBackend(directory, {}), {
+      const read = await call(makeReadOverride(directory, DEFAULT_CONFIG), { path: file });
+      const grep = await call(makeGrepOverrideWithBackend(directory, DEFAULT_CONFIG, {}), {
         path: file,
         pattern: "old",
         context: 2,
@@ -946,7 +947,7 @@ test("tools share physical lines and anchors across text representations", async
       assert.deepEqual(rows(grep), rows(read));
       if (before.includes("a\rb")) assert.match(rows(read)[0], /│a␍b$/);
       const anchor = rows(grep)[1].split("│")[0];
-      const edit = await call(makeEditOverride(directory), {
+      const edit = await call(makeEditOverride(directory, DEFAULT_CONFIG), {
         path: file,
         edits: [{ op: "replace", anchor, body: ["new"] }],
       });
@@ -956,15 +957,15 @@ test("tools share physical lines and anchors across text representations", async
       assert.match(edit.details.diff, /^\+2 new/m);
       assert.ok(!edit.details.diff.includes("\r"));
       if (before.includes("a\rb")) assert.ok(edit.details.patch.includes(" a\rb\n"));
-      const editedRead = await call(makeReadOverride(directory), { path: file });
+      const editedRead = await call(makeReadOverride(directory, DEFAULT_CONFIG), { path: file });
       assert.equal(rows(edit)[0], rows(editedRead)[1].split("│")[0]);
-      const replaced = await call(makeReplaceTool(directory), {
+      const replaced = await call(makeReplaceTool(directory, DEFAULT_CONFIG), {
         path: file,
         replacements: [{ find: "new", replace: "next" }],
       });
       assert.equal(await readFile(file, "utf8"), before.replace("old", "next"));
       assert.equal(replaced.details.firstChangedLine, 2);
-      const replacedRead = await call(makeReadOverride(directory), { path: file });
+      const replacedRead = await call(makeReadOverride(directory, DEFAULT_CONFIG), { path: file });
       assert.equal(rows(replaced)[0], rows(replacedRead)[1].split("│")[0]);
     }
   } finally {
@@ -978,7 +979,7 @@ test("long-line previews preserve full-line anchors across literal and Rust rege
     const long = "😀界".repeat(220) + "NEEDLE" + "tail".repeat(200);
     const context = "x" + "😀".repeat(400);
     await writeFile(join(directory, "long.txt"), `${long}\r\nfollow\r\n${context}\r\n`);
-    const tool = makeGrepOverrideWithBackend(directory, {});
+    const tool = makeGrepOverrideWithBackend(directory, DEFAULT_CONFIG, {});
     for (const params of [
       { pattern: "NEEDLE" },
       { pattern: ["NEEDLE", "tail"], literal: true },
@@ -1010,8 +1011,8 @@ test("all text tools share logical CRLF matching, anchors, and mutation separato
     const path = join(directory, "mixed.txt");
     const before = "\uFEFFhead\r\nalpha\r\nbeta\nstand\rCR\r\r\nlast";
     const write = makeWriteOverride(directory);
-    const read = makeReadOverride(directory);
-    const grep = makeGrepOverrideWithBackend(directory, {});
+    const read = makeReadOverride(directory, DEFAULT_CONFIG);
+    const grep = makeGrepOverrideWithBackend(directory, DEFAULT_CONFIG, {});
     await invoke(write, "write", { path, content: before }, undefined, undefined, {
       cwd: directory,
     } as ExtensionContext);
@@ -1066,7 +1067,7 @@ test("all text tools share logical CRLF matching, anchors, and mutation separato
       } as ExtensionContext);
       if (mode === "edit") {
         await invoke(
-          makeEditOverride(directory),
+          makeEditOverride(directory, DEFAULT_CONFIG),
           "edit",
           {
             path,
@@ -1085,7 +1086,7 @@ test("all text tools share logical CRLF matching, anchors, and mutation separato
         );
       } else {
         await invoke(
-          makeReplaceTool(directory),
+          makeReplaceTool(directory, DEFAULT_CONFIG),
           "replace",
           {
             path,
@@ -1127,12 +1128,19 @@ test("visible source escapes remain readable and searchable while real CRLF stay
       undefined,
       { cwd: directory } as ExtensionContext,
     );
-    const read = await invoke(makeReadOverride(directory), "read", { path }, undefined, undefined, {
-      cwd: directory,
-    } as ExtensionContext);
+    const read = await invoke(
+      makeReadOverride(directory, DEFAULT_CONFIG),
+      "read",
+      { path },
+      undefined,
+      undefined,
+      {
+        cwd: directory,
+      } as ExtensionContext,
+    );
     assert.ok(read.content[0].type === "text");
     assert.ok(read.content[0].text.includes(String.raw`const eol = "\r\n";`));
-    const grep = makeGrepOverrideWithBackend(directory, {});
+    const grep = makeGrepOverrideWithBackend(directory, DEFAULT_CONFIG, {});
     for (const query of [
       { pattern: String.raw`\r\n`, literal: true },
       { pattern: String.raw`\\r\\n`, literal: false },
@@ -1140,7 +1148,7 @@ test("visible source escapes remain readable and searchable while real CRLF stay
       const result = await invoke(grep, "grep", { path, ...query }, undefined, undefined);
       assert.ok(result.content[0].text.includes(String.raw`const eol = "\r\n";`));
     }
-    const replace = makeReplaceTool(directory);
+    const replace = makeReplaceTool(directory, DEFAULT_CONFIG);
     await invoke(
       replace,
       "literal",
@@ -1171,7 +1179,7 @@ test("normalized grep batches retain original paths, literal option markers, and
       Array.from({ length: 70 }, (_, i) => writeFile(join(directory, `file ${i}.txt`), "--\r\n")),
     );
     await writeFile(join(directory, "invalid.txt"), Buffer.from([0xc3, 0x28]));
-    const grep = makeGrepOverrideWithBackend(directory, {});
+    const grep = makeGrepOverrideWithBackend(directory, DEFAULT_CONFIG, {});
     const result = await invoke(
       grep,
       "grep",
@@ -1194,7 +1202,7 @@ test("NUL files are rejected on a confirmed hit, not reported as no match", asyn
   try {
     const binary = join(directory, "binary.txt");
     await writeFile(binary, Buffer.from("needle\r\nother\0needle\n"));
-    const grep = makeGrepOverrideWithBackend(directory, {});
+    const grep = makeGrepOverrideWithBackend(directory, DEFAULT_CONFIG, {});
     await assert.rejects(
       invoke(
         grep,

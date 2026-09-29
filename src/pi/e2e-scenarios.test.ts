@@ -18,6 +18,7 @@ import { createActionFusionExecutor } from "./action-fusion.ts";
 import { computeLineHash } from "../core/hash.ts";
 import { splitLines } from "../core/lines.ts";
 import { callTool } from "./tool-call.testing.ts";
+import { DEFAULT_CONFIG } from "./config.ts";
 
 async function withDir<T>(fn: (dir: string) => Promise<T>): Promise<T> {
   const dir = await mkdtemp(join(tmpdir(), "hl-e2e-"));
@@ -62,8 +63,8 @@ test("E2E Dev D1: Search-and-edit single function without separate read call", a
       ].join("\n") + "\n";
     await writeFile(file, original);
 
-    const grep = makeGrepOverride(dir);
-    const edit = makeEditOverride(dir);
+    const grep = makeGrepOverride(dir, DEFAULT_CONFIG);
+    const edit = makeEditOverride(dir, DEFAULT_CONFIG);
 
     // Turn 1: Search with context: 3
     const grepResult = await call(grep, {
@@ -105,7 +106,7 @@ test("E2E Dev D2: Chained multi-site edits using returned fresh anchors", async 
       ].join("\n") + "\n";
     await writeFile(file, original);
 
-    const edit = makeEditOverride(dir);
+    const edit = makeEditOverride(dir, DEFAULT_CONFIG);
 
     // Step 1: Edit version
     const r1 = await call(edit, {
@@ -167,7 +168,7 @@ test("E2E Dev D3: Recovery from shifted anchor after external line insertion", a
       ].join("\n") + "\n";
     await writeFile(file, externallyModified);
 
-    const edit = makeEditOverride(dir);
+    const edit = makeEditOverride(dir, DEFAULT_CONFIG);
 
     // Agent attempts edit with stale anchor
     let candidateAnchor = "";
@@ -211,7 +212,7 @@ test("E2E Dev D4: Bulk replace with Action Fusion then_run validation", async ()
       return "All checks passed";
     });
 
-    const replace = makeReplaceTool(dir, fusionExecutor);
+    const replace = makeReplaceTool(dir, DEFAULT_CONFIG, fusionExecutor);
     const res = await call(replace, {
       path: "api.ts",
       replacements: [{ find: "old_var", replace: "new_var" }],
@@ -234,7 +235,7 @@ test("E2E Dev D5: Line ending preservation and deletion successor anchor", async
     const crlfText = "line1\r\nline2\r\nline3\r\nline4\r\n";
     await writeFile(file, crlfText);
 
-    const edit = makeEditOverride(dir);
+    const edit = makeEditOverride(dir, DEFAULT_CONFIG);
 
     // Delete line 2: line 3 shifts to line 2 (deletion successor)
     const res = await call(edit, {
@@ -255,7 +256,7 @@ test("E2E Dev D6: structured edit batches use one original snapshot", async () =
     const file = join(dir, "batch.txt");
     const original = "alpha\nbeta\ngamma\n";
     await writeFile(file, original);
-    await call(makeEditOverride(dir), {
+    await call(makeEditOverride(dir, DEFAULT_CONFIG), {
       path: "batch.txt",
       edits: [
         { op: "replace", anchor: h(original, 1), body: ["ALPHA"] },
@@ -278,7 +279,7 @@ test("E2E Holdout H1: Ambiguous candidates provide distinguishing neighborhoods"
       ) + "\n";
     await writeFile(file, text);
 
-    const edit = makeEditOverride(dir);
+    const edit = makeEditOverride(dir, DEFAULT_CONFIG);
     // The cited content moved away from line 3 and now occurs at lines 2 and 5.
     const staleAnchor = h("header\nheader\n  return true;\n", 3);
     let candidateAnchor = "";
@@ -321,7 +322,7 @@ test("E2E Holdout H2: Action Fusion command failure preserves file changes and a
       throw new Error("Syntax error on line 42");
     });
 
-    const edit = makeEditOverride(dir, fusionExecutor);
+    const edit = makeEditOverride(dir, DEFAULT_CONFIG, fusionExecutor);
     const res = await call(edit, {
       path: "fusion_fail.ts",
       edits: [{ op: "replace", anchor: h("let x = 1;\n", 1), body: ["let x = 2;"] }],
@@ -343,7 +344,7 @@ test("E2E Holdout H3: UTF-8 BOM file retains BOM at byte 0 after first-line edit
     const bomContent = "\uFEFFline1\nline2\n";
     await writeFile(file, bomContent);
 
-    const edit = makeEditOverride(dir);
+    const edit = makeEditOverride(dir, DEFAULT_CONFIG);
     const a1 = h(bomContent, 1);
 
     await call(edit, {

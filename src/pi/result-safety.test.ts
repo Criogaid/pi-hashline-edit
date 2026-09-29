@@ -18,6 +18,7 @@ import {
   postProcessMutation,
 } from "./mutation-result.ts";
 import { callTool } from "./tool-call.testing.ts";
+import { DEFAULT_CONFIG } from "./config.ts";
 
 const text = (result: Pick<AgentToolResult<unknown>, "content">): string =>
   result.content.map((block) => (block.type === "text" ? block.text : "")).join("\n");
@@ -77,7 +78,7 @@ test("replace withholds anchors in progress and after commands change or remove 
           return "done";
         });
         const result = await invoke(
-          makeReplaceTool(dir, fusion),
+          makeReplaceTool(dir, DEFAULT_CONFIG, fusion),
           "replace",
           {
             path,
@@ -216,7 +217,7 @@ test("mutation anchor output and aggregate anchor diagnostics have byte budgets"
       const result =
         name === "edit"
           ? await invoke(
-              makeEditOverride(dir),
+              makeEditOverride(dir, DEFAULT_CONFIG),
               name,
               { path, edits: [{ op: "append", body: [long] }] },
               undefined,
@@ -224,7 +225,7 @@ test("mutation anchor output and aggregate anchor diagnostics have byte budgets"
               ctx(dir),
             )
           : await invoke(
-              makeReplaceTool(dir),
+              makeReplaceTool(dir, DEFAULT_CONFIG),
               name,
               { path, replacements: [{ find: "before", replace: long }] },
               undefined,
@@ -241,7 +242,7 @@ test("mutation anchor output and aggregate anchor diagnostics have byte budgets"
       const deleted =
         name === "edit"
           ? await invoke(
-              makeEditOverride(dir),
+              makeEditOverride(dir, DEFAULT_CONFIG),
               name,
               { path, edits: [{ op: "delete", anchor: `1#${computeLineHash(1, "remove", 4)}` }] },
               undefined,
@@ -249,7 +250,7 @@ test("mutation anchor output and aggregate anchor diagnostics have byte budgets"
               ctx(dir),
             )
           : await invoke(
-              makeReplaceTool(dir),
+              makeReplaceTool(dir, DEFAULT_CONFIG),
               name,
               { path, replacements: [{ find: "remove\n", replace: "" }] },
               undefined,
@@ -263,7 +264,7 @@ test("mutation anchor output and aggregate anchor diagnostics have byte budgets"
     await writeFile(path, "current\n");
     await assert.rejects(
       invoke(
-        makeEditOverride(dir),
+        makeEditOverride(dir, DEFAULT_CONFIG),
         "errors",
         {
           path,
@@ -300,12 +301,12 @@ test("unpaired surrogate arguments are rejected before Fusion", async () => {
     await writeFile(path, "original\n");
     const cases = [
       {
-        tool: makeEditOverride(dir, fusion),
+        tool: makeEditOverride(dir, DEFAULT_CONFIG, fusion),
         args: { path, edits: [{ op: "append", body: ["\ud800"] }], then_run: { command: "check" } },
         field: "edits[0].body[0]",
       },
       {
-        tool: makeReplaceTool(dir, fusion),
+        tool: makeReplaceTool(dir, DEFAULT_CONFIG, fusion),
         args: {
           path,
           replacements: [{ find: "original", replace: "\udfff" }],
@@ -345,7 +346,7 @@ test("ambiguous recovery bounds candidate lists and never claims content identit
     await writeFile(path, lines.join("\n"));
     await assert.rejects(
       invoke(
-        makeEditOverride(dir),
+        makeEditOverride(dir, DEFAULT_CONFIG),
         "ambiguous",
         {
           path,
@@ -387,12 +388,12 @@ test("NUL arguments are rejected before Fusion for all mutation tools", async ()
     );
     const cases = [
       {
-        tool: makeEditOverride(dir, fusion),
+        tool: makeEditOverride(dir, DEFAULT_CONFIG, fusion),
         args: { path, edits: [{ op: "append", body: ["\0"] }], then_run: { command: "check" } },
         field: "edits[0].body[0]",
       },
       {
-        tool: makeReplaceTool(dir, fusion),
+        tool: makeReplaceTool(dir, DEFAULT_CONFIG, fusion),
         args: {
           path,
           replacements: [{ find: "original", replace: "\0" }],
@@ -440,7 +441,7 @@ test("Fusion skips the command when a replacement produces unencodable text", as
     );
     await assert.rejects(
       callTool(
-        makeReplaceTool(dir, fusion),
+        makeReplaceTool(dir, DEFAULT_CONFIG, fusion),
         {
           path,
           replacements: [{ find: "^.", replace: "x", regex: true }],
@@ -491,14 +492,24 @@ test("shared result building preserves publication and appends anchors only to t
   assert.equal(result.content[0].text, "summary");
 });
 
+type Fusion = Parameters<typeof makeWriteOverride>[1];
 const noOpCases = [
   {
-    makeTool: makeEditOverride,
+    makeTool: (cwd: string, fusion?: Fusion) => makeEditOverride(cwd, DEFAULT_CONFIG, fusion),
     params: {
-      edits: [{ op: "replace", anchor: `1#${computeLineHash(1, "same", 4)}`, body: ["same"] }],
+      edits: [
+        {
+          op: "replace",
+          anchor: `1#${computeLineHash(1, "same", DEFAULT_CONFIG.hashLen)}`,
+          body: ["same"],
+        },
+      ],
     },
   },
-  { makeTool: makeReplaceTool, params: { replacements: [{ find: "same", replace: "same" }] } },
+  {
+    makeTool: (cwd: string, fusion?: Fusion) => makeReplaceTool(cwd, DEFAULT_CONFIG, fusion),
+    params: { replacements: [{ find: "same", replace: "same" }] },
+  },
   { makeTool: makeWriteOverride, params: { content: "same\n" } },
 ];
 
@@ -615,7 +626,7 @@ test("mutation anchors omit unchanged positions across distant changes", async (
       const result =
         name === "edit"
           ? await invoke(
-              makeEditOverride(dir),
+              makeEditOverride(dir, DEFAULT_CONFIG),
               name,
               {
                 path,
@@ -633,7 +644,7 @@ test("mutation anchors omit unchanged positions across distant changes", async (
               ctx(dir),
             )
           : await invoke(
-              makeReplaceTool(dir),
+              makeReplaceTool(dir, DEFAULT_CONFIG),
               name,
               {
                 path,
@@ -654,7 +665,7 @@ test("mutation anchors omit unchanged positions across distant changes", async (
       assert.doesNotMatch(text(result), /omitted/);
       // An omitted stable row keeps its old anchor; a changed row uses the returned anchor.
       await invoke(
-        makeEditOverride(dir),
+        makeEditOverride(dir, DEFAULT_CONFIG),
         "chain",
         {
           path,
@@ -692,7 +703,7 @@ test("mutation anchors retain a deletion successor but omit stable rows and dele
         const result =
           name === "edit"
             ? await invoke(
-                makeEditOverride(dir),
+                makeEditOverride(dir, DEFAULT_CONFIG),
                 name,
                 {
                   path,
@@ -705,7 +716,7 @@ test("mutation anchors retain a deletion successor but omit stable rows and dele
                 ctx(dir),
               )
             : await invoke(
-                makeReplaceTool(dir),
+                makeReplaceTool(dir, DEFAULT_CONFIG),
                 name,
                 { path, replacements: [{ find: "remove\n", replace: "" }] },
                 undefined,
@@ -729,7 +740,7 @@ test("mutation anchors retain deletion successor even when deleted line content 
     const path = join(dir, "edit.txt");
     const lines = ["a", "duplicate", "duplicate", "d"];
     await writeFile(path, lines.join("\n") + "\n");
-    const tool = makeEditOverride(dir);
+    const tool = makeEditOverride(dir, DEFAULT_CONFIG);
     const result = await invoke(
       tool,
       "edit",
@@ -761,7 +772,7 @@ test("compact mutation anchors exceed forty rows while respecting the byte budge
         const result =
           name === "edit"
             ? await invoke(
-                makeEditOverride(dir),
+                makeEditOverride(dir, DEFAULT_CONFIG),
                 name,
                 { path, edits: [{ op: "append", body: inserted }] },
                 undefined,
@@ -769,7 +780,7 @@ test("compact mutation anchors exceed forty rows while respecting the byte budge
                 ctx(dir),
               )
             : await invoke(
-                makeReplaceTool(dir),
+                makeReplaceTool(dir, DEFAULT_CONFIG),
                 name,
                 { path, replacements: [{ find: "before", replace: inserted.join("\n") }] },
                 undefined,
@@ -805,7 +816,7 @@ test("oversized deletion successors do not suppress later editable anchors", asy
     const path = join(dir, "fixture.txt");
     const long = "x".repeat(17000);
     await writeFile(path, `remove\n${long}\nold\n`);
-    const tool = makeEditOverride(dir);
+    const tool = makeEditOverride(dir, DEFAULT_CONFIG);
     const result = await invoke(
       tool,
       "skip",

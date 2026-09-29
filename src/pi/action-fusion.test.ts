@@ -19,6 +19,7 @@ import {
   THEN_RUN_SUCCEEDED,
 } from "./action-fusion.ts";
 import { byteRevision, FileMutationError } from "./file-commit.ts";
+import { DEFAULT_CONFIG } from "./config.ts";
 
 async function tempDir(): Promise<string> {
   return mkdtemp(join(tmpdir(), "hashline-action-fusion-"));
@@ -26,9 +27,16 @@ async function tempDir(): Promise<string> {
 
 const ctx = (cwd: string) => ({ cwd }) as ExtensionContext;
 
+type Fusion = Parameters<typeof makeWriteOverride>[1];
+const mutationFactories = [
+  (cwd: string, fusion?: Fusion) => makeEditOverride(cwd, DEFAULT_CONFIG, fusion),
+  (cwd: string, fusion?: Fusion) => makeReplaceTool(cwd, DEFAULT_CONFIG, fusion),
+  makeWriteOverride,
+];
+
 test("mutation tools expose Fusion schemas and guidance when supplied an executor", () => {
   const fusion = createActionFusionExecutor();
-  for (const makeTool of [makeEditOverride, makeReplaceTool, makeWriteOverride]) {
+  for (const makeTool of mutationFactories) {
     const disabled = makeTool("/tmp");
     const enabled = makeTool("/tmp", fusion);
     assert.equal(Object.hasOwn(disabled.parameters.properties, "then_run"), false);
@@ -50,7 +58,7 @@ test("mutation tools expose Fusion schemas and guidance when supplied an executo
 test("then_run schemas reject invalid commands, unknown keys, and excessive timeouts", async () => {
   const dir = await tempDir();
   try {
-    for (const makeTool of [makeEditOverride, makeReplaceTool, makeWriteOverride]) {
+    for (const makeTool of mutationFactories) {
       const tool = makeTool(dir, createActionFusionExecutor());
       const path = `${tool.name}.txt`;
       await writeFile(join(dir, path), "old\n");
@@ -86,8 +94,8 @@ test("edit and replace share one embedded executor and preserve mutation results
       calls.push(input.command);
       return "checked";
     });
-    const edit = makeEditOverride(dir, fusion);
-    const replace = makeReplaceTool(dir, fusion);
+    const edit = makeEditOverride(dir, DEFAULT_CONFIG, fusion);
+    const replace = makeReplaceTool(dir, DEFAULT_CONFIG, fusion);
     await writeFile(join(dir, "edit.txt"), "before\n");
     await writeFile(join(dir, "replace.txt"), "before\n");
     const editResult = await edit.execute(
@@ -318,7 +326,7 @@ test("edit omits Updated anchors when then_run changes the target", async () => 
       await writeFile(target, "command changed\n");
       return "changed";
     });
-    const result = await makeEditOverride(dir, fusion).execute(
+    const result = await makeEditOverride(dir, DEFAULT_CONFIG, fusion).execute(
       "edit-stale",
       {
         path: "edit-stale.txt",
@@ -357,7 +365,7 @@ test("all mutation tools forward command progress before completion in RPC mode"
     );
     const cases = [
       () =>
-        makeEditOverride(dir, fusion).execute(
+        makeEditOverride(dir, DEFAULT_CONFIG, fusion).execute(
           "edit",
           {
             path: "progress.txt",
@@ -369,7 +377,7 @@ test("all mutation tools forward command progress before completion in RPC mode"
           { ...ctx(dir), mode: "rpc" },
         ),
       () =>
-        makeReplaceTool(dir, fusion).execute(
+        makeReplaceTool(dir, DEFAULT_CONFIG, fusion).execute(
           "replace",
           {
             path: "progress.txt",
@@ -424,7 +432,7 @@ test("progress reports skipped mutations and failed commands without rolling bac
       (event) => events.push(event),
     );
     await assert.rejects(
-      makeEditOverride(dir, fusion).execute(
+      makeEditOverride(dir, DEFAULT_CONFIG, fusion).execute(
         "skip",
         {
           path: "missing.txt",
@@ -446,7 +454,7 @@ test("progress reports skipped mutations and failed commands without rolling bac
     events.length = 0;
     await writeFile(join(dir, "replace.txt"), "original\n");
     await assert.rejects(
-      makeReplaceTool(dir, fusion).execute(
+      makeReplaceTool(dir, DEFAULT_CONFIG, fusion).execute(
         "replace-skip",
         {
           path: "replace.txt",

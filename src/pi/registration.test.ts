@@ -4,7 +4,6 @@ import { join } from "node:path";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import registerHashline from "../index.ts";
-import { getState } from "./state.ts";
 import { initTheme } from "@earendil-works/pi-coding-agent";
 import { ToolExecutionComponent } from "../../node_modules/@earendil-works/pi-coding-agent/dist/modes/interactive/components/tool-execution.js";
 import { theme } from "../../node_modules/@earendil-works/pi-coding-agent/dist/modes/interactive/theme/theme.js";
@@ -14,8 +13,6 @@ import { callTool } from "./tool-call.testing.ts";
 test("mutation cards use Fusion by default and explicit false removes command support", async () => {
   const dir = await mkdtemp(join(tmpdir(), "hashline-registration-"));
   const previousCwd = process.cwd();
-  const state = getState();
-  const previousConfig = state.config;
   try {
     await mkdir(join(dir, ".pi"));
     await writeFile(
@@ -283,7 +280,6 @@ test("mutation cards use Fusion by default and explicit false removes command su
     }
   } finally {
     process.chdir(previousCwd);
-    state.config = previousConfig;
     await rm(dir, { recursive: true, force: true });
   }
 });

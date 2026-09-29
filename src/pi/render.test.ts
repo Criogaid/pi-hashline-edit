@@ -9,6 +9,7 @@ import { renderDiffPreview, withMutationStatus } from "./render.ts";
 import { makeWriteOverride } from "./write-tool.ts";
 import { generateMutationDetails } from "./mutation-result.ts";
 import type { ActionFusionDetails } from "./action-fusion.ts";
+import { DEFAULT_CONFIG } from "./config.ts";
 
 const versions = { publishedRevision: "r", observedRevision: "r" };
 const mutationDetails = (actionFusion?: ActionFusionDetails) => ({
@@ -18,7 +19,10 @@ const mutationDetails = (actionFusion?: ActionFusionDetails) => ({
 
 test("mutation headers refresh in place and retain isolated per-call counts", () => {
   initTheme("dark");
-  for (const tool of [makeEditOverride(process.cwd()), makeReplaceTool(process.cwd())]) {
+  for (const tool of [
+    makeEditOverride(process.cwd(), DEFAULT_CONFIG),
+    makeReplaceTool(process.cwd(), DEFAULT_CONFIG),
+  ]) {
     const args = {
       path: "a.txt",
       edits: [{ op: "append" as const, body: ["new"] }],
@@ -54,7 +58,7 @@ test("mutation headers refresh in place and retain isolated per-call counts", ()
 
 test("edit call titles show structured batches and tolerate invalid partial input", () => {
   initTheme("dark");
-  const tool = makeEditOverride(process.cwd());
+  const tool = makeEditOverride(process.cwd(), DEFAULT_CONFIG);
   const edits = [
     { op: "replace" as const, anchor: "1#AB", body: ["new"] },
     { op: "append" as const, body: ["more"] },
@@ -73,7 +77,7 @@ test("edit call titles show structured batches and tolerate invalid partial inpu
 
 test("mutation card owns stale-anchor notices without internal status", () => {
   initTheme("dark");
-  const tool = withMutationStatus(makeEditOverride(process.cwd()));
+  const tool = withMutationStatus(makeEditOverride(process.cwd(), DEFAULT_CONFIG));
   const args = { path: "a.txt", edits: [{ op: "append" as const, body: ["new"] }] };
   const context: any = { args, state: {}, isPartial: false, isError: false, invalidate() {} };
   const card = tool.renderCall!(args, theme, context);
@@ -103,7 +107,7 @@ test("mutation card owns stale-anchor notices without internal status", () => {
 
 test("mutation card omits status when then_run was not requested", () => {
   initTheme("dark");
-  const tool = withMutationStatus(makeEditOverride(process.cwd()));
+  const tool = withMutationStatus(makeEditOverride(process.cwd(), DEFAULT_CONFIG));
   const args = { path: "a.txt", edits: [{ op: "append" as const, body: ["new"] }] };
   const context: any = { args, state: {}, isPartial: false, isError: false, invalidate() {} };
   const card = tool.renderCall!(args, theme, context);
@@ -180,7 +184,10 @@ test("mutation previews hide CRLF boundaries even with mixed endings or an unter
     assert.equal(details.diff, displayCarriageReturns(generateDiffString(before, after).diff));
     assert.match(details.diff, /␍/);
     assert.ok(details.patch.includes("-old\r\n"));
-    for (const tool of [makeEditOverride(process.cwd()), makeReplaceTool(process.cwd())]) {
+    for (const tool of [
+      makeEditOverride(process.cwd(), DEFAULT_CONFIG),
+      makeReplaceTool(process.cwd(), DEFAULT_CONFIG),
+    ]) {
       for (const expanded of [false, true]) {
         const context: any = { args: { path: "a.txt" }, state: {}, isError: false };
         const rendered = tool.renderResult(
@@ -207,7 +214,7 @@ test("diff previews retain standalone CR and literal control-picture characters"
       { publishedRevision: "r", observedRevision: "r" },
       "PUBLISHED",
     );
-    const tool = makeEditOverride(process.cwd());
+    const tool = makeEditOverride(process.cwd(), DEFAULT_CONFIG);
     const result = tool.renderResult(
       { content: [], details },
       { expanded: true, isPartial: false },
@@ -225,7 +232,7 @@ test("diff previews retain standalone CR and literal control-picture characters"
 
 test("withMutationStatus renderResult initializes mutationShell defensively", () => {
   initTheme("dark");
-  const tool = withMutationStatus(makeEditOverride(process.cwd()));
+  const tool = withMutationStatus(makeEditOverride(process.cwd(), DEFAULT_CONFIG));
   const context: any = { args: { path: "a.txt" }, state: {}, isError: false };
   const container = tool.renderResult!(
     {

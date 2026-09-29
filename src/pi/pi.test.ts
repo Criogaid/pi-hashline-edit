@@ -13,6 +13,7 @@ import { canonicalPath } from "./path.ts";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { callTool } from "./tool-call.testing.ts";
+import { DEFAULT_CONFIG } from "./config.ts";
 
 test("canonicalPath resolves relative and absolute", () => {
   const cwd = resolve("/cwd");
@@ -78,16 +79,20 @@ test("file tools share Pi-style URL and @ path resolution", async () => {
         ctx,
       },
     );
-    const read = await callTool(makeReadOverride(dir), { path: url }, { toolCallId: "read", ctx });
+    const read = await callTool(
+      makeReadOverride(dir, DEFAULT_CONFIG),
+      { path: url },
+      { toolCallId: "read", ctx },
+    );
     if (read.content[0]?.type !== "text") throw new Error("Expected a text read result");
     assert.match(read.content[0].text, /before/);
     await callTool(
-      makeReplaceTool(dir),
+      makeReplaceTool(dir, DEFAULT_CONFIG),
       { path: url, replacements: [{ find: "before", replace: "after" }] },
       { toolCallId: "replace", ctx },
     );
     await callTool(
-      makeEditOverride(dir),
+      makeEditOverride(dir, DEFAULT_CONFIG),
       {
         path: `@${url}`,
         edits: [{ op: "replace", anchor: `1#${computeLineHash(1, "after", 4)}`, body: ["edited"] }],
@@ -95,7 +100,7 @@ test("file tools share Pi-style URL and @ path resolution", async () => {
       { toolCallId: "edit", ctx },
     );
     const matches = await callTool(
-      makeGrepOverride(dir),
+      makeGrepOverride(dir, DEFAULT_CONFIG),
       { path: `@${url}`, pattern: "edited" },
       { toolCallId: "grep" },
     );
