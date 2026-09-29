@@ -43,12 +43,18 @@ const stubTheme = { fg: (_k: string, s: string) => s, bold: (s: string) => s } a
 // singleton — initialize it once for this test process (watcher off by default).
 initTheme();
 
-test("replace guidance distinguishes literal LF from a visible escape", () => {
+test("replace find guidance distinguishes literal escapes and regex line anchors", () => {
   const tool = makeReplaceTool(process.cwd());
-  const description = JSON.stringify(tool.parameters.properties.replacements.items.properties.find);
-  assert.match(description, /In literal mode \(default\), an actual LF matches a line boundary/);
-  assert.match(description, /backslash followed by n matches those two source characters/);
-  assert.match(description, /In regex mode/);
+  const description: unknown = Reflect.get(
+    tool.parameters.properties.replacements.items.properties.find,
+    "description",
+  );
+  assert.ok(typeof description === "string");
+  assert.match(description, /JavaScript regex/);
+  assert.match(description, /not grep's ripgrep syntax/);
+  assert.match(description, /CRLF.*LF.*\\n/);
+  assert.match(description, /literal mode.*backslash followed by n.*two characters/);
+  assert.match(description, /regex mode.*\^ and \$.*m flag.*per line/);
 });
 
 test("replace schema requires a non-empty replacements array", () => {

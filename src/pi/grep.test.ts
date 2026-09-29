@@ -91,36 +91,42 @@ const text = (result: any): string => result.content[0].text;
 const call = (tool: any, params: any, signal?: AbortSignal) =>
   callTool(tool, params, { toolCallId: "0", signal });
 
-test("grep guidance covers literal, case, and multiline searches", () => {
+test("grep guidance covers query syntax, search scope, and edit anchors", () => {
   const tool = makeGrepOverrideWithBackend(process.cwd(), {});
-  assert.ok(
-    tool.promptGuidelines.some(
-      (rule: string) => rule.includes("literal:true") && rule.includes("literal:false"),
-    ),
-  );
-  assert.ok(tool.promptGuidelines.some((rule: string) => rule.includes("pattern array")));
-  assert.ok(
-    tool.promptGuidelines.some(
-      (rule: string) =>
-        rule.includes("grep anchors") && rule.includes("partial") && rule.includes("full"),
-    ),
-  );
-  assert.match(JSON.stringify(tool.parameters.properties.pattern), /use an array for alternatives/);
-  assert.match(JSON.stringify(tool.parameters.properties.literal), /entire input literally/);
-  const pathDescription = JSON.stringify(tool.parameters.properties.path);
-  assert.match(pathDescription, /Omit path.*working directory/);
-  assert.match(pathDescription, /empty strings and arrays are invalid/);
-  assert.match(pathDescription, /existing file or directory.*wildcards/);
-  assert.match(JSON.stringify(tool.parameters.properties.glob), /filename.*wildcard/);
-  assert.match(JSON.stringify(tool.parameters.properties.ignoreCase), /Inline regex case flags/);
-  assert.match(JSON.stringify(tool.parameters.properties.multiline), /physical lines.*Context/);
-  assert.ok(tool.promptGuidelines.some((rule: string) => rule.includes("multiline:true")));
-  assert.ok(
-    tool.promptGuidelines.some(
-      (rule: string) =>
-        rule.includes("Omit path") && rule.includes("empty path") && rule.includes("glob"),
-    ),
-  );
+  for (const [topic, terms] of [
+    ["literal code", [/literal:true/, /regex punctuation/]],
+    ["Rust regex", [/ripgrep \(Rust\)/, /lookaround/, /backreferences/]],
+    ["pattern alternatives", [/pattern array/, /alternatives/, /\|/]],
+    ["edit context", [/context:3-5/, /code to edit/]],
+    [
+      "path and glob",
+      [/omit path/, /working directory/, /never pass ""/, /glob.*filename wildcards/],
+    ],
+    ["multiline", [/multiline:true/, /cross-line/]],
+    ["edit anchors", [/grep anchors/, /directly into edit/, /full line/, /partial preview/]],
+  ] as const) {
+    assert.ok(
+      tool.promptGuidelines.some((rule) => terms.every((term) => term.test(rule))),
+      `grep guideline missing ${topic}`,
+    );
+  }
+  assert.ok(tool.promptGuidelines.every((rule) => rule.includes("grep")));
+
+  const params = tool.parameters.properties;
+  const description = (field: keyof typeof params) => {
+    const value: unknown = Reflect.get(params[field], "description");
+    assert.ok(typeof value === "string", `${field} needs a description`);
+    return value;
+  };
+  assert.match(description("pattern"), /ripgrep.*Rust/);
+  assert.match(description("pattern"), /not JavaScript/);
+  assert.match(description("pattern"), /\^ and \$.*line boundaries/);
+  assert.match(description("literal"), /single invalid pattern.*falls back.*literal/);
+  assert.match(description("literal"), /invalid array fails/);
+  assert.match(description("path"), /omit.*working directory/);
+  assert.match(description("path"), /Wildcards are not expanded.*glob/);
+  assert.match(description("multiline"), /\. wildcard does not match newlines.*\\n or \(\?s\)/);
+  assert.match(description("ignoreCase"), /omitted.*smart-case.*whole query/);
 });
 
 test("grep exposes nine parameters and rejects only the six removed fields", async () => {

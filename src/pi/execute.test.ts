@@ -48,6 +48,24 @@ function anchorLine(block: string, line: number) {
   return `${line}#${m[1]}`;
 }
 
+test("edit guidance keeps insert anchors and warns about shifted lines", () => {
+  const tool = makeEditOverride(process.cwd());
+  const insertOp = tool.parameters.properties.edits.items.anyOf.find((variant) => {
+    const op = variant.properties.op;
+    return "anyOf" in op && op.anyOf.some((choice) => choice.const === "insert_after");
+  })?.properties.op;
+  assert.ok(insertOp);
+  const description: unknown = Reflect.get(insertOp, "description");
+  assert.ok(typeof description === "string");
+  assert.match(description, /anchor line.*kept/);
+  assert.match(description, /do not repeat.*body/);
+  assert.ok(
+    tool.promptGuidelines.some(
+      (rule) => /inserts and deletes/.test(rule) && /shift later lines/.test(rule),
+    ),
+  );
+});
+
 test("read execute: text outputs LINE#HASH│content", async () => {
   await withDir(async (dir) => {
     await writeFile(join(dir, "f.txt"), "line1\nline2\n");
