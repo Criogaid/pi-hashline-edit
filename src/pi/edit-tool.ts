@@ -43,8 +43,8 @@ import {
 import {
   formatAmbiguousCandidateNeighborhoods,
   MAX_AMBIGUOUS_CANDIDATES,
-  MAX_RECOVERY_CANDIDATE_BYTES,
 } from "./failure-context.ts";
+import { formatKiB, MAX_BLOCK_BYTES, MAX_RECOVERY_CANDIDATE_BYTES } from "./budgets.ts";
 import { formatMutationAnchors } from "./mutation-result.ts";
 import {
   executeMutation,
@@ -60,7 +60,7 @@ type EditRenderContext = Parameters<
 
 /** Keep independent byte budgets for failure details and input-anchor checks. */
 function boundDiagnostic(message: string, notice: string): string {
-  const bounded = truncateHead(message, { maxBytes: 16 * 1024 - Buffer.byteLength(notice) });
+  const bounded = truncateHead(message, { maxBytes: MAX_BLOCK_BYTES - Buffer.byteLength(notice) });
   return bounded.content + (bounded.truncated ? notice : "");
 }
 
@@ -238,7 +238,10 @@ function formatFailureDetails(
     "No changes written by this edit batch.",
     ...lines,
   ].join("\n");
-  return boundDiagnostic(message, "\nDiagnostic output truncated at 16 KiB.");
+  return boundDiagnostic(
+    message,
+    `\nDiagnostic output truncated at ${formatKiB(MAX_BLOCK_BYTES)}.`,
+  );
 }
 
 function formatAnchorChecks(failure: ApplyFailure, anchors: AnchorFormatter): string {
@@ -253,7 +256,7 @@ function formatAnchorChecks(failure: ApplyFailure, anchors: AnchorFormatter): st
   ].join("\n");
   return boundDiagnostic(
     message,
-    "\nAnchor-check output truncated at 16 KiB; omitted entries are not implied matched.",
+    `\nAnchor-check output truncated at ${formatKiB(MAX_BLOCK_BYTES)}; omitted entries are not implied matched.`,
   );
 }
 

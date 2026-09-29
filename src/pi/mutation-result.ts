@@ -4,6 +4,7 @@ import { generateDiffString, generateUnifiedPatch } from "@earendil-works/pi-cod
 import { displayCarriageReturns, type AnchorFormatter } from "./anchor-format.ts";
 import { normalizeLineEndings } from "../core/lines.ts";
 import { errorMessage } from "./error-text.ts";
+import { formatKiB, MAX_BLOCK_BYTES } from "./budgets.ts";
 
 /** Keep byte-faithful diff/patch data and a separate preview of the shared logical text. */
 export function generateMutationDetails(
@@ -108,7 +109,7 @@ export function formatMutationAnchors(
   heading: string,
   contentIndices?: ReadonlySet<number>,
 ): string {
-  const notice = "\n… (additional anchors omitted: 16 KiB limit; use read for omitted positions)";
+  const notice = `\n… (additional anchors omitted: ${formatKiB(MAX_BLOCK_BYTES)} limit; use read for omitted positions)`;
   const rows: string[] = [];
   let bytes = Buffer.byteLength(`\n${heading}\n`) + Buffer.byteLength(notice);
   let omitted = false;
@@ -121,7 +122,7 @@ export function formatMutationAnchors(
       ? anchors.row(index + 1, content)
       : anchors.token(index + 1, content);
     const rowBytes = Buffer.byteLength(row) + 1;
-    if (bytes + rowBytes > 16 * 1024) {
+    if (bytes + rowBytes > MAX_BLOCK_BYTES) {
       omitted = true;
       continue;
     }

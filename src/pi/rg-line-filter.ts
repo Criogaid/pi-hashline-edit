@@ -4,6 +4,10 @@ import { escapeRegex } from "../core/text.ts";
 
 export const COMMON_RG_ARGS = ["--no-config", "--color=never", "--no-crlf"];
 export const MAX_RG_RECORD_BYTES = 16 * 1024 * 1024;
+/** Retained ripgrep stderr; diagnostics beyond this are dropped. */
+export const MAX_RG_STDERR_BYTES = 64 * 1024;
+/** Probe runs read only a short stdout; more means an unexpected rg mode. */
+const MAX_RG_PROBE_OUTPUT_BYTES = 64 * 1024;
 
 export interface SearchModes {
   literal: boolean;
@@ -56,7 +60,8 @@ function startRg(rgPath: string, args: readonly string[], signal?: AbortSignal):
   };
 
   child.stderr.on("data", (chunk: Buffer) => {
-    if (stderr.length < 65536) stderr += chunk.toString("utf8").slice(0, 65536 - stderr.length);
+    if (stderr.length < MAX_RG_STDERR_BYTES)
+      stderr += chunk.toString("utf8").slice(0, MAX_RG_STDERR_BYTES - stderr.length);
   });
   child.on("error", (cause) => {
     error = cause;
@@ -182,14 +187,15 @@ export const runText: RunText = async (rgPath, args, input, signal) => {
   let bytes = 0;
   process.child.stdout.on("data", (chunk: Buffer) => {
     bytes += chunk.length;
-    if (bytes <= 65536) chunks.push(chunk);
+    if (bytes <= MAX_RG_PROBE_OUTPUT_BYTES) chunks.push(chunk);
     else process.kill();
   });
   process.child.stdin.end(input);
   const result = await process.done;
   checkAbort(signal);
   if (result.error) throw result.error;
-  if (bytes > 65536) throw new Error("Unexpected ripgrep probe output overflow");
+  if (bytes > MAX_RG_PROBE_OUTPUT_BYTES)
+    throw new Error("Unexpected ripgrep probe output overflow");
   return {
     code: result.code,
     stderr: result.stderr,

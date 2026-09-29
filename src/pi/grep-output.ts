@@ -5,6 +5,7 @@ import { UNSUPPORTED_TEXT_NUL } from "../core/text.ts";
 import { createAnchorFormatter, displayCarriageReturns } from "./anchor-format.ts";
 import { fileReadWarning, type RgMatch } from "./grep-search.ts";
 import { scanTextLines } from "./text-stream.ts";
+import { formatKiB, MAX_SEARCH_DIAGNOSTIC_BYTES } from "./budgets.ts";
 
 /** Maximum UTF-16 units in a line preview, excluding its partial-line label. */
 const GREP_MAX_LINE_LENGTH = 500;
@@ -12,8 +13,10 @@ const MAX_CONCURRENT_FILE_READS = 16;
 
 export function formatSearchWarnings(warnings: readonly string[]): string {
   if (!warnings.length) return "";
-  const summary = truncateHead([...new Set(warnings)].join("\n"), { maxBytes: 4 * 1024 });
-  return `\n\n[Search incomplete; results and counts cover only confirmed matches.\n${summary.content}${summary.truncated ? "\nAdditional search diagnostics omitted (4 KiB limit)." : ""}]`;
+  const summary = truncateHead([...new Set(warnings)].join("\n"), {
+    maxBytes: MAX_SEARCH_DIAGNOSTIC_BYTES,
+  });
+  return `\n\n[Search incomplete; results and counts cover only confirmed matches.\n${summary.content}${summary.truncated ? `\nAdditional search diagnostics omitted (${formatKiB(MAX_SEARCH_DIAGNOSTIC_BYTES)} limit).` : ""}]`;
 }
 
 function previewLine(text: string, column = 0): { text: string; wasTruncated: boolean } {

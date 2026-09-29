@@ -3,7 +3,19 @@ import { tmpdir } from "node:os";
 import { join, resolve, sep } from "node:path";
 import { normalizeLineEndings } from "../core/lines.ts";
 import { scanTextFile } from "./text-stream.ts";
-import { COMMON_RG_ARGS, rgText, runRg, runRgPaths, type RgRunResult } from "./rg-line-filter.ts";
+import {
+  COMMON_RG_ARGS,
+  MAX_RG_STDERR_BYTES,
+  rgText,
+  runRg,
+  runRgPaths,
+  type RgRunResult,
+} from "./rg-line-filter.ts";
+import { errorMessage } from "./error-text.ts";
+
+/** CRLF snapshot batches flush after this many files or source bytes (README: 64 files / 8 MiB). */
+const SNAPSHOT_BATCH_FILES = 64;
+const SNAPSHOT_BATCH_BYTES = 8 * 1024 * 1024;
 
 async function writeLfSnapshot(source: string, destination: string, signal?: AbortSignal) {
   const handle = await open(destination, "w");
@@ -52,7 +64,7 @@ export const runRgTextView: typeof runRg = async (rgPath, args, signal, onLine) 
   const searchPaths: string[] = [];
   let batchBytes = 0;
   const record = (run: RgRunResult) => {
-    result.stderr = (result.stderr + run.stderr).slice(0, 65536);
+    result.stderr = (result.stderr + run.stderr).slice(0, MAX_RG_STDERR_BYTES);
     if (run.code !== 0 && run.code !== 1 && !run.stopped) result.code = run.code;
     else if (run.code === 0 && result.code === 1) result.code = 0;
     result.stopped ||= run.stopped;
@@ -127,11 +139,14 @@ export const runRgTextView: typeof runRg = async (rgPath, args, signal, onLine) 
         batchBytes += info.byteLength;
       } catch (error) {
         signal?.throwIfAborted();
-        const message = error instanceof Error ? error.message : String(error);
+        const message = errorMessage(error);
         record({ code: 2, stopped: false, stderr: `${original}: ${message}\n` });
         return true;
       }
-      return (searchPaths.length < 64 && batchBytes < 8 * 1024 * 1024) || (await flush());
+      return (
+        (searchPaths.length < SNAPSHOT_BATCH_FILES && batchBytes < SNAPSHOT_BATCH_BYTES) ||
+        (await flush())
+      );
     });
     // A successful listing is not itself a text match.
     record({ ...listed, code: listed.code === 0 ? 1 : listed.code });

@@ -2,10 +2,9 @@ import type { AnchorFormatter } from "./anchor-format.ts";
 import { splitLines } from "../core/lines.ts";
 import type { AnchorFailure } from "../core/types.ts";
 import { mergeRanges } from "../core/ranges.ts";
+import { MAX_BLOCK_BYTES, MAX_RECOVERY_CANDIDATE_BYTES } from "./budgets.ts";
 
 const CONTEXT_RADIUS = 3;
-const MAX_CONTEXT_BYTES = 16 * 1024;
-export const MAX_RECOVERY_CANDIDATE_BYTES = 4 * 1024;
 export const MAX_AMBIGUOUS_CANDIDATES = 8;
 
 type Interval = { lo: number; hi: number };
@@ -51,7 +50,7 @@ function collectContextRows(
         omissions.add("candidate row limit");
         continue;
       }
-      if (bytes + rowBytes + 1 > MAX_CONTEXT_BYTES) {
+      if (bytes + rowBytes + 1 > MAX_BLOCK_BYTES) {
         omissions.add("byte limit");
         continue;
       }
