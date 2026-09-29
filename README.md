@@ -91,21 +91,33 @@ For multi-operation batches that reach snapshot verification, rejected edits rep
 
 When an anchor no longer matches, `edit` looks for where the line went. Recovery only reports; it never edits or retries by itself:
 
-```mermaid
-flowchart TD
-  A["Cited anchor LINE#HASH"] --> B{"Hash of the cited line matches?"}
-  B -- yes --> OK["Verified"]
-  B -- no --> Z{"shiftRadius is 0?"}
-  Z -- yes --> NONE
-  Z -- no --> L["Search within ±shiftRadius lines"]
-  L --> LC{"Any local candidate?"}
-  LC -- yes --> COUNT{"How many candidates?"}
-  LC -- no --> F["Search the rest of the file"]
-  F --> COUNT
-  COUNT -- one --> ONE["Unique: new anchor and full row"]
-  COUNT -- several --> MANY["Ambiguous: first 8 anchors and ±3-line neighborhoods"]
-  COUNT -- none --> NONE["Unresolved: current cited row"]
-  ONE & MANY & NONE --> REJ["Whole batch rejected, nothing written; inspect and resubmit"]
+```text
+cited anchor LINE#HASH
+  |
+  v
+hash of the cited line matches? -- yes --> verified
+  | no
+  v
+shiftRadius is 0? -- yes -------------------------------+
+  | no                                                  |
+  v                                                     |
+search within ±shiftRadius lines                        |
+  |                                                     |
+  v                                                     |
+any local candidate? -- no --> search the rest          |
+  | yes                        of the file              |
+  v                                 |                   |
+how many candidates? <--------------+                   |
+  |                                                     |
+  +-- one -----> unique: new anchor and full row        |
+  |                                                     |
+  +-- several -> ambiguous: first 8 anchors and         |
+  |              ±3-line neighborhoods                  |
+  |                                                     |
+  +-- none ----> unresolved: current cited row <--------+
+
+Every outcome rejects the whole batch and writes nothing;
+inspect the result and resubmit.
 ```
 
 - Candidates are found by hashing each line's current content with the **cited** line number; each returned anchor uses the candidate's actual line number, so the details show both the old and current positions. Diagnostics say `Search: local` or `Search: full file`. A unique local candidate does not establish uniqueness across the file, because matches outside the window were not checked.
@@ -259,21 +271,33 @@ Action Fusion is enabled by default. Set `"actionFusion": false` in `hashlineEdi
 
 `command` is required and must contain a non-whitespace character; `timeout` is optional, in seconds greater than zero and at most 2147483.647, with no default. Unknown `then_run` fields are rejected.
 
-```mermaid
-flowchart TD
-  S["edit / replace / write with then_run"] --> V{"then_run valid?"}
-  V -- no --> E0["Rejected before the file is touched"]
-  V -- yes --> Q["Wait for this file's Fusion queue"]
-  Q --> M{"Mutation completes?"}
-  M -- "no, or cancelled first" --> E1["Mutation error; command skipped or cancelled"]
-  M -- yes --> C{"File still at the published revision?"}
-  C -- no --> K["Command skipped"]
-  C -- yes --> RUN["Run the command with Pi's built-in Bash"]
-  RUN --> O["succeeded / failed / timeout / cancelled"]
-  K --> FR{"File unchanged at the end?"}
-  O --> FR
-  FR -- yes --> FRESH["Mutation result (edit/replace include fresh anchors), then command outcome"]
-  FR -- no --> STALE["Mutation result with the [then_run:stale] notice, then command outcome"]
+```text
+edit / replace / write with then_run
+  |
+  v
+then_run valid? -- no --> rejected before the file is touched
+  | yes
+  v
+wait for this file's Fusion queue
+  |
+  v
+mutation completes? -- no, or cancelled first --> mutation error;
+  | yes                                           command skipped or cancelled
+  v
+file still at the published revision? -- no --> command skipped --+
+  | yes                                                           |
+  v                                                               |
+run the command with Pi's built-in Bash                           |
+(succeeded / failed / timeout / cancelled)                        |
+  |                                                               |
+  v                                                               |
+file unchanged at the end? <--------------------------------------+
+  |
+  +-- yes --> mutation result (edit/replace include fresh anchors),
+  |           then the command outcome
+  |
+  +-- no ---> mutation result with the [then_run:stale] notice,
+              then the command outcome
 ```
 
 Once the mutation completes, it stays successful whatever happens to the command: command failure **does not roll back the file**. The command outcome is returned separately in result text and `details.actionFusion`, rather than thrown as failure of the whole mutation.
@@ -321,20 +345,30 @@ The diagnostic blocks have independent budgets; their combined output can exceed
 
 All three mutation tools publish through one commit layer. `edit`/`replace` bind it to the revision of the bytes they read:
 
-```mermaid
-flowchart TD
-  I["Validate content and target: regular file, single link, mode, expected revision"] -->|fails| NP["NOT_PUBLISHED"]
-  I --> SAME{"Same bytes as the current file?"}
-  SAME -- yes --> NOOP["No-op: NOT_PUBLISHED, target untouched"]
-  SAME -- no --> T["Write and fsync complete content in a sibling temporary directory"]
-  T -->|fails| NP
-  T --> RC{"edit/replace: file still at the revision read?"}
-  RC -- no --> NP
-  RC -- yes --> P["create: link(temp, target) · overwrite: rename(temp, target)"]
-  P -->|target appeared during create| NP
-  P -->|other failure| UNK["UNKNOWN"]
-  P --> POST["Sync directory (POSIX), read back the revision, remove the temp directory"]
-  POST --> PUB["PUBLISHED, even if a step here fails"]
+```text
+validate content and target: regular file,   -- fails --> NOT_PUBLISHED
+single link, mode, expected revision
+  |
+  v
+same bytes as the current file?              -- yes ----> no-op: NOT_PUBLISHED,
+  | no                                                    target untouched
+  v
+write and fsync complete content in a        -- fails --> NOT_PUBLISHED
+sibling temporary directory
+  |
+  v
+edit/replace: still at the revision read?    -- no -----> NOT_PUBLISHED
+  | yes
+  v
+create:    link(temp, target)                -- target appeared -> NOT_PUBLISHED
+overwrite: rename(temp, target)              -- other failure ---> UNKNOWN
+  |
+  v
+sync directory (POSIX), read back the revision,
+remove the temporary directory
+  |
+  v
+PUBLISHED, even if a step after publication fails
 ```
 
 | Case | Behavior |
