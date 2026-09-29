@@ -578,6 +578,27 @@ test("read pagination supports offset windows and stops suggesting continuation 
     }
   }));
 
+test("read uses the displayed line for fractional and clamped offsets", async () =>
+  withDir(async (dir) => {
+    await writeFile(join(dir, "pages.txt"), "first\nsecond\nthird\n");
+    const read = makeReadOverride(dir);
+    const page = await call(read, { path: "pages.txt", offset: 1.5, limit: 1 });
+    assert.match(page.content[0].text, /\n2#[0-9A-Z]+│second/);
+    assert.match(page.content[0].text, /showing lines 2-2 of 3; use offset 3 to continue/);
+    assert.deepEqual(page.details, {
+      pagination: { start: 2, end: 2, totalLines: 3, nextOffset: 3 },
+    });
+    await writeFile(join(dir, "long.txt"), "x".repeat(300 * 1024));
+    for (const offset of [0, -4, 0.5]) {
+      const result = await call(read, { path: "long.txt", offset, limit: 1 });
+      assert.match(result.content[0].text, /line 1 exceeds 256KB/);
+      assert.doesNotMatch(result.content[0].text, /line (?:0|-4|0\.5) exceeds/);
+    }
+    for (const offset of [NaN, Infinity, -Infinity, Number.MAX_SAFE_INTEGER + 1]) {
+      await assert.rejects(call(read, { path: "pages.txt", offset }), /Invalid read offset/);
+    }
+  }));
+
 test("read byte truncation takes precedence over line pagination", async () =>
   withDir(async (dir) => {
     await writeFile(join(dir, "large.txt"), `first\n${"x".repeat(256 * 1024)}\ntail\n`);

@@ -151,7 +151,10 @@ export function makeReadOverride(cwd: string): ReturnType<typeof createReadToolD
 
       const offset = (params.offset as number | undefined) ?? 1;
       const limit = (params.limit as number | undefined) ?? MAX_LINES;
-      const start = Math.max(1, offset);
+      if (!Number.isFinite(offset) || !Number.isSafeInteger(Math.ceil(offset))) {
+        throw new Error("Invalid read offset: expected a finite line number.");
+      }
+      const start = Math.max(1, Math.ceil(offset));
       const end = start + limit;
       const rows: string[] = [];
       const crExpansion = Buffer.byteLength(displayCarriageReturns("\r")) - 1;
@@ -214,13 +217,13 @@ export function makeReadOverride(cwd: string): ReturnType<typeof createReadToolD
         maxBytes: MAX_BYTES,
       };
 
-      const shownFrom = offset > 1 ? ` (from line ${offset})` : "";
+      const shownFrom = start > 1 ? ` (from line ${start})` : "";
       // A file whose last line carries no terminator is a byte-level fact that the
       // numbered rows cannot show; state it in the header, the one line the model
       // never copies into an edit `body`.
       const noFinalNewline = stats.finalNewline ? "" : " · no trailing newline";
       const tail = truncation.firstLineExceedsLimit
-        ? `\n… (line ${offset} exceeds ${MAX_BYTES >> 10}KB; cannot return a complete anchor row. Reducing limit cannot split a physical line; use bash to inspect it in chunks, or replace for a known literal/regex change)`
+        ? `\n… (line ${start} exceeds ${MAX_BYTES >> 10}KB; cannot return a complete anchor row. Reducing limit cannot split a physical line; use bash to inspect it in chunks, or replace for a known literal/regex change)`
         : truncation.truncated
           ? `\n… (truncated at ${MAX_BYTES >> 10}KB; use offset/limit to read more)`
           : pagination
