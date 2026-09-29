@@ -1,3 +1,24 @@
+/**
+ * Action Fusion: run an optional `then_run` command after a successful mutation.
+ *
+ * Two per-file queues nest here, with different jobs:
+ * - Pi's `withFileMutationQueue` (entered by the mutation runner) serializes
+ *   the read-modify-write itself and is shared with every tool that uses it.
+ *   It is released as soon as the file is published.
+ * - The executor's own queue wraps mutation, freshness check, and command, so
+ *   a later fused call on the same file waits until this command finishes and
+ *   cannot change the revision the command started from. Its key resolves the nearest
+ *   existing ancestor and folds case on Windows, so it is never looser than
+ *   Pi's key. It is always taken first and Pi's queue never waits on it, so
+ *   the nesting cannot deadlock.
+ *
+ * Writers outside these queues are not blocked; the freshness check against
+ * `publishedRevision` detects them and the command is skipped or reported stale.
+ * A failed command never rolls back the published file.
+ *
+ * @module pi-hashline-edit/pi
+ */
+
 import { realpath } from "node:fs/promises";
 import { basename, dirname, resolve } from "node:path";
 import type { AgentToolResult, AgentToolUpdateCallback } from "@earendil-works/pi-agent-core";
