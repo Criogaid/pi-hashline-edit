@@ -284,57 +284,52 @@ test("mutation anchor output and aggregate anchor diagnostics have byte budgets"
   }
 });
 
-test("every mutation entry rejects unpaired surrogates without running then_run", async () => {
+test("unpaired surrogate arguments are rejected before Fusion", async () => {
   const dir = await mkdtemp(join(tmpdir(), "hashline-unicode-"));
   try {
     let commands = 0;
-    const fusion = createActionFusionExecutor(async () => {
-      commands++;
-      return "done";
-    });
+    const events: string[] = [];
+    const fusion = createActionFusionExecutor(
+      async () => {
+        commands++;
+        return "done";
+      },
+      (event) => events.push(event.command),
+    );
     const path = join(dir, "file.txt");
     await writeFile(path, "original\n");
     const cases = [
-      () =>
-        invoke(
-          makeEditOverride(dir, fusion),
-          "unicode",
-          { path, edits: [{ op: "append", body: ["\ud800"] }], then_run: { command: "check" } },
-          undefined,
-          undefined,
-          ctx(dir),
-        ),
-      () =>
-        invoke(
-          makeReplaceTool(dir, fusion),
-          "unicode",
-          {
-            path,
-            replacements: [{ find: "original", replace: "\udfff" }],
-            then_run: { command: "check" },
-          },
-          undefined,
-          undefined,
-          ctx(dir),
-        ),
-      () =>
-        invoke(
-          makeWriteOverride(dir, fusion),
-          "unicode",
-          { path, content: "\ud800", then_run: { command: "check" } },
-          undefined,
-          undefined,
-          ctx(dir),
-        ),
+      {
+        tool: makeEditOverride(dir, fusion),
+        args: { path, edits: [{ op: "append", body: ["\ud800"] }], then_run: { command: "check" } },
+        field: "edits[0].body[0]",
+      },
+      {
+        tool: makeReplaceTool(dir, fusion),
+        args: {
+          path,
+          replacements: [{ find: "original", replace: "\udfff" }],
+          then_run: { command: "check" },
+        },
+        field: "replacements[0].replace",
+      },
+      {
+        tool: makeWriteOverride(dir, fusion),
+        args: { path, content: "\ud800", then_run: { command: "check" } },
+        field: "content",
+      },
     ];
-    for (const run of cases) {
+    for (const { tool, args, field } of cases) {
       await assert.rejects(
-        run(),
-        (error: any) =>
-          error.publication === "NOT_PUBLISHED" && /INVALID_UNICODE/.test(error.message),
+        callTool(tool, args, { ctx: ctx(dir) }),
+        (error: unknown) =>
+          error instanceof Error &&
+          error.message.startsWith(`Invalid argument ${field}: INVALID_UNICODE:`) &&
+          !("publication" in error),
       );
       assert.equal(await readFile(path, "utf8"), "original\n");
     }
+    assert.deepEqual(events, []);
     assert.equal(commands, 0);
   } finally {
     await rm(dir, { recursive: true, force: true });
@@ -376,64 +371,90 @@ test("ambiguous recovery bounds candidate lists and never claims content identit
   }
 });
 
-test("all mutation tools report NUL rejection through the shared Fusion lifecycle", async () => {
+test("NUL arguments are rejected before Fusion for all mutation tools", async () => {
   const dir = await mkdtemp(join(tmpdir(), "hashline-nul-"));
   try {
     const path = join(dir, "file.txt");
     await writeFile(path, "original\n");
     let commands = 0;
+    const events: string[] = [];
+    const fusion = createActionFusionExecutor(
+      async () => {
+        commands++;
+        return "unexpected";
+      },
+      (event) => events.push(event.command),
+    );
     const cases = [
-      (fusion: ReturnType<typeof createActionFusionExecutor>) =>
-        invoke(
-          makeEditOverride(dir, fusion),
-          "nul",
-          { path, edits: [{ op: "append", body: ["\0"] }], then_run: { command: "check" } },
-          undefined,
-          undefined,
-          ctx(dir),
-        ),
-      (fusion: ReturnType<typeof createActionFusionExecutor>) =>
-        invoke(
-          makeReplaceTool(dir, fusion),
-          "nul",
-          {
-            path,
-            replacements: [{ find: "original", replace: "\0" }],
-            then_run: { command: "check" },
-          },
-          undefined,
-          undefined,
-          ctx(dir),
-        ),
-      (fusion: ReturnType<typeof createActionFusionExecutor>) =>
-        invoke(
-          makeWriteOverride(dir, fusion),
-          "nul",
-          { path, content: "\0", then_run: { command: "check" } },
-          undefined,
-          undefined,
-          ctx(dir),
-        ),
-    ];
-    for (const run of cases) {
-      const events: string[] = [];
-      const fusion = createActionFusionExecutor(
-        async () => {
-          commands++;
-          return "unexpected";
+      {
+        tool: makeEditOverride(dir, fusion),
+        args: { path, edits: [{ op: "append", body: ["\0"] }], then_run: { command: "check" } },
+        field: "edits[0].body[0]",
+      },
+      {
+        tool: makeReplaceTool(dir, fusion),
+        args: {
+          path,
+          replacements: [{ find: "original", replace: "\0" }],
+          then_run: { command: "check" },
         },
-        (event) => events.push(event.command),
-      );
+        field: "replacements[0].replace",
+      },
+      {
+        tool: makeWriteOverride(dir, fusion),
+        args: { path, content: "\0", then_run: { command: "check" } },
+        field: "content",
+      },
+    ];
+    for (const { tool, args, field } of cases) {
       await assert.rejects(
-        run(fusion),
-        (error: any) =>
-          error.publication === "NOT_PUBLISHED" &&
-          error.command === "skipped" &&
-          /NUL/.test(error.message),
+        callTool(tool, args, { ctx: ctx(dir) }),
+        (error: unknown) =>
+          error instanceof Error &&
+          error.message.startsWith(`Invalid argument ${field}: UNSUPPORTED_TEXT: NUL`) &&
+          !("publication" in error),
       );
-      assert.deepEqual(events, ["waiting", "skipped"]);
       assert.equal(await readFile(path, "utf8"), "original\n");
     }
+    assert.deepEqual(events, []);
+    assert.equal(commands, 0);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("Fusion skips the command when a replacement produces unencodable text", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "hashline-derived-unicode-"));
+  try {
+    const path = join(dir, "file.txt");
+    const before = "😀\n";
+    await writeFile(path, before);
+    let commands = 0;
+    const events: string[] = [];
+    const fusion = createActionFusionExecutor(
+      async () => {
+        commands++;
+        return "unexpected";
+      },
+      (event) => events.push(event.command),
+    );
+    await assert.rejects(
+      callTool(
+        makeReplaceTool(dir, fusion),
+        {
+          path,
+          replacements: [{ find: "^.", replace: "x", regex: true }],
+          then_run: { command: "check" },
+        },
+        { ctx: ctx(dir) },
+      ),
+      (error: any) =>
+        error.publication === "NOT_PUBLISHED" &&
+        error.command === "skipped" &&
+        /INVALID_UNICODE/.test(error.message),
+    );
+    assert.deepEqual(events, ["waiting", "skipped"]);
+    assert.equal(await readFile(path, "utf8"), before);
     assert.equal(commands, 0);
   } finally {
     await rm(dir, { recursive: true, force: true });

@@ -127,6 +127,39 @@ test("replace rejects unsupported per-rule fields before publishing", async () =
     }
   }));
 
+test("replace rejects unwritable text and invalid regex before reading a missing target", async () =>
+  withDir(async (dir) => {
+    const file = join(dir, "missing.txt");
+    const tool = makeReplaceTool(dir);
+    const valid = { path: file, replacements: [{ find: "x", replace: "y", regex: true }] };
+    assert.equal(tool.prepareArguments(valid), valid);
+    for (const [rule, expected] of [
+      [
+        { find: "x", replace: "\0" },
+        /Invalid argument replacements\[0\]\.replace: UNSUPPORTED_TEXT:/,
+      ],
+      [
+        { find: "x", replace: "\ud800" },
+        /Invalid argument replacements\[0\]\.replace: INVALID_UNICODE:/,
+      ],
+      [
+        { find: "(", replace: "x", regex: true },
+        /Invalid argument replacements\[0\]\.find: invalid regex/,
+      ],
+    ] as const) {
+      await assert.rejects(callTool(tool, { path: file, replacements: [rule] }), expected);
+      await assert.rejects(readFile(file, "utf8"), { code: "ENOENT" });
+    }
+    await assert.rejects(
+      callTool(tool, {
+        path: file,
+        replacements: [{ find: "(", replace: "x", regex: true, flags: "z" }],
+      }),
+      /Validation failed for tool "replace":[\s\S]*replacements\.0\.flags: must match pattern/,
+    );
+    await assert.rejects(readFile(file, "utf8"), { code: "ENOENT" });
+  }));
+
 test("replace literal: replaces all occurrences", async () => {
   await withDir(async (dir) => {
     const f = join(dir, "f.txt");
@@ -629,12 +662,21 @@ test("invalid batches reject every change and never run a fused command", async 
         /then_run:skipped/,
         [
           { replacements: [first, { find: "missing", replace: "x" }] },
-          { replacements: [first, { find: "(", replace: "x", regex: true }] },
           { replacements: [first, { find: "bar foo", replace: "x" }] },
           { replacements: [first, { find: "bar", replace: "x" }] },
-          { replacements: [first, { find: "foo", replace: "\0" }] },
-          { replacements: [first, { find: "foo", replace: "\ud800" }] },
         ],
+      ],
+      [
+        /Invalid argument replacements\[1\]\.find: invalid regex/,
+        [{ replacements: [first, { find: "(", replace: "x", regex: true }] }],
+      ],
+      [
+        /Invalid argument replacements\[1\]\.replace: UNSUPPORTED_TEXT: NUL bytes are not editable\./,
+        [{ replacements: [first, { find: "foo", replace: "\0" }] }],
+      ],
+      [
+        /Invalid argument replacements\[1\]\.replace: INVALID_UNICODE: content cannot be encoded losslessly as UTF-8\./,
+        [{ replacements: [first, { find: "foo", replace: "\ud800" }] }],
       ],
       [
         /Validation failed for tool "replace"/,

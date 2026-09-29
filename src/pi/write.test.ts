@@ -44,6 +44,24 @@ test("write rejects unknown fields rather than ignoring a misspelled create mode
     }
   }));
 
+test("write rejects unwritable content before accessing a missing target", async () =>
+  withTemp(async (dir) => {
+    const file = join(dir, "missing.txt");
+    const tool = makeWriteOverride(dir);
+    const valid = { path: file, content: "ready\n" };
+    assert.equal(tool.prepareArguments(valid), valid);
+    for (const [content, expected] of [
+      ["bad\0", /Invalid argument content: UNSUPPORTED_TEXT: NUL bytes are not editable\./],
+      ["\ud800", /Invalid argument content: INVALID_UNICODE:/],
+    ] as const) {
+      await assert.rejects(
+        callTool(tool, { path: file, content }, { ctx: context(dir) }),
+        expected,
+      );
+      await assert.rejects(readFile(file, "utf8"), { code: "ENOENT" });
+    }
+  }));
+
 test("write preserves native default create/overwrite behavior", async () =>
   withTemp(async (dir) => {
     const write = makeWriteOverride(dir) as any;

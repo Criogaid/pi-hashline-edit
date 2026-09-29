@@ -801,7 +801,7 @@ test("invalid anchors and conflicting fields fail before changing the file", asy
     for (const operation of invalid) {
       await assert.rejects(
         call(edit, { path: "invalid.txt", edits: [operation] }),
-        /Invalid anchor|Validation failed for tool "edit"/,
+        /Invalid argument|Invalid anchor|Validation failed for tool "edit"/,
       );
       assert.equal(await readFile(join(dir, "invalid.txt"), "utf8"), original);
     }
@@ -1087,6 +1087,24 @@ test("edit rejects embedded line terminators at its schema boundary", async () =
     );
   }));
 
+test("edit rejects unwritable body lines before reading a missing target", async () =>
+  withDir(async (dir) => {
+    const target = join(dir, "missing.txt");
+    const edit = makeEditOverride(dir);
+    const valid = { path: target, edits: [{ op: "append" as const, body: ["ok"] }] };
+    assert.equal(edit.prepareArguments(valid), valid);
+    for (const [line, expected] of [
+      ["bad\0", /Invalid argument edits\[0\]\.body\[1\]: UNSUPPORTED_TEXT:/],
+      ["\ud800", /Invalid argument edits\[0\]\.body\[1\]: INVALID_UNICODE:/],
+    ] as const) {
+      await assert.rejects(
+        call(edit, { path: target, edits: [{ op: "append", body: ["ok", line] }] }),
+        expected,
+      );
+      await assert.rejects(readFile(target, "utf8"), { code: "ENOENT" });
+    }
+  }));
+
 test("edit preserves a UTF-8 BOM and reports bound mutation revisions", async () =>
   withDir(async (dir) => {
     const target = join(dir, "bom.txt");
@@ -1104,7 +1122,7 @@ test("edit preserves a UTF-8 BOM and reports bound mutation revisions", async ()
     assert.equal("revision" in result.details, false);
   }));
 
-test("edit and replace reject NUL output without rewriting source bytes", async () =>
+test("edit and replace reject NUL arguments without rewriting source bytes", async () =>
   withDir(async (dir) => {
     const target = join(dir, "output.txt");
     const original = Buffer.from("\ufeffbefore\r\n", "utf8");
