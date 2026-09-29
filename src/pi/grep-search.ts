@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { resolve } from "node:path";
-import { UNSUPPORTED_TEXT_NUL } from "../core/text.ts";
+import { UNSUPPORTED_TEXT_NUL } from "../core/errors.ts";
 import { scanTextFile } from "./text-stream.ts";
 import {
   type RgRunResult,

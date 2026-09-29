@@ -1,8 +1,6 @@
 import { TextDecoder } from "node:util";
 
-export const UNSUPPORTED_ENCODING = "UNSUPPORTED_ENCODING: expected valid UTF-8.";
-export const UNSUPPORTED_TEXT_NUL = "UNSUPPORTED_TEXT: NUL bytes are not editable.";
-export const INVALID_UNICODE = "INVALID_UNICODE: content cannot be encoded losslessly as UTF-8.";
+import { INVALID_UNICODE, UNSUPPORTED_ENCODING, UNSUPPORTED_TEXT_NUL } from "./errors.ts";
 
 /** Why text cannot be written as editable UTF-8 (NUL or unpaired surrogates); undefined when it can. */
 export function unwritableTextReason(text: string): string | undefined {

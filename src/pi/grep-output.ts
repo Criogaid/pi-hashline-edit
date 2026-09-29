@@ -1,7 +1,7 @@
 import { truncateHead, formatSize, DEFAULT_MAX_BYTES } from "@earendil-works/pi-coding-agent";
 import { createHash } from "node:crypto";
 import { isAbsolute, relative, resolve, sep } from "node:path";
-import { UNSUPPORTED_TEXT_NUL } from "../core/text.ts";
+import { UNSUPPORTED_TEXT_NUL } from "../core/errors.ts";
 import { createAnchorFormatter, displayCarriageReturns } from "./anchor-format.ts";
 import { fileReadWarning, type RgMatch } from "./grep-search.ts";
 import { scanTextLines } from "./text-stream.ts";
