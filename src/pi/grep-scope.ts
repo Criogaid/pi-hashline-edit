@@ -50,20 +50,7 @@ export async function resolveLiteralMode(
   if (explicit === undefined && !patterns.some((pattern) => REGEX_SYNTAX.test(pattern)))
     return true;
 
-  const result = await backend.runRg(
-    rgPath,
-    [
-      ...COMMON_RG_ARGS,
-      "--engine=default",
-      multiline ? "--multiline" : "--no-multiline",
-      "--quiet",
-      ...patterns.flatMap((pattern) => ["-e", pattern]),
-      "--",
-      "-",
-    ],
-    signal,
-    () => true,
-  );
+  const result = await backend.probeRegex(rgPath, patterns, multiline, signal);
   throwIfCancelled(signal);
   if (result.code === 0 || result.code === 1) return false;
   if (result.code === 2 && REGEX_PARSE_ERROR.test(result.stderr)) {

@@ -5,10 +5,10 @@ import { scanTextFile } from "./text-stream.ts";
 import {
   type RgRunResult,
   matcherArgs,
+  probeRegex,
   resolveIgnoreCase,
   rgBytes,
   rgText,
-  runRg,
   runRgPaths,
   type SearchModes,
 } from "./rg-process.ts";
@@ -44,13 +44,6 @@ interface RgJsonEvent {
   };
 }
 
-/** @internal — injectable process boundary for deterministic tests. */
-export interface GrepBackend {
-  runRg: typeof runRg;
-  runRgPaths: typeof runRgPaths;
-  resolveIgnoreCase: typeof resolveIgnoreCase;
-}
-
 export interface SearchScope {
   globs: readonly string[];
   noIgnore: boolean;
@@ -58,6 +51,30 @@ export interface SearchScope {
   searchPaths: readonly string[];
 }
 
+/** One JSONL content search, kept structured so the backend never re-parses rg arguments. */
+export interface SearchRequest {
+  /** Matcher and output arguments, including `-e` patterns; no scope flags or paths. */
+  readonly matcher: readonly string[];
+  readonly scope: SearchScope;
+}
+
+/** Runs a search request and streams rg JSONL lines to `onLine`; returning false stops rg. */
+export type SearchRunner = (
+  rgPath: string,
+  request: SearchRequest,
+  signal: AbortSignal | undefined,
+  onLine: (line: string) => boolean | Promise<boolean>,
+) => Promise<RgRunResult>;
+
+/** @internal — injectable process boundary for deterministic tests. */
+export interface GrepBackend {
+  search: SearchRunner;
+  runRgPaths: typeof runRgPaths;
+  resolveIgnoreCase: typeof resolveIgnoreCase;
+  probeRegex: typeof probeRegex;
+}
+
+/** The only place scope becomes rg flags. */
 export function scopeArgs(scope: SearchScope): string[] {
   return [
     "--hidden",
@@ -105,16 +122,13 @@ export async function searchMatches(options: SearchMatchesOptions) {
   // rg reports non-overlapping spans, so overlapping multiline OR patterns need separate scans.
   const patternGroups = modes.multiline ? patterns.map((pattern) => [pattern]) : [patterns];
   for (const group of patternGroups) {
-    const args = [
+    const matcher = [
       ...matcherArgs(modes),
       "--json",
       "--line-number",
-      ...scopeArgs(scope),
       ...group.flatMap((pattern) => ["-e", pattern]),
-      "--",
-      ...scope.searchPaths,
     ];
-    const run = await backend.runRg(rgPath, args, signal, async (line) => {
+    const run = await backend.search(rgPath, { matcher, scope }, signal, async (line) => {
       if (raw.length >= limit) return false;
       let event: RgJsonEvent;
       try {

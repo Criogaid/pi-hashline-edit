@@ -11,6 +11,7 @@ import {
   runRgPaths,
   type RgRunResult,
 } from "./rg-process.ts";
+import { scopeArgs, type SearchRunner } from "./grep-search.ts";
 import { errorMessage } from "../core/errors.ts";
 import { searchChangedError, throwIfCancelled } from "./error-text.ts";
 
@@ -39,30 +40,12 @@ async function writeLfSnapshot(source: string, destination: string, signal?: Abo
 }
 
 /** Search LF views in batches while reporting original paths and logical match offsets. */
-export const runRgTextView: typeof runRg = async (rgPath, args, signal, onLine) => {
-  let boundary = args.length;
-  const scope: string[] = [];
-  const matcher: string[] = [];
-  for (let i = 0; i < args.length; i++) {
-    const arg = args[i];
-    if (arg === "--") {
-      boundary = i;
-      break;
-    }
-    if (arg === "--glob") scope.push(arg, args[++i]);
-    else if (["--hidden", "--no-ignore", "--follow"].includes(arg)) scope.push(arg);
-    else {
-      matcher.push(arg);
-      if (arg === "-e") matcher.push(args[++i]);
-    }
-  }
-  if (boundary === args.length || args[boundary + 1] === "-")
-    return runRg(rgPath, args, signal, onLine);
+export const runRgTextView: SearchRunner = async (rgPath, { matcher, scope }, signal, onLine) => {
   let directory: string | undefined;
   const result: RgRunResult = { code: 1, stderr: "", stopped: false };
   // LF-only files pass through to rg directly; only CRLF files need temp snapshots.
   const snapshots = new Map<string, string>();
-  const searchPaths: string[] = [];
+  const batchPaths: string[] = [];
   let batchBytes = 0;
   const record = (run: RgRunResult) => {
     result.stderr = (result.stderr + run.stderr).slice(0, MAX_RG_STDERR_BYTES);
@@ -72,7 +55,7 @@ export const runRgTextView: typeof runRg = async (rgPath, args, signal, onLine) 
   };
 
   const searchBatch = async (
-    searchPaths: readonly string[],
+    batchPaths: readonly string[],
     rewritePaths: ReadonlyMap<string, string>,
   ) => {
     const searchArgs = [
@@ -81,7 +64,7 @@ export const runRgTextView: typeof runRg = async (rgPath, args, signal, onLine) 
       "--no-ignore",
       "--hidden",
       "--",
-      ...searchPaths,
+      ...batchPaths,
     ];
     const run = await runRg(rgPath, searchArgs, signal, async (line) => {
       const event = JSON.parse(line);
@@ -97,12 +80,12 @@ export const runRgTextView: typeof runRg = async (rgPath, args, signal, onLine) 
   };
 
   const flush = async () => {
-    if (!searchPaths.length) return !result.stopped;
+    if (!batchPaths.length) return !result.stopped;
     // Scope filtering belongs to the original paths. Snapshot names have no ignore/glob semantics.
-    await searchBatch(searchPaths, snapshots);
+    await searchBatch(batchPaths, snapshots);
     for (const path of snapshots.keys()) await rm(path);
     snapshots.clear();
-    searchPaths.length = 0;
+    batchPaths.length = 0;
     batchBytes = 0;
     return !result.stopped;
   };
@@ -115,11 +98,11 @@ export const runRgTextView: typeof runRg = async (rgPath, args, signal, onLine) 
   try {
     const listArgs = [
       ...COMMON_RG_ARGS,
-      ...scope,
+      ...scopeArgs(scope),
       "--files",
       "--null",
       "--",
-      ...args.slice(boundary + 1),
+      ...scope.searchPaths,
     ];
     const listed = await runRgPaths(rgPath, listArgs, signal, async (path) => {
       throwIfCancelled(signal);
@@ -132,10 +115,10 @@ export const runRgTextView: typeof runRg = async (rgPath, args, signal, onLine) 
           const snapshot = join(dir, String(snapshots.size));
           await writeLfSnapshot(original, snapshot, signal);
           snapshots.set(snapshot, original);
-          searchPaths.push(snapshot);
+          batchPaths.push(snapshot);
         } else {
           // Binary files retain their raw bytes; confirmed content hits are rejected later.
-          searchPaths.push(original);
+          batchPaths.push(original);
         }
         batchBytes += info.byteLength;
       } catch (error) {
@@ -145,7 +128,7 @@ export const runRgTextView: typeof runRg = async (rgPath, args, signal, onLine) 
         return true;
       }
       return (
-        (searchPaths.length < SNAPSHOT_BATCH_FILES && batchBytes < SNAPSHOT_BATCH_BYTES) ||
+        (batchPaths.length < SNAPSHOT_BATCH_FILES && batchBytes < SNAPSHOT_BATCH_BYTES) ||
         (await flush())
       );
     });

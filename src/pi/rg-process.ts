@@ -140,7 +140,7 @@ async function runDelimited(
   }
 }
 
-/** @internal — shared process boundary for JSONL searches and regex validation. */
+/** @internal — shared process boundary for JSONL searches. */
 export function runRg(
   rgPath: string,
   args: string[],
@@ -199,7 +199,7 @@ export const runText: RunText = async (rgPath, args, input, signal) => {
   process.child.stdin.end(input);
   const result = await process.done;
   throwIfCancelled(signal);
-  if (result.error) throw result.error;
+  if (result.error) throw new Error(`Failed to run ripgrep: ${result.error.message}`);
   if (bytes > MAX_RG_PROBE_OUTPUT_BYTES)
     throw new Error("Unexpected ripgrep probe output overflow");
   return {
@@ -218,6 +218,28 @@ export function matcherArgs(modes: SearchModes): string[] {
     modes.ignoreCase ? "--ignore-case" : "--case-sensitive",
     ...(modes.literal ? ["--fixed-strings"] : []),
   ];
+}
+
+/** Compile the patterns with rg's default engine against empty input; code 2 with a parse error means invalid regex. */
+export async function probeRegex(
+  rgPath: string,
+  patterns: readonly string[],
+  multiline: boolean,
+  signal?: AbortSignal,
+): Promise<Pick<TextRunResult, "code" | "stderr">> {
+  return runText(
+    rgPath,
+    [
+      ...DEFAULT_RG_MODE_ARGS,
+      multiline ? "--multiline" : "--no-multiline",
+      "--quiet",
+      ...patterns.flatMap((pattern) => ["-e", pattern]),
+      "--",
+      "-",
+    ],
+    Buffer.alloc(0),
+    signal,
+  );
 }
 
 /** Resolve rg's query-level default case flag; inline regex flags still apply normally. */
