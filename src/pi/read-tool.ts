@@ -25,7 +25,6 @@ import { scanTextLines } from "./text-stream.ts";
 import { createAnchorFormatter, displayCarriageReturns } from "./anchor-format.ts";
 import { canonicalPath } from "./path.ts";
 import { parseHashline, renderToolError } from "./render.ts";
-import { parseToolInput } from "./tool-input.ts";
 import { POSITIVE_SAFE_INTEGER } from "./schema.ts";
 import { throwIfCancelled } from "./error-text.ts";
 
@@ -147,7 +146,6 @@ export function makeReadOverride(cwd: string): ReturnType<typeof createReadToolD
       ctx: ExtensionContext,
     ) {
       throwIfCancelled(signal);
-      params = parseToolInput("read", parameters, params);
       const offset = params.offset ?? 1;
       const limit = params.limit ?? MAX_LINES;
       const anchors = createAnchorFormatter();

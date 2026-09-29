@@ -254,9 +254,7 @@ export function makeReplaceTool(cwd: string, fusion?: ActionFusionExecutor) {
     ) {
       return executeMutation<Omit<ReplaceParams, "then_run">, ReplaceDetails>(
         {
-          name: "replace",
           cwd,
-          parameters,
           fusion,
           reportsAnchors: true,
           run: (mutationParams, target) => runReplace(target, mutationParams.replacements),

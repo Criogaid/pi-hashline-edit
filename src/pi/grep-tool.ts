@@ -27,7 +27,6 @@ export type { GrepBackend } from "./grep-search.ts";
 import { toDisplayLines } from "./grep-render.ts";
 import { resolveIgnoreCase, runRg, runRgPaths, type SearchModes } from "./rg-line-filter.ts";
 import { runRgTextView } from "./rg-text-view.ts";
-import { parseToolInput } from "./tool-input.ts";
 import { integerRange, POSITIVE_SAFE_INTEGER } from "./schema.ts";
 import { throwIfCancelled } from "./error-text.ts";
 
@@ -184,7 +183,6 @@ export function makeGrepOverrideWithBackend(cwd: string, overrides: Partial<Grep
       _onUpdate: Parameters<GrepTool["execute"]>[3],
     ) {
       throwIfCancelled(signal);
-      params = parseToolInput("grep", grepOverrideSchema, params);
       const anchors = createAnchorFormatter();
       const warnings: string[] = [];
 

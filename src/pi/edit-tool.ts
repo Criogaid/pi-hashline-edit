@@ -67,18 +67,11 @@ function boundDiagnostic(message: string, notice: string): string {
   return bounded.content + (bounded.truncated ? notice : "");
 }
 
-/** Parse copied tokens at the boundary; core edits retain numeric anchors. */
+/** Split a validated anchor token; prepareArguments and the schema already checked it. */
 function parseAnchor(value: string): Anchor;
 function parseAnchor(value: string | undefined): Anchor | undefined;
 function parseAnchor(value: string | undefined) {
-  if (value === undefined) return undefined;
-  const token = parseAnchorToken(value);
-  if (!token || !Number.isSafeInteger(token.line)) {
-    throw new Error(
-      'Invalid anchor; copy a complete "LINE#HASH" token from the latest tool result.',
-    );
-  }
-  return token;
+  return value === undefined ? undefined : parseAnchorToken(value)!;
 }
 
 /** Edit parameters; anchors must carry exactly `hashLen` hash characters. */
@@ -160,10 +153,12 @@ type EditParams = Static<EditSchema> & { then_run?: ThenRunInput };
 type EditOpInput = Static<EditSchema>["edits"][number];
 
 /**
- * Name anchors whose hash length differs from `hashLen` before schema validation,
- * which would otherwise report only a bare pattern mismatch. Arguments are never changed.
+ * Anchor checks the schema cannot express, run before Pi's schema validation.
+ * Names anchors whose hash length differs from `hashLen` (the schema would report
+ * only a bare pattern mismatch) and rejects line numbers beyond the safe-integer
+ * range. Arguments are never changed.
  */
-function checkAnchorHashLength(args: unknown, hashLen: number): void {
+function checkAnchors(args: unknown, hashLen: number): void {
   const edits = (args as { edits?: unknown } | null)?.edits;
   if (!Array.isArray(edits)) return;
   const mismatches: string[] = [];
@@ -172,6 +167,11 @@ function checkAnchorHashLength(args: unknown, hashLen: number): void {
       const value = (op as Record<string, unknown> | null)?.[field];
       if (typeof value !== "string") continue;
       const token = parseAnchorToken(value);
+      if (token && !Number.isSafeInteger(token.line)) {
+        throw new Error(
+          `Invalid anchor edits[${index}].${field} ${value}: line number exceeds the safe integer range; copy a complete "LINE#HASH" token from the latest tool result.`,
+        );
+      }
       if (token && token.hash.length !== hashLen) {
         mismatches.push(
           `edits[${index}].${field} ${value} has ${token.hash.length} hash characters`,
@@ -398,7 +398,7 @@ export function makeEditOverride(cwd: string, fusion?: ActionFusionExecutor) {
     ],
     parameters,
     prepareArguments(args: unknown): EditParams {
-      checkAnchorHashLength(args, hashLen);
+      checkAnchors(args, hashLen);
       return args as EditParams;
     },
     renderShell: "default" as const,
@@ -433,9 +433,7 @@ export function makeEditOverride(cwd: string, fusion?: ActionFusionExecutor) {
     ) {
       return executeMutation<Omit<EditParams, "then_run">, EditDetails>(
         {
-          name: "edit",
           cwd,
-          parameters,
           fusion,
           reportsAnchors: true,
           run: (mutationParams, target) => runHashline(target, mutationParams.edits, hashLen),

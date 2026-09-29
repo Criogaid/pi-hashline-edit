@@ -82,9 +82,7 @@ export function makeWriteOverride(cwd: string, fusion?: ActionFusionExecutor) {
     ) {
       return executeMutation<Omit<WriteParams, "then_run">, WriteDetails>(
         {
-          name: "write",
           cwd,
-          parameters,
           fusion,
           // Write results carry no anchors; stale revisions are reported by then_run.
           reportsAnchors: false,

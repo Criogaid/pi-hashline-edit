@@ -74,7 +74,7 @@ All text inspection and matching uses one logical representation: CRLF boundarie
 
 ### Edit operations
 
-`edit` declares a required `path` and a non-empty structured `edits` array. This extension does not normalize alternate formats: stringified JSON and top-level single-op fields are rejected. Pi may convert a single edit object to a one-element array before schema validation; a direct `execute` call without Pi's conversion rejects that object. Anchors are `"LINE#HASH"` strings whose hash has exactly `hashLen` characters; each `body` element is one logical line without CR or LF. An anchor of a different hash length, such as one copied before a `hashLen` change, is rejected before the file is read, and the error names each such anchor.
+`edit` declares a required `path` and a non-empty structured `edits` array. This extension does not normalize alternate formats: stringified JSON and top-level single-op fields are rejected. Pi's own argument validation may convert a single edit object to a one-element array before the extension sees it. Anchors are `"LINE#HASH"` strings whose hash has exactly `hashLen` characters; each `body` element is one logical line without CR or LF. An anchor of a different hash length, such as one copied before a `hashLen` change, is rejected before the file is read, and the error names each such anchor.
 
 | `op` | Required | Optional | Effect |
 | --- | --- | --- | --- |

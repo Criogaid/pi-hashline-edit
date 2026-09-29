@@ -17,7 +17,6 @@
 
 import { withFileMutationQueue, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { AgentToolResult, AgentToolUpdateCallback } from "@earendil-works/pi-agent-core";
-import type { TSchema } from "typebox";
 import type {
   ActionFusionDetails,
   createActionFusionExecutor,
@@ -31,7 +30,6 @@ import {
   postProcessMutation,
 } from "./mutation-result.ts";
 import { canonicalPath } from "./path.ts";
-import { parseToolInput } from "./tool-input.ts";
 import { throwIfCancelled } from "./error-text.ts";
 
 export type ActionFusionExecutor = ReturnType<typeof createActionFusionExecutor>;
@@ -57,10 +55,7 @@ export interface MutationOutcome<TDetails> {
 }
 
 export interface MutationToolSpec<TParams extends { path: string }, TDetails> {
-  readonly name: MutationToolName;
   readonly cwd: string;
-  /** The schema exposed to Pi; direct execute calls are validated against it. */
-  readonly parameters: TSchema;
   readonly fusion: ActionFusionExecutor | undefined;
   /**
    * Whether results carry fresh anchors. Anchor-reporting tools append a stale
@@ -71,30 +66,23 @@ export interface MutationToolSpec<TParams extends { path: string }, TDetails> {
   run(params: TParams, target: MutationTarget): Promise<MutationOutcome<TDetails>>;
 }
 
-export interface MutationCall<TDetails> {
+export interface MutationCall<TParams, TDetails> {
   readonly toolCallId: string;
-  readonly params: unknown;
+  /** Arguments already prepared and validated by Pi against the tool schema. */
+  readonly params: TParams & { then_run?: ThenRunInput };
   readonly signal: AbortSignal | undefined;
   readonly onUpdate: AgentToolUpdateCallback<TDetails> | undefined;
   readonly ctx: ExtensionContext;
 }
 
-/** Validate, queue, and publish one mutation call, then run its then_run command when fused. */
+/** Queue and publish one validated mutation call, then run its then_run command when fused. */
 export async function executeMutation<TParams extends { path: string }, TDetails>(
   spec: MutationToolSpec<TParams, TDetails>,
-  call: MutationCall<TDetails>,
+  call: MutationCall<TParams, TDetails>,
 ): Promise<AgentToolResult<TDetails>> {
-  const { name, cwd, fusion, parameters } = spec;
+  const { cwd, fusion } = spec;
   const { toolCallId, signal, onUpdate, ctx } = call;
-  if (!fusion && (call.params as { then_run?: unknown }).then_run !== undefined)
-    throw new Error("then_run is unavailable because hashlineEdit.actionFusion is disabled");
-  const { then_run, ...mutationParams } = parseToolInput(
-    name,
-    parameters,
-    call.params,
-  ) as TParams & {
-    then_run?: ThenRunInput;
-  };
+  const { then_run, ...mutationParams } = call.params;
   const absolutePath = canonicalPath(cwd, mutationParams.path);
   const target: MutationTarget = { absolutePath, displayPath: mutationParams.path, signal };
   let anchors = "";
