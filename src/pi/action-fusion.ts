@@ -5,7 +5,6 @@ import { createBashToolDefinition, type ExtensionContext } from "@earendil-works
 import { Type, type Static, type TObject, type TProperties } from "typebox";
 import { fileRevision, FileMutationError, type PublicationStatus } from "./file-commit.ts";
 import { finalizeMutationResult, observedFreshness } from "./mutation-result.ts";
-import { parseToolInput } from "./tool-input.ts";
 
 export const THEN_RUN_SUCCEEDED = "[then_run:succeeded]";
 export const THEN_RUN_FAILED = "[then_run:failed]";
@@ -82,8 +81,7 @@ export function withThenRunSchema<P extends TProperties>(
       )
     : schema;
 }
-const thenRunInputSchema = createThenRunSchema("Command to run");
-export type ThenRunInput = NonNullable<Static<typeof thenRunInputSchema>>;
+export type ThenRunInput = NonNullable<Static<ReturnType<typeof createThenRunSchema>>>;
 
 type CommandRunner = (
   toolCallId: string,
@@ -277,7 +275,6 @@ export function createActionFusionExecutor(
     onUpdate?: AgentToolUpdateCallback<TDetails>;
     finalizeMutation?: MutationFinalizer<TDetails>;
   }): Promise<MutationResult<TDetails>> {
-    if (thenRun !== undefined) thenRun = parseToolInput("then_run", thenRunInputSchema, thenRun);
     let completedMutation: MutationResult<TDetails> | undefined;
     let progressFailure: string | undefined;
     let commandSucceeded = false;

@@ -61,6 +61,7 @@ test("then_run schemas reject invalid commands, unknown keys, and excessive time
             ? { replacements: [{ find: "old", replace: "new" }] }
             : { content: "new\n" };
       for (const then_run of [
+        {},
         { command: "   " },
         { command: "echo ok", timeot: 1 },
         { command: "echo ok", timeout: 2_147_483.648 },
@@ -81,6 +82,20 @@ test("then_run schemas reject invalid commands, unknown keys, and excessive time
         await assert.rejects(
           (tool as any).execute("invalid-then-run", args, undefined, undefined, ctx(dir)),
           /then_run|timeout|not supported/i,
+        );
+        assert.equal(await readFile(join(dir, path), "utf8"), "old\n");
+      }
+      // Pi drops optional nulls and converts scalars before validation; direct execute does neither.
+      for (const then_run of [null, { command: null }, { command: 123 }]) {
+        await assert.rejects(
+          (tool as any).execute(
+            "invalid-then-run",
+            { path, ...mutation, then_run },
+            undefined,
+            undefined,
+            ctx(dir),
+          ),
+          new RegExp(`Validation failed for tool "${tool.name}": /then_run`),
         );
         assert.equal(await readFile(join(dir, path), "utf8"), "old\n");
       }
@@ -583,34 +598,6 @@ test("ActionFusionError re-wrapping appends recovery guidance without duplicatin
     assert.equal((caught.message.match(/\[then_run:skipped\]/g) ?? []).length, 1);
     assert.equal((caught.message.match(/File changes are saved/g) ?? []).length, 1);
     assert.equal((caught.message.match(/post-process failed/g) ?? []).length, 1);
-  } finally {
-    await rm(dir, { recursive: true, force: true });
-  }
-});
-
-test("ActionFusion validates direct then_run inputs against the shared schema", async () => {
-  const dir = await tempDir();
-  try {
-    const fusion = createActionFusionExecutor();
-    for (const invalid of [
-      {},
-      { command: null },
-      { command: 123 },
-      { command: "   " },
-      null as any,
-    ]) {
-      await assert.rejects(
-        fusion({
-          toolCallId: "test-invalid-cmd",
-          absolutePath: join(dir, "target.txt"),
-          thenRun: invalid as any,
-          mutate: async () => ({ content: [{ type: "text", text: "mutated" }], details: {} }),
-          signal: undefined,
-          ctx: ctx(dir),
-        }),
-        /Validation failed for tool "then_run"/,
-      );
-    }
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
