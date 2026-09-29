@@ -1,7 +1,7 @@
 /**
- * Config loading: project `.pi/settings.json` replaces global, per-field `??`
- * falls back to DEFAULT. Config field `hashlineEdit` (drop the `pi-` prefix,
- * camelCase).
+ * Config loading: project `.pi/settings.json` replaces global, and each setting
+ * that is missing or invalid falls back to its schema default. Config field
+ * `hashlineEdit` (drop the `pi-` prefix, camelCase).
  *
  * @module pi-hashline-edit/pi
  */
@@ -9,37 +9,98 @@
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { Type, type Static, type TSchema } from "typebox";
+import { Value } from "typebox/value";
 import { HASH_LEN_MAX, HASH_LEN_MIN } from "../core/hash.ts";
-import { isIntegerInRange } from "./schema.ts";
+import { GREP_CONTEXT_RANGE, integerRange, POSITIVE_SAFE_INTEGER } from "./schema.ts";
 
-export interface HashlineEditConfig {
-  /** Master switch: when false the extension registers no tools — pi's built-ins remain. */
-  enabled: boolean;
-  /** Expose optional commands after edit/replace/write. Enabled by default; false disables them. */
-  actionFusion: boolean;
-  /** Line hash length. */
-  hashLen: number;
-  /** First-pass ±line radius before full-file recovery; 0 disables recovery. */
-  shiftRadius: number;
+function integerSetting(
+  range: ReturnType<typeof integerRange>,
+  value: number,
+  description: string,
+) {
+  return Type.Number({ ...range, default: value, description });
 }
 
-const SHIFT_RADIUS_MAX = 100;
+/** Settings schema: the single source of setting types, bounds, and defaults. */
+export const configSchema = Type.Object({
+  enabled: Type.Boolean({
+    default: true,
+    description:
+      "Master switch: when false the extension registers no tools; Pi's built-ins remain.",
+  }),
+  actionFusion: Type.Boolean({
+    default: true,
+    description: "Expose optional then_run commands after edit/replace/write.",
+  }),
+  hashLen: integerSetting(
+    integerRange(HASH_LEN_MIN, HASH_LEN_MAX),
+    4,
+    "Line hash length shared by every anchored tool.",
+  ),
+  shiftRadius: integerSetting(
+    integerRange(0, 100),
+    15,
+    "First-pass ±line radius before full-file recovery; 0 disables recovery.",
+  ),
+  read: Type.Object({
+    defaultLimit: integerSetting(
+      POSITIVE_SAFE_INTEGER,
+      500,
+      "Lines returned when limit is omitted.",
+    ),
+    maxKiB: integerSetting(integerRange(1, 4096), 256, "Anchored text returned per call, in KiB."),
+  }),
+  grep: Type.Object({
+    defaultLimit: integerSetting(
+      POSITIVE_SAFE_INTEGER,
+      100,
+      "Matching lines returned when limit is omitted.",
+    ),
+    defaultContext: integerSetting(
+      GREP_CONTEXT_RANGE,
+      0,
+      "Context lines shown when context is omitted.",
+    ),
+  }),
+  replace: Type.Object({
+    regexTimeoutMs: integerSetting(
+      integerRange(1_000, 300_000),
+      5_000,
+      "Time limit for one regex batch, in milliseconds.",
+    ),
+  }),
+});
 
-export const DEFAULT_CONFIG: HashlineEditConfig = {
-  enabled: true,
-  actionFusion: true,
-  hashLen: 4,
-  shiftRadius: 15,
-};
+export type HashlineEditConfig = Static<typeof configSchema>;
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+/** Keep each valid leaf; replace a missing or invalid leaf with its default. */
+function resolveSetting<T extends TSchema>(schema: T, value: unknown): Static<T> {
+  if (Type.IsObject(schema)) {
+    const source = asRecord(value);
+    return Object.fromEntries(
+      Object.entries(schema.properties).map(([key, property]) => [
+        key,
+        resolveSetting(property, source[key]),
+      ]),
+    ) as Static<T>;
+  }
+  return (Value.Check(schema, value) ? value : Value.Create(schema)) as Static<T>;
+}
+
+export const DEFAULT_CONFIG: HashlineEditConfig = resolveSetting(configSchema, {});
 
 /** Parse JSON directly without stripping comments (standard JSON forbids comments; on error fall back to default). */
 function readSettings(filePath: string): Record<string, unknown> {
   try {
     if (!fs.existsSync(filePath)) return {};
-    const value: unknown = JSON.parse(fs.readFileSync(filePath, "utf-8"));
-    return value !== null && typeof value === "object" && !Array.isArray(value)
-      ? (value as Record<string, unknown>)
-      : {};
+    return asRecord(JSON.parse(fs.readFileSync(filePath, "utf-8")));
   } catch {
     return {};
   }
@@ -47,25 +108,10 @@ function readSettings(filePath: string): Record<string, unknown> {
 
 /**
  * Load config. The `hashlineEdit` in project `cwd/.pi/settings.json` replaces
- * the global one wholesale; missing fields fall back to DEFAULT_CONFIG.
+ * the global one wholesale; missing or invalid settings use their defaults.
  */
 export function loadConfig(cwd?: string): HashlineEditConfig {
   const globalSettings = readSettings(path.join(getAgentDir(), "settings.json"));
   const projectSettings = cwd ? readSettings(path.join(cwd, ".pi", "settings.json")) : {};
-  const value = projectSettings.hashlineEdit ?? globalSettings.hashlineEdit;
-  const raw =
-    value !== null && typeof value === "object" && !Array.isArray(value)
-      ? (value as Record<string, unknown>)
-      : {};
-  return {
-    enabled: typeof raw.enabled === "boolean" ? raw.enabled : DEFAULT_CONFIG.enabled,
-    actionFusion:
-      typeof raw.actionFusion === "boolean" ? raw.actionFusion : DEFAULT_CONFIG.actionFusion,
-    hashLen: isIntegerInRange(raw.hashLen, HASH_LEN_MIN, HASH_LEN_MAX)
-      ? raw.hashLen
-      : DEFAULT_CONFIG.hashLen,
-    shiftRadius: isIntegerInRange(raw.shiftRadius, 0, SHIFT_RADIUS_MAX)
-      ? raw.shiftRadius
-      : DEFAULT_CONFIG.shiftRadius,
-  };
+  return resolveSetting(configSchema, projectSettings.hashlineEdit ?? globalSettings.hashlineEdit);
 }

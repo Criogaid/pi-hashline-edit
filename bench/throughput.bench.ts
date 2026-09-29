@@ -8,6 +8,9 @@ import { splitLines, createLfTextView } from "../src/core/lines.ts";
 import { computeLineHash, hashFileLines } from "../src/core/hash.ts";
 import { applyEdits } from "../src/core/apply.ts";
 import type { Edit } from "../src/core/types.ts";
+import { DEFAULT_CONFIG } from "../src/pi/config.ts";
+
+const { hashLen, shiftRadius } = DEFAULT_CONFIG;
 
 function bench(name: string, iterations: number, fn: () => void): void {
   // Warm up
@@ -39,13 +42,13 @@ bench("splitLines (CRLF text)", 20, () => {
 const sampleLines = splitLines(lfText);
 console.log(`\n[2. Content Hashing (${sampleLines.length.toLocaleString()} lines)]`);
 bench("hashFileLines (50,000 lines, hashLen=4)", 10, () => {
-  hashFileLines(sampleLines, 4);
+  hashFileLines(sampleLines, hashLen);
 });
 bench("computeLineHash (single line)", 100_000, () => {
-  computeLineHash(1234, "export const configurationKey = 'hashlineEdit.enabled';", 4);
+  computeLineHash(1234, "export const configurationKey = 'hashlineEdit.enabled';", hashLen);
 });
 bench("computeLineHash (blank line)", 100_000, () => {
-  computeLineHash(1234, "", 4);
+  computeLineHash(1234, "", hashLen);
 });
 
 // 3. createLfTextView offset mapping (10,000 lines CRLF)
@@ -62,13 +65,13 @@ const edits: Edit[] = [];
 for (let i = 100; i < 200; i += 5) {
   edits.push({
     op: "replace",
-    start: { line: i, hash: computeLineHash(i, lines5k[i - 1], 4) },
+    start: { line: i, hash: computeLineHash(i, lines5k[i - 1], hashLen) },
     body: [`updated line ${i}`],
   });
 }
 console.log("\n[4. Edit Application (5,000 lines, 20 edits)]");
 bench("applyEdits batch verification and application", 50, () => {
-  applyEdits(file5k, edits, 4, 15);
+  applyEdits(file5k, edits, hashLen, shiftRadius);
 });
 
 console.log("\nAll benchmarks completed successfully.");

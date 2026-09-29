@@ -27,91 +27,101 @@ export type { GrepBackend } from "./grep-search.ts";
 import { toDisplayLines } from "./grep-render.ts";
 import { resolveIgnoreCase, runRg, runRgPaths, type SearchModes } from "./rg-line-filter.ts";
 import { runRgTextView } from "./rg-text-view.ts";
-import { integerRange, POSITIVE_SAFE_INTEGER } from "./schema.ts";
+import { GREP_CONTEXT_RANGE, POSITIVE_SAFE_INTEGER } from "./schema.ts";
 import { throwIfCancelled } from "./error-text.ts";
-import { getState } from "./state.ts";
+import type { HashlineEditConfig } from "./config.ts";
 
-const DEFAULT_LIMIT = 100;
-const GREP_CONTEXT_MIN = 0;
-const DEFAULT_CONTEXT = GREP_CONTEXT_MIN;
-const GREP_CONTEXT_MAX = 20;
-
-const grepOverrideSchema = Type.Object(
-  {
-    pattern: Type.Union(
-      [Type.String({ minLength: 1 }), Type.Array(Type.String({ minLength: 1 }), { minItems: 1 })],
-      {
-        description:
-          "String or array of strings (an array matches any of them). Regex syntax is ripgrep's Rust regex, not JavaScript: no lookaround or backreferences; ^ and $ match at line boundaries.",
-      },
-    ),
-    path: Type.Optional(
-      Type.Union(
+/** Grep parameters; descriptions state the configured defaults. */
+function createGrepSchema({ defaultLimit, defaultContext }: HashlineEditConfig["grep"]) {
+  return Type.Object(
+    {
+      pattern: Type.Union(
         [Type.String({ minLength: 1 }), Type.Array(Type.String({ minLength: 1 }), { minItems: 1 })],
         {
           description:
-            "Existing file or directory, or an array of them; omit to search the working directory. Wildcards are not expanded; use glob.",
+            "String or array of strings (an array matches any of them). Regex syntax is ripgrep's Rust regex, not JavaScript: no lookaround or backreferences; ^ and $ match at line boundaries.",
         },
       ),
-    ),
-    glob: Type.Optional(
-      Type.Union(
-        [Type.String({ minLength: 1 }), Type.Array(Type.String({ minLength: 1 }), { minItems: 1 })],
-        {
+      path: Type.Optional(
+        Type.Union(
+          [
+            Type.String({ minLength: 1 }),
+            Type.Array(Type.String({ minLength: 1 }), { minItems: 1 }),
+          ],
+          {
+            description:
+              "Existing file or directory, or an array of them; omit to search the working directory. Wildcards are not expanded; use glob.",
+          },
+        ),
+      ),
+      glob: Type.Optional(
+        Type.Union(
+          [
+            Type.String({ minLength: 1 }),
+            Type.Array(Type.String({ minLength: 1 }), { minItems: 1 }),
+          ],
+          {
+            description:
+              "Filename glob, or an ordered array of them; prefix exclusions with !, e.g. ['*.ts', '!**/*.test.ts'].",
+          },
+        ),
+      ),
+      literal: Type.Optional(
+        Type.Boolean({
           description:
-            "Filename glob, or an ordered array of them; prefix exclusions with !, e.g. ['*.ts', '!**/*.test.ts'].",
-        },
+            "true: match the text literally. false: ripgrep Rust regex. Omitted: regex when the pattern has metacharacters; a single invalid pattern falls back to a literal search of the whole string, an invalid array fails.",
+        }),
       ),
-    ),
-    literal: Type.Optional(
-      Type.Boolean({
-        description:
-          "true: match the text literally. false: ripgrep Rust regex. Omitted: regex when the pattern has metacharacters; a single invalid pattern falls back to a literal search of the whole string, an invalid array fails.",
-      }),
-    ),
-    ignoreCase: Type.Optional(
-      Type.Boolean({
-        description:
-          "true ignores case, false matches case; omitted uses smart-case for the whole query. Inline regex flags still apply.",
-      }),
-    ),
-    multiline: Type.Optional(
-      Type.Boolean({
-        description:
-          "Match across lines (default false); every line a match touches is anchored. The . wildcard does not match newlines; use \\n or (?s).",
-      }),
-    ),
-    context: Type.Optional(
-      Type.Number({
-        ...integerRange(GREP_CONTEXT_MIN, GREP_CONTEXT_MAX),
-        description: `Anchored lines shown before and after each match (${GREP_CONTEXT_MIN}-${GREP_CONTEXT_MAX}, default ${DEFAULT_CONTEXT}); display only, not matched.`,
-      }),
-    ),
-    limit: Type.Optional(
-      Type.Number({
-        ...POSITIVE_SAFE_INTEGER,
-        description: `Maximum matching lines, across all files (default ${DEFAULT_LIMIT}).`,
-      }),
-    ),
-    outputMode: Type.Optional(
-      Type.Union([Type.Literal("content"), Type.Literal("files"), Type.Literal("count")], {
-        description:
-          '"content" (default): anchored lines; "files": paths; "count": matching lines per file and total. All modes share limit.',
-      }),
-    ),
-  },
-  { additionalProperties: false },
-);
-type GrepTool = ToolDefinition<typeof grepOverrideSchema, { incomplete?: true } | undefined>;
+      ignoreCase: Type.Optional(
+        Type.Boolean({
+          description:
+            "true ignores case, false matches case; omitted uses smart-case for the whole query. Inline regex flags still apply.",
+        }),
+      ),
+      multiline: Type.Optional(
+        Type.Boolean({
+          description:
+            "Match across lines (default false); every line a match touches is anchored. The . wildcard does not match newlines; use \\n or (?s).",
+        }),
+      ),
+      context: Type.Optional(
+        Type.Number({
+          ...GREP_CONTEXT_RANGE,
+          description: `Anchored lines shown before and after each match (${GREP_CONTEXT_RANGE.minimum}-${GREP_CONTEXT_RANGE.maximum}, default ${defaultContext}); display only, not matched.`,
+        }),
+      ),
+      limit: Type.Optional(
+        Type.Number({
+          ...POSITIVE_SAFE_INTEGER,
+          description: `Maximum matching lines, across all files (default ${defaultLimit}).`,
+        }),
+      ),
+      outputMode: Type.Optional(
+        Type.Union([Type.Literal("content"), Type.Literal("files"), Type.Literal("count")], {
+          description:
+            '"content" (default): anchored lines; "files": paths; "count": matching lines per file and total. All modes share limit.',
+        }),
+      ),
+    },
+    { additionalProperties: false },
+  );
+}
+type GrepSchema = ReturnType<typeof createGrepSchema>;
+type GrepTool = ToolDefinition<GrepSchema, { incomplete?: true } | undefined>;
 
 /** Build the production grep override (a ToolDefinition fragment for registerTool). */
-export function makeGrepOverride(cwd: string) {
-  return makeGrepOverrideWithBackend(cwd, {});
+export function makeGrepOverride(cwd: string, config: HashlineEditConfig) {
+  return makeGrepOverrideWithBackend(cwd, config, {});
 }
 
 /** @internal — build a grep override with deterministic process backends for tests. */
-export function makeGrepOverrideWithBackend(cwd: string, overrides: Partial<GrepBackend>) {
-  const { hashLen } = getState().config;
+export function makeGrepOverrideWithBackend(
+  cwd: string,
+  config: HashlineEditConfig,
+  overrides: Partial<GrepBackend>,
+) {
+  const { hashLen } = config;
+  const grepSchema = createGrepSchema(config.grep);
   const backend: GrepBackend = {
     runRg: runRgTextView,
     runRgPaths,
@@ -133,12 +143,12 @@ export function makeGrepOverrideWithBackend(cwd: string, overrides: Partial<Grep
       "In grep, use multiline:true for cross-line matches and outputMode files or count when only paths or counts are needed.",
       "Copy grep anchors directly into edit; read the full line before rewriting from a partial preview.",
     ],
-    parameters: grepOverrideSchema,
+    parameters: grepSchema,
 
     renderShell: "default" as const,
 
     renderCall(
-      args: Static<typeof grepOverrideSchema>,
+      args: Static<GrepSchema>,
       theme: Parameters<NonNullable<GrepTool["renderCall"]>>[1],
     ) {
       const rawPattern = args?.pattern;
@@ -179,7 +189,7 @@ export function makeGrepOverrideWithBackend(cwd: string, overrides: Partial<Grep
 
     async execute(
       _toolCallId: string,
-      params: Static<typeof grepOverrideSchema>,
+      params: Static<GrepSchema>,
       signal: AbortSignal | undefined,
       _onUpdate: Parameters<GrepTool["execute"]>[3],
     ) {
@@ -188,8 +198,8 @@ export function makeGrepOverrideWithBackend(cwd: string, overrides: Partial<Grep
       const warnings: string[] = [];
 
       const patterns = toArray(params.pattern).map(normalizeLineEndings);
-      const effectiveLimit = params.limit ?? DEFAULT_LIMIT;
-      const context = params.context ?? DEFAULT_CONTEXT;
+      const effectiveLimit = params.limit ?? config.grep.defaultLimit;
+      const context = params.context ?? config.grep.defaultContext;
       const rgPath = bundledRgPath;
       const outputMode: "content" | "files" | "count" = params.outputMode ?? "content";
       const multiline = params.multiline ?? false;

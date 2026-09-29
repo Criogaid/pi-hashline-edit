@@ -37,7 +37,7 @@ import { applyReplacements, buildRegex, type Replacement } from "./replace-apply
 import { unwritableTextReason } from "../core/text.ts";
 import { ACTION_FUSION_GUIDELINES, withThenRunSchema, type ThenRunInput } from "./action-fusion.ts";
 import { createAnchorFormatter, type AnchorFormatter } from "./anchor-format.ts";
-import { getState } from "./state.ts";
+import type { HashlineEditConfig } from "./config.ts";
 import {
   formatDiffCounts,
   renderMutationCall,
@@ -112,11 +112,10 @@ function createReplaceSchema(actionFusion: boolean) {
 }
 type ReplaceParams = Static<typeof replaceSchema> & { then_run?: ThenRunInput };
 
-const REGEX_TIMEOUT_MS = 5_000;
-
 async function applyRegexReplacements(
   source: string,
   rules: readonly Replacement[],
+  timeoutMs: number,
   signal: AbortSignal | undefined,
 ): Promise<{ text: string; count: number }> {
   throwIfCancelled(signal);
@@ -136,8 +135,8 @@ async function applyRegexReplacements(
     };
     const abort = () => finish(cancellationError(), true);
     const timer = setTimeout(
-      () => finish(new Error(`regex evaluation timed out after ${REGEX_TIMEOUT_MS}ms`), true),
-      REGEX_TIMEOUT_MS,
+      () => finish(new Error(`regex evaluation timed out after ${timeoutMs}ms`), true),
+      timeoutMs,
     );
     worker.on(
       "message",
@@ -244,8 +243,11 @@ function checkReplaceArguments(args: unknown): void {
   });
 }
 
-export function makeReplaceTool(cwd: string, fusion?: ActionFusionExecutor) {
-  const { hashLen } = getState().config;
+export function makeReplaceTool(
+  cwd: string,
+  config: HashlineEditConfig,
+  fusion?: ActionFusionExecutor,
+) {
   const parameters = createReplaceSchema(fusion !== undefined);
   return {
     name: "replace" as const,
@@ -297,7 +299,7 @@ export function makeReplaceTool(cwd: string, fusion?: ActionFusionExecutor) {
           cwd,
           fusion,
           reportsAnchors: true,
-          run: (mutationParams, target) => runReplace(target, mutationParams.replacements, hashLen),
+          run: (mutationParams, target) => runReplace(target, mutationParams.replacements, config),
         },
         { toolCallId, params, signal, onUpdate, ctx },
       );
@@ -305,15 +307,24 @@ export function makeReplaceTool(cwd: string, fusion?: ActionFusionExecutor) {
   };
 }
 
-function runReplace(target: MutationTarget, rules: ReplaceParams["replacements"], hashLen: number) {
-  const anchorFormatter = createAnchorFormatter(hashLen);
+function runReplace(
+  target: MutationTarget,
+  rules: ReplaceParams["replacements"],
+  config: HashlineEditConfig,
+) {
+  const anchorFormatter = createAnchorFormatter(config.hashLen);
 
   return runTextMutation("replace", target, async (currentText) => {
     let newText: string;
     let count: number;
     try {
       ({ text: newText, count } = rules.some((rule) => rule.regex === true)
-        ? await applyRegexReplacements(currentText, rules, target.signal)
+        ? await applyRegexReplacements(
+            currentText,
+            rules,
+            config.replace.regexTimeoutMs,
+            target.signal,
+          )
         : applyReplacements(currentText, rules));
     } catch (error) {
       throwIfCancelled(target.signal, `before apply; ${target.displayPath} was not changed.`);

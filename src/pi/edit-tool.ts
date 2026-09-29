@@ -34,7 +34,7 @@ import { splitLines } from "../core/lines.ts";
 import { unwritableTextReason } from "../core/text.ts";
 import { invalidArgument } from "./error-text.ts";
 import type { Anchor, ApplyFailure, Edit } from "../core/types.ts";
-import { getState } from "./state.ts";
+import type { HashlineEditConfig } from "./config.ts";
 import {
   anchorPattern,
   createAnchorFormatter,
@@ -391,9 +391,13 @@ function editHeader(args: EditParams, theme: Theme, counts?: DiffCounts): string
   return t;
 }
 
-export function makeEditOverride(cwd: string, fusion?: ActionFusionExecutor) {
+export function makeEditOverride(
+  cwd: string,
+  config: HashlineEditConfig,
+  fusion?: ActionFusionExecutor,
+) {
   // Schema, verification, recovery, and returned anchors use the registered configuration.
-  const { hashLen, shiftRadius } = getState().config;
+  const { hashLen, shiftRadius } = config;
   const parameters = createEditSchema(fusion !== undefined, hashLen);
 
   return {

@@ -15,13 +15,5 @@ export function integerRange(minimum: number, maximum: number) {
 /** Positive line numbers, line counts, and match limits. */
 export const POSITIVE_SAFE_INTEGER = integerRange(1, Number.MAX_SAFE_INTEGER);
 
-/** Runtime counterpart of {@link integerRange} for values not validated by a schema. */
-export function isIntegerInRange(
-  value: unknown,
-  minimum: number,
-  maximum: number,
-): value is number {
-  return (
-    typeof value === "number" && Number.isInteger(value) && value >= minimum && value <= maximum
-  );
-}
+/** grep `context` parameter and its configured default. */
+export const GREP_CONTEXT_RANGE = integerRange(0, 20);

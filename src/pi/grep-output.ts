@@ -9,6 +9,8 @@ import { formatKiB, MAX_SEARCH_DIAGNOSTIC_BYTES } from "./budgets.ts";
 
 /** Maximum UTF-16 units in a line preview, excluding its partial-line label. */
 const GREP_MAX_LINE_LENGTH = 500;
+/** UTF-16 units kept before the match column when a preview window is cut. */
+const GREP_PREVIEW_LEAD = 100;
 const MAX_CONCURRENT_FILE_READS = 16;
 
 export function formatSearchWarnings(warnings: readonly string[]): string {
@@ -21,7 +23,7 @@ export function formatSearchWarnings(warnings: readonly string[]): string {
 
 function previewLine(text: string, column = 0): { text: string; wasTruncated: boolean } {
   if (text.length <= GREP_MAX_LINE_LENGTH) return { text, wasTruncated: false };
-  let start = Math.max(0, Math.min(column - 100, text.length - GREP_MAX_LINE_LENGTH));
+  let start = Math.max(0, Math.min(column - GREP_PREVIEW_LEAD, text.length - GREP_MAX_LINE_LENGTH));
   // Slice at UTF-16 boundaries without splitting an astral character.
   if (start > 0 && /[\uDC00-\uDFFF]/.test(text[start])) start++;
   let end = Math.min(text.length, start + GREP_MAX_LINE_LENGTH);

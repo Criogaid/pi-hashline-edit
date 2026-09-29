@@ -28,11 +28,10 @@ import { canonicalPath } from "./path.ts";
 import { renderToolError } from "./render.ts";
 import { POSITIVE_SAFE_INTEGER } from "./schema.ts";
 import { throwIfCancelled } from "./error-text.ts";
-import { getState } from "./state.ts";
+import { formatKiB } from "./budgets.ts";
+import type { HashlineEditConfig } from "./config.ts";
 
 const DEFAULT_OFFSET = 1;
-const DEFAULT_LIMIT = 500;
-const MAX_BYTES = 256 * 1024;
 
 type ReadDetails = ReadToolDetails & { nativeRead?: true };
 
@@ -98,11 +97,14 @@ function renderReadBody(raw: string, path: string, theme: Theme): string {
 /** Build the read override (a ToolDefinition fragment for registerTool). */
 export function makeReadOverride(
   cwd: string,
+  config: HashlineEditConfig,
 ): ToolDefinition<
   ReturnType<typeof createReadToolDefinition>["parameters"],
   ReadDetails | undefined
 > {
-  const { hashLen } = getState().config;
+  const { hashLen } = config;
+  const { defaultLimit } = config.read;
+  const maxBytes = config.read.maxKiB * 1024;
   const builtin = createReadToolDefinition(cwd);
   const parameters = {
     ...builtin.parameters,
@@ -118,7 +120,7 @@ export function makeReadOverride(
       limit: {
         ...builtin.parameters.properties.limit,
         ...POSITIVE_SAFE_INTEGER,
-        description: `Maximum lines to read (default ${DEFAULT_LIMIT}).`,
+        description: `Maximum lines to read (default ${defaultLimit}).`,
       },
     },
   };
@@ -160,7 +162,7 @@ export function makeReadOverride(
     ) {
       throwIfCancelled(signal);
       const offset = params.offset ?? DEFAULT_OFFSET;
-      const limit = params.limit ?? DEFAULT_LIMIT;
+      const limit = params.limit ?? defaultLimit;
       const anchors = createAnchorFormatter(hashLen);
       const readNative = async () => {
         const result = await builtin.execute(toolCallId, params, signal, onUpdate, ctx);
@@ -197,7 +199,7 @@ export function makeReadOverride(
             totalBytes += rowBytes + (totalRows++ > 0 ? 1 : 0);
             if (truncated) return;
             const nextBytes = outputBytes + rowBytes + (rows.length > 0 ? 1 : 0);
-            if (nextBytes > MAX_BYTES) {
+            if (nextBytes > maxBytes) {
               truncated = true;
               firstLineExceedsLimit = rows.length === 0;
               return;
@@ -205,7 +207,7 @@ export function makeReadOverride(
             rows.push(anchors.row(line.number, line.text!));
             outputBytes = nextBytes;
           },
-          { signal, maxLineBytes: MAX_BYTES },
+          { signal, maxLineBytes: maxBytes },
         );
       } catch (error) {
         // Keep native filesystem diagnostics without retrying decoding or cancellation failures.
@@ -235,7 +237,7 @@ export function makeReadOverride(
         lastLinePartial: false,
         firstLineExceedsLimit,
         maxLines: totalRows,
-        maxBytes: MAX_BYTES,
+        maxBytes,
       };
 
       const shownFrom = start > 1 ? ` (from line ${start})` : "";
@@ -244,9 +246,9 @@ export function makeReadOverride(
       // never copies into an edit `body`.
       const noFinalNewline = stats.finalNewline ? "" : " · no trailing newline";
       const tail = truncation.firstLineExceedsLimit
-        ? `\n… (line ${start} exceeds ${MAX_BYTES >> 10}KB; cannot return a complete anchor row. Reducing limit cannot split a physical line; use bash to inspect it in chunks, or replace for a known literal/regex change)`
+        ? `\n… (line ${start} exceeds ${formatKiB(maxBytes)}; cannot return a complete anchor row. Reducing limit cannot split a physical line; use bash to inspect it in chunks, or replace for a known literal/regex change)`
         : truncation.truncated
-          ? `\n… (truncated at ${MAX_BYTES >> 10}KB; use offset/limit to read more)`
+          ? `\n… (truncated at ${formatKiB(maxBytes)}; use offset/limit to read more)`
           : pagination
             ? `\n… (showing lines ${pagination.start}-${pagination.end} of ${pagination.totalLines}; use offset ${pagination.nextOffset} to continue)`
             : "";

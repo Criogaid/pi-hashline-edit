@@ -136,7 +136,7 @@ Original `foo bar` becomes `bar baz`; inserted text is not searched again. All r
 
 ### Read
 
-Required: non-empty `path`. Optional: positive safe-integer `offset` (1-based; default 1) and positive safe-integer `limit` (default 500 lines). Fractions, zero, negative values, and unknown fields are rejected. Returned text is capped at 256 KiB; oversized rows are not returned as partial editable lines. Files without a final newline are identified in the header. Content delegated to Pi's built-in read is displayed without interpreting source text as hashline anchors.
+Required: non-empty `path`. Optional: positive safe-integer `offset` (1-based; default 1) and positive safe-integer `limit` (default 500 lines, set by `read.defaultLimit`). Fractions, zero, negative values, and unknown fields are rejected. Returned text is capped at 256 KiB by default (`read.maxKiB`); oversized rows are not returned as partial editable lines. Files without a final newline are identified in the header. Content delegated to Pi's built-in read is displayed without interpreting source text as hashline anchors.
 
 When the line limit leaves more content, the result reports the shown range and the next `offset`, for example `showing lines 1-500 of 1200; use offset 501 to continue`. `details.pagination` contains 1-based `start`, inclusive `end`, `totalLines`, and `nextOffset`. This applies to default and explicit limits. Reads reaching EOF omit pagination; byte-limited reads retain their byte-truncation notice and metadata.
 
@@ -176,7 +176,7 @@ Required: non-empty `path` and a non-empty `replacements` array. Use one item fo
 Zero matches in any rule, an invalid rule, or overlapping match ranges rejects the whole call without writing. Adjacent ranges are allowed. Zero-length matches conflict at the same position or at the start/interior of another match; a zero-length match at another match's end is allowed unless it conflicts with a following match. Error rule indices and string offsets are zero-based (offsets count UTF-16 code units in the original text). Literal and regex rules share the same original ranges for conflict detection.
 
 Regex captures and prefix/suffix substitutions always refer to the original LF-normalized snapshot.
-Regex batches run in a worker and are terminated on cancellation or after 5 seconds of evaluation. A cancelled or timed-out batch leaves the file unchanged; literal-only batches retain their existing execution path.
+Regex batches run in a worker and are terminated on cancellation or when `replace.regexTimeoutMs` (default 5000 ms) elapses. A cancelled or timed-out batch leaves the file unchanged; literal-only batches retain their existing execution path.
 
 ### Write
 
@@ -205,10 +205,15 @@ Add `hashlineEdit` to Pi's global settings (`~/.pi/agent/settings.json` by defau
     "enabled": true,
     "actionFusion": true,
     "hashLen": 4,
-    "shiftRadius": 15
+    "shiftRadius": 15,
+    "read": { "defaultLimit": 500, "maxKiB": 256 },
+    "grep": { "defaultLimit": 100, "defaultContext": 0 },
+    "replace": { "regexTimeoutMs": 5000 }
   }
 }
 ```
+
+Top-level settings apply to every tool; each group applies to one tool.
 
 | Setting | Default | Meaning |
 | --- | --- | --- |
@@ -216,8 +221,13 @@ Add `hashlineEdit` to Pi's global settings (`~/.pi/agent/settings.json` by defau
 | `actionFusion` | `true` | Expose `then_run` on mutation tools. Set `false` to disable command support. |
 | `hashLen` | `4` | Integer checksum length, 2–8 characters. `edit` accepts only anchors of this length; anchors produced under another setting must be read again. |
 | `shiftRadius` | `15` | Integer first-pass recovery-search radius, 0–100 lines. With no local candidates, recovery searches the rest of the file; `0` disables both searches. |
+| `read.defaultLimit` | `500` | Lines returned when a call omits `limit`; positive safe integer. |
+| `read.maxKiB` | `256` | Anchored text returned per call, 1–4096 KiB. Calls cannot raise it. |
+| `grep.defaultLimit` | `100` | Matching lines returned when a call omits `limit`; positive safe integer. |
+| `grep.defaultContext` | `0` | Context lines shown when a call omits `context`, 0–20. |
+| `replace.regexTimeoutMs` | `5000` | Time limit for one regex batch, 1000–300000 ms, including worker startup. |
 
-The project's `hashlineEdit` object replaces the global object as a whole; missing or invalid fields use defaults. Defaults are defined in `src/pi/config.ts`; tools capture the resolved values at registration and pass them explicitly to core functions and anchor formatters. A registered tool keeps that configuration for its lifetime. Reload Pi after changes to register tools with the new configuration.
+The project's `hashlineEdit` object replaces the global object as a whole. Each setting is resolved on its own: a missing or invalid setting, or a group that is not an object, uses the defaults while valid neighbors are kept. Types, bounds, and defaults are defined once by the settings schema in `src/pi/config.ts`. Tools receive the resolved configuration at registration, keep it for their lifetime, and state configured defaults in their parameter descriptions. Reload Pi after changes to register tools with the new configuration.
 
 ## Action Fusion
 
@@ -263,8 +273,8 @@ These limits bound model context, not file size. Omission notices direct the cal
 
 | Output | Limit |
 | --- | --- |
-| `read` | Default 500 rows, overridable with `limit`; 256 KiB of anchored text. No partial anchor rows. An oversized single row directs the caller to inspect chunks with `bash` or make a known text change with `replace`; reducing `limit` cannot split a physical line. |
-| `grep` | Default 100 matching lines, overridable; up to 500 UTF-16 units per partial line preview, plus labels and Pi's total output limits. Match previews use rg byte offsets; hashes use full content. Search error notices have a separate 4 KiB budget. |
+| `read` | Default 500 rows (`read.defaultLimit`), overridable with `limit`; 256 KiB of anchored text (`read.maxKiB`). No partial anchor rows. An oversized single row directs the caller to inspect chunks with `bash` or make a known text change with `replace`; reducing `limit` cannot split a physical line. |
+| `grep` | Default 100 matching lines (`grep.defaultLimit`), overridable; up to 500 UTF-16 units per partial line preview, plus labels and Pi's total output limits. Match previews use rg byte offsets; hashes use full content. Search error notices have a separate 4 KiB budget. |
 | `edit` / `replace` anchors | 16 KiB including heading/omission notice, with no fixed entry-count limit. Compact tokens for changed positions; selected deletion successors retain complete content. The omission notice consumes budget only when rows are omitted. Rows that do not fit are omitted in full; later rows that fit are still returned. |
 | Anchor failure details | 16 KiB, with no fixed failure-count limit; unique candidates include complete rows up to 4 KiB, and ambiguous failures list up to eight candidates each. Unresolved anchors show the current cited row when it fits; oversized or out-of-range rows require a fresh `read` or `grep`. |
 | Input-anchor checks | Independent 16 KiB block, with no fixed entry-count limit. Truncation is reported explicitly; omitted entries are not implied matched. |
