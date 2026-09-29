@@ -18,7 +18,7 @@
  *
  * Concurrency: read-modify-write is wrapped in Pi's withFileMutationQueue
  * (shared with `edit`), so a `replace` and an `edit` on the same file never
- * interleave. Regex batches run in a cancellable worker with a time limit.
+ * interleave. Regex batches run in a cancellable worker with a time limit (replace-regex).
  *
  * @module pi-hashline-edit/pi
  */
@@ -31,9 +31,9 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import type { AgentToolResult, AgentToolUpdateCallback } from "@earendil-works/pi-agent-core";
 import { Type, type Static } from "typebox";
-import { Worker } from "node:worker_threads";
 import { splitLines } from "../core/lines.ts";
-import { applyReplacements, buildRegex, type Replacement } from "../core/replace.ts";
+import { applyReplacements, buildRegex } from "../core/replace.ts";
+import { runRegexReplacements } from "./replace-regex.ts";
 import { unwritableTextReason } from "../core/text.ts";
 import { ACTION_FUSION_GUIDELINES, withThenRunSchema, type ThenRunInput } from "./action-fusion.ts";
 import { createAnchorFormatter, type AnchorFormatter } from "./anchor-format.ts";
@@ -53,7 +53,7 @@ import {
   type TextMutationDetails,
 } from "./mutation-runner.ts";
 import { errorMessage } from "../core/errors.ts";
-import { cancellationError, invalidArgument, throwIfCancelled } from "./error-text.ts";
+import { invalidArgument, throwIfCancelled } from "./error-text.ts";
 type ReplaceDetails = TextMutationDetails;
 type ReplaceRenderContext = Parameters<
   NonNullable<ToolDefinition<typeof replaceSchema>["renderCall"]>
@@ -108,48 +108,6 @@ function createReplaceSchema(actionFusion: boolean) {
 }
 type ReplaceParams = Static<typeof replaceSchema> & { then_run?: ThenRunInput };
 
-async function applyRegexReplacements(
-  source: string,
-  rules: readonly Replacement[],
-  timeoutMs: number,
-  signal: AbortSignal | undefined,
-): Promise<{ text: string; count: number }> {
-  throwIfCancelled(signal);
-  const worker = new Worker(new URL("./replace-worker.mjs", import.meta.url), {
-    workerData: { source, rules },
-  });
-  return new Promise((resolve, reject) => {
-    let settled = false;
-    const finish = (result: { text: string; count: number } | Error, terminate = false) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      signal?.removeEventListener("abort", abort);
-      const complete = () => (result instanceof Error ? reject(result) : resolve(result));
-      if (terminate) void worker.terminate().then(complete, reject);
-      else complete();
-    };
-    const abort = () => finish(cancellationError(), true);
-    const timer = setTimeout(
-      () => finish(new Error(`regex evaluation timed out after ${timeoutMs}ms`), true),
-      timeoutMs,
-    );
-    worker.on(
-      "message",
-      (message: { result?: { text: string; count: number }; error?: string }) => {
-        if (message.error !== undefined) finish(new Error(message.error));
-        else if (message.result) finish(message.result);
-        else finish(new Error("Regex worker returned an invalid result"));
-      },
-    );
-    worker.on("error", (error) =>
-      finish(error instanceof Error ? error : new Error(String(error))),
-    );
-    worker.on("exit", (code) => finish(new Error(`Regex worker exited with code ${code}`)));
-    signal?.addEventListener("abort", abort, { once: true });
-    if (signal?.aborted) abort();
-  });
-}
 /**
  * Bound candidate anchors by stripping common prefix/suffix lines in O(n).
  * For a pure deletion, retain its first surviving successor. Shifted suffixes
@@ -314,7 +272,7 @@ function runReplace(
     let count: number;
     try {
       ({ text: newText, count } = rules.some((rule) => rule.regex === true)
-        ? await applyRegexReplacements(
+        ? await runRegexReplacements(
             currentText,
             rules,
             config.replace.regexTimeoutMs,
