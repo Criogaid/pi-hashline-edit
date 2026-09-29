@@ -18,18 +18,21 @@ import {
   type ReadToolDetails,
   type ExtensionContext,
   type Theme,
+  type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import type { AgentToolUpdateCallback } from "@earendil-works/pi-agent-core";
 import { Text } from "@earendil-works/pi-tui";
 import { scanTextLines } from "./text-stream.ts";
-import { createAnchorFormatter, displayCarriageReturns } from "./anchor-format.ts";
+import { createAnchorFormatter, displayCarriageReturns, parseHashline } from "./anchor-format.ts";
 import { canonicalPath } from "./path.ts";
-import { parseHashline, renderToolError } from "./render.ts";
+import { renderToolError } from "./render.ts";
 import { POSITIVE_SAFE_INTEGER } from "./schema.ts";
 import { throwIfCancelled } from "./error-text.ts";
 
 const MAX_LINES = 500;
 const MAX_BYTES = 256 * 1024;
+
+type ReadDetails = ReadToolDetails & { nativeRead?: true };
 
 /**
  * Render the expanded read body for the TUI: color the header, strip the
@@ -91,7 +94,12 @@ function renderReadBody(raw: string, path: string, theme: Theme): string {
 }
 
 /** Build the read override (a ToolDefinition fragment for registerTool). */
-export function makeReadOverride(cwd: string): ReturnType<typeof createReadToolDefinition> {
+export function makeReadOverride(
+  cwd: string,
+): ToolDefinition<
+  ReturnType<typeof createReadToolDefinition>["parameters"],
+  ReadDetails | undefined
+> {
   const builtin = createReadToolDefinition(cwd);
   const parameters = {
     ...builtin.parameters,
@@ -127,10 +135,12 @@ export function makeReadOverride(cwd: string): ReturnType<typeof createReadToolD
 
     renderCall: builtin.renderCall,
 
-    renderResult(result, { isPartial, expanded }, theme, context) {
+    renderResult(result, options, theme, context) {
+      const { isPartial, expanded } = options;
       if (isPartial) return new Text(theme.fg("warning", "Reading…"), 0, 0);
       const content = result.content?.[0];
       if (context?.isError) return renderToolError(result, theme);
+      if (result.details?.nativeRead) return builtin.renderResult!(result, options, theme, context);
       // Collapsed (not expanded): show nothing — the call line carries the
       // title, matching the built-in read's fold behavior.
       if (!expanded) return new Text("", 0, 0);
@@ -149,14 +159,18 @@ export function makeReadOverride(cwd: string): ReturnType<typeof createReadToolD
       const offset = params.offset ?? 1;
       const limit = params.limit ?? MAX_LINES;
       const anchors = createAnchorFormatter();
+      const readNative = async () => {
+        const result = await builtin.execute(toolCallId, params, signal, onUpdate, ctx);
+        return { ...result, details: { ...result.details, nativeRead: true as const } };
+      };
 
       const absPath = canonicalPath(cwd, params.path as string);
       try {
         if (await detectSupportedImageMimeTypeFromFile(absPath)) {
-          return builtin.execute(toolCallId, params, signal, onUpdate, ctx);
+          return readNative();
         }
       } catch {
-        return builtin.execute(toolCallId, params, signal, onUpdate, ctx);
+        return readNative();
       }
 
       const start = offset;
@@ -194,11 +208,11 @@ export function makeReadOverride(cwd: string): ReturnType<typeof createReadToolD
       } catch (error) {
         // Keep native filesystem diagnostics without retrying decoding or cancellation failures.
         if (!signal?.aborted && error instanceof Error && "code" in error) {
-          return builtin.execute(toolCallId, params, signal, onUpdate, ctx);
+          return readNative();
         }
         throw error;
       }
-      if (stats.hasNul) return builtin.execute(toolCallId, params, signal, onUpdate, ctx);
+      if (stats.hasNul) return readNative();
       const pagination =
         !truncated && rows.length > 0 && end <= stats.totalLines
           ? {

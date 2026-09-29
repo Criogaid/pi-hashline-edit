@@ -21,7 +21,7 @@
  */
 
 /** Crockford base32 alphabet (without I/L/O/U to avoid ambiguous characters). Exactly 32 characters. */
-const BASE32 = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
+export const HASH_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 
 /**
  * FNV-1a 32-bit. Stable (same input always yields the same output), evenly
@@ -66,7 +66,7 @@ function fnv1a32Line(line: number, content: string): number {
 function toBase32(n: number, len: number): string {
   let encoded = "";
   for (let i = 0; i < len; i++) {
-    encoded = BASE32[n & 31] + encoded;
+    encoded = HASH_ALPHABET[n & 31] + encoded;
     n >>>= 5;
   }
   return encoded;

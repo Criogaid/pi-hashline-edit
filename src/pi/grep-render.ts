@@ -1,5 +1,5 @@
 import type { Theme } from "@earendil-works/pi-coding-agent";
-import { parseHashline } from "./render.ts";
+import { parseHashline } from "./anchor-format.ts";
 
 /**
  * Convert the anchored grep output (grouped, `LINE#HASH│`) into a human-readable

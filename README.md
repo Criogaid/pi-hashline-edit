@@ -74,7 +74,7 @@ All text inspection and matching uses one logical representation: CRLF boundarie
 
 ### Edit operations
 
-`edit` declares a required `path` and a non-empty structured `edits` array. This extension does not normalize alternate formats: stringified JSON and top-level single-op fields are rejected. Pi's own argument validation may convert a single edit object to a one-element array before the extension sees it. Anchors are `"LINE#HASH"` strings whose hash has exactly `hashLen` characters; each `body` element is one logical line without CR or LF. An anchor of a different hash length, such as one copied before a `hashLen` change, is rejected before the file is read, and the error names each such anchor.
+`edit` declares a required `path` and a non-empty structured `edits` array. This extension does not normalize alternate formats: stringified JSON and top-level single-op fields are rejected. Pi's own argument validation may convert a single edit object to a one-element array before the extension sees it. Anchors are `"LINE#HASH"` strings whose hash has exactly `hashLen` characters from uppercase Crockford base32 (digits and A–Z except I, L, O, and U). Line numbers are positive safe integers without leading zeroes. Each `body` element is one logical line without CR or LF. An anchor of a different hash length, such as one copied before a `hashLen` change, is rejected before the file is read, and the error names each such anchor.
 
 | `op` | Required | Optional | Effect |
 | --- | --- | --- | --- |
@@ -136,7 +136,7 @@ Original `foo bar` becomes `bar baz`; inserted text is not searched again. All r
 
 ### Read
 
-Required: non-empty `path`. Optional: positive safe-integer `offset` (1-based; default 1) and positive safe-integer `limit` (default 500 lines). Fractions, zero, negative values, and unknown fields are rejected. Returned text is capped at 256 KiB; oversized rows are not returned as partial editable lines. Files without a final newline are identified in the header.
+Required: non-empty `path`. Optional: positive safe-integer `offset` (1-based; default 1) and positive safe-integer `limit` (default 500 lines). Fractions, zero, negative values, and unknown fields are rejected. Returned text is capped at 256 KiB; oversized rows are not returned as partial editable lines. Files without a final newline are identified in the header. Content delegated to Pi's built-in read is displayed without interpreting source text as hashline anchors.
 
 When the line limit leaves more content, the result reports the shown range and the next `offset`, for example `showing lines 1-500 of 1200; use offset 501 to continue`. `details.pagination` contains 1-based `start`, inclusive `end`, `totalLines`, and `nextOffset`. This applies to default and explicit limits. Reads reaching EOF omit pagination; byte-limited reads retain their byte-truncation notice and metadata.
 

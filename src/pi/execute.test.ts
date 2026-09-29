@@ -1693,3 +1693,38 @@ test("unresolved oversized and out-of-range rows require more context without pa
     }
   });
 });
+
+test("edit rejects impossible checksum characters before accessing the file", async () =>
+  withDir(async (dir) => {
+    const tool = makeEditOverride(dir);
+    for (const char of ["I", "L", "O", "U"]) {
+      await assert.rejects(
+        call(tool, {
+          path: "missing.txt",
+          edits: [{ op: "delete", anchor: `1#${char.repeat(getState().config.hashLen)}` }],
+        }),
+        /Validation failed/,
+      );
+    }
+  }));
+
+test("read renders native content without interpreting anchor-like prefixes", async () =>
+  withDir(async (dir) => {
+    const tool = makeReadOverride(dir);
+    for (const content of ["12#abc│ordinary content", "12#ABCD│ordinary content"]) {
+      for (const suffix of ["\n", "\n\0tail"]) {
+        await writeFile(join(dir, "prefix.txt"), content + suffix);
+        const result = await call(tool, { path: "prefix.txt" });
+        // Round-trip details as persisted session results do before rendering.
+        const rendered = tool.renderResult!(
+          JSON.parse(JSON.stringify(result)),
+          { expanded: true, isPartial: false },
+          stubTheme as Theme,
+          { args: { path: "prefix.txt" }, state: {}, cwd: dir, isError: false } as any,
+        )
+          .render(120)
+          .join("\n");
+        assert.ok(rendered.includes(content), rendered);
+      }
+    }
+  }));
