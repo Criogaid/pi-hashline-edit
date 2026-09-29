@@ -29,6 +29,7 @@ import { resolveIgnoreCase, runRg, runRgPaths, type SearchModes } from "./rg-lin
 import { runRgTextView } from "./rg-text-view.ts";
 import { integerRange, POSITIVE_SAFE_INTEGER } from "./schema.ts";
 import { throwIfCancelled } from "./error-text.ts";
+import { getState } from "./state.ts";
 
 const DEFAULT_LIMIT = 100;
 const GREP_CONTEXT_MAX = 20;
@@ -180,7 +181,7 @@ export function makeGrepOverrideWithBackend(cwd: string, overrides: Partial<Grep
       _onUpdate: Parameters<GrepTool["execute"]>[3],
     ) {
       throwIfCancelled(signal);
-      const anchors = createAnchorFormatter();
+      const anchors = createAnchorFormatter(getState().config.hashLen);
       const warnings: string[] = [];
 
       const patterns = toArray(params.pattern).map(normalizeLineEndings);

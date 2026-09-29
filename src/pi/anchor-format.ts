@@ -1,5 +1,4 @@
 import { computeLineHash, HASH_ALPHABET, HASH_LEN_MIN, HASH_LEN_MAX } from "../core/hash.ts";
-import { getState } from "./state.ts";
 
 function anchorSource(hashQuantifier: string): string {
   return `([1-9][0-9]*)#([${HASH_ALPHABET}]${hashQuantifier})`;
@@ -32,9 +31,8 @@ export function parseHashline(line: string): HashlineRow | null {
   return match ? { lineNo: match[1], content: match[3] } : null;
 }
 
-/** Anchor serialization bound to one hash-length snapshot. */
+/** Anchor serialization bound to a caller-supplied hash length. */
 export interface AnchorFormatter {
-  readonly hashLen: number;
   reference(line: number, hash: string): string;
   token(line: number, content: string): string;
   row(line: number, content: string, displayContent?: string): string;
@@ -45,12 +43,11 @@ export function displayCarriageReturns(text: string): string {
   return text.replace(/\r/g, "␍");
 }
 
-export function createAnchorFormatter(hashLen = getState().config.hashLen): AnchorFormatter {
+export function createAnchorFormatter(hashLen: number): AnchorFormatter {
   const reference = (line: number, hash: string) => `${line}#${hash}`;
   const token = (line: number, content: string) =>
     reference(line, computeLineHash(line, content, hashLen));
   return {
-    hashLen,
     token,
     reference,
     row: (line, content, displayContent = content) =>

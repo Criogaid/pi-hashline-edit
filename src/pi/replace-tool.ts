@@ -37,6 +37,7 @@ import { applyReplacements, buildRegex, type Replacement } from "./replace-apply
 import { unwritableTextReason } from "../core/text.ts";
 import { ACTION_FUSION_GUIDELINES, withThenRunSchema, type ThenRunInput } from "./action-fusion.ts";
 import { createAnchorFormatter, type AnchorFormatter } from "./anchor-format.ts";
+import { getState } from "./state.ts";
 import {
   formatDiffCounts,
   renderMutationCall,
@@ -304,7 +305,7 @@ export function makeReplaceTool(cwd: string, fusion?: ActionFusionExecutor) {
 }
 
 function runReplace(target: MutationTarget, rules: ReplaceParams["replacements"]) {
-  const anchorFormatter = createAnchorFormatter();
+  const anchorFormatter = createAnchorFormatter(getState().config.hashLen);
 
   return runTextMutation("replace", target, async (currentText) => {
     let newText: string;

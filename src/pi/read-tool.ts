@@ -28,6 +28,7 @@ import { canonicalPath } from "./path.ts";
 import { renderToolError } from "./render.ts";
 import { POSITIVE_SAFE_INTEGER } from "./schema.ts";
 import { throwIfCancelled } from "./error-text.ts";
+import { getState } from "./state.ts";
 
 const MAX_LINES = 500;
 const MAX_BYTES = 256 * 1024;
@@ -158,7 +159,7 @@ export function makeReadOverride(
       throwIfCancelled(signal);
       const offset = params.offset ?? 1;
       const limit = params.limit ?? MAX_LINES;
-      const anchors = createAnchorFormatter();
+      const anchors = createAnchorFormatter(getState().config.hashLen);
       const readNative = async () => {
         const result = await builtin.execute(toolCallId, params, signal, onUpdate, ctx);
         return { ...result, details: { ...result.details, nativeRead: true as const } };

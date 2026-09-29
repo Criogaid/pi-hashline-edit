@@ -1811,3 +1811,29 @@ test("loaded configuration controls hash length and recovery radius", async () =
       state.config = previous;
     }
   }));
+
+test("edit verification and returned anchors keep the registered hash length", async () =>
+  withDir(async (dir) => {
+    const state = getState();
+    const previous = state.config;
+    try {
+      state.config = { ...previous, hashLen: 6 };
+      const edit = makeEditOverride(dir);
+      await writeFile(join(dir, "registered.txt"), "before\n");
+      state.config = { ...previous, hashLen: 8 };
+      const result = await call(edit, {
+        path: "registered.txt",
+        edits: [
+          {
+            op: "replace",
+            anchor: `1#${computeLineHash(1, "before", 6)}`,
+            body: ["after"],
+          },
+        ],
+      });
+      assert.equal(anchorLine(result.content[0].text, 1), `1#${computeLineHash(1, "after", 6)}`);
+      assert.equal(await readFile(join(dir, "registered.txt"), "utf8"), "after\n");
+    } finally {
+      state.config = previous;
+    }
+  }));

@@ -466,7 +466,7 @@ function runHashline(target: MutationTarget, editOps: readonly EditOpInput[], ha
     // Recovery reports checksum candidates from nearby lines, then the whole file
     // if needed. Every failed anchor still rejects the batch; callers inspect
     // candidates and resubmit with fresh anchors.
-    const result = applyEdits(currentText, translated, anchorFormatter.hashLen, shiftRadius);
+    const result = applyEdits(currentText, translated, hashLen, shiftRadius);
     if (!result.ok) {
       throw new Error(
         formatFailure(
