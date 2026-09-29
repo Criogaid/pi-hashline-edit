@@ -33,7 +33,12 @@ import { applyEdits } from "../core/index.ts";
 import { splitLines } from "../core/lines.ts";
 import type { Anchor, ApplyFailure, Edit } from "../core/types.ts";
 import { getState } from "./state.ts";
-import { ANCHOR_PATTERN, createAnchorFormatter, type AnchorFormatter } from "./anchor-format.ts";
+import {
+  anchorPattern,
+  createAnchorFormatter,
+  parseAnchorToken,
+  type AnchorFormatter,
+} from "./anchor-format.ts";
 import {
   formatDiffCounts,
   renderMutationCall,
@@ -54,9 +59,7 @@ import {
   type TextMutationDetails,
 } from "./mutation-runner.ts";
 type EditDetails = TextMutationDetails;
-type EditRenderContext = Parameters<
-  NonNullable<ToolDefinition<typeof editSchema>["renderCall"]>
->[2];
+type EditRenderContext = Parameters<NonNullable<ToolDefinition<EditSchema>["renderCall"]>>[2];
 
 /** Keep independent byte budgets for failure details and input-anchor checks. */
 function boundDiagnostic(message: string, notice: string): string {
@@ -64,93 +67,124 @@ function boundDiagnostic(message: string, notice: string): string {
   return bounded.content + (bounded.truncated ? notice : "");
 }
 
-function anchorRef(description: string) {
-  return Type.Optional(Type.String({ pattern: ANCHOR_PATTERN, description }));
-}
-
 /** Parse copied tokens at the boundary; core edits retain numeric anchors. */
 function parseAnchor(value: string): Anchor;
 function parseAnchor(value: string | undefined): Anchor | undefined;
 function parseAnchor(value: string | undefined) {
   if (value === undefined) return undefined;
-  const match = new RegExp(ANCHOR_PATTERN).exec(value);
-  if (!match || !Number.isSafeInteger(Number(match[1]))) {
+  const token = parseAnchorToken(value);
+  if (!token || !Number.isSafeInteger(token.line)) {
     throw new Error(
       'Invalid anchor; copy a complete "LINE#HASH" token from the latest tool result.',
     );
   }
-  return { line: Number(match[1]), hash: match[2] };
+  return token;
 }
 
-const requiredAnchor = Type.String({
-  pattern: ANCHOR_PATTERN,
-  description: 'Copy "LINE#HASH" from the latest read, grep, or mutation result.',
-});
-const optionalEnd = anchorRef(
-  'Inclusive last "LINE#HASH" for replace/delete ranges; omitted means only the anchor line.',
-);
-const bodyLines = Type.Array(Type.String({ pattern: "^[^\\r\\n]*$" }), {
-  description: "New content lines; each element must be one logical line without CR/LF.",
-});
-const editOpSchema = Type.Union([
-  Type.Object(
-    {
-      op: Type.Literal("replace", { description: "Replace the cited line(s) with `body`." }),
-      anchor: requiredAnchor,
-      end: optionalEnd,
-      body: bodyLines,
-    },
-    { additionalProperties: false },
-  ),
-  Type.Object(
-    {
-      op: Type.Literal("delete", { description: "Delete the cited line(s)." }),
-      anchor: requiredAnchor,
-      end: optionalEnd,
-    },
-    { additionalProperties: false },
-  ),
-  Type.Object(
-    {
-      op: Type.Union([Type.Literal("insert_after"), Type.Literal("insert_before")]),
-      anchor: requiredAnchor,
-      body: bodyLines,
-    },
-    { additionalProperties: false },
-  ),
-  Type.Object(
-    {
-      op: Type.Union([Type.Literal("append"), Type.Literal("prepend")]),
-      body: bodyLines,
-    },
-    { additionalProperties: false },
-  ),
-]);
-const editSchema = Type.Object(
-  {
-    path: Type.String({
-      minLength: 1,
-      description: "Path to the file to edit (relative or absolute)",
-    }),
-    edits: Type.Array(editOpSchema, {
-      minItems: 1,
+/** Edit parameters; anchors must carry exactly `hashLen` hash characters. */
+function buildEditSchema(hashLen: number) {
+  const pattern = anchorPattern(hashLen);
+  const requiredAnchor = Type.String({
+    pattern,
+    description: 'Copy "LINE#HASH" from the latest read, grep, or mutation result.',
+  });
+  const optionalEnd = Type.Optional(
+    Type.String({
+      pattern,
       description:
-        "Hashline ops; ops requiring anchors use LINE#HASH from your latest read, grep, or mutation result (append/prepend omit anchors)",
+        'Inclusive last "LINE#HASH" for replace/delete ranges; omitted means only the anchor line.',
     }),
-  },
-  { additionalProperties: false },
-);
+  );
+  const bodyLines = Type.Array(Type.String({ pattern: "^[^\\r\\n]*$" }), {
+    description: "New content lines; each element must be one logical line without CR/LF.",
+  });
+  const editOpSchema = Type.Union([
+    Type.Object(
+      {
+        op: Type.Literal("replace", { description: "Replace the cited line(s) with `body`." }),
+        anchor: requiredAnchor,
+        end: optionalEnd,
+        body: bodyLines,
+      },
+      { additionalProperties: false },
+    ),
+    Type.Object(
+      {
+        op: Type.Literal("delete", { description: "Delete the cited line(s)." }),
+        anchor: requiredAnchor,
+        end: optionalEnd,
+      },
+      { additionalProperties: false },
+    ),
+    Type.Object(
+      {
+        op: Type.Union([Type.Literal("insert_after"), Type.Literal("insert_before")]),
+        anchor: requiredAnchor,
+        body: bodyLines,
+      },
+      { additionalProperties: false },
+    ),
+    Type.Object(
+      {
+        op: Type.Union([Type.Literal("append"), Type.Literal("prepend")]),
+        body: bodyLines,
+      },
+      { additionalProperties: false },
+    ),
+  ]);
+  return Type.Object(
+    {
+      path: Type.String({
+        minLength: 1,
+        description: "Path to the file to edit (relative or absolute)",
+      }),
+      edits: Type.Array(editOpSchema, {
+        minItems: 1,
+        description: `Hashline ops; ops requiring anchors use LINE#HASH from your latest read, grep, or mutation result, with exactly ${hashLen} hash characters (append/prepend omit anchors)`,
+      }),
+    },
+    { additionalProperties: false },
+  );
+}
+type EditSchema = ReturnType<typeof buildEditSchema>;
 
-function createEditSchema(actionFusion: boolean) {
+function createEditSchema(actionFusion: boolean, hashLen: number) {
   return withThenRunSchema(
-    editSchema,
+    buildEditSchema(hashLen),
     "Command to run after the edit succeeds; failure does not roll back the edit.",
     actionFusion,
   );
 }
-type EditParams = Static<typeof editSchema> & { then_run?: ThenRunInput };
+type EditParams = Static<EditSchema> & { then_run?: ThenRunInput };
 
-type EditOpInput = Static<typeof editOpSchema>;
+type EditOpInput = Static<EditSchema>["edits"][number];
+
+/**
+ * Name anchors whose hash length differs from `hashLen` before schema validation,
+ * which would otherwise report only a bare pattern mismatch. Arguments are never changed.
+ */
+function checkAnchorHashLength(args: unknown, hashLen: number): void {
+  const edits = (args as { edits?: unknown } | null)?.edits;
+  if (!Array.isArray(edits)) return;
+  const mismatches: string[] = [];
+  edits.forEach((op, index) => {
+    for (const field of ["anchor", "end"] as const) {
+      const value = (op as Record<string, unknown> | null)?.[field];
+      if (typeof value !== "string") continue;
+      const token = parseAnchorToken(value);
+      if (token && token.hash.length !== hashLen) {
+        mismatches.push(
+          `edits[${index}].${field} ${value} has ${token.hash.length} hash characters`,
+        );
+      }
+    }
+  });
+  if (mismatches.length) {
+    throw new Error(
+      `Anchor hash length mismatch: ${mismatches.join("; ")}, but hashLen is ${hashLen}. Anchors from a different hashLen setting cannot be verified; read or grep the file for current anchors.`,
+    );
+  }
+}
 
 /** Format failure mappings and complete unique-candidate rows within the detail budget. */
 function formatFailureDetails(
@@ -345,7 +379,9 @@ function editHeader(args: EditParams, theme: Theme, counts?: DiffCounts): string
 }
 
 export function makeEditOverride(cwd: string, fusion?: ActionFusionExecutor) {
-  const parameters = createEditSchema(fusion !== undefined);
+  // Schema, argument preparation, and verification share the hash length registered with the tool.
+  const { hashLen } = getState().config;
+  const parameters = createEditSchema(fusion !== undefined, hashLen);
 
   return {
     name: "edit" as const,
@@ -361,6 +397,10 @@ export function makeEditOverride(cwd: string, fusion?: ActionFusionExecutor) {
       ...(fusion ? ACTION_FUSION_GUIDELINES : []),
     ],
     parameters,
+    prepareArguments(args: unknown): EditParams {
+      checkAnchorHashLength(args, hashLen);
+      return args as EditParams;
+    },
     renderShell: "default" as const,
 
     renderCall(args: EditParams, theme: Theme, context: EditRenderContext) {
@@ -398,7 +438,7 @@ export function makeEditOverride(cwd: string, fusion?: ActionFusionExecutor) {
           parameters,
           fusion,
           reportsAnchors: true,
-          run: (mutationParams, target) => runHashline(target, mutationParams.edits),
+          run: (mutationParams, target) => runHashline(target, mutationParams.edits, hashLen),
         },
         { toolCallId, params, signal, onUpdate, ctx },
       );
@@ -406,8 +446,8 @@ export function makeEditOverride(cwd: string, fusion?: ActionFusionExecutor) {
   };
 }
 
-function runHashline(target: MutationTarget, editOps: readonly EditOpInput[]) {
-  const anchorFormatter = createAnchorFormatter();
+function runHashline(target: MutationTarget, editOps: readonly EditOpInput[], hashLen: number) {
+  const anchorFormatter = createAnchorFormatter(hashLen);
   const { shiftRadius } = getState().config;
 
   return runTextMutation("edit", target, (currentText) => {

@@ -1,7 +1,18 @@
-import { computeLineHash, HASH_LEN_MAX, HASH_LEN_MIN } from "../core/hash.ts";
+import { computeLineHash } from "../core/hash.ts";
 import { getState } from "./state.ts";
 
-export const ANCHOR_PATTERN = `^([1-9][0-9]*)#([0-9A-Z]{${HASH_LEN_MIN},${HASH_LEN_MAX}})$`;
+/** Schema pattern for a `LINE#HASH` anchor whose hash has exactly `hashLen` characters. */
+export function anchorPattern(hashLen: number): string {
+  return `^([1-9][0-9]*)#([0-9A-Z]{${hashLen}})$`;
+}
+
+const ANCHOR_TOKEN = /^([1-9][0-9]*)#([0-9A-Z]+)$/;
+
+/** Split a `LINE#HASH` token of any hash length; undefined when the shape is wrong. */
+export function parseAnchorToken(value: string): { line: number; hash: string } | undefined {
+  const match = ANCHOR_TOKEN.exec(value);
+  return match ? { line: Number(match[1]), hash: match[2]! } : undefined;
+}
 
 /** Anchor serialization bound to one hash-length snapshot. */
 export interface AnchorFormatter {

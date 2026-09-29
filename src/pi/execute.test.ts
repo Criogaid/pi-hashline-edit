@@ -282,7 +282,7 @@ test("edit execute: malformed op (replace without body) → throws", async () =>
     await assert.rejects(
       call(makeEditOverride(dir), {
         path: "f.txt",
-        edits: [{ op: "replace", anchor: "1#XX" }],
+        edits: [{ op: "replace", anchor: "1#XXXX" }],
       }),
       /body/i,
     );
@@ -792,7 +792,7 @@ test("invalid anchors and conflicting fields fail before changing the file", asy
     const anchor = h(original, 1);
     const invalid = [
       { op: "replace", anchor: { line: 1, hash: anchor.split("#")[1] }, body: ["changed"] },
-      ...["0#AB", "-1#AB", "1.5#AB", "1#", "1#ab", "1#AB│a", "9007199254740993#AB"].map(
+      ...["0#ABCD", "-1#ABCD", "1.5#ABCD", "1#", "1#abcd", "1#ABCD│a", "9007199254740993#ABCD"].map(
         (anchor) => ({ op: "replace", anchor, body: ["changed"] }),
       ),
       { op: "insert_after", anchor, end: anchor, body: ["changed"] },
@@ -1262,12 +1262,12 @@ test("schema-invalid bodies omit anchor checks; subsequent retries revalidate", 
         path: file,
         edits: [
           { op: "replace", anchor: stable, body: ["A"] },
-          { op: "delete", anchor: h(before, 2), end: "3#ZZ" },
+          { op: "delete", anchor: h(before, 2), end: "3#ZZZZ" },
         ],
       }),
       (error: Error) => {
         assert.ok(error.message.includes(`op 0 / anchor / ${stable} / matched`));
-        assert.match(error.message, /op 1 \/ end \/ 3#ZZ \/ mismatched/);
+        assert.match(error.message, /op 1 \/ end \/ 3#ZZZZ \/ mismatched/);
         assert.match(error.message, /Anchor checks only; retries revalidate/);
         return true;
       },
@@ -1279,7 +1279,7 @@ test("schema-invalid bodies omit anchor checks; subsequent retries revalidate", 
         path: file,
         edits: [
           { op: "replace", anchor: stable, body: ["A"] },
-          { op: "replace", anchor: "3#ZZ", body: ["B"] },
+          { op: "replace", anchor: "3#ZZZZ", body: ["B"] },
         ],
       }),
       (error: Error) => {
@@ -1521,12 +1521,44 @@ test("edit execute accepts only structured edit arrays", async () =>
       { path: "f.txt", edits: JSON.stringify([{ op: "replace", anchor, body: ["SECOND"] }]) },
       { path: "f.txt", op: "replace", anchor, body: ["SECOND"] },
     ]) {
+      // prepareArguments only explains wrong hash lengths; it never rewrites arguments.
+      assert.equal(edit.prepareArguments(alternate), alternate);
       await assert.rejects(call(edit, alternate), /Validation failed/);
       assert.equal(await readFile(file, "utf8"), "first\nsecond\n");
     }
-    assert.equal("prepareArguments" in edit, false);
     await call(edit, { path: "f.txt", edits: [{ op: "replace", anchor, body: ["SECOND"] }] });
     assert.equal(await readFile(file, "utf8"), "first\nSECOND\n");
+  }));
+
+test("edit names anchors whose hash length differs from the registered hashLen", async () =>
+  withDir(async (dir) => {
+    const text = "first\nsecond\n";
+    const file = join(dir, "f.txt");
+    await writeFile(file, text);
+    const { hashLen } = getState().config;
+    const edit = makeEditOverride(dir);
+    const anchor = h(text, 1);
+    const short = h(text, 2).slice(0, -2);
+    const args = { path: "f.txt", edits: [{ op: "replace", anchor, end: short, body: ["x"] }] };
+
+    assert.throws(
+      () => edit.prepareArguments(args),
+      new RegExp(
+        `^Error: Anchor hash length mismatch: edits\\[0\\]\\.end ${short} has ${hashLen - 2} hash characters, but hashLen is ${hashLen}\\.`,
+      ),
+    );
+    // The schema itself also admits only the registered length.
+    assert.throws(
+      () =>
+        validateToolArguments(edit as any, {
+          type: "toolCall",
+          id: "short-anchor",
+          name: "edit",
+          arguments: args as any,
+        }),
+      /Validation failed/,
+    );
+    assert.equal(await readFile(file, "utf8"), text);
   }));
 
 test("Pi-converted single-object edits execute as a canonical array", async () =>

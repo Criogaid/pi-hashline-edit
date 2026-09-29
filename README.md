@@ -74,7 +74,7 @@ All text inspection and matching uses one logical representation: CRLF boundarie
 
 ### Edit operations
 
-`edit` declares a required `path` and a non-empty structured `edits` array. This extension does not normalize alternate formats: stringified JSON and top-level single-op fields are rejected. Pi may convert a single edit object to a one-element array before schema validation; a direct `execute` call without Pi's conversion rejects that object. Anchors are `"LINE#HASH"` strings; each `body` element is one logical line without CR or LF.
+`edit` declares a required `path` and a non-empty structured `edits` array. This extension does not normalize alternate formats: stringified JSON and top-level single-op fields are rejected. Pi may convert a single edit object to a one-element array before schema validation; a direct `execute` call without Pi's conversion rejects that object. Anchors are `"LINE#HASH"` strings whose hash has exactly `hashLen` characters; each `body` element is one logical line without CR or LF. An anchor of a different hash length, such as one copied before a `hashLen` change, is rejected before the file is read, and the error names each such anchor.
 
 | `op` | Required | Optional | Effect |
 | --- | --- | --- | --- |
@@ -214,7 +214,7 @@ Add `hashlineEdit` to Pi's global settings (`~/.pi/agent/settings.json` by defau
 | --- | --- | --- |
 | `enabled` | `true` | Enable all five tools as one unit. Set `false` to restore built-in tools. |
 | `actionFusion` | `true` | Expose `then_run` on mutation tools. Set `false` to disable command support. |
-| `hashLen` | `4` | Integer checksum length, 2–8 characters. |
+| `hashLen` | `4` | Integer checksum length, 2–8 characters. `edit` accepts only anchors of this length; anchors produced under another setting must be read again. |
 | `shiftRadius` | `15` | Integer first-pass recovery-search radius, 0–100 lines. With no local candidates, recovery searches the rest of the file; `0` disables both searches. |
 
 The project's `hashlineEdit` object replaces the global object as a whole; missing or invalid fields use defaults. Reload Pi after changes.
