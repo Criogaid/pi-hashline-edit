@@ -145,7 +145,7 @@ When the line limit leaves more content, the result reports the shown range and 
 | Parameter | Default | Meaning |
 | --- | --- | --- |
 | `pattern` | Required | Non-empty string (including whitespace-only text) or array of non-empty strings; arrays match any pattern (OR). When `ignoreCase` is omitted, smart-case is resolved for the entire query, not separately for each array item. |
-| `path` | Current directory | One non-empty existing file or directory, or a non-empty array of search roots. Wildcards are not expanded; use `glob` to filter filenames. |
+| `path` | Current directory | Omit `path` to search the working directory. If supplied, it must be one non-empty existing file or directory, or a non-empty array of search roots; `""` and `[]` are invalid. Wildcards are not expanded; use `glob` to filter filenames. |
 | `glob` | None | One non-empty glob or a non-empty ordered array; prefix exclusions with `!`. |
 | `literal` | Automatic | Set `true` for literal code text, including regex punctuation such as `pi.on(`; this does not force case-sensitive matching. Set `false` for intentional ripgrep Rust regex. Automatic mode tries regex for metacharacters; an invalid single-pattern query falls back to searching the **entire string** literally and reports the fallback. Invalid pattern arrays fail instead of changing their meaning; invalid regex with `literal: false` fails. |
 | `ignoreCase` | Smart-case | Query-level case override: `true` ignores case; `false` distinguishes case. Inline regex case flags may override either setting. |

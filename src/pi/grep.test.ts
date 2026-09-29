@@ -106,17 +106,18 @@ test("grep guidance covers literal, case, and multiline searches", () => {
   );
   assert.match(JSON.stringify(tool.parameters.properties.pattern), /use an array for alternatives/);
   assert.match(JSON.stringify(tool.parameters.properties.literal), /entire input literally/);
-  assert.match(
-    JSON.stringify(tool.parameters.properties.path),
-    /existing file or directory.*wildcards/,
-  );
+  const pathDescription = JSON.stringify(tool.parameters.properties.path);
+  assert.match(pathDescription, /Omit path.*working directory/);
+  assert.match(pathDescription, /empty strings and arrays are invalid/);
+  assert.match(pathDescription, /existing file or directory.*wildcards/);
   assert.match(JSON.stringify(tool.parameters.properties.glob), /filename.*wildcard/);
   assert.match(JSON.stringify(tool.parameters.properties.ignoreCase), /Inline regex case flags/);
   assert.match(JSON.stringify(tool.parameters.properties.multiline), /physical lines.*Context/);
   assert.ok(tool.promptGuidelines.some((rule: string) => rule.includes("multiline:true")));
   assert.ok(
     tool.promptGuidelines.some(
-      (rule: string) => rule.includes("in path") && rule.includes("in glob"),
+      (rule: string) =>
+        rule.includes("Omit path") && rule.includes("empty path") && rule.includes("glob"),
     ),
   );
 });

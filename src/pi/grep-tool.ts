@@ -149,7 +149,7 @@ const grepOverrideSchema = Type.Object(
         [Type.String({ minLength: 1 }), Type.Array(Type.String({ minLength: 1 }), { minItems: 1 })],
         {
           description:
-            "Search an existing file or directory (string or array; default: current directory). Path wildcards are not expanded; use glob to filter filenames.",
+            "Omit path to search the working directory. When supplied, use a non-empty existing file or directory, or a non-empty array of them; empty strings and arrays are invalid. Path wildcards are not expanded; use glob to filter filenames.",
         },
       ),
     ),
@@ -690,7 +690,7 @@ export function makeGrepOverrideWithBackend(cwd: string, overrides: Partial<Grep
     promptSnippet: "Search file contents with ripgrep",
     promptGuidelines: [
       "Prefer grep for file-content searches.",
-      "Use existing files or directories in path; put filename wildcards in glob.",
+      "Omit path for the working directory; never pass an empty path. Use glob for filename wildcards.",
       "Use literal:true for code containing regex punctuation; use literal:false only for intentional regex.",
       "Use a pattern array for OR alternatives.",
       "Copy grep anchors directly into edit; inspect the full line before rewriting from a partial preview.",
