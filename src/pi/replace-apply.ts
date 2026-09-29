@@ -6,6 +6,7 @@ import {
   restoreLineEndings,
 } from "../core/lines.ts";
 import { findSortedRangeConflict } from "../core/ranges.ts";
+import { errorMessage } from "./error-text.ts";
 
 export interface Replacement {
   find: string;
@@ -24,7 +25,7 @@ function buildRegex(find: string, isRegex: boolean, flagsRaw: string | undefined
   try {
     return new RegExp(source, flagStr);
   } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
+    const msg = errorMessage(e);
     throw new Error(`invalid regex /${source}/${flagStr}: ${msg}`);
   }
 }
@@ -82,7 +83,7 @@ export function applyReplacements(
           `no matches for ${rule.regex ? `/${rule.find}/` : JSON.stringify(rule.find)}. Verify the target text with read or grep; check case sensitivity or regex flags if applicable.`,
         );
     } catch (error) {
-      throw new Error(`rule ${index}: ${error instanceof Error ? error.message : String(error)}`);
+      throw new Error(`rule ${index}: ${errorMessage(error)}`);
     }
   }
   changes.sort((a, b) => a.start - b.start || a.end - b.end);

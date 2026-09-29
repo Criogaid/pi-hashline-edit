@@ -50,6 +50,7 @@ import {
   type MutationTarget,
   type TextMutationDetails,
 } from "./mutation-runner.ts";
+import { errorMessage } from "./error-text.ts";
 type ReplaceDetails = TextMutationDetails;
 type ReplaceRenderContext = Parameters<
   NonNullable<ToolDefinition<typeof replaceSchema>["renderCall"]>
@@ -277,9 +278,7 @@ function runReplace(target: MutationTarget, rules: ReplaceParams["replacements"]
         ? await applyRegexReplacements(currentText, rules, target.signal)
         : applyReplacements(currentText, rules));
     } catch (error) {
-      throw new Error(
-        `Replace ${target.displayPath}: ${error instanceof Error ? error.message : String(error)}`,
-      );
+      throw new Error(`Replace ${target.displayPath}: ${errorMessage(error)}`);
     }
     const changed = newText !== currentText;
 

@@ -5,6 +5,7 @@ import { createBashToolDefinition, type ExtensionContext } from "@earendil-works
 import { Type, type Static, type TObject, type TProperties } from "typebox";
 import { fileRevision, FileMutationError, type PublicationStatus } from "./file-commit.ts";
 import { finalizeMutationResult, observedFreshness } from "./mutation-result.ts";
+import { errorMessage } from "./error-text.ts";
 
 export const THEN_RUN_SUCCEEDED = "[then_run:succeeded]";
 export const THEN_RUN_FAILED = "[then_run:failed]";
@@ -101,10 +102,6 @@ function staleAnchorNotice(): string {
   return `${THEN_RUN_STALE} Pre-command anchors are omitted: target freshness is unconfirmed. Re-read before further edits.`;
 }
 
-function errorText(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
 async function readFreshness(path: string, baseline: string): Promise<Freshness> {
   try {
     return (await fileRevision(path)) === baseline ? "unchanged" : "changed";
@@ -124,7 +121,7 @@ async function assertUnchangedBeforeCommand(path: string, baseline: string): Pro
       throw new Error("target content changed after the fused mutation");
     }
   } catch (error) {
-    throw new Error(`${THEN_RUN_SKIPPED} ${errorText(error)}; the command was not run.`);
+    throw new Error(`${THEN_RUN_SKIPPED} ${errorMessage(error)}; the command was not run.`);
   }
 }
 
@@ -156,7 +153,7 @@ export class ActionFusionError extends Error {
             ? "No file changes were published."
             : "File state is uncertain.";
       const outcome = `${message} ${state.command === "skipped" || state.command === "cancelled" ? THEN_RUN_SKIPPED : state.command === "succeeded" ? THEN_RUN_SUCCEEDED : THEN_RUN_FAILED}\n${fileState} Command ${state.command}.`;
-      const diagnostic = options?.cause === undefined ? "" : errorText(options.cause);
+      const diagnostic = options?.cause === undefined ? "" : errorMessage(options.cause);
       // Pi serializes only the message. Put the mutation's own error first for its card.
       super(
         (options?.mutationFailure ? [diagnostic, outcome] : [outcome, diagnostic])
@@ -187,7 +184,7 @@ function mutationPublishedRevision<TDetails>(result: MutationResult<TDetails>): 
 
 function commandStatus(error: unknown, signal: AbortSignal | undefined): CommandStatus {
   if (signal?.aborted) return "cancelled";
-  return /timeout|timed out/i.test(errorText(error)) ? "timeout" : "failed";
+  return /timeout|timed out/i.test(errorMessage(error)) ? "timeout" : "failed";
 }
 
 async function defaultCommandRunner(
@@ -316,7 +313,7 @@ export function createActionFusionExecutor(
         try {
           notify();
         } catch (error) {
-          progressFailure ??= errorText(error);
+          progressFailure ??= errorMessage(error);
         }
       }
     };
@@ -423,7 +420,7 @@ export function createActionFusionExecutor(
         throw new ActionFusionError(
           "mutation completed; then_run did not complete successfully",
           { publication, command: commandStatus(commandError, signal), freshness },
-          { cause: commandError, commandOutput: errorText(commandError) },
+          { cause: commandError, commandOutput: errorMessage(commandError) },
         );
       }
 
@@ -494,7 +491,7 @@ export function createActionFusionExecutor(
           } as MutationResult<TDetails>;
         }
         {
-          const parts: string[] = [errorText(error)];
+          const parts: string[] = [errorMessage(error)];
           if (error instanceof ActionFusionError && error.publication !== "NOT_PUBLISHED")
             parts.push("Re-read before retrying.");
           if (progressFailure) parts.push(`Progress reporting failed: ${progressFailure}`);

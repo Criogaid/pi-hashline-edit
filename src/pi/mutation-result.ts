@@ -3,6 +3,7 @@ import { FileMutationError, type MutationVersions, type PublicationStatus } from
 import { generateDiffString, generateUnifiedPatch } from "@earendil-works/pi-coding-agent";
 import { displayCarriageReturns, type AnchorFormatter } from "./anchor-format.ts";
 import { normalizeLineEndings } from "../core/lines.ts";
+import { errorMessage } from "./error-text.ts";
 
 /** Keep byte-faithful diff/patch data and a separate preview of the shared logical text. */
 export function generateMutationDetails(
@@ -41,7 +42,7 @@ export function postProcessMutation<T>(
     throw new FileMutationError(
       "post_process",
       publication,
-      `${tool} result generation failed; publication=${publication}: ${error instanceof Error ? error.message : String(error)}`,
+      `${tool} result generation failed; publication=${publication}: ${errorMessage(error)}`,
       { cause: error },
     );
   }
@@ -92,7 +93,7 @@ export function finalizeMutationResult<T>(
     throw new FileMutationError(
       "post_process",
       publication,
-      `Result generation failed; publication=${publication}. Re-read before retrying: ${error instanceof Error ? error.message : String(error)}`,
+      `Result generation failed; publication=${publication}. Re-read before retrying: ${errorMessage(error)}`,
       { cause: error },
     );
   }

@@ -14,6 +14,7 @@ import {
 import { dirname, join } from "node:path";
 import { createHash } from "node:crypto";
 import { decodeEditableText, INVALID_UNICODE, UNSUPPORTED_TEXT_NUL } from "../core/text.ts";
+import { errorMessage } from "./error-text.ts";
 
 export type PublicationStatus = "NOT_PUBLISHED" | "PUBLISHED" | "UNKNOWN";
 export type CommitMode = "create" | "overwrite";
@@ -68,9 +69,7 @@ export async function readEditableSnapshot(path: string, displayPath: string) {
     const bytes = await readFile(path);
     return { text: decodeEditableText(bytes), baseRevision: byteRevision(bytes) };
   } catch (error) {
-    throw new Error(
-      `Error reading ${displayPath}: ${error instanceof Error ? error.message : String(error)}`,
-    );
+    throw new Error(`Error reading ${displayPath}: ${errorMessage(error)}`);
   }
 }
 
@@ -94,7 +93,7 @@ export async function commitReplacement(
     throw new FileMutationError(
       "commit",
       "UNKNOWN",
-      `Error writing ${displayPath}: ${error instanceof Error ? error.message : String(error)}`,
+      `Error writing ${displayPath}: ${errorMessage(error)}`,
       { cause: error },
     );
   }
@@ -126,10 +125,7 @@ async function inspectTarget(path: string, knownBeforeRevision?: string): Promis
     entry = await lstat(path);
   } catch (error) {
     if (errorCode(error) === "ENOENT") return { existed: false, publishPath: path };
-    throw prepareError(
-      `unable to inspect target: ${error instanceof Error ? error.message : String(error)}`,
-      error,
-    );
+    throw prepareError(`unable to inspect target: ${errorMessage(error)}`, error);
   }
 
   let publishPath = path;
@@ -137,10 +133,7 @@ async function inspectTarget(path: string, knownBeforeRevision?: string): Promis
     try {
       publishPath = await realpath(path);
     } catch (error) {
-      throw prepareError(
-        `target symlink cannot be resolved: ${error instanceof Error ? error.message : String(error)}`,
-        error,
-      );
+      throw prepareError(`target symlink cannot be resolved: ${errorMessage(error)}`, error);
     }
   }
 
@@ -148,10 +141,7 @@ async function inspectTarget(path: string, knownBeforeRevision?: string): Promis
   try {
     target = await stat(publishPath);
   } catch (error) {
-    throw prepareError(
-      `unable to inspect target: ${error instanceof Error ? error.message : String(error)}`,
-      error,
-    );
+    throw prepareError(`unable to inspect target: ${errorMessage(error)}`, error);
   }
   if (!target.isFile()) throw prepareError("target is not a regular file");
   if (target.nlink > 1)
@@ -164,10 +154,7 @@ async function inspectTarget(path: string, knownBeforeRevision?: string): Promis
     try {
       beforeRevision = await fileRevision(publishPath);
     } catch (error) {
-      throw prepareError(
-        `unable to read target revision: ${error instanceof Error ? error.message : String(error)}`,
-        error,
-      );
+      throw prepareError(`unable to read target revision: ${errorMessage(error)}`, error);
     }
   }
   return {
@@ -216,7 +203,7 @@ async function publishCreate(
     throw new FileMutationError(
       "commit",
       "UNKNOWN",
-      `unable to publish new target: ${error instanceof Error ? error.message : String(error)}`,
+      `unable to publish new target: ${errorMessage(error)}`,
       { cause: error },
     );
   }
@@ -235,7 +222,7 @@ async function publishReplace(
     throw new FileMutationError(
       "commit",
       "UNKNOWN",
-      `unable to publish replacement: ${error instanceof Error ? error.message : String(error)}`,
+      `unable to publish replacement: ${errorMessage(error)}`,
       { cause: error },
     );
   }
@@ -294,10 +281,7 @@ export async function commitFile(
       } catch (error) {
         if (options.signal?.aborted)
           throw prepareError("mutation was cancelled before publication", error);
-        throw prepareError(
-          `unable to read target revision: ${error instanceof Error ? error.message : String(error)}`,
-          error,
-        );
+        throw prepareError(`unable to read target revision: ${errorMessage(error)}`, error);
       }
       if (options.expectedRevision !== undefined && currentRevision !== options.expectedRevision) {
         throw prepareError("expectedRevision does not match the current file");
@@ -327,7 +311,7 @@ export async function commitFile(
     throw new FileMutationError(
       "commit",
       "NOT_PUBLISHED",
-      `unable to prepare temporary publication area: ${error instanceof Error ? error.message : String(error)}`,
+      `unable to prepare temporary publication area: ${errorMessage(error)}`,
       { cause: error },
     );
   }
@@ -341,10 +325,7 @@ export async function commitFile(
       try {
         currentRevision = await fileRevision(publishPath);
       } catch (error) {
-        throw prepareError(
-          `unable to recheck target revision: ${error instanceof Error ? error.message : String(error)}`,
-          error,
-        );
+        throw prepareError(`unable to recheck target revision: ${errorMessage(error)}`, error);
       }
       if (currentRevision !== options.expectedRevision)
         throw prepareError("expectedRevision changed before publication");
@@ -366,7 +347,7 @@ export async function commitFile(
       throw new FileMutationError(
         "post_process",
         "PUBLISHED",
-        `target was published but final revision could not be read: ${error instanceof Error ? error.message : String(error)}`,
+        `target was published but final revision could not be read: ${errorMessage(error)}`,
         { cause: error },
       );
     }
@@ -377,13 +358,13 @@ export async function commitFile(
       throw new FileMutationError(
         "post_process",
         "PUBLISHED",
-        `target was published but post-publication processing failed: ${error instanceof Error ? error.message : String(error)}`,
+        `target was published but post-publication processing failed: ${errorMessage(error)}`,
         { cause: error },
       );
     throw new FileMutationError(
       "commit",
       "NOT_PUBLISHED",
-      `unable to prepare or publish target: ${error instanceof Error ? error.message : String(error)}`,
+      `unable to prepare or publish target: ${errorMessage(error)}`,
       { cause: error },
     );
   } finally {
@@ -397,7 +378,7 @@ export async function commitFile(
       throw new FileMutationError(
         "post_process",
         "PUBLISHED",
-        `target was published but temporary cleanup failed: ${error instanceof Error ? error.message : String(error)}`,
+        `target was published but temporary cleanup failed: ${errorMessage(error)}`,
         {
           cause:
             failure === undefined
