@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { validateToolArguments } from "@earendil-works/pi-ai";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { makeEditOverride } from "./edit-tool.ts";
 import { makeReplaceTool } from "./replace-tool.ts";
@@ -43,6 +44,49 @@ test("mutation tools expose Fusion schemas and guidance when supplied an executo
         ACTION_FUSION_GUIDELINES.includes(line),
       ),
     );
+  }
+});
+
+test("then_run schemas reject invalid commands, unknown keys, and excessive timeouts", async () => {
+  const dir = await tempDir();
+  try {
+    for (const makeTool of [makeEditOverride, makeReplaceTool, makeWriteOverride]) {
+      const tool = makeTool(dir, createActionFusionExecutor());
+      const path = `${tool.name}.txt`;
+      await writeFile(join(dir, path), "old\n");
+      const mutation =
+        tool.name === "edit"
+          ? { edits: [{ op: "append", body: ["new"] }] }
+          : tool.name === "replace"
+            ? { replacements: [{ find: "old", replace: "new" }] }
+            : { content: "new\n" };
+      for (const then_run of [
+        { command: "   " },
+        { command: "echo ok", timeot: 1 },
+        { command: "echo ok", timeout: 2_147_483.648 },
+      ]) {
+        const args = { path, ...mutation, then_run };
+        assert.throws(
+          () =>
+            validateToolArguments(tool as any, {
+              type: "toolCall",
+              id: "invalid-then-run",
+              name: tool.name,
+              arguments: args as unknown as Parameters<
+                typeof validateToolArguments
+              >[1]["arguments"],
+            }),
+          /Validation failed/,
+        );
+        await assert.rejects(
+          (tool as any).execute("invalid-then-run", args, undefined, undefined, ctx(dir)),
+          /then_run|timeout|not supported/i,
+        );
+        assert.equal(await readFile(join(dir, path), "utf8"), "old\n");
+      }
+    }
+  } finally {
+    await rm(dir, { recursive: true, force: true });
   }
 });
 

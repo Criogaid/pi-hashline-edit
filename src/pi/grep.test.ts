@@ -196,6 +196,41 @@ test("grep limit accepts only positive integers through schema and direct execut
   });
 });
 
+test("grep schema rejects empty search inputs and fractional context", async () =>
+  withDir(async (dir) => {
+    const fake = fakeBackend();
+    const tool = makeGrepOverrideWithBackend(dir, fake.backend);
+    const invalidArgs: Parameters<typeof validateToolArguments>[1]["arguments"][] = [
+      { pattern: "" },
+      { pattern: [] },
+      { pattern: ["ok", ""] },
+      { pattern: "needle", path: "" },
+      { pattern: "needle", path: [] },
+      { pattern: "needle", glob: "" },
+      { pattern: "needle", glob: [] },
+      { pattern: "needle", context: 1.5 },
+      { pattern: "needle", limit: Number.MAX_SAFE_INTEGER + 1 },
+    ];
+    for (const args of invalidArgs) {
+      assert.throws(
+        () =>
+          validateToolArguments(tool, {
+            type: "toolCall",
+            id: "invalid",
+            name: "grep",
+            arguments: args,
+          }),
+        /Validation failed/,
+        JSON.stringify(args),
+      );
+    }
+    await assert.rejects(
+      call(tool, { pattern: "needle", context: 1.5 }),
+      /context must be an integer/,
+    );
+    assert.equal(fake.calls.length, 0);
+  }));
+
 test("case and multiline options select only their matching ripgrep flags", async () => {
   await withDir(async (dir) => {
     const file = join(dir, "fixture.ts");
@@ -461,10 +496,11 @@ test("context preserves logical CRLF anchors around a matched line", async () =>
 
       const tool = makeGrepOverrideWithBackend(dir, fake.backend);
       const contextSchema: any = tool.parameters.properties.context;
-      assert.equal(contextSchema.type, "integer");
+      assert.equal(contextSchema.type, "number");
       assert.equal(contextSchema.minimum, 0);
       assert.equal(contextSchema.maximum, 20);
-      const result = await call(tool, { pattern: "beta$", context: 1.9 });
+      assert.equal(contextSchema.multipleOf, 1);
+      const result = await call(tool, { pattern: "beta$", context: 1 });
       assert.equal(
         text(result),
         [

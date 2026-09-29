@@ -68,6 +68,7 @@ type ReplaceRenderContext = Parameters<
 const replacementSchema = Type.Object(
   {
     find: Type.String({
+      minLength: 1,
       description:
         "Text or JavaScript regex to find in the shared LF view. Actual CRLF in the file and query normalizes to LF; standalone CR stays content. In literal mode (default), an actual LF matches a line boundary, while backslash followed by n matches those two source characters. In regex mode, \\n in the pattern matches LF.",
     }),
@@ -80,6 +81,7 @@ const replacementSchema = Type.Object(
     ),
     flags: Type.Optional(
       Type.String({
+        pattern: "^[gimsuyd]*$",
         description:
           "Regex flags in either mode; g is always added. For regex patterns, use 'm' to make ^ and $ match line boundaries.",
       }),
@@ -91,7 +93,10 @@ type Replacement = Static<typeof replacementSchema>;
 
 const replaceSchema = Type.Object(
   {
-    path: Type.String({ description: "Path to the file to edit (relative or absolute)" }),
+    path: Type.String({
+      minLength: 1,
+      description: "Path to the file to edit (relative or absolute)",
+    }),
     replacements: Type.Array(replacementSchema, {
       minItems: 1,
       description:

@@ -636,6 +636,28 @@ test("read rejects noninteger and nonpositive offsets and limits before reading"
     assert.match(long.content[0].text, /line 1 exceeds 256KB/);
   }));
 
+test("read schema rejects empty paths and unknown fields before file access", async () =>
+  withDir(async (dir) => {
+    const read = makeReadOverride(dir);
+    const invalidArgs: Parameters<typeof validateToolArguments>[1]["arguments"][] = [
+      { path: "" },
+      { path: "missing.txt", offest: 3 },
+    ];
+    for (const args of invalidArgs) {
+      assert.throws(
+        () =>
+          validateToolArguments(read as any, {
+            type: "toolCall",
+            id: "invalid",
+            name: "read",
+            arguments: args,
+          }),
+        /Validation failed/,
+      );
+      await assert.rejects(call(read, args), /Invalid read path|not supported/);
+    }
+  }));
+
 test("read byte truncation takes precedence over line pagination", async () =>
   withDir(async (dir) => {
     await writeFile(join(dir, "large.txt"), `first\n${"x".repeat(256 * 1024)}\ntail\n`);

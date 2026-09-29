@@ -135,28 +135,32 @@ function toArray(v: string | string[] | undefined): string[] {
   return Array.isArray(v) ? v : [v];
 }
 
-function clampContext(context: number | undefined): number {
-  if (!context || !Number.isFinite(context) || context < 0) return 0;
-  return Math.min(Math.floor(context), GREP_CONTEXT_MAX);
-}
-
 const grepOverrideSchema = Type.Object(
   {
-    pattern: Type.Union([Type.String(), Type.Array(Type.String())], {
-      description:
-        "Non-empty string or array of non-empty strings (OR across patterns; whitespace-only strings are valid). For code snippets with regex punctuation, set literal:true; use an array for alternatives instead of joining literals with |.",
-    }),
-    path: Type.Optional(
-      Type.Union([Type.String(), Type.Array(Type.String())], {
+    pattern: Type.Union(
+      [Type.String({ minLength: 1 }), Type.Array(Type.String({ minLength: 1 }), { minItems: 1 })],
+      {
         description:
-          "Search an existing file or directory (string or array; default: current directory). Path wildcards are not expanded; use glob to filter filenames.",
-      }),
+          "Non-empty string or array of non-empty strings (OR across patterns; whitespace-only strings are valid). For code snippets with regex punctuation, set literal:true; use an array for alternatives instead of joining literals with |.",
+      },
+    ),
+    path: Type.Optional(
+      Type.Union(
+        [Type.String({ minLength: 1 }), Type.Array(Type.String({ minLength: 1 }), { minItems: 1 })],
+        {
+          description:
+            "Search an existing file or directory (string or array; default: current directory). Path wildcards are not expanded; use glob to filter filenames.",
+        },
+      ),
     ),
     glob: Type.Optional(
-      Type.Union([Type.String(), Type.Array(Type.String())], {
-        description:
-          "Filter filenames with a wildcard glob pattern; pass an array for multiple filters and prefix exclusions with `!`, e.g. ['*.ts', '!**/*.test.ts']",
-      }),
+      Type.Union(
+        [Type.String({ minLength: 1 }), Type.Array(Type.String({ minLength: 1 }), { minItems: 1 })],
+        {
+          description:
+            "Filter filenames with a wildcard glob pattern; pass an array for multiple filters and prefix exclusions with `!`, e.g. ['*.ts', '!**/*.test.ts']",
+        },
+      ),
     ),
     literal: Type.Optional(
       Type.Boolean({
@@ -177,17 +181,18 @@ const grepOverrideSchema = Type.Object(
       }),
     ),
     context: Type.Optional(
-      Type.Integer({
+      Type.Number({
         minimum: 0,
         maximum: GREP_CONTEXT_MAX,
-        description: `Number of lines to show before and after each match (0-${GREP_CONTEXT_MAX}; default: 0). Set to 3-5 when searching code to edit so surrounding lines and anchors are included without needing a separate read; context lines are anchored too`,
+        multipleOf: 1,
+        description: `Integer number of lines to show before and after each match (0-${GREP_CONTEXT_MAX}; default: 0). Set to 3-5 when searching code to edit so surrounding lines and anchors are included without needing a separate read; context lines are anchored too`,
       }),
     ),
-    // Pi converts Type.Integer arguments with Math.trunc before schema validation.
     limit: Type.Optional(
       Type.Number({
         minimum: 1,
         multipleOf: 1,
+        maximum: Number.MAX_SAFE_INTEGER,
         description: "Positive integer maximum of matching lines to return (default: 100)",
       }),
     ),
@@ -765,6 +770,25 @@ export function makeGrepOverrideWithBackend(cwd: string, overrides: Partial<Grep
       if (!Number.isSafeInteger(effectiveLimit) || effectiveLimit < 1) {
         throw new Error("limit must be a positive integer");
       }
+      const context = params.context ?? 0;
+      if (!Number.isSafeInteger(context) || context < 0 || context > GREP_CONTEXT_MAX) {
+        throw new Error(`context must be an integer between 0 and ${GREP_CONTEXT_MAX}`);
+      }
+      for (const [key, input] of [
+        ["path", params.path],
+        ["glob", params.glob],
+      ] as const) {
+        if (
+          input !== undefined &&
+          (typeof input === "string"
+            ? input.length === 0
+            : !Array.isArray(input) ||
+              input.length === 0 ||
+              input.some((part) => typeof part !== "string" || part.length === 0))
+        ) {
+          throw new Error(`${key} must be a non-empty string or array of non-empty strings`);
+        }
+      }
       const rgPath = bundledRgPath;
       const outputMode: "content" | "files" | "count" = params.outputMode ?? "content";
       const multiline = params.multiline ?? false;
@@ -790,7 +814,7 @@ export function makeGrepOverrideWithBackend(cwd: string, overrides: Partial<Grep
         signal,
       );
       const modes: SearchModes = { literal, ignoreCase: matcherIgnoreCase, multiline };
-      const ctx = clampContext(params.context);
+      const ctx = context;
       const searchPaths = (() => {
         const values = toArray(params.path);
         return (values.length ? values : ["."]).map((path) => canonicalPath(cwd, path));

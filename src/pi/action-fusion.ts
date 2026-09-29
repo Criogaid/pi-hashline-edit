@@ -10,6 +10,8 @@ export const THEN_RUN_SUCCEEDED = "[then_run:succeeded]";
 export const THEN_RUN_FAILED = "[then_run:failed]";
 export const THEN_RUN_SKIPPED = "[then_run:skipped]";
 export const THEN_RUN_STALE = "[then_run:stale]";
+// Pi's built-in Bash rejects timeouts above the setTimeout millisecond limit.
+const MAX_BASH_TIMEOUT_SECONDS = 2_147_483_647 / 1_000;
 
 export const ACTION_FUSION_GUIDELINES = [
   "Before each file mutation, identify its next command.",
@@ -58,15 +60,16 @@ export function createThenRunSchema(description: string) {
   return Type.Optional(
     Type.Object(
       {
-        command: Type.String({ minLength: 1, description: "Bash command to run" }),
+        command: Type.String({ minLength: 1, pattern: "\\S", description: "Bash command to run" }),
         timeout: Type.Optional(
           Type.Number({
             exclusiveMinimum: 0,
+            maximum: MAX_BASH_TIMEOUT_SECONDS,
             description: "Timeout in seconds (optional, no default timeout)",
           }),
         ),
       },
-      { description },
+      { description, additionalProperties: false },
     ),
   );
 }
@@ -187,8 +190,16 @@ function validateThenRun(input: ThenRunInput): void {
   ) {
     throw new Error("then_run command must not be empty");
   }
-  if (input.timeout !== undefined && (!Number.isFinite(input.timeout) || input.timeout <= 0)) {
-    throw new Error("then_run timeout must be a finite positive number of seconds");
+  const unsupported = Object.keys(input).filter((key) => key !== "command" && key !== "timeout");
+  if (unsupported.length)
+    throw new Error(`then_run parameters not supported: ${unsupported.join(", ")}`);
+  if (
+    input.timeout !== undefined &&
+    (!Number.isFinite(input.timeout) ||
+      input.timeout <= 0 ||
+      input.timeout > MAX_BASH_TIMEOUT_SECONDS)
+  ) {
+    throw new Error(`then_run timeout must be between 0 and ${MAX_BASH_TIMEOUT_SECONDS} seconds`);
   }
 }
 

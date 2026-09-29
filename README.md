@@ -136,7 +136,7 @@ Original `foo bar` becomes `bar baz`; inserted text is not searched again. All r
 
 ### Read
 
-Required: `path`. Optional: positive safe-integer `offset` (1-based; default 1) and positive safe-integer `limit` (default 500 lines). Fractions, zero, and negative values are rejected. Returned text is capped at 256 KiB; oversized rows are not returned as partial editable lines. Files without a final newline are identified in the header.
+Required: non-empty `path`. Optional: positive safe-integer `offset` (1-based; default 1) and positive safe-integer `limit` (default 500 lines). Fractions, zero, negative values, and unknown fields are rejected. Returned text is capped at 256 KiB; oversized rows are not returned as partial editable lines. Files without a final newline are identified in the header.
 
 When the line limit leaves more content, the result reports the shown range and the next `offset`, for example `showing lines 1-500 of 1200; use offset 501 to continue`. `details.pagination` contains 1-based `start`, inclusive `end`, `totalLines`, and `nextOffset`. This applies to default and explicit limits. Reads reaching EOF omit pagination; byte-limited reads retain their byte-truncation notice and metadata.
 
@@ -145,13 +145,13 @@ When the line limit leaves more content, the result reports the shown range and 
 | Parameter | Default | Meaning |
 | --- | --- | --- |
 | `pattern` | Required | Non-empty string (including whitespace-only text) or array of non-empty strings; arrays match any pattern (OR). When `ignoreCase` is omitted, smart-case is resolved for the entire query, not separately for each array item. |
-| `path` | Current directory | One existing file or directory, or an array of search roots. Wildcards are not expanded; use `glob` to filter filenames. |
-| `glob` | None | One glob or an ordered array; prefix exclusions with `!`. |
+| `path` | Current directory | One non-empty existing file or directory, or a non-empty array of search roots. Wildcards are not expanded; use `glob` to filter filenames. |
+| `glob` | None | One non-empty glob or a non-empty ordered array; prefix exclusions with `!`. |
 | `literal` | Automatic | Set `true` for literal code text, including regex punctuation such as `pi.on(`; this does not force case-sensitive matching. Set `false` for intentional ripgrep Rust regex. Automatic mode tries regex for metacharacters; an invalid single-pattern query falls back to searching the **entire string** literally and reports the fallback. Invalid pattern arrays fail instead of changing their meaning; invalid regex with `literal: false` fails. |
 | `ignoreCase` | Smart-case | Query-level case override: `true` ignores case; `false` distinguishes case. Inline regex case flags may override either setting. |
 | `multiline` | `false` | Allow matches across physical lines. CRLF is searched as LF; each distinct matched physical line counts toward `limit` and receives an anchor in content mode. `context` alone does not enable cross-line matching. |
-| `context` | `0` | Include 0–20 anchored lines before and after each match (pass 3–5 to inspect code blocks without another read). Context lines do not count toward `limit`. |
-| `limit` | `100` | Positive integer maximum of distinct matching physical lines, across all files and patterns. Reaching the limit produces a notice; it does not prove that another match exists. |
+| `context` | `0` | Integer from 0 to 20: include that many anchored lines before and after each match (pass 3–5 to inspect code blocks without another read). Fractions are rejected, not rounded. Context lines do not count toward `limit`. |
+| `limit` | `100` | Positive safe-integer maximum of distinct matching physical lines, across all files and patterns. Reaching the limit produces a notice; it does not prove that another match exists. |
 | `outputMode` | `"content"` | `"content"` returns anchored matching lines plus context, `"files"` returns distinct paths, and `"count"` returns matching-line counts per file and a total. All modes use the same limited match set: files and counts may be incomplete when the limit or output byte cap is reached. |
 
 The six former grep fields (`matchMode`, `excludePattern`, `wordMatch`, `pcre2`, `follow`, `noIgnore`) are no longer supported. Calls that contain them, including `false` or `null`, fail before searching; saved session history remains readable, but replaying an old call with these fields requires a new query. They are not silently converted to a different search.
@@ -168,10 +168,10 @@ Long lines show a labeled partial preview of up to 500 UTF-16 units near a repor
 
 ### Replace
 
-Required: `path` and a non-empty `replacements` array. Use one item for a single rule; top-level `find`, `replace`, `regex`, and `flags` are not accepted. Each rule requires `find` and `replace`, with these optional fields:
+Required: non-empty `path` and a non-empty `replacements` array. Use one item for a single rule; top-level `find`, `replace`, `regex`, and `flags` are not accepted. Each rule requires non-empty `find` and a `replace` string (which may be empty), with these optional fields:
 
 - `regex`: defaults to `false`; both modes match the shared LF view. Regex mode supports capture groups, the full match, and prefix/suffix substitutions.
-- `flags`: applies in both modes; `g` is always added. Supported flags: `g i m s u y d`.
+- `flags`: applies in both modes; `g` is always added. Only `g i m s u y d` characters are accepted; regex syntax errors still fail before writing.
 
 Zero matches in any rule, an invalid rule, or overlapping match ranges rejects the whole call without writing. Adjacent ranges are allowed. Zero-length matches conflict at the same position or at the start/interior of another match; a zero-length match at another match's end is allowed unless it conflicts with a following match. Error rule indices and string offsets are zero-based (offsets count UTF-16 code units in the original text). Literal and regex rules share the same original ranges for conflict detection.
 
@@ -231,7 +231,7 @@ Action Fusion is enabled by default. Set `"actionFusion": false` in `hashlineEdi
 }
 ```
 
-`command` is required; `timeout` is optional, in positive seconds, with no default. Mutation failure skips the command. Command failure after mutation success **does not roll back the file**: it is returned separately in result text and `details.actionFusion`, rather than thrown as failure of the whole mutation.
+`command` is required and must contain a non-whitespace character; `timeout` is optional, in seconds greater than zero and at most 2147483.647, with no default. Unknown `then_run` fields are rejected. Invalid command parameters fail before mutation. Mutation failure skips the command. Command failure after mutation success **does not roll back the file**: it is returned separately in result text and `details.actionFusion`, rather than thrown as failure of the whole mutation.
 
 In the TUI, the mutation card owns the mutation's result or error summary, publication status, and freshness warnings. It turns successful when mutation execution and result generation finish. The command card owns command output and execution status; skipped or cancelled commands are neutral and show a short reason when execution never started. Mutation diagnostics never become command output, and command failure leaves a successful mutation card intact. RPC hosts receive the same progress and choose their own rendering.
 

@@ -93,8 +93,10 @@ export function makeReadOverride(cwd: string): ReturnType<typeof createReadToolD
   const builtin = createReadToolDefinition(cwd);
   const parameters = {
     ...builtin.parameters,
+    additionalProperties: false,
     properties: {
       ...builtin.parameters.properties,
+      path: { ...builtin.parameters.properties.path, minLength: 1 },
       offset: {
         ...builtin.parameters.properties.offset,
         minimum: 1,
@@ -147,6 +149,14 @@ export function makeReadOverride(cwd: string): ReturnType<typeof createReadToolD
     ) {
       // User cancelled → delegate to the built-in (builtin handles abort itself)
       if (signal?.aborted) return builtin.execute(toolCallId, params, signal, onUpdate, ctx);
+      if (typeof params.path !== "string" || params.path.length === 0) {
+        throw new Error("Invalid read path: expected a non-empty path.");
+      }
+      const unsupported = Object.keys(params).filter(
+        (key) => !Object.hasOwn(parameters.properties, key),
+      );
+      if (unsupported.length)
+        throw new Error(`read parameters not supported: ${unsupported.join(", ")}`);
       const offset = (params.offset as number | undefined) ?? 1;
       const limit = (params.limit as number | undefined) ?? MAX_LINES;
       if (!Number.isSafeInteger(offset) || offset < 1) {

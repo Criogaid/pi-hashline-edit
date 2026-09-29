@@ -75,6 +75,27 @@ test("replace schema requires a non-empty replacements array", () => {
   }
 });
 
+test("replace schema rejects empty paths, empty find, and unsupported flags", () => {
+  const tool = makeReplaceTool(process.cwd());
+  for (const args of [
+    { path: "", replacements: [{ find: "old", replace: "new" }] },
+    { path: "f.txt", replacements: [{ find: "", replace: "new" }] },
+    { path: "f.txt", replacements: [{ find: "old", replace: "new", flags: "x" }] },
+  ]) {
+    assert.throws(
+      () =>
+        validateToolArguments(tool, {
+          type: "toolCall",
+          id: "invalid",
+          name: "replace",
+          arguments: args,
+        }),
+      /Validation failed/,
+      JSON.stringify(args),
+    );
+  }
+});
+
 test("replace rejects top-level rules without publishing", async () =>
   withDir(async (dir) => {
     const file = join(dir, "f.txt");
