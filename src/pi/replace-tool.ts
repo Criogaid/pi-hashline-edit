@@ -65,25 +65,28 @@ type ReplaceRenderContext = Parameters<
   NonNullable<ToolDefinition<typeof replaceSchema>["renderCall"]>
 >[2];
 
-const replacementSchema = Type.Object({
-  find: Type.String({
-    description:
-      "Text or JavaScript regex to find in the shared LF view. Actual CRLF in the file and query normalizes to LF; standalone CR stays content. In literal mode (default), an actual LF matches a line boundary, while backslash followed by n matches those two source characters. In regex mode, \\n in the pattern matches LF.",
-  }),
-  replace: Type.String({
-    description:
-      "Replacement text in the shared LF view. Restores original line endings; extra lines use the last matched ending or the file style. Literal mode keeps $ verbatim; regex mode expands JavaScript $ substitutions against the LF snapshot. Use write for explicit whole-file line-ending conversion.",
-  }),
-  regex: Type.Optional(
-    Type.Boolean({ description: "Interpret find as a JavaScript regex (default false)." }),
-  ),
-  flags: Type.Optional(
-    Type.String({
+const replacementSchema = Type.Object(
+  {
+    find: Type.String({
       description:
-        "Regex flags in either mode; g is always added. For regex patterns, use 'm' to make ^ and $ match line boundaries.",
+        "Text or JavaScript regex to find in the shared LF view. Actual CRLF in the file and query normalizes to LF; standalone CR stays content. In literal mode (default), an actual LF matches a line boundary, while backslash followed by n matches those two source characters. In regex mode, \\n in the pattern matches LF.",
     }),
-  ),
-});
+    replace: Type.String({
+      description:
+        "Replacement text in the shared LF view. Restores original line endings; extra lines use the last matched ending or the file style. Literal mode keeps $ verbatim; regex mode expands JavaScript $ substitutions against the LF snapshot. Use write for explicit whole-file line-ending conversion.",
+    }),
+    regex: Type.Optional(
+      Type.Boolean({ description: "Interpret find as a JavaScript regex (default false)." }),
+    ),
+    flags: Type.Optional(
+      Type.String({
+        description:
+          "Regex flags in either mode; g is always added. For regex patterns, use 'm' to make ^ and $ match line boundaries.",
+      }),
+    ),
+  },
+  { additionalProperties: false },
+);
 type Replacement = Static<typeof replacementSchema>;
 
 const replaceSchema = Type.Object(
@@ -123,6 +126,11 @@ function replacementRules(params: ReplaceParams): Replacement[] {
     if (!rule || typeof rule.find !== "string" || typeof rule.replace !== "string")
       throw new Error(`rule ${index}: find and replace must be strings`);
     if (rule.find === "") throw new Error(`rule ${index}: \`find\` is empty`);
+    const unsupported = Object.keys(rule).filter((key) => !(key in replacementSchema.properties));
+    if (unsupported.length)
+      throw new Error(
+        `rule ${index}: ${unsupported.join(", ")} not supported${unsupported.includes("maxMatches") ? "; maxMatches was removed" : ""}`,
+      );
     if (rule.regex !== undefined && typeof rule.regex !== "boolean")
       throw new Error(`rule ${index}: regex must be a boolean`);
     if (rule.flags !== undefined && typeof rule.flags !== "string")
@@ -137,7 +145,6 @@ async function applyRegexReplacements(
   source: string,
   rules: readonly Replacement[],
   signal: AbortSignal | undefined,
-  displayPath: string,
 ): Promise<{ text: string; count: number }> {
   signal?.throwIfAborted();
   const worker = new Worker(new URL("./replace-worker.mjs", import.meta.url), {
@@ -154,15 +161,9 @@ async function applyRegexReplacements(
       if (terminate) void worker.terminate().then(complete, reject);
       else complete();
     };
-    const abort = () => finish(new Error(`Replace ${displayPath} aborted before apply.`), true);
+    const abort = () => finish(new Error("aborted before apply."), true);
     const timer = setTimeout(
-      () =>
-        finish(
-          new Error(
-            `Replace ${displayPath}: regex evaluation timed out after ${REGEX_TIMEOUT_MS}ms`,
-          ),
-          true,
-        ),
+      () => finish(new Error(`regex evaluation timed out after ${REGEX_TIMEOUT_MS}ms`), true),
       REGEX_TIMEOUT_MS,
     );
     worker.on(
@@ -342,7 +343,7 @@ async function runReplace(
   let count: number;
   try {
     ({ text: newText, count } = rules.some((rule) => rule.regex === true)
-      ? await applyRegexReplacements(currentText, rules, signal, displayPath)
+      ? await applyRegexReplacements(currentText, rules, signal)
       : applyReplacements(currentText, rules));
   } catch (error) {
     throw new Error(

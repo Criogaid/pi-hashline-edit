@@ -226,8 +226,7 @@ Action Fusion is enabled by default. Set `"actionFusion": false` in `hashlineEdi
 ```json
 {
   "path": "src/foo.ts",
-  "find": "oldName",
-  "replace": "newName",
+  "replacements": [{ "find": "oldName", "replace": "newName" }],
   "then_run": { "command": "npm test", "timeout": 60 }
 }
 ```

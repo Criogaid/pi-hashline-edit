@@ -64,6 +64,10 @@ test("replace schema requires a non-empty replacements array", () => {
       { path: "f.txt", replacements: [] },
       { path: "f.txt", replacements: [{ find: "old", replace: "new" }], find: "old" },
       { path: "f.txt", replacements: '[{"find":"old","replace":"new"}]' },
+      ...[1, null, false].map((maxMatches) => ({
+        path: "f.txt",
+        replacements: [{ find: "old", replace: "new", maxMatches }],
+      })),
     ];
     for (const args of invalidArgs) {
       assert.throws(() => check(args));
@@ -84,6 +88,21 @@ test("replace rejects top-level rules without publishing", async () =>
       /top-level replacement fields/,
     );
     assert.equal(await readFile(file, "utf8"), "old\n");
+  }));
+
+test("replace rejects unsupported per-rule fields before publishing", async () =>
+  withDir(async (dir) => {
+    const file = join(dir, "f.txt");
+    const before = "foo foo foo\n";
+    await writeFile(file, before);
+    const tool = makeReplaceTool(dir);
+    for (const maxMatches of [1, null, false]) {
+      await assert.rejects(
+        call(tool, { path: file, replacements: [{ find: "foo", replace: "bar", maxMatches }] }),
+        /rule 0: .*maxMatches.*not supported/,
+      );
+      assert.equal(await readFile(file, "utf8"), before);
+    }
   }));
 
 test("replace literal: replaces all occurrences", async () => {
@@ -228,7 +247,8 @@ test("replace aborts catastrophic regex without blocking the event loop or publi
           undefined,
           { cwd: dir } as Parameters<ReturnType<typeof makeReplaceTool>["execute"]>[4],
         ),
-        /aborted/,
+        (error: unknown) =>
+          error instanceof Error && error.message === `Replace ${file}: aborted before apply.`,
       );
       assert.ok(performance.now() - start < 2000);
       assert.equal(await readFile(file, "utf8"), before);
@@ -247,7 +267,9 @@ test("replace times out catastrophic regex without publishing", async () => {
         path: file,
         replacements: [{ find: "^(a+)+$", replace: "x", regex: true }],
       }),
-      /regex evaluation timed out/,
+      (error: unknown) =>
+        error instanceof Error &&
+        error.message === `Replace ${file}: regex evaluation timed out after 5000ms`,
     );
     assert.equal(await readFile(file, "utf8"), before);
   });
