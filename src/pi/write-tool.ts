@@ -91,8 +91,6 @@ export function makeWriteOverride(cwd: string, fusion?: ActionFusionExecutor) {
         {
           cwd,
           fusion,
-          // Write results carry no anchors; stale revisions are reported by then_run.
-          reportsAnchors: false,
           async run(mutationParams, { absolutePath, displayPath, signal }) {
             throwIfCancelled(signal, `before write; ${displayPath} was not changed.`);
             const result = await commitFile(absolutePath, mutationParams.content, {
@@ -100,6 +98,7 @@ export function makeWriteOverride(cwd: string, fusion?: ActionFusionExecutor) {
               signal,
             });
             return {
+              commit: result,
               result: postProcessMutation("write", result.publication, () => ({
                 content: [
                   {

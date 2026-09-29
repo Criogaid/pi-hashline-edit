@@ -298,7 +298,6 @@ export function makeReplaceTool(
         {
           cwd,
           fusion,
-          reportsAnchors: true,
           run: (mutationParams, target) => runReplace(target, mutationParams.replacements, config),
         },
         { toolCallId, params, signal, onUpdate, ctx },

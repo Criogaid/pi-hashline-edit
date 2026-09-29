@@ -309,7 +309,6 @@ export function makeEditOverride(
         {
           cwd,
           fusion,
-          reportsAnchors: true,
           run: (mutationParams, target) =>
             runHashline(target, mutationParams.edits, hashLen, shiftRadius),
         },

@@ -1,5 +1,10 @@
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
-import { FileMutationError, type MutationVersions, type PublicationStatus } from "./file-commit.ts";
+import {
+  FileMutationError,
+  type CommitResult,
+  type MutationVersions,
+  type PublicationStatus,
+} from "./file-commit.ts";
 import { generateDiffString, generateUnifiedPatch } from "@earendil-works/pi-coding-agent";
 import { displayCarriageReturns, type AnchorFormatter } from "./anchor-format.ts";
 import { normalizeLineEndings } from "../core/lines.ts";
@@ -49,55 +54,47 @@ export function postProcessMutation<T>(
   }
 }
 
-/** Append only to the summary block after the caller confirms anchor freshness. */
-export function appendMutationAnchors<T>(
-  result: AgentToolResult<T>,
-  anchors: string,
-  publish: boolean,
+/** A published (or no-op) mutation with its commit facts, before anchors are released. */
+export interface MutationOutcome<TDetails> {
+  readonly result: AgentToolResult<TDetails>;
+  /** Publication and revisions from the commit layer; later steps never read them back from details. */
+  readonly commit: CommitResult;
+  /** Fresh anchor report for the committed text; absent for tools that never report anchors. */
+  readonly anchors?: string;
+}
+
+/** Freshness known from the commit layer alone, before any later observation. */
+export function commitFreshness(commit: MutationVersions): "unchanged" | "changed" {
+  return commit.publishedRevision === commit.observedRevision ? "unchanged" : "changed";
+}
+
+/** The single notice for a target whose published revision was not confirmed unchanged. */
+export function staleTargetNotice(marker = ""): string {
+  return `${marker ? `${marker} ` : ""}Target not confirmed unchanged since publication; anchors are withheld and earlier anchors may no longer match. Re-read before further edits.`;
+}
+
+/**
+ * Release the result: append anchors to the summary when the target is fresh,
+ * otherwise add the stale notice (prefixed by `staleMarker`, e.g. then_run's).
+ */
+export function finalizeMutation<T>(
+  { result, anchors }: MutationOutcome<T>,
+  fresh: boolean,
+  staleMarker = "",
 ): AgentToolResult<T> {
+  if (!fresh) {
+    return {
+      ...result,
+      content: [...result.content, { type: "text", text: staleTargetNotice(staleMarker) }],
+    };
+  }
+  if (!anchors) return result;
   return {
     ...result,
     content: result.content.map((block, index) =>
-      index === 0 && block.type === "text"
-        ? { ...block, text: `${block.text}${publish ? anchors : ""}` }
-        : block,
+      index === 0 && block.type === "text" ? { ...block, text: block.text + anchors } : block,
     ),
   };
-}
-
-export function observedFreshness(
-  result: AgentToolResult<unknown>,
-): "unchanged" | "changed" | "unknown" {
-  const versions = result.details as Partial<MutationVersions> | undefined;
-  if (!versions?.publishedRevision || !versions.observedRevision) return "unknown";
-  return versions.publishedRevision === versions.observedRevision ? "unchanged" : "changed";
-}
-
-/** Finalize from the observed commit revision unless a later freshness check supplies the decision. */
-export function finalizeMutationResult<T>(
-  result: AgentToolResult<T>,
-  finalize: (result: AgentToolResult<T>, publishAnchors: boolean) => AgentToolResult<T>,
-  publishAnchors = observedFreshness(result) === "unchanged",
-  staleNotice = "Anchors omitted: target revision was not confirmed unchanged. Re-read before further edits.",
-): AgentToolResult<T> {
-  try {
-    const finalized = finalize(result, publishAnchors);
-    return publishAnchors
-      ? finalized
-      : {
-          ...finalized,
-          content: [...finalized.content, { type: "text", text: staleNotice }],
-        };
-  } catch (error) {
-    const publication =
-      (result.details as { publication?: PublicationStatus } | undefined)?.publication ?? "UNKNOWN";
-    throw new FileMutationError(
-      "post_process",
-      publication,
-      `Result generation failed; publication=${publication}. Re-read before retrying: ${errorMessage(error)}`,
-      { cause: error },
-    );
-  }
 }
 
 /** Return compact changed-position anchors; selected context rows retain full content within the byte budget. */

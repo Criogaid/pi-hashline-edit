@@ -3,9 +3,9 @@
  *
  * Owns the sequencing every mutation tool must keep identical: then_run
  * availability, schema validation, path resolution, the shared file mutation
- * queue, and the hand-off to Action Fusion or plain finalization. Anchor
- * publication is an explicit outcome field rather than a side channel, so the
- * freshness rule (anchors only for an unchanged published revision) lives here.
+ * queue, and the hand-off to Action Fusion or plain finalization. Each tool
+ * returns a typed `MutationOutcome` (result, commit facts, anchors); nothing
+ * downstream reads publication or revisions back from result details.
  *
  * `runTextMutation` adds the read-modify-write sequence shared by edit and
  * replace: snapshot bound to the bytes read, cancellation before apply and
@@ -24,10 +24,11 @@ import type {
 } from "./action-fusion.ts";
 import { commitReplacement, readEditableSnapshot } from "./file-commit.ts";
 import {
-  appendMutationAnchors,
-  finalizeMutationResult,
+  commitFreshness,
+  finalizeMutation,
   generateMutationDetails,
   postProcessMutation,
+  type MutationOutcome,
 } from "./mutation-result.ts";
 import { canonicalPath } from "./path.ts";
 import { throwIfCancelled } from "./error-text.ts";
@@ -48,20 +49,9 @@ export interface MutationTarget {
   readonly signal: AbortSignal | undefined;
 }
 
-export interface MutationOutcome<TDetails> {
-  readonly result: AgentToolResult<TDetails>;
-  /** Fresh anchor report; appended to the summary only once freshness is confirmed. */
-  readonly anchors?: string;
-}
-
 export interface MutationToolSpec<TParams extends { path: string }, TDetails> {
   readonly cwd: string;
   readonly fusion: ActionFusionExecutor | undefined;
-  /**
-   * Whether results carry fresh anchors. Anchor-reporting tools append a stale
-   * notice when freshness is unconfirmed; others leave staleness to then_run.
-   */
-  readonly reportsAnchors: boolean;
   /** Perform the mutation. Runs inside the file mutation queue. */
   run(params: TParams, target: MutationTarget): Promise<MutationOutcome<TDetails>>;
 }
@@ -85,27 +75,19 @@ export async function executeMutation<TParams extends { path: string }, TDetails
   const { then_run, ...mutationParams } = call.params;
   const absolutePath = canonicalPath(cwd, mutationParams.path);
   const target: MutationTarget = { absolutePath, displayPath: mutationParams.path, signal };
-  let anchors = "";
-  const mutate = (): Promise<AgentToolResult<TDetails>> =>
-    withFileMutationQueue(absolutePath, async () => {
-      const outcome = await spec.run(mutationParams as unknown as TParams, target);
-      anchors = outcome.anchors ?? "";
-      return outcome.result;
-    });
-  const finalizeMutation = spec.reportsAnchors
-    ? (result: AgentToolResult<TDetails>, publishAnchors: boolean) =>
-        appendMutationAnchors(result, anchors, publishAnchors)
-    : undefined;
+  const mutate = (): Promise<MutationOutcome<TDetails>> =>
+    withFileMutationQueue(absolutePath, () =>
+      spec.run(mutationParams as unknown as TParams, target),
+    );
   if (!fusion) {
-    const result = await mutate();
-    return finalizeMutation ? finalizeMutationResult(result, finalizeMutation) : result;
+    const outcome = await mutate();
+    return finalizeMutation(outcome, commitFreshness(outcome.commit) === "unchanged");
   }
   return fusion({
     toolCallId,
     absolutePath,
     thenRun: then_run,
     mutate,
-    finalizeMutation,
     signal,
     ctx,
     onUpdate,
@@ -164,5 +146,5 @@ export async function runTextMutation(
       details,
     };
   });
-  return { result, anchors };
+  return { result, commit: versions, anchors };
 }
