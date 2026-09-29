@@ -13,6 +13,7 @@ import { join } from "node:path";
 import { rgPath } from "@vscode/ripgrep";
 import { computeLineHash } from "../core/hash.ts";
 import { makeGrepOverrideWithBackend, type GrepBackend } from "./grep-tool.ts";
+import { scopeArgs, type SearchRequest } from "./grep-search.ts";
 import { makeEditOverride } from "./edit-tool.ts";
 import { callTool } from "./tool-call.testing.ts";
 import { DEFAULT_CONFIG } from "./config.ts";
@@ -21,7 +22,7 @@ type FakeOptions = {
   lines?: string[];
   code?: number | null;
   stderr?: string;
-  validation?: { code: number | null; stderr: string };
+  validation?: Awaited<ReturnType<GrepBackend["probeRegex"]>>;
   error?: Error;
   onRun?: () => void;
   paths?: string[];
@@ -54,15 +55,13 @@ function fakeSmartCase(patterns: readonly string[]): boolean {
 }
 
 function fakeBackend(options: FakeOptions = {}) {
-  const calls: { path: string; args: string[] }[] = [];
+  const calls: { path: string; request: SearchRequest }[] = [];
+  const probes: Parameters<GrepBackend["probeRegex"]>[] = [];
   const backend: GrepBackend = {
-    async runRg(path, args, _signal, onLine) {
-      calls.push({ path, args });
+    async search(path, request, _signal, onLine) {
+      calls.push({ path, request });
       options.onRun?.();
       if (options.error) throw options.error;
-      if (args.includes("--quiet")) {
-        return { code: 1, stderr: "", ...options.validation, stopped: false };
-      }
       for (const line of options.lines ?? []) {
         if (!(await onLine(line)))
           return { code: null, stderr: options.stderr ?? "", stopped: true };
@@ -82,8 +81,12 @@ function fakeBackend(options: FakeOptions = {}) {
     async resolveIgnoreCase(_path, patterns, _modes, explicit) {
       return explicit ?? fakeSmartCase(patterns);
     },
+    async probeRegex(...args) {
+      probes.push(args);
+      return { code: 1, stderr: "", ...options.validation };
+    },
   };
-  return { backend, calls };
+  return { backend, calls, probes };
 }
 
 const text = (result: any): string => result.content[0].text;
@@ -283,11 +286,11 @@ test("case and multiline options select only their matching ripgrep flags", asyn
       multiline: true,
       literal: true,
     });
-    assert.ok(fake.calls[0].args.includes("--ignore-case"));
-    assert.ok(fake.calls[0].args.includes("--multiline"));
+    assert.ok(fake.calls[0].request.matcher.includes("--ignore-case"));
+    assert.ok(fake.calls[0].request.matcher.includes("--multiline"));
     await call(tool, { path: file, pattern: "foo", ignoreCase: false, multiline: false });
-    assert.ok(fake.calls.at(-1)?.args.includes("--case-sensitive"));
-    assert.ok(fake.calls.at(-1)?.args.includes("--no-multiline"));
+    assert.ok(fake.calls.at(-1)?.request.matcher.includes("--case-sensitive"));
+    assert.ok(fake.calls.at(-1)?.request.matcher.includes("--no-multiline"));
   });
 });
 
@@ -334,22 +337,22 @@ test("formats parsed rg matches with full-line hash anchors", async () => {
     assert.match(output, /3#[0-9A-Z]+│alpha only/);
     assert.deepEqual(fake.calls[0], {
       path: rgPath,
-      args: [
-        "--no-config",
-        "--color=never",
-        "--no-crlf",
-        "--engine=default",
-        "--no-multiline",
-        "--ignore-case",
-        "--fixed-strings",
-        "--json",
-        "--line-number",
-        "--hidden",
-        "-e",
-        "alpha",
-        "--",
-        dir,
-      ],
+      request: {
+        matcher: [
+          "--no-config",
+          "--color=never",
+          "--no-crlf",
+          "--engine=default",
+          "--no-multiline",
+          "--ignore-case",
+          "--fixed-strings",
+          "--json",
+          "--line-number",
+          "-e",
+          "alpha",
+        ],
+        scope: { globs: [], noIgnore: false, follow: false, searchPaths: [dir] },
+      },
     });
   });
 });
@@ -361,8 +364,8 @@ test("grep rejects a file changed between a match and anchor formatting", async 
     const fake = fakeBackend({ lines: [rgMatch(file, 1, "needle\n")] });
     const backend: GrepBackend = {
       ...fake.backend,
-      async runRg(...args) {
-        const result = await fake.backend.runRg(...args);
+      async search(...args) {
+        const result = await fake.backend.search(...args);
         await writeFile(file, "NOT_THE_MATCH\nneedle\n");
         return result;
       },
@@ -381,9 +384,9 @@ test("grep rejects matches missing from the current file before anchoring contex
     const fake = fakeBackend({ lines: [rgMatch(file, 5, "needle\n")] });
     const backend: GrepBackend = {
       ...fake.backend,
-      async runRg(...args) {
+      async search(...args) {
         await writeFile(file, "line1\nline2\nline3\n");
-        return fake.backend.runRg(...args);
+        return fake.backend.search(...args);
       },
     };
     await assert.rejects(
@@ -414,9 +417,9 @@ test("multiline grep rejects a zero-width match beyond the current EOF", async (
     });
     const backend: GrepBackend = {
       ...fake.backend,
-      async runRg(...args) {
+      async search(...args) {
         await writeFile(file, "one\ntwo\n");
-        return fake.backend.runRg(...args);
+        return fake.backend.search(...args);
       },
     };
     for (const outputMode of ["content", "files", "count"]) {
@@ -467,8 +470,8 @@ test("grep rejects changed context even when the matched line stays the same", a
     const fake = fakeBackend({ lines: [rgMatch(file, 1, "needle\n")] });
     const backend: GrepBackend = {
       ...fake.backend,
-      async runRg(...args) {
-        const result = await fake.backend.runRg(...args);
+      async search(...args) {
+        const result = await fake.backend.search(...args);
         await writeFile(file, "needle\nnew context\n");
         return result;
       },
@@ -561,7 +564,7 @@ test("passes output flags and formats files and counts", async () => {
       outputMode: "files",
     });
     assert.equal(text(files), "a.ts\nb.ts");
-    assert.deepEqual(fake.calls[0].args, [
+    assert.deepEqual(fake.calls[0].request.matcher, [
       "--no-config",
       "--color=never",
       "--no-crlf",
@@ -571,19 +574,19 @@ test("passes output flags and formats files and counts", async () => {
       "--fixed-strings",
       "--json",
       "--line-number",
+      "-e",
+      "Foo",
+      "-e",
+      "a.b",
+    ]);
+    assert.deepEqual(scopeArgs(fake.calls[0].request.scope), [
       "--hidden",
       "--glob",
       "*.ts",
       "--glob",
       "!**/*.test.ts",
-      "-e",
-      "Foo",
-      "-e",
-      "a.b",
-      "--",
-      a,
-      b,
     ]);
+    assert.deepEqual(fake.calls[0].request.scope.searchPaths, [a, b]);
 
     const count = await call(makeGrepOverrideWithBackend(dir, DEFAULT_CONFIG, fake.backend), {
       pattern: "foo",
@@ -662,23 +665,18 @@ test("auto-detects literal or regex mode and keeps explicit overrides", async ()
     await call(tool, { pattern: "value.*", literal: true });
 
     assert.deepEqual(
-      [...invalid.calls, ...valid.calls]
-        .filter(({ args }) => !args.includes("--quiet"))
-        .map(({ args }) => args.includes("--fixed-strings")),
+      [...invalid.calls, ...valid.calls].map(({ request }) =>
+        request.matcher.includes("--fixed-strings"),
+      ),
       [true, false, false, true],
     );
-    assert.equal(valid.calls.filter(({ args }) => args.includes("--quiet")).length, 2);
-    assert.deepEqual(invalid.calls[0].args, [
-      "--no-config",
-      "--color=never",
-      "--no-crlf",
-      "--engine=default",
-      "--no-multiline",
-      "--quiet",
-      "-e",
-      "queueTool(",
-      "--",
-      "-",
+    assert.deepEqual(valid.probes, [
+      [rgPath, ["value.*"], false, undefined],
+      [rgPath, ["plain"], false, undefined],
+    ]);
+    assert.deepEqual(invalid.probes, [
+      [rgPath, ["queueTool("], false, undefined],
+      [rgPath, ["plain", "broken("], false, undefined],
     ]);
 
     const failed = fakeBackend({ validation: { code: 2, stderr: "Permission denied" } });
@@ -688,7 +686,8 @@ test("auto-detects literal or regex mode and keeps explicit overrides", async ()
       }),
       /Permission denied/,
     );
-    assert.equal(failed.calls.length, 1);
+    assert.equal(failed.probes.length, 1);
+    assert.equal(failed.calls.length, 0);
   });
 });
 
@@ -721,9 +720,10 @@ test("uses smart-case across the entire OR pattern array", async () => {
     await call(tool, { pattern: "Upper" });
     await call(tool, { pattern: "foo\\S*" });
     assert.deepEqual(
-      flags.calls
-        .filter(({ args }) => !args.includes("--quiet"))
-        .map(({ args }) => [args.includes("--ignore-case"), args.includes("--case-sensitive")]),
+      flags.calls.map(({ request }) => [
+        request.matcher.includes("--ignore-case"),
+        request.matcher.includes("--case-sensitive"),
+      ]),
       [
         [true, false],
         [false, true],
@@ -740,7 +740,9 @@ test("OR pattern arrays are not limited by the former AND filter", async () => {
     const patterns = Array.from({ length: 17 }, (_, index) => `pattern${index}`);
     assert.equal(text(await call(tool, { pattern: patterns })), "No matches found");
     assert.deepEqual(
-      fake.calls[0].args.flatMap((arg, index, args) => (args[index - 1] === "-e" ? [arg] : [])),
+      fake.calls[0].request.matcher.flatMap((arg, index, args) =>
+        args[index - 1] === "-e" ? [arg] : [],
+      ),
       patterns,
     );
   });
@@ -761,8 +763,8 @@ test("rejects empty patterns while allowing wildcard, literal, and empty-line se
 
     assert.equal(text(await call(tool, { pattern: ".*", literal: true })), "No matches found");
     assert.equal(text(await call(tool, { pattern: "^$" })), "No matches found");
-    assert.equal(fake.calls.filter(({ args }) => !args.includes("--quiet")).length, 5);
-    assert.equal(fake.calls.filter(({ args }) => args.includes("--quiet")).length, 4);
+    assert.equal(fake.calls.length, 5);
+    assert.equal(fake.probes.length, 4);
   });
 });
 
@@ -848,7 +850,9 @@ test("OR patterns count each matched line once", async () => {
     });
     assert.match(text(result), /fixture\.ts: 4097/);
     assert.deepEqual(
-      fake.calls[0].args.flatMap((arg, index, args) => (args[index - 1] === "-e" ? [arg] : [])),
+      fake.calls[0].request.matcher.flatMap((arg, index, args) =>
+        args[index - 1] === "-e" ? [arg] : [],
+      ),
       ["foo", "bar"],
     );
   });
@@ -942,9 +946,9 @@ test("first-match revision read errors retain results from other files", async (
     });
     const backend: GrepBackend = {
       ...fake.backend,
-      async runRg(...args) {
+      async search(...args) {
         await rm(gone);
-        return fake.backend.runRg(...args);
+        return fake.backend.search(...args);
       },
     };
     const result = await call(makeGrepOverrideWithBackend(dir, DEFAULT_CONFIG, backend), {
@@ -969,8 +973,8 @@ test("failed result reads report incomplete coverage while retaining readable fi
     const result = await call(
       makeGrepOverrideWithBackend(dir, DEFAULT_CONFIG, {
         ...fake.backend,
-        runRg: async (...args) => {
-          const result = await fake.backend.runRg(...args);
+        search: async (...args) => {
+          const result = await fake.backend.search(...args);
           await rm(gone);
           return result;
         },

@@ -23,7 +23,8 @@ import { makeEditOverride } from "../pi/edit-tool.ts";
 import { makeReadOverride } from "../pi/read-tool.ts";
 import { makeWriteOverride } from "../pi/write-tool.ts";
 import { makeReplaceTool } from "../pi/replace-tool.ts";
-import { COMMON_RG_ARGS, resolveIgnoreCase, runRg } from "../pi/rg-process.ts";
+import { COMMON_RG_ARGS, probeRegex, resolveIgnoreCase, runRg } from "../pi/rg-process.ts";
+import { runRgTextView } from "../pi/rg-text-view.ts";
 import { computeLineHash } from "../core/hash.ts";
 import { callTool } from "../pi/tool-call.testing.ts";
 import { DEFAULT_CONFIG } from "../pi/config.ts";
@@ -379,6 +380,10 @@ test("shared rg runner stops and cleans up after limits, callback failures, and 
     await assert.rejects(
       runRg(join(directory, "missing-rg"), [], undefined, () => true),
       /Failed to run ripgrep/,
+    );
+    await assert.rejects(
+      probeRegex(join(directory, "missing-rg"), ["needle"], false),
+      /^Error: Failed to run ripgrep: /,
     );
   } finally {
     await rm(directory, { recursive: true, force: true });
@@ -743,9 +748,9 @@ test("multiline grep detects changed files and propagates cancellation", async (
     const file = join(directory, "fixture.txt");
     await writeFile(file, "alpha\nbeta\n");
     const changing = makeGrepOverrideWithBackend(directory, DEFAULT_CONFIG, {
-      async runRg(path, args, signal, onLine) {
-        const result = await runRg(path, args, signal, onLine);
-        if (args.includes("--json")) await writeFile(file, "alpha\nchanged\n");
+      async search(path, request, signal, onLine) {
+        const result = await runRgTextView(path, request, signal, onLine);
+        await writeFile(file, "alpha\nchanged\n");
         return result;
       },
     });
@@ -762,9 +767,9 @@ test("multiline grep detects changed files and propagates cancellation", async (
     await writeFile(file, "alpha\nbeta\n");
     const controller = new AbortController();
     const cancelling = makeGrepOverrideWithBackend(directory, DEFAULT_CONFIG, {
-      runRg(path, args, signal, onLine) {
-        if (args.includes("--json")) controller.abort();
-        return runRg(path, args, signal, onLine);
+      search(path, request, signal, onLine) {
+        controller.abort();
+        return runRgTextView(path, request, signal, onLine);
       },
     });
     await assert.rejects(
@@ -835,9 +840,9 @@ test("default grep rejects file changes and propagates cancellation", async () =
     const file = join(directory, "fixture.txt");
     await writeFile(file, "foo bar\n");
     const changing = makeGrepOverrideWithBackend(directory, DEFAULT_CONFIG, {
-      async runRg(path, args, signal, onLine) {
-        const result = await runRg(path, args, signal, onLine);
-        if (args.includes("--json")) await writeFile(file, "changed content\n");
+      async search(path, request, signal, onLine) {
+        const result = await runRgTextView(path, request, signal, onLine);
+        await writeFile(file, "changed content\n");
         return result;
       },
     });
@@ -849,9 +854,9 @@ test("default grep rejects file changes and propagates cancellation", async () =
     await writeFile(file, "foo bar\n");
     const controller = new AbortController();
     const cancelling = makeGrepOverrideWithBackend(directory, DEFAULT_CONFIG, {
-      runRg(path, args, signal, onLine) {
-        if (args.includes("--json")) controller.abort();
-        return runRg(path, args, signal, onLine);
+      search(path, request, signal, onLine) {
+        controller.abort();
+        return runRgTextView(path, request, signal, onLine);
       },
     });
     await assert.rejects(

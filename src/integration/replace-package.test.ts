@@ -10,14 +10,18 @@ test("regex worker starts from an installed-package path", async () => {
   try {
     const src = join(root, "src");
     await mkdir(join(src, "pi"), { recursive: true });
-    await cp(new URL("../core/", import.meta.url), join(src, "core"), { recursive: true });
-    for (const name of [
-      "replace-worker.mjs",
-      "replace-worker.ts",
-      "replace-apply.ts",
-      "error-text.ts",
+    await mkdir(join(src, "core"), { recursive: true });
+    for (const path of [
+      "pi/replace-worker.mjs",
+      "pi/replace-worker.ts",
+      "core/replace.ts",
+      "core/errors.ts",
+      "core/text.ts",
+      "core/lines.ts",
+      "core/ranges.ts",
+      "core/types.ts",
     ]) {
-      await cp(new URL(`../pi/${name}`, import.meta.url), join(src, "pi", name));
+      await cp(new URL(`../${path}`, import.meta.url), join(src, path));
     }
     const worker = new Worker(join(src, "pi", "replace-worker.mjs"), {
       workerData: {
