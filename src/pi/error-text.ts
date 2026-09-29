@@ -1,8 +1,3 @@
-/** Message text for a caught value; non-Error throws are stringified. */
-export function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
 /** Every cancellation starts with this text, matching Pi's built-in tools. */
 export const OPERATION_ABORTED = "Operation aborted";
 

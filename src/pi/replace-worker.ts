@@ -1,6 +1,6 @@
 import { parentPort, workerData } from "node:worker_threads";
-import { applyReplacements } from "./replace-apply.ts";
-import { errorMessage } from "./error-text.ts";
+import { applyReplacements } from "../core/replace.ts";
+import { errorMessage } from "../core/errors.ts";
 
 try {
   const { source, rules } = workerData;

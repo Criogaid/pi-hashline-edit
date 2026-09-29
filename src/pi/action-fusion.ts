@@ -26,7 +26,8 @@ import { createBashToolDefinition, type ExtensionContext } from "@earendil-works
 import { Type, type Static, type TObject, type TProperties } from "typebox";
 import { fileRevision, FileMutationError, type PublicationStatus } from "./file-commit.ts";
 import { commitFreshness, finalizeMutation, type MutationOutcome } from "./mutation-result.ts";
-import { errorMessage, OPERATION_ABORTED, throwIfCancelled } from "./error-text.ts";
+import { errorMessage } from "../core/errors.ts";
+import { OPERATION_ABORTED, throwIfCancelled } from "./error-text.ts";
 
 export const THEN_RUN_SUCCEEDED = "[then_run:succeeded]";
 export const THEN_RUN_FAILED = "[then_run:failed]";

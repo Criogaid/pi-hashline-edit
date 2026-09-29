@@ -33,7 +33,7 @@ import type { AgentToolResult, AgentToolUpdateCallback } from "@earendil-works/p
 import { Type, type Static } from "typebox";
 import { Worker } from "node:worker_threads";
 import { splitLines } from "../core/lines.ts";
-import { applyReplacements, buildRegex, type Replacement } from "./replace-apply.ts";
+import { applyReplacements, buildRegex, type Replacement } from "../core/replace.ts";
 import { unwritableTextReason } from "../core/text.ts";
 import { ACTION_FUSION_GUIDELINES, withThenRunSchema, type ThenRunInput } from "./action-fusion.ts";
 import { createAnchorFormatter, type AnchorFormatter } from "./anchor-format.ts";
@@ -52,12 +52,8 @@ import {
   type MutationTarget,
   type TextMutationDetails,
 } from "./mutation-runner.ts";
-import {
-  cancellationError,
-  errorMessage,
-  invalidArgument,
-  throwIfCancelled,
-} from "./error-text.ts";
+import { errorMessage } from "../core/errors.ts";
+import { cancellationError, invalidArgument, throwIfCancelled } from "./error-text.ts";
 type ReplaceDetails = TextMutationDetails;
 type ReplaceRenderContext = Parameters<
   NonNullable<ToolDefinition<typeof replaceSchema>["renderCall"]>

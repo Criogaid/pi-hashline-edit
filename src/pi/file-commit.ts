@@ -14,7 +14,8 @@ import {
 import { dirname, join } from "node:path";
 import { createHash } from "node:crypto";
 import { decodeEditableText, unwritableTextReason } from "../core/text.ts";
-import { errorMessage, OPERATION_ABORTED, throwIfCancelled } from "./error-text.ts";
+import { errorMessage } from "../core/errors.ts";
+import { OPERATION_ABORTED, throwIfCancelled } from "./error-text.ts";
 
 export type PublicationStatus = "NOT_PUBLISHED" | "PUBLISHED" | "UNKNOWN";
 export type CommitMode = "create" | "overwrite";

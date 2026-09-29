@@ -8,7 +8,7 @@ import {
 import { generateDiffString, generateUnifiedPatch } from "@earendil-works/pi-coding-agent";
 import { displayCarriageReturns, type AnchorFormatter } from "./anchor-format.ts";
 import { normalizeLineEndings } from "../core/lines.ts";
-import { errorMessage } from "./error-text.ts";
+import { errorMessage } from "../core/errors.ts";
 import { formatKiB, MAX_BLOCK_BYTES } from "./budgets.ts";
 
 /** Keep byte-faithful diff/patch data and a separate preview of the shared logical text. */

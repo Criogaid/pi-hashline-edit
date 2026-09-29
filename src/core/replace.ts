@@ -1,12 +1,12 @@
-import { escapeRegex } from "../core/text.ts";
+import { escapeRegex } from "./text.ts";
 import {
   createLfTextView,
   detectLineEnding,
   normalizeLineEndings,
   restoreLineEndings,
-} from "../core/lines.ts";
-import { findSortedRangeConflict } from "../core/ranges.ts";
-import { errorMessage } from "./error-text.ts";
+} from "./lines.ts";
+import { findSortedRangeConflict } from "./ranges.ts";
+import { errorMessage } from "./errors.ts";
 
 export interface Replacement {
   find: string;
