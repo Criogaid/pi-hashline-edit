@@ -4,9 +4,10 @@ import { join } from "node:path";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { makeWriteOverride } from "./write-tool.ts";
-import { createActionFusionExecutor } from "./action-fusion.ts";
+import { createActionFusionExecutor, THEN_RUN_STALE, THEN_RUN_SUCCEEDED } from "./action-fusion.ts";
 import { fileRevision } from "./file-commit.ts";
 import { callTool } from "./tool-call.testing.ts";
+import { staleTargetNotice } from "./mutation-result.ts";
 
 const context = (cwd: string) => ({ cwd }) as any;
 
@@ -193,18 +194,18 @@ test("write reports changed freshness when then_run changes the target", async (
       return "checked";
     });
     const write = makeWriteOverride(dir, fusion) as any;
-    const result = await write.execute(
-      "changed",
+    const result = await callTool(
+      write,
       { path: "changed.txt", content: "mutation\n", then_run: { command: "check" } },
-      undefined,
-      undefined,
-      context(dir),
+      { toolCallId: "changed", ctx: context(dir) },
     );
     const text = result.content.map((block: any) => block.text).join("\n");
     assert.doesNotMatch(text, /revision:|[0-9a-f]{64}/i);
-    assert.doesNotMatch(text, /anchors are omitted/);
-    assert.equal((text.match(/Re-read/g) ?? []).length, 1);
-    assert.equal((text.match(/\[then_run:stale\]/g) ?? []).length, 1);
+    assert.deepEqual(result.content, [
+      { type: "text", text: "Created changed.txt." },
+      { type: "text", text: staleTargetNotice(THEN_RUN_STALE) },
+      { type: "text", text: `${THEN_RUN_SUCCEEDED}\nchecked` },
+    ]);
     assert.doesNotMatch(text, /Fresh anchors:|\b1#[0-9A-Z]+\b/);
     assert.equal(result.details.actionFusion.freshness, "changed");
     assert.deepEqual(

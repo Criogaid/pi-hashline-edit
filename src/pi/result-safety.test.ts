@@ -7,18 +7,21 @@ import { writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { createActionFusionExecutor } from "./action-fusion.ts";
+import { createActionFusionExecutor, THEN_RUN_STALE } from "./action-fusion.ts";
 import { makeReplaceTool } from "./replace-tool.ts";
 import { makeWriteOverride } from "./write-tool.ts";
 import { makeEditOverride } from "./edit-tool.ts";
 import { byteRevision, FileMutationError } from "./file-commit.ts";
 import {
-  appendMutationAnchors,
-  finalizeMutationResult,
+  commitFreshness,
+  finalizeMutation,
   postProcessMutation,
+  staleTargetNotice,
+  type MutationOutcome,
 } from "./mutation-result.ts";
 import { callTool } from "./tool-call.testing.ts";
 import { DEFAULT_CONFIG } from "./config.ts";
+import { publishedMutation } from "./mutation-outcome.testing.ts";
 
 const text = (result: Pick<AgentToolResult<unknown>, "content">): string =>
   result.content.map((block) => (block.type === "text" ? block.text : "")).join("\n");
@@ -93,8 +96,16 @@ test("replace withholds anchors in progress and after commands change or remove 
         assert.equal(result.details.actionFusion.freshness, state);
         assert.equal(result.details.publication, "PUBLISHED");
         assert.doesNotMatch(text(result), /Updated anchors|\d+#[0-9A-Z]+│/);
-        assert.equal((text(result).match(/Re-read/g) ?? []).length, 1);
-        assert.equal((text(result).match(/\[then_run:stale\]/g) ?? []).length, 1);
+        assert.deepEqual(result.content[1], {
+          type: "text",
+          text: staleTargetNotice(THEN_RUN_STALE),
+        });
+        assert.equal(
+          result.content.filter(
+            (block: any) => block.type === "text" && block.text.includes(THEN_RUN_STALE),
+          ).length,
+          1,
+        );
         for (const update of updates)
           assert.doesNotMatch(text(update), /Updated anchors|\d+#[0-9A-Z]+│/);
       }
@@ -160,47 +171,59 @@ test("progress callback failures preserve publication and do not prevent the com
   }
 });
 
-test("standalone and Fusion finalizers suppress anchors unless commit observations agree", async () => {
+test("standalone and Fusion finalizers use commit freshness with or without anchors", async () => {
   const dir = await mkdtemp(join(tmpdir(), "hashline-finalizer-"));
   try {
-    for (const observedRevision of ["published", "external", undefined]) {
-      const mutation = {
-        content: [{ type: "text" as const, text: "saved" }],
-        details: {
-          publication: "PUBLISHED" as const,
-          publishedRevision: "published",
-          observedRevision,
-        },
-      };
-      const finalize = (result: AgentToolResult<typeof mutation.details>, expose: boolean) => ({
-        ...result,
-        content: [{ type: "text" as const, text: `saved${expose ? " ANCHOR" : ""}` }],
-      });
-      const standalone = finalizeMutationResult(mutation, finalize);
-      const fused = await createActionFusionExecutor()({
-        toolCallId: "no-command",
-        absolutePath: join(dir, "file"),
-        thenRun: undefined,
-        mutate: async () => mutation,
-        finalizeMutation: finalize,
-        signal: undefined,
-        ctx: ctx(dir),
-      });
-      for (const result of [standalone, fused]) {
-        assert.equal(text(result).includes("ANCHOR"), observedRevision === "published");
-        assert.equal(result.details.publication, "PUBLISHED");
-        if (observedRevision !== "published") assert.match(text(result), /Re-read/);
+    for (const publication of ["PUBLISHED", "NOT_PUBLISHED"] as const) {
+      for (const observedRevision of ["published", "external"]) {
+        for (const anchors of [" ANCHOR", undefined]) {
+          const mutation = {
+            result: {
+              content: [{ type: "text", text: "saved" }],
+              details: {
+                publication: "UNKNOWN",
+                publishedRevision: "ignored",
+                observedRevision: "ignored",
+              },
+            },
+            commit: {
+              publication,
+              publishedRevision: "published",
+              observedRevision,
+              created: false,
+            },
+            anchors,
+          } satisfies MutationOutcome<unknown>;
+          const fresh = observedRevision === "published";
+          assert.equal(commitFreshness(mutation.commit), fresh ? "unchanged" : "changed");
+          const standalone = finalizeMutation(
+            mutation,
+            commitFreshness(mutation.commit) === "unchanged",
+          );
+          const fused = await createActionFusionExecutor()({
+            toolCallId: "no-command",
+            absolutePath: join(dir, "file"),
+            thenRun: undefined,
+            mutate: async () => mutation,
+            signal: undefined,
+            ctx: ctx(dir),
+          });
+          const expectedContent = [{ type: "text", text: `saved${fresh ? (anchors ?? "") : ""}` }];
+          if (!fresh) expectedContent.push({ type: "text", text: staleTargetNotice() });
+          assert.deepEqual(standalone.content, expectedContent);
+          assert.deepEqual(fused.content, expectedContent);
+          assert.deepEqual(standalone.details, mutation.result.details);
+          assert.deepEqual(fused.details, {
+            ...mutation.result.details,
+            actionFusion: {
+              publication,
+              command: "not_requested",
+              freshness: fresh ? "unchanged" : "changed",
+            },
+          });
+          assert.deepEqual(mutation.result.content, [{ type: "text", text: "saved" }]);
+        }
       }
-      assert.throws(
-        () =>
-          finalizeMutationResult(mutation, () => {
-            throw new Error("formatting failed");
-          }),
-        (error: any) =>
-          error instanceof FileMutationError &&
-          error.publication === "PUBLISHED" &&
-          /publication=PUBLISHED/.test(error.message),
-      );
     }
   } finally {
     await rm(dir, { recursive: true, force: true });
@@ -484,11 +507,15 @@ test("shared result building preserves publication and appends anchors only to t
     ],
     details: {},
   };
+  const outcome = publishedMutation("saved", result, " ANCHOR");
   assert.deepEqual(
-    appendMutationAnchors(result, " ANCHOR", true).content.map((block: any) => block.text),
+    finalizeMutation(outcome, true).content.map((block: any) => block.text),
     ["summary ANCHOR", "command"],
   );
-  assert.deepEqual(appendMutationAnchors(result, " ANCHOR", false), result);
+  assert.deepEqual(finalizeMutation(outcome, false).content, [
+    ...result.content,
+    { type: "text", text: staleTargetNotice() },
+  ]);
   assert.equal(result.content[0].text, "summary");
 });
 

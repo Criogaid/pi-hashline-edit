@@ -3,8 +3,15 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { createActionFusionExecutor, ActionFusionError } from "./action-fusion.ts";
-import { byteRevision, FileMutationError } from "./file-commit.ts";
+import {
+  createActionFusionExecutor,
+  ActionFusionError,
+  THEN_RUN_STALE,
+  THEN_RUN_SUCCEEDED,
+} from "./action-fusion.ts";
+import { FileMutationError } from "./file-commit.ts";
+import { staleTargetNotice } from "./mutation-result.ts";
+import { publishedMutation } from "./mutation-outcome.testing.ts";
 
 async function withTemp<T>(run: (dir: string) => Promise<T>): Promise<T> {
   const dir = await mkdtemp(join(tmpdir(), "hashline-failure-"));
@@ -16,10 +23,11 @@ async function withTemp<T>(run: (dir: string) => Promise<T>): Promise<T> {
 }
 
 const context = (cwd: string) => ({ cwd }) as any;
-const result = (content: string) => ({
-  content: [{ type: "text" as const, text: "mutation" }],
-  details: { publication: "PUBLISHED", publishedRevision: byteRevision(content) },
-});
+const result = (content: string) =>
+  publishedMutation(content, {
+    content: [{ type: "text", text: "mutation" }],
+    details: undefined,
+  });
 
 test("published post-processing failure skips command and preserves publication state", async () =>
   withTemp(async (dir) => {
@@ -82,8 +90,9 @@ test("command failure still reports final changed freshness", async () =>
       command: "failed",
       freshness: "changed",
     });
-    assert.equal((outcome.content[1].text.match(/Re-read/g) ?? []).length, 1);
-    assert.match(outcome.content[1].text, /then_run:stale/);
+    assert.deepEqual(outcome.content[1], { type: "text", text: staleTargetNotice(THEN_RUN_STALE) });
+    assert.equal(outcome.content.length, 3);
+    assert.match(outcome.content[2].text, /command failed/);
   }));
 
 test("timeout and cancellation do not rerun mutation and still inspect freshness", async () =>
@@ -154,7 +163,7 @@ test("queue is released after a failed command", async () =>
     );
   }));
 
-test("result generation failure cannot overwrite an already successful command", async () =>
+test("successful command finalizes anchors and retains completed progress", async () =>
   withTemp(async (dir) => {
     const target = join(dir, "finalize.txt");
     const progress: any[] = [];
@@ -162,23 +171,21 @@ test("result generation failure cannot overwrite an already successful command",
       async () => "command finished",
       (event) => progress.push(event),
     );
-    await assert.rejects(
-      fusion({
-        toolCallId: "finalize",
-        absolutePath: target,
-        thenRun: { command: "check" },
-        signal: undefined,
-        ctx: context(dir),
-        mutate: async () => {
-          await writeFile(target, "saved\n");
-          return result("saved\n");
-        },
-        finalizeMutation: () => {
-          throw new Error("mutation result failure");
-        },
-      }),
-      /mutation result failure/,
-    );
+    const completed = await fusion({
+      toolCallId: "finalize",
+      absolutePath: target,
+      thenRun: { command: "check" },
+      signal: undefined,
+      ctx: context(dir),
+      mutate: async () => {
+        await writeFile(target, "saved\n");
+        return { ...result("saved\n"), anchors: " ANCHOR" };
+      },
+    });
+    assert.deepEqual(completed.content, [
+      { type: "text", text: "mutation ANCHOR" },
+      { type: "text", text: `${THEN_RUN_SUCCEEDED}\ncommand finished` },
+    ]);
     assert.equal(progress.filter((event) => event.command === "succeeded").length, 1);
     assert.equal(progress.at(-1).publication, "PUBLISHED");
     assert.equal(progress.at(-1).freshness, "unchanged");

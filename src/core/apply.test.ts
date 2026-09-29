@@ -477,20 +477,6 @@ test("shiftRadius=0 disables rescue (always none)", () => {
   assert.equal(r.failure.failures[0].recovery.kind, "none");
 });
 
-test("rejects CR or LF embedded in body elements", () => {
-  for (const body of [["x\ny"], ["x\ry"]]) {
-    const result = applyEdits("a\n", [{ op: "append", body }], 4, 15);
-    assert.deepEqual(result, {
-      ok: false,
-      failure: {
-        kind: "input",
-        message: "INVALID_BODY: each body element must contain exactly one logical line.",
-        checks: [],
-      },
-    });
-  }
-});
-
 test("BOM stays at byte zero through first-line edits while anchors retain their original hashes", () => {
   for (const text of [
     "\uFEFFfirst\nsecond\n",
@@ -562,12 +548,6 @@ test("failed batches report every supplied anchor in input order from one snapsh
     { opIndex: 2, op: "insert_after", which: "anchor", cited: at(text, 5), status: "matched" },
     { opIndex: 3, op: "insert_before", which: "anchor", cited: stale, status: "mismatched" },
   ]);
-  const invalid = applyEdits(text, [...edits, { op: "append", body: ["bad\nline"] }], 4, 15);
-  assert.ok(!invalid.ok && invalid.failure.kind === "input");
-  assert.deepEqual(
-    invalid.failure.checks,
-    result.failure.checks.map((check) => ({ ...check, status: "not_checked" })),
-  );
 });
 
 test("matched anchor checks do not imply valid ranges", () => {

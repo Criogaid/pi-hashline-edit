@@ -1070,14 +1070,16 @@ test("edit rejects embedded line terminators at its schema boundary", async () =
   withDir(async (dir) => {
     const target = join(dir, "body.txt");
     await writeFile(target, "a\n");
-    await assert.rejects(
-      call(makeEditOverride(dir, DEFAULT_CONFIG), {
-        path: "body.txt",
-        edits: [{ op: "append", body: ["x\ny"] }],
-      }),
-      /Validation failed for tool "edit"/,
-    );
-    assert.equal(await readFile(target, "utf8"), "a\n");
+    for (const line of ["x\ny", "x\ry"]) {
+      await assert.rejects(
+        call(makeEditOverride(dir, DEFAULT_CONFIG), {
+          path: "body.txt",
+          edits: [{ op: "append", body: [line] }],
+        }),
+        /Validation failed for tool "edit"/,
+      );
+      assert.equal(await readFile(target, "utf8"), "a\n");
+    }
   }));
 
 test("edit rejects unwritable body lines before reading a missing target", async () =>
@@ -1262,7 +1264,7 @@ test("schema-invalid bodies omit anchor checks; subsequent retries revalidate", 
       }),
       (error: Error) => {
         assert.match(error.message, /Validation failed for tool "edit"/);
-        assert.doesNotMatch(error.message, /Input-anchor checks|not_checked|\/ matched/);
+        assert.doesNotMatch(error.message, /Input-anchor checks|\/ matched|\/ mismatched/);
         return true;
       },
     );
@@ -1349,7 +1351,7 @@ test("multi-op schema failures omit anchor checks even when later ops have ancho
       }),
       (error: Error) => {
         assert.match(error.message, /Validation failed for tool "edit"/);
-        assert.doesNotMatch(error.message, /Input-anchor checks|not_checked/);
+        assert.doesNotMatch(error.message, /Input-anchor checks/);
         return true;
       },
     );

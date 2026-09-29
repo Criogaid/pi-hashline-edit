@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import assert from "node:assert/strict";
@@ -16,10 +16,13 @@ import {
   createActionFusionExecutor,
   THEN_RUN_FAILED,
   THEN_RUN_SKIPPED,
+  THEN_RUN_STALE,
   THEN_RUN_SUCCEEDED,
 } from "./action-fusion.ts";
 import { byteRevision, FileMutationError } from "./file-commit.ts";
 import { DEFAULT_CONFIG } from "./config.ts";
+import { staleTargetNotice } from "./mutation-result.ts";
+import { publishedMutation } from "./mutation-outcome.testing.ts";
 
 async function tempDir(): Promise<string> {
   return mkdtemp(join(tmpdir(), "hashline-action-fusion-"));
@@ -169,10 +172,11 @@ test("mutation failure skips the command and command failure does not roll back"
       toolCallId: "y",
       absolutePath: target,
       thenRun: { command: "check" },
-      mutate: async () => ({
-        content: [{ type: "text", text: "mutation" }],
-        details: { ok: true, publishedRevision: byteRevision("changed\n") },
-      }),
+      mutate: async () =>
+        publishedMutation("changed\n", {
+          content: [{ type: "text", text: "mutation" }],
+          details: { ok: true },
+        }),
       signal: undefined,
       ctx: ctx(dir),
     });
@@ -204,7 +208,7 @@ test("cancelled calls do not mutate or run the command", async () => {
         thenRun: { command: "check" },
         mutate: async () => {
           mutated = true;
-          return { content: [], details: undefined };
+          throw new Error("Cancelled mutation must not run");
         },
         signal: controller.signal,
         ctx: ctx(dir),
@@ -229,10 +233,10 @@ test("default runner executes a real local command", async () => {
       thenRun: { command: "node -e \"process.stdout.write('real runner')\"" },
       mutate: async () => {
         await writeFile(target, "after\n");
-        return {
+        return publishedMutation("after\n", {
           content: [{ type: "text", text: "mutated" }],
-          details: { ok: true, publishedRevision: byteRevision("after\n") },
-        };
+          details: { ok: true },
+        });
       },
       signal: undefined,
       ctx: {
@@ -265,10 +269,14 @@ test("marks anchors stale when then_run changes the target", async () => {
       thenRun: { command: "mutate target" },
       mutate: async () => {
         await writeFile(target, "after mutation\n");
-        return {
-          content: [{ type: "text", text: "mutated" }],
-          details: { publishedRevision: byteRevision("after mutation\n") },
-        };
+        return publishedMutation(
+          "after mutation\n",
+          {
+            content: [{ type: "text", text: "mutated" }],
+            details: undefined,
+          },
+          " ANCHOR",
+        );
       },
       signal: undefined,
       ctx: ctx(dir),
@@ -277,7 +285,8 @@ test("marks anchors stale when then_run changes the target", async () => {
       .filter((block) => block.type === "text")
       .map((block) => (block.type === "text" ? block.text : ""))
       .join("\n");
-    assert.match(output, /\[then_run:stale\]/);
+    assert.deepEqual(result.content[1], { type: "text", text: staleTargetNotice(THEN_RUN_STALE) });
+    assert.doesNotMatch(output, /ANCHOR/);
     assert.equal((result.details as any)?.actionFusion?.freshness, "changed");
   } finally {
     await rm(dir, { recursive: true, force: true });
@@ -287,7 +296,7 @@ test("marks anchors stale when then_run changes the target", async () => {
 test("Action Fusion omits structured anchors when target freshness is unknown", async () => {
   const dir = await tempDir();
   try {
-    const missing = join(dir, "never-created.txt");
+    const missing = join(dir, "unreadable.txt");
     let commands = 0;
     const fusion = createActionFusionExecutor(async () => {
       commands++;
@@ -297,11 +306,19 @@ test("Action Fusion omits structured anchors when target freshness is unknown", 
       toolCallId: "unknown",
       absolutePath: missing,
       thenRun: { command: "check" },
-      mutate: async () => ({ content: [{ type: "text", text: "mutated" }], details: {} }),
-      finalizeMutation: (mutation, publishAnchors) => ({
-        ...mutation,
-        content: [{ type: "text", text: `mutated${publishAnchors ? " ANCHOR" : ""}` }],
-      }),
+      mutate: async () => {
+        await writeFile(missing, "mutation\n");
+        await rm(missing);
+        await mkdir(missing);
+        return publishedMutation(
+          "mutation\n",
+          {
+            content: [{ type: "text", text: "mutated" }],
+            details: undefined,
+          },
+          " ANCHOR",
+        );
+      },
       signal: undefined,
       ctx: ctx(dir),
     });
@@ -311,7 +328,7 @@ test("Action Fusion omits structured anchors when target freshness is unknown", 
     assert.equal(commands, 0);
     assert.equal((result.details as any).actionFusion.freshness, "unknown");
     assert.doesNotMatch(output, /ANCHOR/);
-    assert.match(output, /Pre-command anchors are omitted/);
+    assert.deepEqual(result.content[1], { type: "text", text: staleTargetNotice(THEN_RUN_STALE) });
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
@@ -340,7 +357,7 @@ test("edit omits Updated anchors when then_run changes the target", async () => 
     const output = result.content.map((block: any) => block.text ?? "").join("\n");
     assert.ok(result.details.actionFusion);
     assert.equal(result.details.actionFusion.freshness, "changed");
-    assert.match(output, /Pre-command anchors are omitted/);
+    assert.deepEqual(result.content[1], { type: "text", text: staleTargetNotice(THEN_RUN_STALE) });
     assert.doesNotMatch(output, /Updated anchors|\b1#[0-9A-Z]+│/);
     assert.equal(await readFile(target, "utf8"), "command changed\n");
   } finally {
@@ -513,7 +530,7 @@ test("concurrent mutations on case-differing paths serialize on Windows", {
         order.push("start-1");
         await firstRunning;
         order.push("end-1");
-        return { content: [], details: { publication: "PUBLISHED" as const } };
+        return publishedMutation("first\n", { content: [], details: undefined });
       },
       signal: undefined,
       ctx: ctx(dir),
@@ -526,7 +543,7 @@ test("concurrent mutations on case-differing paths serialize on Windows", {
       mutate: async () => {
         order.push("start-2");
         order.push("end-2");
-        return { content: [], details: { publication: "PUBLISHED" as const } };
+        return publishedMutation("second\n", { content: [], details: undefined });
       },
       signal: undefined,
       ctx: ctx(dir),
@@ -579,6 +596,57 @@ test("ActionFusionError re-wrapping appends recovery guidance without duplicatin
     assert.equal((caught.message.match(/\[then_run:skipped\]/g) ?? []).length, 1);
     assert.equal((caught.message.match(/File changes are saved/g) ?? []).length, 1);
     assert.equal((caught.message.match(/post-process failed/g) ?? []).length, 1);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("Fusion uses commit facts when details omit or contradict publication and revision", async () => {
+  const dir = await tempDir();
+  try {
+    const target = join(dir, "unchanged.txt");
+    await writeFile(target, "same\n");
+    const commit = {
+      publication: "NOT_PUBLISHED" as const,
+      publishedRevision: byteRevision("same\n"),
+      observedRevision: byteRevision("same\n"),
+      created: false,
+    };
+    for (const details of [
+      undefined,
+      { publication: "UNKNOWN", publishedRevision: "wrong", observedRevision: "wrong" },
+    ]) {
+      for (const thenRun of [undefined, { command: "check" }]) {
+        let commands = 0;
+        const fusion = createActionFusionExecutor(async () => {
+          commands++;
+          return "checked";
+        });
+        const result = await fusion({
+          toolCallId: "commit-facts",
+          absolutePath: target,
+          thenRun,
+          signal: undefined,
+          ctx: ctx(dir),
+          mutate: async () => ({
+            result: { content: [{ type: "text", text: "mutation" }], details },
+            commit,
+            anchors: " ANCHOR",
+          }),
+        });
+        assert.deepEqual(result.content[0], { type: "text", text: "mutation ANCHOR" });
+        assert.deepEqual(result.details, {
+          ...details,
+          actionFusion: {
+            publication: "NOT_PUBLISHED",
+            command: thenRun ? "succeeded" : "not_requested",
+            freshness: "unchanged",
+          },
+        });
+        assert.equal(commands, thenRun ? 1 : 0);
+        assert.equal(await readFile(target, "utf8"), "same\n");
+      }
+    }
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

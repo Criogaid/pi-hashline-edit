@@ -23,7 +23,7 @@ import { makeEditOverride } from "../pi/edit-tool.ts";
 import { makeReadOverride } from "../pi/read-tool.ts";
 import { makeWriteOverride } from "../pi/write-tool.ts";
 import { makeReplaceTool } from "../pi/replace-tool.ts";
-import { COMMON_RG_ARGS, resolveIgnoreCase, runRg } from "../pi/rg-line-filter.ts";
+import { COMMON_RG_ARGS, resolveIgnoreCase, runRg } from "../pi/rg-process.ts";
 import { computeLineHash } from "../core/hash.ts";
 import { callTool } from "../pi/tool-call.testing.ts";
 import { DEFAULT_CONFIG } from "../pi/config.ts";

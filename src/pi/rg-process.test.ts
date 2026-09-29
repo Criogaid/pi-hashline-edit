@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { assertRgSucceeded, resolveIgnoreCase, type RunText } from "./rg-line-filter.ts";
+import { assertRgSucceeded, resolveIgnoreCase, type RunText } from "./rg-process.ts";
 
 const lineModes = { literal: false, multiline: false } as const;
 

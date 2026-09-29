@@ -5,7 +5,8 @@ import { theme } from "../../node_modules/@earendil-works/pi-coding-agent/dist/m
 import { displayCarriageReturns } from "./anchor-format.ts";
 import { makeEditOverride } from "./edit-tool.ts";
 import { makeReplaceTool } from "./replace-tool.ts";
-import { renderDiffPreview, withMutationStatus } from "./render.ts";
+import { renderDiffPreview } from "./render.ts";
+import { withMutationStatus } from "./fusion-card.ts";
 import { makeWriteOverride } from "./write-tool.ts";
 import { generateMutationDetails } from "./mutation-result.ts";
 import type { ActionFusionDetails } from "./action-fusion.ts";
