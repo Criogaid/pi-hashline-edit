@@ -20,10 +20,9 @@ import { unwritableTextReason } from "../core/text.ts";
 
 const writeSchema = Type.Object(
   {
-    path: Type.String({ minLength: 1, description: "Path to the file to write" }),
+    path: Type.String({ minLength: 1, description: "Path to the file (relative or absolute)" }),
     content: Type.String({
-      description:
-        "Complete file content, including the exact desired line endings. Source-code escape sequences remain literal text.",
+      description: "Complete file content, written exactly as supplied, including line endings.",
     }),
     mode: Type.Optional(
       Type.Union([
@@ -55,7 +54,7 @@ export function makeWriteOverride(cwd: string, fusion?: ActionFusionExecutor) {
     name: "write" as const,
     label: "write",
     description:
-      "Write complete file content exactly as supplied, including LF/CRLF choices. Use for intentional whole-file line-ending conversion. By default, creates missing files (including parent directories) and overwrites existing files.",
+      "Write a whole file exactly as supplied, including LF/CRLF, so it also converts line endings. By default, creates missing files and parent directories and overwrites existing files.",
     promptSnippet: "Write complete file content to a path",
     promptGuidelines: [
       "Use write for creating new files or whole-file overwrites; for targeted changes, prefer edit or replace to preserve surrounding content.",

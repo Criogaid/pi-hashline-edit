@@ -81,17 +81,16 @@ function buildEditSchema(hashLen: number) {
   const pattern = anchorPattern(hashLen);
   const requiredAnchor = Type.String({
     pattern,
-    description: 'Copy "LINE#HASH" from the latest read, grep, or mutation result.',
+    description: "LINE#HASH of the target line.",
   });
   const optionalEnd = Type.Optional(
     Type.String({
       pattern,
-      description:
-        'Inclusive last "LINE#HASH" for replace/delete ranges; omitted means only the anchor line.',
+      description: "Inclusive last LINE#HASH of the range; omit for one line.",
     }),
   );
   const bodyLines = Type.Array(Type.String({ pattern: "^[^\\r\\n]*$" }), {
-    description: "New content lines; each element must be one logical line without CR/LF.",
+    description: "New lines, one per element, without CR/LF.",
   });
   const editOpSchema = Type.Union([
     Type.Object(
@@ -113,7 +112,10 @@ function buildEditSchema(hashLen: number) {
     ),
     Type.Object(
       {
-        op: Type.Union([Type.Literal("insert_after"), Type.Literal("insert_before")]),
+        op: Type.Union([Type.Literal("insert_after"), Type.Literal("insert_before")], {
+          description:
+            "Insert body beside the anchor line, which is kept; do not repeat it in body.",
+        }),
         anchor: requiredAnchor,
         body: bodyLines,
       },
@@ -121,7 +123,9 @@ function buildEditSchema(hashLen: number) {
     ),
     Type.Object(
       {
-        op: Type.Union([Type.Literal("append"), Type.Literal("prepend")]),
+        op: Type.Union([Type.Literal("append"), Type.Literal("prepend")], {
+          description: "Add body at the end or start of the file.",
+        }),
         body: bodyLines,
       },
       { additionalProperties: false },
@@ -131,11 +135,11 @@ function buildEditSchema(hashLen: number) {
     {
       path: Type.String({
         minLength: 1,
-        description: "Path to the file to edit (relative or absolute)",
+        description: "Path to the file (relative or absolute)",
       }),
       edits: Type.Array(editOpSchema, {
         minItems: 1,
-        description: `Hashline ops; ops requiring anchors use LINE#HASH from your latest read, grep, or mutation result, with exactly ${hashLen} hash characters (append/prepend omit anchors)`,
+        description: `Operations on one snapshot. Anchors are LINE#HASH with exactly ${hashLen} hash characters, copied from the latest read, grep, edit, or replace result.`,
       }),
     },
     { additionalProperties: false },
@@ -398,13 +402,12 @@ export function makeEditOverride(cwd: string, fusion?: ActionFusionExecutor) {
     name: "edit" as const,
     label: "edit",
     description:
-      "Edit file lines using content-verified anchors. Returns fresh anchors for subsequent edits. Anchor failures show bounded current-file context; batches also report input-anchor checks. Inspect recovery candidates before retrying; retries revalidate anchors and never run automatically.",
+      "Edit file lines by LINE#HASH anchors checked against the current file. Returns fresh anchors for changed lines. On anchor failure, shows current context and recovery candidates; nothing is retried automatically.",
     promptSnippet: "Edit file lines using verified anchors",
     promptGuidelines: [
-      "Batch related edits to the same file in one call; the batch checks anchors against one snapshot.",
-      "Reuse anchors while their line numbers and content remain unchanged.",
-      "After an edit, use Updated anchors for changed lines.",
-      "On anchor failure, inspect recovery candidates before retrying or re-reading with read or grep.",
+      "Batch related edits to one file in a single edit call; all its anchors are checked against one snapshot.",
+      "Reuse anchors while their line number and content are unchanged; inserts and deletes shift later lines, so use the edit's Updated anchors or re-read shifted lines.",
+      "On edit anchor failure, inspect the recovery candidates before retrying or re-reading.",
       ...(fusion ? ACTION_FUSION_GUIDELINES : []),
     ],
     parameters,

@@ -39,7 +39,7 @@ const grepOverrideSchema = Type.Object(
       [Type.String({ minLength: 1 }), Type.Array(Type.String({ minLength: 1 }), { minItems: 1 })],
       {
         description:
-          "Non-empty string or array of non-empty strings (OR across patterns; whitespace-only strings are valid). For code snippets with regex punctuation, set literal:true; use an array for alternatives instead of joining literals with |. Regex syntax is ripgrep's Rust regex, not JavaScript: no lookaround or backreferences; ^ and $ match at line boundaries.",
+          "String or array of strings (an array matches any of them). Regex syntax is ripgrep's Rust regex, not JavaScript: no lookaround or backreferences; ^ and $ match at line boundaries.",
       },
     ),
     path: Type.Optional(
@@ -47,7 +47,7 @@ const grepOverrideSchema = Type.Object(
         [Type.String({ minLength: 1 }), Type.Array(Type.String({ minLength: 1 }), { minItems: 1 })],
         {
           description:
-            "Omit path to search the working directory. When supplied, use a non-empty existing file or directory, or a non-empty array of them; empty strings and arrays are invalid. Path wildcards are not expanded; use glob to filter filenames.",
+            "Existing file or directory, or an array of them; omit to search the working directory. Wildcards are not expanded; use glob.",
         },
       ),
     ),
@@ -56,44 +56,44 @@ const grepOverrideSchema = Type.Object(
         [Type.String({ minLength: 1 }), Type.Array(Type.String({ minLength: 1 }), { minItems: 1 })],
         {
           description:
-            "Filter filenames with a wildcard glob pattern; pass an array for multiple filters and prefix exclusions with `!`, e.g. ['*.ts', '!**/*.test.ts']",
+            "Filename glob, or an ordered array of them; prefix exclusions with !, e.g. ['*.ts', '!**/*.test.ts'].",
         },
       ),
     ),
     literal: Type.Optional(
       Type.Boolean({
         description:
-          "Set true for literal code text, especially calls, brackets, pipes, and backslashes. Set false only for intentional ripgrep Rust regex. Automatic mode tries regex for metacharacters; one invalid pattern can fall back to searching the entire input literally, but invalid pattern arrays fail. Literal mode uses the same case setting as regex mode.",
+          "true: match the text literally. false: ripgrep Rust regex. Omitted: regex when the pattern has metacharacters; a single invalid pattern falls back to a literal search of the whole string, an invalid array fails.",
       }),
     ),
     ignoreCase: Type.Optional(
       Type.Boolean({
         description:
-          "Override query-level smart-case: true ignores case; false distinguishes case. Inline regex case flags can still override either setting. Omit for smart-case across the whole query.",
+          "true ignores case, false matches case; omitted uses smart-case for the whole query. Inline regex flags still apply.",
       }),
     ),
     multiline: Type.Optional(
       Type.Boolean({
         description:
-          "Allow matches across physical lines (default: false). CRLF is searched as LF; results anchor each distinct physical line touched by a match. Context only changes displayed lines.",
+          "Match across lines (default false); every line a match touches is anchored. The . wildcard does not match newlines; use \\n or (?s).",
       }),
     ),
     context: Type.Optional(
       Type.Number({
         ...integerRange(0, GREP_CONTEXT_MAX),
-        description: `Integer number of lines to show before and after each match (0-${GREP_CONTEXT_MAX}; default: 0). Set to 3-5 when searching code to edit so surrounding lines and anchors are included without needing a separate read; context lines are anchored too`,
+        description: `Anchored lines shown before and after each match (0-${GREP_CONTEXT_MAX}, default 0); display only, not matched.`,
       }),
     ),
     limit: Type.Optional(
       Type.Number({
         ...POSITIVE_SAFE_INTEGER,
-        description: "Positive integer maximum of matching lines to return (default: 100)",
+        description: "Maximum matching lines, across all files (default 100).",
       }),
     ),
     outputMode: Type.Optional(
       Type.Union([Type.Literal("content"), Type.Literal("files"), Type.Literal("count")], {
         description:
-          '"content" (default): anchored lines. "files": paths. "count": matching lines per file and total. All modes share the limit on matching lines.',
+          '"content" (default): anchored lines; "files": paths; "count": matching lines per file and total. All modes share limit.',
       }),
     ),
   },
@@ -119,18 +119,15 @@ export function makeGrepOverrideWithBackend(cwd: string, overrides: Partial<Grep
     name: "grep" as const,
     label: "grep",
     description:
-      "Search LF-normalized file contents with ripgrep. Content mode returns LINE#HASH anchors for logical lines; files/count modes return paths or limited matching-line counts. CRLF queries normalize to LF; standalone CR stays content. Pattern arrays use OR; smart-case applies unless ignoreCase overrides it. Set multiline:true to match across lines; context only changes display. Directory searches respect ignore rules and skip linked directories.",
+      "Search file contents with ripgrep. Content mode returns LINE#HASH anchors usable by edit; files/count modes return paths or matching-line counts. CRLF is searched as LF. Directory searches respect ignore rules and skip linked directories.",
     promptSnippet: "Search file contents with ripgrep",
     promptGuidelines: [
-      "Prefer grep for file-content searches.",
-      "Omit path for the working directory; never pass an empty path. Use glob for filename wildcards.",
-      "Use literal:true for code containing regex punctuation; use literal:false only for intentional ripgrep (Rust) regex, which has no lookaround or backreferences.",
-      "Use a pattern array for OR alternatives.",
-      "Copy grep anchors directly into edit; inspect the full line before rewriting from a partial preview.",
-      "Use context:3-5 when searching code to edit so surrounding lines are anchored.",
-      "Use files/count when only paths or counts are needed.",
-      "Use multiline:true for cross-line matches.",
-      "Use another tool to traverse ignored or linked directories.",
+      "Prefer grep for file-content searches; use another tool for ignored or linked directories.",
+      'In grep, omit path to search the working directory (never pass ""); use glob for filename wildcards.',
+      "In grep, set literal:true for code with regex punctuation; grep regex is ripgrep (Rust) syntax without lookaround or backreferences.",
+      "In grep, use a pattern array for alternatives instead of joining them with |, and context:3-5 when searching code to edit.",
+      "In grep, use multiline:true for cross-line matches and outputMode files or count when only paths or counts are needed.",
+      "Copy grep anchors directly into edit; read the full line before rewriting from a partial preview.",
     ],
     parameters: grepOverrideSchema,
 

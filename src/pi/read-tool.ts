@@ -102,12 +102,12 @@ export function makeReadOverride(cwd: string): ReturnType<typeof createReadToolD
       offset: {
         ...builtin.parameters.properties.offset,
         ...POSITIVE_SAFE_INTEGER,
-        description: "Positive integer line number to start reading from (1-indexed; default: 1).",
+        description: "1-based line to start from (default 1).",
       },
       limit: {
         ...builtin.parameters.properties.limit,
         ...POSITIVE_SAFE_INTEGER,
-        description: "Positive integer maximum number of lines to read (default: 500).",
+        description: "Maximum lines to read (default 500).",
       },
     },
   };
@@ -116,11 +116,11 @@ export function makeReadOverride(cwd: string): ReturnType<typeof createReadToolD
     name: "read" as const,
     label: "read",
     description:
-      "Read file contents. Text files display per-line content hashes (LINE#HASH│content) in the shared LF view for hashline-verified editing. CRLF line boundaries display as LF; source-code escape sequences remain literal text.",
+      "Read a file. Text lines show as LINE#HASH│content anchors for edit; CRLF line endings show as LF.",
     promptSnippet: "Read files with editable line anchors",
     promptGuidelines: [
       "Prefer read over shell output for files you intend to edit.",
-      "For targeted inspection of large files, pass offset and limit (e.g. limit: 50) to inspect only the relevant section and conserve context.",
+      "For large files, pass read offset and limit to read only the relevant section.",
     ],
     parameters: parameters as typeof builtin.parameters,
     renderShell: "default" as const,

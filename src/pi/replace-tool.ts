@@ -69,20 +69,19 @@ const replacementSchema = Type.Object(
     find: Type.String({
       minLength: 1,
       description:
-        "Text or JavaScript regex to find in the shared LF view. Actual CRLF in the file and query normalizes to LF; standalone CR stays content. In literal mode (default), an actual LF matches a line boundary, while backslash followed by n matches those two source characters. In regex mode, \\n in the pattern matches LF. Regex mode uses JavaScript syntax, not grep's ripgrep syntax: add the m flag for per-line ^ and $; \\d matches only ASCII digits; \\w and \\b are ASCII-based, except that with both i and u they also treat ſ (U+017F) and K (U+212A) as word characters.",
+        "Text, or a JavaScript regex when regex is true (not grep's ripgrep syntax). CRLF in the file reads as LF, so a line break is \\n; in literal mode a backslash followed by n matches those two characters. In regex mode, ^ and $ need the m flag to match per line; \\d, \\w, and \\b are ASCII-based.",
     }),
     replace: Type.String({
       description:
-        "Replacement text in the shared LF view. Restores original line endings; extra lines use the last matched ending or the file style. Literal mode keeps $ verbatim; regex mode expands JavaScript $ substitutions against the LF snapshot. Use write for explicit whole-file line-ending conversion.",
+        "Replacement text; the file's line endings are kept. Literal mode keeps $ as is; regex mode expands $1, $<name>, and $&.",
     }),
     regex: Type.Optional(
-      Type.Boolean({ description: "Interpret find as a JavaScript regex (default false)." }),
+      Type.Boolean({ description: "Treat find as a JavaScript regex (default false)." }),
     ),
     flags: Type.Optional(
       Type.String({
         pattern: REGEX_FLAGS_PATTERN,
-        description:
-          "Regex flags in either mode; g is always added. For regex patterns, use 'm' to make ^ and $ match line boundaries.",
+        description: "Extra regex flags, also applied in literal mode; g is always added.",
       }),
     ),
   },
@@ -93,12 +92,11 @@ const replaceSchema = Type.Object(
   {
     path: Type.String({
       minLength: 1,
-      description: "Path to the file to edit (relative or absolute)",
+      description: "Path to the file (relative or absolute)",
     }),
     replacements: Type.Array(replacementSchema, {
       minItems: 1,
-      description:
-        "Rules matched against one original snapshot. Overlaps or any zero-match rule reject the entire call.",
+      description: "Rules applied to the original content; inserted text is not searched again.",
     }),
   },
   { additionalProperties: false },
@@ -251,7 +249,7 @@ export function makeReplaceTool(cwd: string, fusion?: ActionFusionExecutor) {
     name: "replace" as const,
     label: "replace",
     description:
-      "Replace all matching text across a file using one or more replacement rules. All rules match the original snapshot; overlaps or any zero-match rule reject the entire call. Supports literal strings and JavaScript regex. Returns a diff and fresh anchors.",
+      "Replace every match of one or more literal or JavaScript-regex rules in a file. Overlapping matches or a rule with no match reject the whole call. Returns a diff and fresh anchors.",
     promptSnippet: "Replace matching text across a file",
     promptGuidelines: [
       "Use replace for bulk changes; prefer edit for a specific, anchor-verified location.",
