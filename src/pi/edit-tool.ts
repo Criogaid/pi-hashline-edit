@@ -392,8 +392,8 @@ function editHeader(args: EditParams, theme: Theme, counts?: DiffCounts): string
 }
 
 export function makeEditOverride(cwd: string, fusion?: ActionFusionExecutor) {
-  // Schema, argument preparation, and verification share the hash length registered with the tool.
-  const { hashLen } = getState().config;
+  // Schema, verification, recovery, and returned anchors use the registered configuration.
+  const { hashLen, shiftRadius } = getState().config;
   const parameters = createEditSchema(fusion !== undefined, hashLen);
 
   return {
@@ -448,7 +448,8 @@ export function makeEditOverride(cwd: string, fusion?: ActionFusionExecutor) {
           cwd,
           fusion,
           reportsAnchors: true,
-          run: (mutationParams, target) => runHashline(target, mutationParams.edits, hashLen),
+          run: (mutationParams, target) =>
+            runHashline(target, mutationParams.edits, hashLen, shiftRadius),
         },
         { toolCallId, params, signal, onUpdate, ctx },
       );
@@ -456,9 +457,13 @@ export function makeEditOverride(cwd: string, fusion?: ActionFusionExecutor) {
   };
 }
 
-function runHashline(target: MutationTarget, editOps: readonly EditOpInput[], hashLen: number) {
+function runHashline(
+  target: MutationTarget,
+  editOps: readonly EditOpInput[],
+  hashLen: number,
+  shiftRadius: number,
+) {
   const anchorFormatter = createAnchorFormatter(hashLen);
-  const { shiftRadius } = getState().config;
 
   return runTextMutation("edit", target, (currentText) => {
     const translated = toCoreEdits(editOps);

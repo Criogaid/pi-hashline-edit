@@ -5,6 +5,7 @@ import { throwIfCancelled } from "./error-text.ts";
 
 export const COMMON_RG_ARGS = ["--no-config", "--color=never", "--no-crlf"];
 export const MAX_RG_RECORD_BYTES = 16 * 1024 * 1024;
+const RG_RECORD_LIMIT_MESSAGE = `ripgrep output record exceeds ${MAX_RG_RECORD_BYTES / 1024 ** 2} MiB`;
 /** Retained ripgrep stderr; diagnostics beyond this are dropped. */
 export const MAX_RG_STDERR_BYTES = 64 * 1024;
 /** Probe runs read only a short stdout; more means an unexpected rg mode. */
@@ -91,11 +92,11 @@ async function* delimitedRecords(stream: Readable, delimiter: number): AsyncGene
     pending = Buffer.alloc(0);
     let at: number;
     while ((at = buf.indexOf(delimiter)) !== -1) {
-      if (at > MAX_RG_RECORD_BYTES) throw new Error("ripgrep output record exceeds 16 MiB");
+      if (at > MAX_RG_RECORD_BYTES) throw new Error(RG_RECORD_LIMIT_MESSAGE);
       yield buf.subarray(0, at);
       buf = buf.subarray(at + 1);
     }
-    if (buf.length > MAX_RG_RECORD_BYTES) throw new Error("ripgrep output record exceeds 16 MiB");
+    if (buf.length > MAX_RG_RECORD_BYTES) throw new Error(RG_RECORD_LIMIT_MESSAGE);
     pending = buf;
   }
   if (pending.length) yield pending;

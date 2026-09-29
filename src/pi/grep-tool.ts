@@ -32,6 +32,8 @@ import { throwIfCancelled } from "./error-text.ts";
 import { getState } from "./state.ts";
 
 const DEFAULT_LIMIT = 100;
+const GREP_CONTEXT_MIN = 0;
+const DEFAULT_CONTEXT = GREP_CONTEXT_MIN;
 const GREP_CONTEXT_MAX = 20;
 
 const grepOverrideSchema = Type.Object(
@@ -81,14 +83,14 @@ const grepOverrideSchema = Type.Object(
     ),
     context: Type.Optional(
       Type.Number({
-        ...integerRange(0, GREP_CONTEXT_MAX),
-        description: `Anchored lines shown before and after each match (0-${GREP_CONTEXT_MAX}, default 0); display only, not matched.`,
+        ...integerRange(GREP_CONTEXT_MIN, GREP_CONTEXT_MAX),
+        description: `Anchored lines shown before and after each match (${GREP_CONTEXT_MIN}-${GREP_CONTEXT_MAX}, default ${DEFAULT_CONTEXT}); display only, not matched.`,
       }),
     ),
     limit: Type.Optional(
       Type.Number({
         ...POSITIVE_SAFE_INTEGER,
-        description: "Maximum matching lines, across all files (default 100).",
+        description: `Maximum matching lines, across all files (default ${DEFAULT_LIMIT}).`,
       }),
     ),
     outputMode: Type.Optional(
@@ -109,6 +111,7 @@ export function makeGrepOverride(cwd: string) {
 
 /** @internal — build a grep override with deterministic process backends for tests. */
 export function makeGrepOverrideWithBackend(cwd: string, overrides: Partial<GrepBackend>) {
+  const { hashLen } = getState().config;
   const backend: GrepBackend = {
     runRg: runRgTextView,
     runRgPaths,
@@ -181,12 +184,12 @@ export function makeGrepOverrideWithBackend(cwd: string, overrides: Partial<Grep
       _onUpdate: Parameters<GrepTool["execute"]>[3],
     ) {
       throwIfCancelled(signal);
-      const anchors = createAnchorFormatter(getState().config.hashLen);
+      const anchors = createAnchorFormatter(hashLen);
       const warnings: string[] = [];
 
       const patterns = toArray(params.pattern).map(normalizeLineEndings);
       const effectiveLimit = params.limit ?? DEFAULT_LIMIT;
-      const context = params.context ?? 0;
+      const context = params.context ?? DEFAULT_CONTEXT;
       const rgPath = bundledRgPath;
       const outputMode: "content" | "files" | "count" = params.outputMode ?? "content";
       const multiline = params.multiline ?? false;

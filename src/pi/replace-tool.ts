@@ -245,6 +245,7 @@ function checkReplaceArguments(args: unknown): void {
 }
 
 export function makeReplaceTool(cwd: string, fusion?: ActionFusionExecutor) {
+  const { hashLen } = getState().config;
   const parameters = createReplaceSchema(fusion !== undefined);
   return {
     name: "replace" as const,
@@ -296,7 +297,7 @@ export function makeReplaceTool(cwd: string, fusion?: ActionFusionExecutor) {
           cwd,
           fusion,
           reportsAnchors: true,
-          run: (mutationParams, target) => runReplace(target, mutationParams.replacements),
+          run: (mutationParams, target) => runReplace(target, mutationParams.replacements, hashLen),
         },
         { toolCallId, params, signal, onUpdate, ctx },
       );
@@ -304,8 +305,8 @@ export function makeReplaceTool(cwd: string, fusion?: ActionFusionExecutor) {
   };
 }
 
-function runReplace(target: MutationTarget, rules: ReplaceParams["replacements"]) {
-  const anchorFormatter = createAnchorFormatter(getState().config.hashLen);
+function runReplace(target: MutationTarget, rules: ReplaceParams["replacements"], hashLen: number) {
+  const anchorFormatter = createAnchorFormatter(hashLen);
 
   return runTextMutation("replace", target, async (currentText) => {
     let newText: string;

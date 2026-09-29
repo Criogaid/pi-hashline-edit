@@ -217,7 +217,7 @@ Add `hashlineEdit` to Pi's global settings (`~/.pi/agent/settings.json` by defau
 | `hashLen` | `4` | Integer checksum length, 2–8 characters. `edit` accepts only anchors of this length; anchors produced under another setting must be read again. |
 | `shiftRadius` | `15` | Integer first-pass recovery-search radius, 0–100 lines. With no local candidates, recovery searches the rest of the file; `0` disables both searches. |
 
-The project's `hashlineEdit` object replaces the global object as a whole; missing or invalid fields use defaults. Defaults are defined in `src/pi/config.ts`; tools pass the resolved values to the core. Reload Pi after changes.
+The project's `hashlineEdit` object replaces the global object as a whole; missing or invalid fields use defaults. Defaults are defined in `src/pi/config.ts`; tools capture the resolved values at registration and pass them explicitly to core functions and anchor formatters. A registered tool keeps that configuration for its lifetime. Reload Pi after changes to register tools with the new configuration.
 
 ## Action Fusion
 

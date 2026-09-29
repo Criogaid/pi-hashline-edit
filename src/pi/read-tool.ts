@@ -30,7 +30,8 @@ import { POSITIVE_SAFE_INTEGER } from "./schema.ts";
 import { throwIfCancelled } from "./error-text.ts";
 import { getState } from "./state.ts";
 
-const MAX_LINES = 500;
+const DEFAULT_OFFSET = 1;
+const DEFAULT_LIMIT = 500;
 const MAX_BYTES = 256 * 1024;
 
 type ReadDetails = ReadToolDetails & { nativeRead?: true };
@@ -101,6 +102,7 @@ export function makeReadOverride(
   ReturnType<typeof createReadToolDefinition>["parameters"],
   ReadDetails | undefined
 > {
+  const { hashLen } = getState().config;
   const builtin = createReadToolDefinition(cwd);
   const parameters = {
     ...builtin.parameters,
@@ -111,12 +113,12 @@ export function makeReadOverride(
       offset: {
         ...builtin.parameters.properties.offset,
         ...POSITIVE_SAFE_INTEGER,
-        description: "1-based line to start from (default 1).",
+        description: `1-based line to start from (default ${DEFAULT_OFFSET}).`,
       },
       limit: {
         ...builtin.parameters.properties.limit,
         ...POSITIVE_SAFE_INTEGER,
-        description: "Maximum lines to read (default 500).",
+        description: `Maximum lines to read (default ${DEFAULT_LIMIT}).`,
       },
     },
   };
@@ -157,9 +159,9 @@ export function makeReadOverride(
       ctx: ExtensionContext,
     ) {
       throwIfCancelled(signal);
-      const offset = params.offset ?? 1;
-      const limit = params.limit ?? MAX_LINES;
-      const anchors = createAnchorFormatter(getState().config.hashLen);
+      const offset = params.offset ?? DEFAULT_OFFSET;
+      const limit = params.limit ?? DEFAULT_LIMIT;
+      const anchors = createAnchorFormatter(hashLen);
       const readNative = async () => {
         const result = await builtin.execute(toolCallId, params, signal, onUpdate, ctx);
         return { ...result, details: { ...result.details, nativeRead: true as const } };
