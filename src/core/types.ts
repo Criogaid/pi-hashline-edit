@@ -76,16 +76,13 @@ export interface AnchorFailure {
   readonly current: { readonly hash: string; readonly content: string } | null;
 }
 
-/**
- * Record for one supplied anchor in the immutable apply snapshot.
- * not_checked means input validation rejected the batch before hashing.
- */
+/** Record for one supplied anchor in the immutable apply snapshot. */
 export interface AnchorCheck {
   readonly opIndex: number;
   readonly which: "anchor" | "end";
   readonly op: Edit["op"];
   readonly cited: Anchor;
-  readonly status: "matched" | "mismatched" | "not_checked";
+  readonly status: "matched" | "mismatched";
 }
 
 /** Batch-level failure. Anchor checks describe only checksum validation in this snapshot. */
@@ -96,7 +93,7 @@ export type ApplyFailure =
       readonly checks: readonly AnchorCheck[];
     }
   | {
-      readonly kind: "input" | "range";
+      readonly kind: "range";
       readonly message: string;
       readonly checks: readonly AnchorCheck[];
     };
@@ -107,7 +104,7 @@ export type ApplyFailure =
  * callers retain their content while compacting anchors for caller-supplied rows.
  * Byte-identical output succeeds with changed=false and empty anchor lists.
  * On failure, `failure` is either the collected set of anchor failures
- * (each with recovery) or an input/range error, plus per-input anchor checks.
+ * (each with recovery) or a range error, plus per-input anchor checks.
  * Nothing is written on failure.
  */
 export type ApplyResult =

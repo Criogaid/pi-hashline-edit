@@ -316,8 +316,6 @@ Streaming mutation summaries omit anchors. Result-generation failures preserve p
 
 ## Verification
 
-The standalone core API does not load Pi configuration or supply configuration defaults. Direct callers must pass `hashLen` to `computeLineHash(line, content, hashLen)` and `hashFileLines(lines, hashLen)`, and both `hashLen` and `shiftRadius` to `applyEdits(text, edits, hashLen, shiftRadius)`.
-
 - `npm run typecheck` checks source, test, and benchmark types in `src/` and `bench/`.
 - `npm run format:check` checks formatting in both directories.
 - `npm test` runs core and tool tests.

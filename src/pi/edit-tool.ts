@@ -29,7 +29,7 @@ import {
 import type { AgentToolResult, AgentToolUpdateCallback } from "@earendil-works/pi-agent-core";
 import { Type, type Static } from "typebox";
 import { ACTION_FUSION_GUIDELINES, withThenRunSchema, type ThenRunInput } from "./action-fusion.ts";
-import { applyEdits } from "../core/index.ts";
+import { applyEdits } from "../core/apply.ts";
 import { splitLines } from "../core/lines.ts";
 import { unwritableTextReason } from "../core/text.ts";
 import { invalidArgument } from "./error-text.ts";

@@ -136,20 +136,6 @@ function checkedAnchor(
   return { opIndex, which, op: edit.op, cited, status: failure ? "mismatched" : "matched" };
 }
 
-function inputAnchorChecks(edits: readonly Edit[], status: AnchorCheck["status"]): AnchorCheck[] {
-  const checks: AnchorCheck[] = [];
-  for (let opIndex = 0; opIndex < edits.length; opIndex++) {
-    const edit = edits[opIndex];
-    if (edit.op === "replace" || edit.op === "delete") {
-      checks.push({ opIndex, which: "anchor", op: edit.op, cited: edit.start, status });
-      if (edit.end) checks.push({ opIndex, which: "end", op: edit.op, cited: edit.end, status });
-    } else if (edit.op === "insert_after" || edit.op === "insert_before") {
-      checks.push({ opIndex, which: "anchor", op: edit.op, cited: edit.anchor, status });
-    }
-  }
-  return checks;
-}
-
 /** Translate an Edit into a SpanOp, verifying anchors and ranges against the current lines. */
 function translateEdit(
   edit: Edit,
@@ -209,19 +195,15 @@ function translateEdit(
   }
 }
 
-function hasInvalidBodyLine(edits: readonly Edit[]): boolean {
-  return edits.some((edit) => "body" in edit && edit.body.some((line) => /[\r\n]/.test(line)));
-}
-
 /**
  * Apply edits to `text`. Anchors are verified against the current content; on
  * success `touchedLines` gives the 0-based indices of the new-file lines this
  * edit produced. On any anchor mismatch, all failures (with shifted recovery)
  * are collected and returned together — nothing is written. Every failure includes
- * per-input anchor checks; input rejection before hashing marks them not_checked.
+ * per-input anchor checks.
  *
  * @param text        current full file text
- * @param edits       parsed edit operations
+ * @param edits       validated edit operations; each body element is one logical line
  * @param hashLen     hash length used to verify anchors
  * @param shiftRadius first-pass ±line radius before full-file recovery; 0 disables recovery
  */
@@ -231,16 +213,6 @@ export function applyEdits(
   hashLen: number,
   shiftRadius: number,
 ): ApplyResult {
-  if (hasInvalidBodyLine(edits)) {
-    return {
-      ok: false,
-      failure: {
-        kind: "input",
-        message: "INVALID_BODY: each body element must contain exactly one logical line.",
-        checks: inputAnchorChecks(edits, "not_checked"),
-      },
-    };
-  }
   const lines = splitLines(text);
   const bom = text.startsWith("\uFEFF") ? "\uFEFF" : "";
   const ending = detectLineEnding(text);
