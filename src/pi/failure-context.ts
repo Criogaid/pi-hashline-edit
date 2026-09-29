@@ -1,11 +1,16 @@
 import type { AnchorFormatter } from "./anchor-format.ts";
 import { splitLines } from "../core/lines.ts";
-import type { AnchorFailure } from "../core/types.ts";
+import type { Anchor, AnchorFailure } from "../core/types.ts";
 import { mergeRanges } from "../core/ranges.ts";
-import { MAX_BLOCK_BYTES, MAX_RECOVERY_CANDIDATE_BYTES } from "./budgets.ts";
+import { formatKiB, MAX_BLOCK_BYTES, MAX_RECOVERY_CANDIDATE_BYTES } from "./budgets.ts";
 
 const CONTEXT_RADIUS = 3;
-export const MAX_AMBIGUOUS_CANDIDATES = 8;
+const MAX_AMBIGUOUS_CANDIDATES = 8;
+
+/** Select the shared candidate prefix for detail lists and observation neighborhoods. */
+export function selectAmbiguousCandidates(candidates: readonly Anchor[]): readonly Anchor[] {
+  return candidates.slice(0, MAX_AMBIGUOUS_CANDIDATES);
+}
 
 type Interval = { lo: number; hi: number };
 type ContextRow = { line: number; text: string };
@@ -82,9 +87,7 @@ export function formatAmbiguousCandidateNeighborhoods(
 ): { text: string; shownLines: ReadonlySet<number> } {
   const centers = failures.flatMap((failure) =>
     failure.recovery.kind === "ambiguous"
-      ? failure.recovery.candidates
-          .slice(0, MAX_AMBIGUOUS_CANDIDATES)
-          .map((candidate) => candidate.line)
+      ? selectAmbiguousCandidates(failure.recovery.candidates).map((candidate) => candidate.line)
       : [],
   );
   if (centers.length === 0) return { text: "", shownLines: new Set() };
@@ -95,7 +98,7 @@ export function formatAmbiguousCandidateNeighborhoods(
     if (failure.recovery.kind === "found") candidateLines.add(failure.recovery.newLine);
   }
   const { rows, total, truncatedBy } = collectContextRows(lines, centers, anchors, candidateLines);
-  const body = ["Ambiguous-candidate neighborhoods (+/-3; observation only):"];
+  const body = [`Ambiguous-candidate neighborhoods (+/-${CONTEXT_RADIUS}; observation only):`];
   if (rows.length === 0) {
     body.push("No complete neighborhood row fits the limits.");
   } else {
@@ -106,7 +109,7 @@ export function formatAmbiguousCandidateNeighborhoods(
       `Candidate-neighborhood rows: ${rows.length}/${total}; ${total - rows.length} omitted.`,
     );
     body.push(
-      `Candidate neighborhoods truncated: ${truncatedBy} (16384 bytes; candidate row 4096 bytes; lowest lines first).`,
+      `Candidate neighborhoods truncated: ${truncatedBy} (${formatKiB(MAX_BLOCK_BYTES)}; candidate row ${formatKiB(MAX_RECOVERY_CANDIDATE_BYTES)}; lowest lines first).`,
     );
   }
   return { text: `\n${body.join("\n")}`, shownLines: new Set(rows.map((row) => row.line)) };

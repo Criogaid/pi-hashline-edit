@@ -110,9 +110,17 @@ export function formatMutationAnchors(
   contentIndices?: ReadonlySet<number>,
 ): string {
   const notice = `\n… (additional anchors omitted: ${formatKiB(MAX_BLOCK_BYTES)} limit; use read for omitted positions)`;
-  const rows: string[] = [];
-  let bytes = Buffer.byteLength(`\n${heading}\n`) + Buffer.byteLength(notice);
+  const prefix = `\n${heading}\n`;
+  let rows: string[] = [];
+  let bytes = Buffer.byteLength(prefix);
   let omitted = false;
+  const append = (row: string): boolean => {
+    const rowBytes = Buffer.byteLength(row) + (rows.length ? 1 : 0);
+    if (bytes + rowBytes > MAX_BLOCK_BYTES) return false;
+    rows.push(row);
+    bytes += rowBytes;
+    return true;
+  };
   for (const index of indices) {
     const content = lines[index];
     // Compare source content, not short hashes: a collision must not suppress a changed row.
@@ -121,13 +129,15 @@ export function formatMutationAnchors(
     const row = contentIndices?.has(index)
       ? anchors.row(index + 1, content)
       : anchors.token(index + 1, content);
-    const rowBytes = Buffer.byteLength(row) + 1;
-    if (bytes + rowBytes > MAX_BLOCK_BYTES) {
-      omitted = true;
-      continue;
-    }
-    rows.push(row);
-    bytes += rowBytes;
+    if (append(row) || omitted) continue;
+    // Only reserve a notice after overflow. Reconsider earlier rows in order so
+    // a newly oversized row does not prevent later, shorter rows from fitting.
+    omitted = true;
+    const previousRows = rows;
+    rows = [];
+    bytes = Buffer.byteLength(prefix) + Buffer.byteLength(notice);
+    for (const previous of previousRows) append(previous);
+    append(row);
   }
-  return rows.length || omitted ? `\n${heading}\n${rows.join("\n")}${omitted ? notice : ""}` : "";
+  return rows.length || omitted ? `${prefix}${rows.join("\n")}${omitted ? notice : ""}` : "";
 }

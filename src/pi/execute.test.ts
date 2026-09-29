@@ -906,7 +906,7 @@ test("shifted-anchor recovery keeps the read fallback for oversized candidates",
         edits: [{ op: "replace", anchor: h(original, 2), body: ["B"] }],
       }),
       (error: Error) => {
-        assert.match(error.message, /Candidate content exceeds 4096 bytes/);
+        assert.match(error.message, /Candidate content exceeds 4 KiB/);
         assert.match(error.message, /use read or grep/);
         assert.doesNotMatch(error.message, new RegExp(`│x{${oversized.length}}`));
         return true;
@@ -1727,4 +1727,52 @@ test("read renders native content without interpreting anchor-like prefixes", as
         assert.ok(rendered.includes(content), rendered);
       }
     }
+  }));
+
+test("read accepts safe offsets and limits whose sum exceeds the safe integer range", async () =>
+  withDir(async (dir) => {
+    await writeFile(join(dir, "range.txt"), "first\nsecond\nthird\n");
+    const tool = makeReadOverride(dir);
+    for (const offset of [2, 3, Number.MAX_SAFE_INTEGER]) {
+      const result = await call(tool, {
+        path: "range.txt",
+        offset,
+        limit: Number.MAX_SAFE_INTEGER,
+      });
+      assert.equal(result.details, undefined);
+      assert.doesNotMatch(result.content[0].text, /to continue|│first/);
+      if (offset <= 3) assert.match(result.content[0].text, /│third/);
+      else assert.doesNotMatch(result.content[0].text, /│/);
+    }
+  }));
+
+test("ambiguous failure lists and neighborhoods select the same first eight candidates", async () =>
+  withDir(async (dir) => {
+    const positions = [4, 14, 24, 34, 44, 54, 64, 74, 84];
+    const lines = Array.from({ length: 90 }, (_, index) => `line-${index + 1}`);
+    for (const position of positions) lines[position - 1] = "target";
+    const text = lines.join("\n");
+    await writeFile(join(dir, "candidates.txt"), text);
+    const tool = makeEditOverride(dir);
+    await assert.rejects(
+      call(tool, {
+        path: "candidates.txt",
+        edits: [{ op: "delete", anchor: `200#${computeLineHash(200, "target")}` }],
+      }),
+      (error: Error) => {
+        const list = error.message
+          .split("\n")
+          .find((line) => line.includes("ambiguous checksum matches:"));
+        assert.ok(list);
+        assert.match(list, /1 more candidates omitted/);
+        for (const position of positions.slice(0, 8)) {
+          const anchor = h(text, position);
+          assert.ok(list.includes(`"${anchor}"`));
+          assert.ok(error.message.includes(`${anchor}│target`));
+        }
+        assert.ok(!error.message.includes(h(text, 84)));
+        return true;
+      },
+    );
+    assert.equal(await readFile(join(dir, "candidates.txt"), "utf8"), text);
   }));

@@ -49,7 +49,7 @@ import {
 } from "./render.ts";
 import {
   formatAmbiguousCandidateNeighborhoods,
-  MAX_AMBIGUOUS_CANDIDATES,
+  selectAmbiguousCandidates,
 } from "./failure-context.ts";
 import { formatKiB, MAX_BLOCK_BYTES, MAX_RECOVERY_CANDIDATE_BYTES } from "./budgets.ts";
 import { formatMutationAnchors } from "./mutation-result.ts";
@@ -241,21 +241,19 @@ function formatFailureDetails(
             detail += `\n${row}`;
             shownCandidates.add(f.recovery.newLine);
           } else {
-            detail += ` Candidate content exceeds ${MAX_RECOVERY_CANDIDATE_BYTES} bytes.`;
+            detail += ` Candidate content exceeds ${formatKiB(MAX_RECOVERY_CANDIDATE_BYTES)}.`;
           }
         }
         lines.push(detail);
         break;
       }
       case "ambiguous": {
-        const list = f.recovery.candidates
-          .slice(0, MAX_AMBIGUOUS_CANDIDATES)
+        const candidates = selectAmbiguousCandidates(f.recovery.candidates);
+        const list = candidates
           .map((candidate) => `"${snapshot.anchors.reference(candidate.line, candidate.hash)}"`)
           .join(" / ");
-        const more =
-          f.recovery.candidates.length > MAX_AMBIGUOUS_CANDIDATES
-            ? ` (${f.recovery.candidates.length - MAX_AMBIGUOUS_CANDIDATES} more candidates omitted)`
-            : "";
+        const omitted = f.recovery.candidates.length - candidates.length;
+        const more = omitted ? ` (${omitted} more candidates omitted)` : "";
         lines.push(`• ${where}: ambiguous checksum matches: ${list}${more}. ${search}`);
         break;
       }
@@ -271,7 +269,7 @@ function formatFailureDetails(
             `• ${where}: no checksum-matching candidate found. Use read or grep to inspect the current file before retrying.` +
               (f.current === null
                 ? " Cited line is out of range."
-                : ` Current row exceeds ${MAX_RECOVERY_CANDIDATE_BYTES} bytes.`),
+                : ` Current row exceeds ${formatKiB(MAX_RECOVERY_CANDIDATE_BYTES)}.`),
           );
         }
         break;

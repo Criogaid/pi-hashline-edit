@@ -10,6 +10,7 @@ import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { HASH_LEN_MAX, HASH_LEN_MIN } from "../core/hash.ts";
+import { DEFAULT_SHIFT_RADIUS } from "../core/apply.ts";
 import { isIntegerInRange } from "./schema.ts";
 
 export interface HashlineEditConfig {
@@ -29,7 +30,7 @@ export const DEFAULT_CONFIG: HashlineEditConfig = {
   enabled: true,
   actionFusion: true,
   hashLen: 4,
-  shiftRadius: 15,
+  shiftRadius: DEFAULT_SHIFT_RADIUS,
 };
 
 /** Parse JSON directly without stripping comments (standard JSON forbids comments; on error fall back to default). */

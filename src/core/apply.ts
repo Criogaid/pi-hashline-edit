@@ -53,7 +53,7 @@ interface SpanOp {
 }
 
 /** Default first-pass ±line radius before full-file recovery. */
-const DEFAULT_SHIFT_RADIUS = 15;
+export const DEFAULT_SHIFT_RADIUS = 15;
 
 /**
  * Verify an anchor against the live content; on mismatch, attempt shifted

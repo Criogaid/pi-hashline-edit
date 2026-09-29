@@ -174,7 +174,6 @@ export function makeReadOverride(
       }
 
       const start = offset;
-      const end = start + limit;
       const rows: string[] = [];
       const crExpansion = Buffer.byteLength(displayCarriageReturns("\r")) - 1;
       let totalRows = 0;
@@ -186,7 +185,7 @@ export function makeReadOverride(
       try {
         stats = await scanTextLines(
           absPath,
-          (number) => number >= start && number < end,
+          (number) => number >= start && number - start < limit,
           (line) => {
             const rowBytes =
               line.byteLength +
@@ -214,10 +213,10 @@ export function makeReadOverride(
       }
       if (stats.hasNul) return readNative();
       const pagination =
-        !truncated && rows.length > 0 && end <= stats.totalLines
+        !truncated && rows.length > 0 && stats.totalLines - start >= limit
           ? {
               start,
-              end: start + rows.length - 1,
+              end: start + (rows.length - 1),
               totalLines: stats.totalLines,
               nextOffset: start + rows.length,
             }
