@@ -1,9 +1,10 @@
 /**
  * Shared execution pipeline for the file mutation tools (edit, replace, write).
  *
- * Owns the sequencing every mutation tool must keep identical: then_run
- * availability, schema validation, path resolution, the shared file mutation
- * queue, and the hand-off to Action Fusion or plain finalization. Each tool
+ * Owns the sequencing every mutation tool must keep identical once Pi has
+ * prepared and validated the arguments: separating then_run, path resolution,
+ * the shared file mutation queue, and the hand-off to Action Fusion or plain
+ * finalization. Each tool
  * returns a typed `MutationOutcome` (result, commit facts, anchors); nothing
  * downstream reads publication or revisions back from result details.
  *

@@ -1,8 +1,9 @@
 /**
  * Override grep: anchored `LINE#HASH│` results feed edit without a re-read.
- * Scope and paths live in grep-scope; ripgrep events in grep-search; output and
- * byte budgets in grep-output; TUI presentation in grep-render. This module
- * owns the tool schema, render wiring, and execution order.
+ * Scope and paths live in grep-scope; search requests and ripgrep events in
+ * grep-search; the rg process layer in rg-process; result formatting in
+ * grep-output; TUI presentation in grep-render. This module owns the tool
+ * schema, the production backend, render wiring, and execution order.
  * @module pi-hashline-edit/pi
  */
 
