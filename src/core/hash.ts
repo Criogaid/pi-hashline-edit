@@ -72,6 +72,10 @@ function toBase32(n: number, len: number): string {
   return encoded;
 }
 
+/** Supported hash lengths: two characters minimum; eight is the widest useful encoding. */
+export const HASH_LEN_MIN = 2;
+export const HASH_LEN_MAX = 8;
+
 /**
  * Compute the hash of a single line from its 1-based line number and content.
  *

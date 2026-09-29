@@ -26,6 +26,7 @@ import { createAnchorFormatter, displayCarriageReturns } from "./anchor-format.t
 import { canonicalPath } from "./path.ts";
 import { parseHashline, renderToolError } from "./render.ts";
 import { parseToolInput } from "./tool-input.ts";
+import { POSITIVE_SAFE_INTEGER } from "./schema.ts";
 
 const MAX_LINES = 500;
 const MAX_BYTES = 256 * 1024;
@@ -100,16 +101,12 @@ export function makeReadOverride(cwd: string): ReturnType<typeof createReadToolD
       path: { ...builtin.parameters.properties.path, minLength: 1 },
       offset: {
         ...builtin.parameters.properties.offset,
-        minimum: 1,
-        multipleOf: 1,
-        maximum: Number.MAX_SAFE_INTEGER,
+        ...POSITIVE_SAFE_INTEGER,
         description: "Positive integer line number to start reading from (1-indexed; default: 1).",
       },
       limit: {
         ...builtin.parameters.properties.limit,
-        minimum: 1,
-        multipleOf: 1,
-        maximum: Number.MAX_SAFE_INTEGER,
+        ...POSITIVE_SAFE_INTEGER,
         description: "Positive integer maximum number of lines to read (default: 500).",
       },
     },

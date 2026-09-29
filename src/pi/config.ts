@@ -9,6 +9,8 @@
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { HASH_LEN_MAX, HASH_LEN_MIN } from "../core/hash.ts";
+import { isIntegerInRange } from "./schema.ts";
 
 export interface HashlineEditConfig {
   /** Master switch: when false the extension registers no tools — pi's built-ins remain. */
@@ -20,6 +22,8 @@ export interface HashlineEditConfig {
   /** First-pass ±line radius before full-file recovery (default 15; 0 disables recovery). */
   shiftRadius: number;
 }
+
+const SHIFT_RADIUS_MAX = 100;
 
 export const DEFAULT_CONFIG: HashlineEditConfig = {
   enabled: true,
@@ -57,19 +61,11 @@ export function loadConfig(cwd?: string): HashlineEditConfig {
     enabled: typeof raw.enabled === "boolean" ? raw.enabled : DEFAULT_CONFIG.enabled,
     actionFusion:
       typeof raw.actionFusion === "boolean" ? raw.actionFusion : DEFAULT_CONFIG.actionFusion,
-    hashLen:
-      typeof raw.hashLen === "number" &&
-      Number.isInteger(raw.hashLen) &&
-      raw.hashLen >= 2 &&
-      raw.hashLen <= 8
-        ? raw.hashLen
-        : DEFAULT_CONFIG.hashLen,
-    shiftRadius:
-      typeof raw.shiftRadius === "number" &&
-      Number.isInteger(raw.shiftRadius) &&
-      raw.shiftRadius >= 0 &&
-      raw.shiftRadius <= 100
-        ? raw.shiftRadius
-        : DEFAULT_CONFIG.shiftRadius,
+    hashLen: isIntegerInRange(raw.hashLen, HASH_LEN_MIN, HASH_LEN_MAX)
+      ? raw.hashLen
+      : DEFAULT_CONFIG.hashLen,
+    shiftRadius: isIntegerInRange(raw.shiftRadius, 0, SHIFT_RADIUS_MAX)
+      ? raw.shiftRadius
+      : DEFAULT_CONFIG.shiftRadius,
   };
 }

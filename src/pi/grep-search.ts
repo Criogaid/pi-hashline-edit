@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { resolve } from "node:path";
+import { UNSUPPORTED_TEXT_NUL } from "../core/text.ts";
 import { scanTextFile } from "./text-stream.ts";
 import {
   type RgRunResult,
@@ -140,7 +141,7 @@ export async function searchMatches(options: SearchMatchesOptions) {
         if (outputMode === "content" && !revisions.has(filePath)) {
           try {
             const stats = await scanFileRevision(filePath, signal);
-            if (stats.hasNul) throw new Error("UNSUPPORTED_TEXT: NUL bytes are not editable.");
+            if (stats.hasNul) throw new Error(UNSUPPORTED_TEXT_NUL);
             revisions.set(filePath, stats.revision);
           } catch (error) {
             const warning = fileReadWarning(filePath, error, signal);
@@ -174,7 +175,7 @@ export async function searchMatches(options: SearchMatchesOptions) {
             outputMode === "content"
               ? await scanFileRevision(filePath, signal)
               : await scanTextFile(filePath, undefined, signal);
-          if (stats.hasNul) throw new Error("UNSUPPORTED_TEXT: NUL bytes are not editable.");
+          if (stats.hasNul) throw new Error(UNSUPPORTED_TEXT_NUL);
           lineCount = stats.totalLines;
           lineCounts.set(filePath, lineCount);
           if ("revision" in stats && typeof stats.revision === "string") {

@@ -1,6 +1,7 @@
 import { truncateHead, formatSize, DEFAULT_MAX_BYTES } from "@earendil-works/pi-coding-agent";
 import { createHash } from "node:crypto";
 import { isAbsolute, relative, resolve, sep } from "node:path";
+import { UNSUPPORTED_TEXT_NUL } from "../core/text.ts";
 import { createAnchorFormatter, displayCarriageReturns } from "./anchor-format.ts";
 import { fileReadWarning, type RgMatch } from "./grep-search.ts";
 import { scanTextLines } from "./text-stream.ts";
@@ -105,7 +106,7 @@ export async function formatMatches(options: FormatMatchesOptions) {
                 },
                 { signal: scanSignal, onBytes: (bytes) => hash.update(bytes) },
               );
-              if (stats.hasNul) throw new Error("UNSUPPORTED_TEXT: NUL bytes are not editable.");
+              if (stats.hasNul) throw new Error(UNSUPPORTED_TEXT_NUL);
               if (matchLines.some(({ lineNumber }) => !matchedRows.has(lineNumber))) {
                 throw new Error("File changed during search; rerun the query.");
               }

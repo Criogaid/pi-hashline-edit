@@ -1,7 +1,7 @@
-import { computeLineHash } from "../core/hash.ts";
+import { computeLineHash, HASH_LEN_MAX, HASH_LEN_MIN } from "../core/hash.ts";
 import { getState } from "./state.ts";
 
-export const ANCHOR_PATTERN = "^([1-9][0-9]*)#([0-9A-Z]{2,8})$";
+export const ANCHOR_PATTERN = `^([1-9][0-9]*)#([0-9A-Z]{${HASH_LEN_MIN},${HASH_LEN_MAX}})$`;
 
 /** Anchor serialization bound to one hash-length snapshot. */
 export interface AnchorFormatter {

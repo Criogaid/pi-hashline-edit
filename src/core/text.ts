@@ -1,5 +1,9 @@
 import { TextDecoder } from "node:util";
 
+export const UNSUPPORTED_ENCODING = "UNSUPPORTED_ENCODING: expected valid UTF-8.";
+export const UNSUPPORTED_TEXT_NUL = "UNSUPPORTED_TEXT: NUL bytes are not editable.";
+export const INVALID_UNICODE = "INVALID_UNICODE: content cannot be encoded losslessly as UTF-8.";
+
 /** Create an independent UTF-8 decoder; streaming calls preserve split code points and the BOM. */
 export function createUtf8Decoder() {
   const decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
@@ -7,7 +11,7 @@ export function createUtf8Decoder() {
     try {
       return decoder.decode(bytes, { stream });
     } catch (error) {
-      throw new Error("UNSUPPORTED_ENCODING: expected valid UTF-8.", { cause: error });
+      throw new Error(UNSUPPORTED_ENCODING, { cause: error });
     }
   };
 }
@@ -21,7 +25,7 @@ export function decodeUtf8(bytes: Uint8Array): string {
 
 /** Reject byte-oriented/binary content before entering a text mutation pipeline. */
 export function decodeEditableText(bytes: Uint8Array): string {
-  if (bytes.includes(0)) throw new Error("UNSUPPORTED_TEXT: NUL bytes are not editable.");
+  if (bytes.includes(0)) throw new Error(UNSUPPORTED_TEXT_NUL);
   return decodeUtf8(bytes);
 }
 

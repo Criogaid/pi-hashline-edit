@@ -13,7 +13,7 @@ import {
 } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { createHash } from "node:crypto";
-import { decodeEditableText } from "../core/text.ts";
+import { decodeEditableText, INVALID_UNICODE, UNSUPPORTED_TEXT_NUL } from "../core/text.ts";
 
 export type PublicationStatus = "NOT_PUBLISHED" | "PUBLISHED" | "UNKNOWN";
 export type CommitMode = "create" | "overwrite";
@@ -260,9 +260,8 @@ export async function commitFile(
   content: string,
   options: CommitOptions = {},
 ): Promise<CommitResult> {
-  if (content.includes("\0")) throw prepareError("UNSUPPORTED_TEXT: NUL bytes are not editable.");
-  if (!content.isWellFormed())
-    throw prepareError("INVALID_UNICODE: content cannot be encoded losslessly as UTF-8.");
+  if (content.includes("\0")) throw prepareError(UNSUPPORTED_TEXT_NUL);
+  if (!content.isWellFormed()) throw prepareError(INVALID_UNICODE);
   const bytes = Buffer.from(content, "utf8");
   const target = await inspectTarget(path, options.knownBeforeRevision);
   const mode = options.mode ?? (target.existed ? "overwrite" : "create");

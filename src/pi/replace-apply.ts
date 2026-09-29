@@ -14,13 +14,8 @@ export interface Replacement {
   flags?: string;
 }
 
-const VALID_FLAGS = new Set(["g", "i", "m", "s", "u", "y", "d"]);
-
-/** Both matcher modes operate on the shared LF view. */
+/** Both matcher modes operate on the shared LF view. Flag characters are validated by the tool schema. */
 function buildRegex(find: string, isRegex: boolean, flagsRaw: string | undefined): RegExp {
-  for (const c of flagsRaw ?? "") {
-    if (!VALID_FLAGS.has(c)) throw new Error(`invalid regex flag '${c}' (valid: g i m s u y d)`);
-  }
   const set = new Set((flagsRaw ?? "").split(""));
   set.add("g");
   const flagStr = [...set].join("");

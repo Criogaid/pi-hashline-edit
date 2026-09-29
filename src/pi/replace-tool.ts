@@ -33,7 +33,7 @@ import type { AgentToolResult, AgentToolUpdateCallback } from "@earendil-works/p
 import { Type, type Static } from "typebox";
 import { Worker } from "node:worker_threads";
 import { splitLines } from "../core/lines.ts";
-import { applyReplacements } from "./replace-apply.ts";
+import { applyReplacements, type Replacement } from "./replace-apply.ts";
 import { ACTION_FUSION_GUIDELINES, withThenRunSchema, type ThenRunInput } from "./action-fusion.ts";
 import { createAnchorFormatter, type AnchorFormatter } from "./anchor-format.ts";
 import {
@@ -79,7 +79,6 @@ const replacementSchema = Type.Object(
   },
   { additionalProperties: false },
 );
-type Replacement = Static<typeof replacementSchema>;
 
 const replaceSchema = Type.Object(
   {

@@ -28,6 +28,7 @@ import {
 } from "./grep-scope.ts";
 import { searchMatches, type GrepBackend, type SearchScope } from "./grep-search.ts";
 export type { GrepBackend } from "./grep-search.ts";
+import { integerRange, POSITIVE_SAFE_INTEGER } from "./schema.ts";
 import { toDisplayLines } from "./grep-render.ts";
 import { resolveIgnoreCase, runRg, runRgPaths, type SearchModes } from "./rg-line-filter.ts";
 import { runRgTextView } from "./rg-text-view.ts";
@@ -83,17 +84,13 @@ const grepOverrideSchema = Type.Object(
     ),
     context: Type.Optional(
       Type.Number({
-        minimum: 0,
-        maximum: GREP_CONTEXT_MAX,
-        multipleOf: 1,
+        ...integerRange(0, GREP_CONTEXT_MAX),
         description: `Integer number of lines to show before and after each match (0-${GREP_CONTEXT_MAX}; default: 0). Set to 3-5 when searching code to edit so surrounding lines and anchors are included without needing a separate read; context lines are anchored too`,
       }),
     ),
     limit: Type.Optional(
       Type.Number({
-        minimum: 1,
-        multipleOf: 1,
-        maximum: Number.MAX_SAFE_INTEGER,
+        ...POSITIVE_SAFE_INTEGER,
         description: "Positive integer maximum of matching lines to return (default: 100)",
       }),
     ),
