@@ -4,6 +4,13 @@ export const UNSUPPORTED_ENCODING = "UNSUPPORTED_ENCODING: expected valid UTF-8.
 export const UNSUPPORTED_TEXT_NUL = "UNSUPPORTED_TEXT: NUL bytes are not editable.";
 export const INVALID_UNICODE = "INVALID_UNICODE: content cannot be encoded losslessly as UTF-8.";
 
+/** Why text cannot be written as editable UTF-8 (NUL or unpaired surrogates); undefined when it can. */
+export function unwritableTextReason(text: string): string | undefined {
+  if (text.includes("\0")) return UNSUPPORTED_TEXT_NUL;
+  if (!text.isWellFormed()) return INVALID_UNICODE;
+  return undefined;
+}
+
 /** Create an independent UTF-8 decoder; streaming calls preserve split code points and the BOM. */
 export function createUtf8Decoder() {
   const decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });

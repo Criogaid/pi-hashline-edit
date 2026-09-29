@@ -14,3 +14,8 @@ export function cancellationError(detail?: string): Error {
 export function throwIfCancelled(signal: AbortSignal | undefined, detail?: string): void {
   if (signal?.aborted) throw cancellationError(detail);
 }
+
+/** Rejection from a tool's prepareArguments for a check the schema cannot express. */
+export function invalidArgument(path: string, reason: string): Error {
+  return new Error(`Invalid argument ${path}: ${reason}`);
+}

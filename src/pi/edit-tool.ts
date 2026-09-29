@@ -31,6 +31,8 @@ import { Type, type Static } from "typebox";
 import { ACTION_FUSION_GUIDELINES, withThenRunSchema, type ThenRunInput } from "./action-fusion.ts";
 import { applyEdits } from "../core/index.ts";
 import { splitLines } from "../core/lines.ts";
+import { unwritableTextReason } from "../core/text.ts";
+import { invalidArgument } from "./error-text.ts";
 import type { Anchor, ApplyFailure, Edit } from "../core/types.ts";
 import { getState } from "./state.ts";
 import {
@@ -153,23 +155,32 @@ type EditParams = Static<EditSchema> & { then_run?: ThenRunInput };
 type EditOpInput = Static<EditSchema>["edits"][number];
 
 /**
- * Anchor checks the schema cannot express, run before Pi's schema validation.
- * Names anchors whose hash length differs from `hashLen` (the schema would report
- * only a bare pattern mismatch) and rejects line numbers beyond the safe-integer
- * range. Arguments are never changed.
+ * Checks the schema cannot express, run before Pi's schema validation. Rejects body
+ * lines that cannot be written as UTF-8, anchor line numbers beyond the safe-integer
+ * range, and names anchors whose hash length differs from `hashLen` (the schema would
+ * report only a bare pattern mismatch). Malformed shapes are left to the schema.
+ * Arguments are never changed.
  */
-function checkAnchors(args: unknown, hashLen: number): void {
+function checkEditArguments(args: unknown, hashLen: number): void {
   const edits = (args as { edits?: unknown } | null)?.edits;
   if (!Array.isArray(edits)) return;
   const mismatches: string[] = [];
   edits.forEach((op, index) => {
+    const body = (op as Record<string, unknown> | null)?.body;
+    if (Array.isArray(body)) {
+      body.forEach((line, lineIndex) => {
+        const reason = typeof line === "string" ? unwritableTextReason(line) : undefined;
+        if (reason) throw invalidArgument(`edits[${index}].body[${lineIndex}]`, reason);
+      });
+    }
     for (const field of ["anchor", "end"] as const) {
       const value = (op as Record<string, unknown> | null)?.[field];
       if (typeof value !== "string") continue;
       const token = parseAnchorToken(value);
       if (token && !Number.isSafeInteger(token.line)) {
-        throw new Error(
-          `Invalid anchor edits[${index}].${field} ${value}: line number exceeds the safe integer range; copy a complete "LINE#HASH" token from the latest tool result.`,
+        throw invalidArgument(
+          `edits[${index}].${field}`,
+          `line number in ${value} exceeds the safe integer range; copy a complete "LINE#HASH" token from the latest tool result.`,
         );
       }
       if (token && token.hash.length !== hashLen) {
@@ -398,7 +409,7 @@ export function makeEditOverride(cwd: string, fusion?: ActionFusionExecutor) {
     ],
     parameters,
     prepareArguments(args: unknown): EditParams {
-      checkAnchors(args, hashLen);
+      checkEditArguments(args, hashLen);
       return args as EditParams;
     },
     renderShell: "default" as const,

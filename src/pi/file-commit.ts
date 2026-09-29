@@ -13,7 +13,7 @@ import {
 } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { createHash } from "node:crypto";
-import { decodeEditableText, INVALID_UNICODE, UNSUPPORTED_TEXT_NUL } from "../core/text.ts";
+import { decodeEditableText, unwritableTextReason } from "../core/text.ts";
 import { errorMessage, OPERATION_ABORTED, throwIfCancelled } from "./error-text.ts";
 
 export type PublicationStatus = "NOT_PUBLISHED" | "PUBLISHED" | "UNKNOWN";
@@ -247,8 +247,10 @@ export async function commitFile(
   content: string,
   options: CommitOptions = {},
 ): Promise<CommitResult> {
-  if (content.includes("\0")) throw prepareError(UNSUPPORTED_TEXT_NUL);
-  if (!content.isWellFormed()) throw prepareError(INVALID_UNICODE);
+  // Tools reject such input in prepareArguments, but a transformation can still produce it
+  // (a regex without `u` can split a surrogate pair), so publication keeps the final check.
+  const unwritable = unwritableTextReason(content);
+  if (unwritable) throw prepareError(unwritable);
   const bytes = Buffer.from(content, "utf8");
   const target = await inspectTarget(path, options.knownBeforeRevision);
   const mode = options.mode ?? (target.existed ? "overwrite" : "create");

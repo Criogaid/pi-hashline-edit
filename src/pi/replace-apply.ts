@@ -15,8 +15,11 @@ export interface Replacement {
   flags?: string;
 }
 
-/** Both matcher modes operate on the shared LF view. Flag characters are validated by the tool schema. */
-function buildRegex(find: string, isRegex: boolean, flagsRaw: string | undefined): RegExp {
+/**
+ * Both matcher modes operate on the shared LF view. Flag characters are validated by the tool
+ * schema; replace's prepareArguments also compiles regex rules here before any file is read.
+ */
+export function buildRegex(find: string, isRegex: boolean, flagsRaw: string | undefined): RegExp {
   const set = new Set((flagsRaw ?? "").split(""));
   set.add("g");
   const flagStr = [...set].join("");

@@ -33,7 +33,8 @@ import type { AgentToolResult, AgentToolUpdateCallback } from "@earendil-works/p
 import { Type, type Static } from "typebox";
 import { Worker } from "node:worker_threads";
 import { splitLines } from "../core/lines.ts";
-import { applyReplacements, type Replacement } from "./replace-apply.ts";
+import { applyReplacements, buildRegex, type Replacement } from "./replace-apply.ts";
+import { unwritableTextReason } from "../core/text.ts";
 import { ACTION_FUSION_GUIDELINES, withThenRunSchema, type ThenRunInput } from "./action-fusion.ts";
 import { createAnchorFormatter, type AnchorFormatter } from "./anchor-format.ts";
 import {
@@ -50,11 +51,18 @@ import {
   type MutationTarget,
   type TextMutationDetails,
 } from "./mutation-runner.ts";
-import { cancellationError, errorMessage, throwIfCancelled } from "./error-text.ts";
+import {
+  cancellationError,
+  errorMessage,
+  invalidArgument,
+  throwIfCancelled,
+} from "./error-text.ts";
 type ReplaceDetails = TextMutationDetails;
 type ReplaceRenderContext = Parameters<
   NonNullable<ToolDefinition<typeof replaceSchema>["renderCall"]>
 >[2];
+
+const REGEX_FLAGS_PATTERN = "^[gimsuyd]*$";
 
 const replacementSchema = Type.Object(
   {
@@ -72,7 +80,7 @@ const replacementSchema = Type.Object(
     ),
     flags: Type.Optional(
       Type.String({
-        pattern: "^[gimsuyd]*$",
+        pattern: REGEX_FLAGS_PATTERN,
         description:
           "Regex flags in either mode; g is always added. For regex patterns, use 'm' to make ^ and $ match line boundaries.",
       }),
@@ -209,6 +217,34 @@ function replaceHeader(args: ReplaceParams, theme: Theme, counts?: DiffCounts): 
   return t;
 }
 
+/**
+ * Checks the schema cannot express, run before Pi's schema validation: replacement
+ * text must be writable as UTF-8, and regex rules must compile. Rules with malformed
+ * fields are left to the schema. Arguments are never changed.
+ */
+function checkReplaceArguments(args: unknown): void {
+  const rules = (args as { replacements?: unknown } | null)?.replacements;
+  if (!Array.isArray(rules)) return;
+  const validFlags = new RegExp(REGEX_FLAGS_PATTERN);
+  rules.forEach((rule, index) => {
+    const { find, replace, regex, flags } = (rule ?? {}) as Record<string, unknown>;
+    const reason = typeof replace === "string" ? unwritableTextReason(replace) : undefined;
+    if (reason) throw invalidArgument(`replacements[${index}].replace`, reason);
+    if (
+      regex === true &&
+      typeof find === "string" &&
+      find !== "" &&
+      (flags === undefined || (typeof flags === "string" && validFlags.test(flags)))
+    ) {
+      try {
+        buildRegex(find, true, flags);
+      } catch (error) {
+        throw invalidArgument(`replacements[${index}].find`, errorMessage(error));
+      }
+    }
+  });
+}
+
 export function makeReplaceTool(cwd: string, fusion?: ActionFusionExecutor) {
   const parameters = createReplaceSchema(fusion !== undefined);
   return {
@@ -222,6 +258,10 @@ export function makeReplaceTool(cwd: string, fusion?: ActionFusionExecutor) {
       ...(fusion ? ACTION_FUSION_GUIDELINES : []),
     ],
     parameters,
+    prepareArguments(args: unknown): ReplaceParams {
+      checkReplaceArguments(args);
+      return args as ReplaceParams;
+    },
     renderShell: "default" as const,
 
     renderCall(args: ReplaceParams, theme: Theme, context: ReplaceRenderContext) {

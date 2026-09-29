@@ -15,7 +15,8 @@ import {
 import { commitFile, type CommitMode, type CommitResult } from "./file-commit.ts";
 import { postProcessMutation } from "./mutation-result.ts";
 import { executeMutation, type ActionFusionExecutor } from "./mutation-runner.ts";
-import { throwIfCancelled } from "./error-text.ts";
+import { invalidArgument, throwIfCancelled } from "./error-text.ts";
+import { unwritableTextReason } from "../core/text.ts";
 
 const writeSchema = Type.Object(
   {
@@ -61,6 +62,13 @@ export function makeWriteOverride(cwd: string, fusion?: ActionFusionExecutor) {
       ...(fusion ? ACTION_FUSION_GUIDELINES : []),
     ],
     parameters,
+    /** Reject content that cannot be written as UTF-8 before Pi's schema validation; never rewrites. */
+    prepareArguments(args: unknown): WriteParams {
+      const content = (args as { content?: unknown } | null)?.content;
+      const reason = typeof content === "string" ? unwritableTextReason(content) : undefined;
+      if (reason) throw invalidArgument("content", reason);
+      return args as WriteParams;
+    },
     renderShell: "default" as const,
     renderCall(args: WriteParams, theme: Theme, context: WriteRenderContext) {
       return builtin.renderCall!(args, theme, context);
