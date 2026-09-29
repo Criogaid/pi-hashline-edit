@@ -190,7 +190,7 @@ test("grep limit accepts only positive integers through schema and direct execut
       );
       await assert.rejects(
         call(tool, { pattern: "needle", limit }),
-        /limit must be a positive integer/,
+        /Validation failed for tool "grep".*limit/,
       );
     }
     assert.equal(fake.calls.length, 0);
@@ -227,7 +227,7 @@ test("grep schema rejects empty search inputs and fractional context", async () 
     }
     await assert.rejects(
       call(tool, { pattern: "needle", context: 1.5 }),
-      /context must be an integer/,
+      /Validation failed for tool "grep".*context/,
     );
     assert.equal(fake.calls.length, 0);
   }));
@@ -721,7 +721,7 @@ test("rejects empty patterns while allowing wildcard, literal, and empty-line se
     const tool = makeGrepOverrideWithBackend(dir, fake.backend);
 
     for (const pattern of ["", [], ["valid", ""]]) {
-      await assert.rejects(call(tool, { pattern }), /pattern (?:is required|must not be empty)/);
+      await assert.rejects(call(tool, { pattern }), /Validation failed for tool "grep"/);
     }
     assert.equal(fake.calls.length, 0);
     for (const pattern of [".*", "^.+$", ".?"]) {

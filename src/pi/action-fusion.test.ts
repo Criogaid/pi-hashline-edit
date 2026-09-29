@@ -588,7 +588,7 @@ test("ActionFusionError re-wrapping appends recovery guidance without duplicatin
   }
 });
 
-test("ActionFusion rejects missing or invalid then_run command definitions defensively", async () => {
+test("ActionFusion validates direct then_run inputs against the shared schema", async () => {
   const dir = await tempDir();
   try {
     const fusion = createActionFusionExecutor();
@@ -608,7 +608,7 @@ test("ActionFusion rejects missing or invalid then_run command definitions defen
           signal: undefined,
           ctx: ctx(dir),
         }),
-        { message: "then_run command must not be empty" },
+        /Validation failed for tool "then_run"/,
       );
     }
   } finally {

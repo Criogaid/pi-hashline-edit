@@ -5,9 +5,9 @@
  * (or from a prior edit's "Updated anchors"). The core verifies each anchor live against
  * the current file content — no snapshot, no global stale check: a cited line
  * that changed (or was misremembered) fails its own anchor; unchanged lines
- * elsewhere never block the edit. Legacy oldText/newText is not accepted — the
- * schema requires an `op` discriminator, so legacy payloads are rejected at the
- * schema layer (a visible failure, never a silent degradation).
+ * elsewhere never block the edit. The extension requires structured `edits` arrays
+ * at execution; Pi may coerce a single object before validation. Legacy
+ * oldText/newText inputs fail schema validation before mutation.
  *
  * On success the result carries fresh `LINE#HASH` anchors for the lines this
  * edit produced (and the line that shifted into a deletion gap), so the model
@@ -39,7 +39,7 @@ import {
 import { readEditableSnapshot, commitReplacement } from "./file-commit.ts";
 import { applyEdits } from "../core/index.ts";
 import { splitLines } from "../core/lines.ts";
-import type { ApplyFailure, Edit } from "../core/types.ts";
+import type { Anchor, ApplyFailure, Edit } from "../core/types.ts";
 import { canonicalPath } from "./path.ts";
 import { getState } from "./state.ts";
 import { ANCHOR_PATTERN, createAnchorFormatter, type AnchorFormatter } from "./anchor-format.ts";
@@ -61,6 +61,7 @@ import {
   generateMutationDetails,
   postProcessMutation,
 } from "./mutation-result.ts";
+import { parseToolInput } from "./tool-input.ts";
 type EditDetails = ReturnType<typeof generateMutationDetails> & {
   actionFusion?: ActionFusionDetails;
 };
@@ -79,9 +80,11 @@ function anchorRef(description: string) {
 }
 
 /** Parse copied tokens at the boundary; core edits retain numeric anchors. */
+function parseAnchor(value: string): Anchor;
+function parseAnchor(value: string | undefined): Anchor | undefined;
 function parseAnchor(value: string | undefined) {
   if (value === undefined) return undefined;
-  const match = typeof value === "string" ? new RegExp(ANCHOR_PATTERN).exec(value) : null;
+  const match = new RegExp(ANCHOR_PATTERN).exec(value);
   if (!match || !Number.isSafeInteger(Number(match[1]))) {
     throw new Error(
       'Invalid anchor; copy a complete "LINE#HASH" token from the latest tool result.',
@@ -164,12 +167,7 @@ function createEditSchema(actionFusion: boolean) {
 }
 type EditParams = Static<typeof editSchema> & { then_run?: ThenRunInput };
 
-type EditOpInput = {
-  op: Static<typeof editOpSchema>["op"];
-  anchor?: string;
-  end?: string;
-  body?: string[];
-};
+type EditOpInput = Static<typeof editOpSchema>;
 
 /** Format failure mappings and complete unique-candidate rows within the detail budget. */
 function formatFailureDetails(
@@ -301,122 +299,27 @@ function formatFailure(
   return `${formatFailureDetails(failure, snapshot, candidateNeighborhoods.shownLines)}${anchorChecks}${candidateNeighborhoods.text}${guidance}`;
 }
 
-/** Translate JSON edit ops into core Edit[]. Validates conditional required fields (anchor/body per op). */
-function toCoreEdits(
-  ops: readonly EditOpInput[],
-): { ok: true; edits: Edit[] } | { ok: false; error: string } {
-  const edits: Edit[] = [];
-  for (const o of ops) {
-    if (typeof o !== "object" || o === null) {
-      return { ok: false, error: "invalid edit operation: each edit must be an object" };
-    }
-    if ("oldText" in o || "newText" in o) {
-      return {
-        ok: false,
-        error:
-          "legacy oldText/newText is not supported; use structured hashline ops with LINE#HASH anchors",
-      };
-    }
-    const unsupported = Object.keys(o).filter(
-      (key) => !["op", "anchor", "end", "body"].includes(key),
-    );
-    if (unsupported.length)
-      return {
-        ok: false,
-        error: `edit operation parameters not supported: ${unsupported.join(", ")}`,
-      };
-    const anchor = parseAnchor(o.anchor);
-    const end = parseAnchor(o.end);
-    if (o.op !== "replace" && o.op !== "delete" && end)
-      return { ok: false, error: `${o.op} does not accept \`end\`` };
-    if ((o.op === "append" || o.op === "prepend") && anchor)
-      return { ok: false, error: `${o.op} does not accept \`anchor\`` };
-    if (o.op === "delete" && o.body !== undefined)
-      return { ok: false, error: "delete does not accept `body`" };
-    switch (o.op) {
+/** Translate validated public operations into core edits, parsing numeric anchor positions. */
+function toCoreEdits(ops: readonly EditOpInput[]): Edit[] {
+  return ops.map((op) => {
+    switch (op.op) {
       case "replace":
-        if (!anchor) return { ok: false, error: 'replace needs `anchor` "LINE#HASH"' };
-        if (!Array.isArray(o.body)) return { ok: false, error: "replace needs `body` array" };
-        edits.push({ op: "replace", start: anchor, end, body: o.body });
-        break;
+        return {
+          op: "replace",
+          start: parseAnchor(op.anchor),
+          end: parseAnchor(op.end),
+          body: op.body,
+        };
       case "delete":
-        if (!anchor) return { ok: false, error: 'delete needs `anchor` "LINE#HASH"' };
-        edits.push({ op: "delete", start: anchor, end });
-        break;
+        return { op: "delete", start: parseAnchor(op.anchor), end: parseAnchor(op.end) };
       case "insert_after":
       case "insert_before":
-        if (!anchor) return { ok: false, error: `${o.op} needs \`anchor\` "LINE#HASH"` };
-        if (!Array.isArray(o.body)) return { ok: false, error: `${o.op} needs \`body\` array` };
-        edits.push({ op: o.op, anchor, body: o.body });
-        break;
+        return { op: op.op, anchor: parseAnchor(op.anchor), body: op.body };
       case "append":
       case "prepend":
-        if (!Array.isArray(o.body)) return { ok: false, error: `${o.op} needs \`body\` array` };
-        edits.push({ op: o.op, body: o.body });
-        break;
-      default:
-        return {
-          ok: false,
-          error: `unknown or missing operation \`${String((o as { op: unknown }).op)}\`; must be replace, delete, insert_after, insert_before, append, or prepend`,
-        };
+        return { op: op.op, body: op.body };
     }
-  }
-  return { ok: true, edits };
-}
-
-function isSingleEditInput(value: unknown): value is Record<string, unknown> {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return false;
-  }
-  const candidate = value as Record<string, unknown>;
-  return typeof candidate.op === "string";
-}
-
-/**
- * Normalize model arguments into standard { path, edits: [...] } format.
- * Accommodates models emitting edits as a JSON string, a single edit object,
- * or top-level single op parameters, while rejecting legacy oldText/newText.
- */
-export function prepareEditArguments(input: unknown): unknown {
-  if (!input || typeof input !== "object" || Array.isArray(input)) {
-    return input;
-  }
-  const args = { ...(input as Record<string, unknown>) };
-
-  if ("oldText" in args || "newText" in args) {
-    const target = typeof args.path === "string" && args.path ? ` ${args.path}` : "";
-    throw new Error(
-      `Edit${target}: legacy oldText/newText is not supported; use structured hashline ops with LINE#HASH anchors.`,
-    );
-  }
-
-  if (typeof args.edits === "string") {
-    try {
-      const parsed = JSON.parse(args.edits);
-      if (Array.isArray(parsed)) {
-        args.edits = parsed;
-      } else if (isSingleEditInput(parsed)) {
-        args.edits = [parsed];
-      }
-    } catch {
-      // keep original so downstream validation reports format issues
-    }
-  } else if (isSingleEditInput(args.edits)) {
-    args.edits = [args.edits];
-  } else if ((args.edits === undefined || args.edits === null) && typeof args.op === "string") {
-    const { op, anchor, end, body } = args;
-    const singleEdit: Record<string, unknown> = { op };
-    if (anchor !== undefined) singleEdit.anchor = anchor;
-    if (end !== undefined) singleEdit.end = end;
-    if (body !== undefined) singleEdit.body = body;
-    args.edits = [singleEdit];
-    delete args.op;
-    delete args.anchor;
-    delete args.end;
-    delete args.body;
-  }
-
-  return args;
+  });
 }
 
 /**
@@ -445,13 +348,7 @@ function formatUpdatedAnchors(
 function editHeader(args: EditParams, theme: Theme, counts?: DiffCounts): string {
   let t = theme.fg("toolTitle", theme.bold("edit "));
   t += theme.fg("accent", args.path);
-  let edits: EditParams["edits"] = [];
-  try {
-    const prepared = prepareEditArguments(args) as EditParams;
-    if (Array.isArray(prepared.edits)) edits = prepared.edits;
-  } catch {
-    // Invalid arguments still need a renderable title; execution reports the error.
-  }
+  const edits = Array.isArray(args.edits) ? args.edits : [];
   const n = edits.length;
   if (n) {
     const kind = typeof edits[0]?.op === "string" ? edits[0].op : "unknown";
@@ -481,7 +378,6 @@ export function makeEditOverride(
       ...(fusion ? ACTION_FUSION_GUIDELINES : []),
     ],
     parameters,
-    prepareArguments: (input: unknown) => prepareEditArguments(input) as EditParams,
     renderShell: "default" as const,
 
     renderCall(args: EditParams, theme: Theme, context: EditRenderContext) {
@@ -512,32 +408,24 @@ export function makeEditOverride(
       onUpdate: AgentToolUpdateCallback<EditDetails> | undefined,
       ctx: ExtensionContext,
     ) {
-      const prepared = prepareEditArguments(params) as EditParams;
-      const { then_run, ...mutationParams } = prepared;
-      if (!fusion && then_run !== undefined)
+      if (!fusion && params.then_run !== undefined)
         throw new Error("then_run is unavailable because hashlineEdit.actionFusion is disabled");
-      const unsupported = Object.keys(prepared).filter(
-        (key) => !Object.hasOwn(parameters.properties, key),
-      );
-      if (unsupported.length)
-        throw new Error(`edit parameters not supported: ${unsupported.join(", ")}`);
+      params = parseToolInput("edit", parameters, params);
+      const { then_run, ...mutationParams } = params;
       const absolutePath = canonicalPath(cwd, mutationParams.path);
       let mutationAnchors = "";
-      const mutate = (): Promise<AgentToolResult<EditDetails>> => {
-        const path = mutationParams.path;
-        if (
-          !mutationParams.edits ||
-          !Array.isArray(mutationParams.edits) ||
-          mutationParams.edits.length === 0
-        ) {
-          throw new Error(`Edit ${path}: \`edits\` is empty or missing.`);
-        }
-        return withFileMutationQueue(absolutePath, () =>
-          runHashline(absolutePath, path, mutationParams.edits, signal, (anchors) => {
-            mutationAnchors = anchors;
-          }),
+      const mutate = (): Promise<AgentToolResult<EditDetails>> =>
+        withFileMutationQueue(absolutePath, () =>
+          runHashline(
+            absolutePath,
+            mutationParams.path,
+            mutationParams.edits,
+            signal,
+            (anchors) => {
+              mutationAnchors = anchors;
+            },
+          ),
         );
-      };
       const finalizeMutation = (result: AgentToolResult<EditDetails>, publishAnchors: boolean) =>
         appendMutationAnchors(result, mutationAnchors, publishAnchors);
       if (!fusion) return finalizeMutationResult(await mutate(), finalizeMutation);
@@ -570,18 +458,17 @@ async function runHashline(
   if (signal?.aborted) throw new Error(`Edit ${displayPath} aborted before apply.`);
 
   const translated = toCoreEdits(editOps);
-  if (!translated.ok) throw new Error(translated.error);
 
   // Recovery reports checksum candidates from nearby lines, then the whole file
   // if needed. Every failed anchor still rejects the batch; callers inspect
   // candidates and resubmit with fresh anchors.
-  const result = applyEdits(currentText, translated.edits, anchorFormatter.hashLen, shiftRadius);
+  const result = applyEdits(currentText, translated, anchorFormatter.hashLen, shiftRadius);
   if (!result.ok) {
     throw new Error(
       formatFailure(
         result.failure,
         { currentText, anchors: anchorFormatter },
-        translated.edits.length > 1,
+        translated.length > 1,
       ),
     );
   }
@@ -611,7 +498,7 @@ async function runHashline(
       content: [
         {
           type: "text" as const,
-          text: `Edited ${displayPath} (${translated.edits.length} op(s)${result.changed ? "" : ", no net change"}).`,
+          text: `Edited ${displayPath} (${translated.length} op(s)${result.changed ? "" : ", no net change"}).`,
         },
       ],
       details,

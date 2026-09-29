@@ -74,7 +74,7 @@ All text inspection and matching uses one logical representation: CRLF boundarie
 
 ### Edit operations
 
-`edit` takes `path` and an `edits` array. A single edit object, stringified JSON, or top-level single op parameters are normalized to `edits: [...]`. Anchors are `"LINE#HASH"` strings; each `body` element is one logical line without CR or LF.
+`edit` declares a required `path` and a non-empty structured `edits` array. This extension does not normalize alternate formats: stringified JSON and top-level single-op fields are rejected. Pi may convert a single edit object to a one-element array before schema validation; a direct `execute` call without Pi's conversion rejects that object. Anchors are `"LINE#HASH"` strings; each `body` element is one logical line without CR or LF.
 
 | `op` | Required | Optional | Effect |
 | --- | --- | --- | --- |
@@ -87,7 +87,7 @@ An empty `body: []` deletes the cited range for `replace` and leaves the file un
 
 All operations in a batch use the same snapshot. Validation failure rejects the whole batch. Unknown fields, conflicting fields, and overlapping operations are rejected; some touching operations also conflict and need separate calls with fresh anchors. For insertion, **do not repeat the anchor line in `body`**. `edit` uses structured operations, not `oldText`/`newText` pairs.
 
-For multi-operation batches, rejected edits report each supplied anchor's status from that validation snapshot: `matched`, `mismatched`, or `not_checked` when body validation stopped the batch before hashing. Single-operation edits omit this summary table and report the failure directly. Entries identify the zero-based operation index, `anchor` or `end`, and the cited token. The bounded list reports omitted entries explicitly. These statuses do not establish range/overlap validity, semantic intent, publication, command success, or validity on a later retry.
+For multi-operation batches that reach snapshot verification, rejected edits report each supplied anchor's status: `matched` or `mismatched`. Schema-invalid inputs fail before reading the file and have no anchor-status table. Single-operation edits omit the summary table and report the failure directly. Entries identify the zero-based operation index, `anchor` or `end`, and the cited token. The bounded list reports omitted entries explicitly. These statuses do not establish range/overlap validity, semantic intent, publication, command success, or validity on a later retry.
 
 Recovery first searches within `shiftRadius` of the cited line. If that search finds no candidates, it searches the rest of the file and collects all checksum matches before deciding whether the result is unique or ambiguous. Existing local candidates take priority; distant matches are not added when local candidates exist. `shiftRadius: 0` disables both searches. Candidate matching holds the original line number fixed when hashing current content; returned anchors use each candidate's actual line number.
 

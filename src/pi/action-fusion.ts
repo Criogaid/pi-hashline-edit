@@ -2,9 +2,10 @@ import { realpath } from "node:fs/promises";
 import { basename, dirname, resolve } from "node:path";
 import type { AgentToolResult, AgentToolUpdateCallback } from "@earendil-works/pi-agent-core";
 import { createBashToolDefinition, type ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
+import { Type, type Static } from "typebox";
 import { fileRevision, FileMutationError, type PublicationStatus } from "./file-commit.ts";
 import { finalizeMutationResult, observedFreshness } from "./mutation-result.ts";
+import { parseToolInput } from "./tool-input.ts";
 
 export const THEN_RUN_SUCCEEDED = "[then_run:succeeded]";
 export const THEN_RUN_FAILED = "[then_run:failed]";
@@ -21,11 +22,6 @@ export const ACTION_FUSION_GUIDELINES = [
   "Use platform-appropriate commands; avoid Unix-only paths like /tmp on Windows.",
   "Check the command outcome before claiming validation passed.",
 ];
-
-export interface ThenRunInput {
-  command: string;
-  timeout?: number;
-}
 
 export type CommandStatus =
   | "not_requested"
@@ -73,6 +69,8 @@ export function createThenRunSchema(description: string) {
     ),
   );
 }
+const thenRunInputSchema = createThenRunSchema("Command to run");
+export type ThenRunInput = NonNullable<Static<typeof thenRunInputSchema>>;
 
 type CommandRunner = (
   toolCallId: string,
@@ -181,28 +179,6 @@ function commandStatus(error: unknown, signal: AbortSignal | undefined): Command
   return /timeout|timed out/i.test(errorText(error)) ? "timeout" : "failed";
 }
 
-function validateThenRun(input: ThenRunInput): void {
-  if (
-    !input ||
-    typeof input !== "object" ||
-    typeof input.command !== "string" ||
-    !input.command.trim()
-  ) {
-    throw new Error("then_run command must not be empty");
-  }
-  const unsupported = Object.keys(input).filter((key) => key !== "command" && key !== "timeout");
-  if (unsupported.length)
-    throw new Error(`then_run parameters not supported: ${unsupported.join(", ")}`);
-  if (
-    input.timeout !== undefined &&
-    (!Number.isFinite(input.timeout) ||
-      input.timeout <= 0 ||
-      input.timeout > MAX_BASH_TIMEOUT_SECONDS)
-  ) {
-    throw new Error(`then_run timeout must be between 0 and ${MAX_BASH_TIMEOUT_SECONDS} seconds`);
-  }
-}
-
 async function defaultCommandRunner(
   toolCallId: string,
   input: ThenRunInput,
@@ -288,7 +264,7 @@ export function createActionFusionExecutor(
     onUpdate?: AgentToolUpdateCallback<TDetails>;
     finalizeMutation?: MutationFinalizer<TDetails>;
   }): Promise<MutationResult<TDetails>> {
-    if (thenRun !== undefined) validateThenRun(thenRun);
+    if (thenRun !== undefined) thenRun = parseToolInput("then_run", thenRunInputSchema, thenRun);
     let completedMutation: MutationResult<TDetails> | undefined;
     let progressFailure: string | undefined;
     let commandSucceeded = false;

@@ -17,6 +17,7 @@ import {
 import { commitFile, type CommitMode, type CommitResult } from "./file-commit.ts";
 import { postProcessMutation } from "./mutation-result.ts";
 import { canonicalPath } from "./path.ts";
+import { parseToolInput } from "./tool-input.ts";
 
 const writeSchema = Type.Object(
   {
@@ -90,16 +91,10 @@ export function makeWriteOverride(
       onUpdate: AgentToolUpdateCallback<WriteDetails> | undefined,
       ctx: ExtensionContext,
     ) {
-      if ("expectedRevision" in params)
-        throw new Error("expectedRevision is not supported by write");
-      const { then_run, ...mutationParams } = params;
-      if (!fusion && then_run !== undefined)
+      if (!fusion && params.then_run !== undefined)
         throw new Error("then_run is unavailable because hashlineEdit.actionFusion is disabled");
-      const unsupported = Object.keys(params).filter(
-        (key) => !Object.hasOwn(parameters.properties, key),
-      );
-      if (unsupported.length)
-        throw new Error(`write parameters not supported: ${unsupported.join(", ")}`);
+      params = parseToolInput("write", parameters, params);
+      const { then_run, ...mutationParams } = params;
       const absolutePath = canonicalPath(cwd, mutationParams.path);
       const mutate = (): Promise<AgentToolResult<WriteDetails>> =>
         withFileMutationQueue(absolutePath, async () => {

@@ -249,37 +249,19 @@ test("E2E Dev D5: Line ending preservation and deletion successor anchor", async
     assert.equal(afterBytes.toString("utf8"), "line1\r\nline3\r\nline4\r\n");
   }));
 
-test("E2E Dev D6: Parameter normalization tolerance across single-object and JSON string inputs", async () =>
+test("E2E Dev D6: structured edit batches use one original snapshot", async () =>
   withDir(async (dir) => {
-    const file = join(dir, "flexible.txt");
-    await writeFile(file, "alpha\nbeta\ngamma\n");
-
-    const edit = makeEditOverride(dir);
-
-    // Format A: Single object instead of array
-    await call(edit, {
-      path: "flexible.txt",
-      edits: { op: "replace", anchor: h("alpha\nbeta\ngamma\n", 1), body: ["ALPHA"] },
+    const file = join(dir, "batch.txt");
+    const original = "alpha\nbeta\ngamma\n";
+    await writeFile(file, original);
+    await call(makeEditOverride(dir), {
+      path: "batch.txt",
+      edits: [
+        { op: "replace", anchor: h(original, 1), body: ["ALPHA"] },
+        { op: "replace", anchor: h(original, 3), body: ["GAMMA"] },
+      ],
     });
-    assert.equal(await readFile(file, "utf8"), "ALPHA\nbeta\ngamma\n");
-
-    // Format B: Top-level op fields
-    const cur1 = await readFile(file, "utf8");
-    await call(edit, {
-      path: "flexible.txt",
-      op: "replace",
-      anchor: h(cur1, 2),
-      body: ["BETA"],
-    });
-    assert.equal(await readFile(file, "utf8"), "ALPHA\nBETA\ngamma\n");
-
-    // Format C: JSON stringified edits
-    const cur2 = await readFile(file, "utf8");
-    await call(edit, {
-      path: "flexible.txt",
-      edits: JSON.stringify([{ op: "replace", anchor: h(cur2, 3), body: ["GAMMA"] }]),
-    });
-    assert.equal(await readFile(file, "utf8"), "ALPHA\nBETA\nGAMMA\n");
+    assert.equal(await readFile(file, "utf8"), "ALPHA\nbeta\nGAMMA\n");
   }));
 
 // ---------------------------------------------------------------------------

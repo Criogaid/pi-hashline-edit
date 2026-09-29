@@ -25,6 +25,7 @@ import { scanTextLines } from "./text-stream.ts";
 import { createAnchorFormatter, displayCarriageReturns } from "./anchor-format.ts";
 import { canonicalPath } from "./path.ts";
 import { parseHashline, renderToolError } from "./render.ts";
+import { parseToolInput } from "./tool-input.ts";
 
 const MAX_LINES = 500;
 const MAX_BYTES = 256 * 1024;
@@ -149,22 +150,9 @@ export function makeReadOverride(cwd: string): ReturnType<typeof createReadToolD
     ) {
       // User cancelled → delegate to the built-in (builtin handles abort itself)
       if (signal?.aborted) return builtin.execute(toolCallId, params, signal, onUpdate, ctx);
-      if (typeof params.path !== "string" || params.path.length === 0) {
-        throw new Error("Invalid read path: expected a non-empty path.");
-      }
-      const unsupported = Object.keys(params).filter(
-        (key) => !Object.hasOwn(parameters.properties, key),
-      );
-      if (unsupported.length)
-        throw new Error(`read parameters not supported: ${unsupported.join(", ")}`);
-      const offset = (params.offset as number | undefined) ?? 1;
-      const limit = (params.limit as number | undefined) ?? MAX_LINES;
-      if (!Number.isSafeInteger(offset) || offset < 1) {
-        throw new Error("Invalid read offset: expected a positive integer (1-based).");
-      }
-      if (!Number.isSafeInteger(limit) || limit < 1) {
-        throw new Error("Invalid read limit: expected a positive integer.");
-      }
+      params = parseToolInput("read", parameters, params);
+      const offset = params.offset ?? 1;
+      const limit = params.limit ?? MAX_LINES;
       const anchors = createAnchorFormatter();
 
       const absPath = canonicalPath(cwd, params.path as string);

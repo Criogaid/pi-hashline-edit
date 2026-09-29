@@ -52,7 +52,7 @@ test("mutation headers refresh in place and retain isolated per-call counts", ()
   }
 });
 
-test("edit call titles treat JSON-string edits like structured edits and tolerate invalid JSON", () => {
+test("edit call titles show structured batches and tolerate invalid partial input", () => {
   initTheme("dark");
   const tool = makeEditOverride(process.cwd());
   const edits = [
@@ -66,9 +66,9 @@ test("edit call titles treat JSON-string edits like structured edits and tolerat
       } as Parameters<typeof tool.renderCall>[2])
       .render(120)
       .join("\n");
-  assert.equal(render(JSON.stringify(edits)), render(edits));
   assert.match(render(edits), /2 ops: replace/);
-  assert.doesNotMatch(render("[{bad"), /ops: undefined/);
+  assert.doesNotMatch(render(JSON.stringify(edits)), /ops:/);
+  assert.doesNotMatch(render("[{bad"), /ops:/);
 });
 
 test("mutation card owns stale-anchor notices without internal status", () => {

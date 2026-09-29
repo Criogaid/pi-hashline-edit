@@ -48,6 +48,7 @@ import {
 } from "./rg-line-filter.ts";
 import { runRgTextView } from "./rg-text-view.ts";
 import { submatchesToLineRanges } from "./rg-line-ranges.ts";
+import { parseToolInput } from "./tool-input.ts";
 
 const DEFAULT_LIMIT = 100;
 /** Maximum UTF-16 units in a line preview, excluding its partial-line label. */
@@ -750,45 +751,13 @@ export function makeGrepOverrideWithBackend(cwd: string, overrides: Partial<Grep
       _onUpdate: Parameters<GrepTool["execute"]>[3],
     ) {
       if (signal?.aborted) throw new Error("Operation aborted");
-      const unsupported = Object.keys(params).filter(
-        (key) => !Object.hasOwn(grepOverrideSchema.properties, key),
-      );
-      if (unsupported.length)
-        throw new Error(
-          `grep parameters not supported: ${unsupported.join(", ")}. Allowed: ${Object.keys(grepOverrideSchema.properties).join(", ")}`,
-        );
+      params = parseToolInput("grep", grepOverrideSchema, params);
       const anchors = createAnchorFormatter();
       const warnings: string[] = [];
 
       const patterns = toArray(params.pattern).map(normalizeLineEndings);
-      if (patterns.length === 0) throw new Error("pattern is required (got an empty array)");
-      if (patterns.some((pattern) => pattern.length === 0)) {
-        throw new Error("pattern must not be empty");
-      }
-
       const effectiveLimit = params.limit ?? DEFAULT_LIMIT;
-      if (!Number.isSafeInteger(effectiveLimit) || effectiveLimit < 1) {
-        throw new Error("limit must be a positive integer");
-      }
       const context = params.context ?? 0;
-      if (!Number.isSafeInteger(context) || context < 0 || context > GREP_CONTEXT_MAX) {
-        throw new Error(`context must be an integer between 0 and ${GREP_CONTEXT_MAX}`);
-      }
-      for (const [key, input] of [
-        ["path", params.path],
-        ["glob", params.glob],
-      ] as const) {
-        if (
-          input !== undefined &&
-          (typeof input === "string"
-            ? input.length === 0
-            : !Array.isArray(input) ||
-              input.length === 0 ||
-              input.some((part) => typeof part !== "string" || part.length === 0))
-        ) {
-          throw new Error(`${key} must be a non-empty string or array of non-empty strings`);
-        }
-      }
       const rgPath = bundledRgPath;
       const outputMode: "content" | "files" | "count" = params.outputMode ?? "content";
       const multiline = params.multiline ?? false;

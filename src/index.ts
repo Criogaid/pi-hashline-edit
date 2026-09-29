@@ -3,7 +3,7 @@
  *
  * Overrides the built-in read/edit: read outputs "lineNo#hash│content";
  * edit accepts structured hashline ops (edits[] with LINE#HASH anchors), and
- * legacy oldText/newText is rejected explicitly (no silent degradation). grep
+ * legacy oldText/newText is rejected by the schema. grep
  * is overridden the same way so results carry usable anchors. A separate
  * `replace` tool adds location-blind bulk + regex replacement (replaceAll and
  * full JS regex with capture groups) for renames/pattern transforms that

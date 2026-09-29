@@ -132,7 +132,7 @@ test("write rejects obsolete expectedRevision without overwriting", async () =>
       const write = makeWriteOverride(dir, fusion);
       await assert.rejects(
         write.execute("obsolete", params, undefined, undefined, context(dir)),
-        /expectedRevision is not supported/,
+        /Validation failed for tool "write".*expectedRevision/,
       );
       assert.equal(await readFile(target, "utf8"), "original\n");
     }

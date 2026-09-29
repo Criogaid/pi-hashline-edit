@@ -106,7 +106,7 @@ test("replace rejects top-level rules without publishing", async () =>
         find: "old",
         replace: "new",
       }),
-      /top-level replacement fields/,
+      /Validation failed for tool "replace".*replacements/,
     );
     assert.equal(await readFile(file, "utf8"), "old\n");
   }));
@@ -120,7 +120,7 @@ test("replace rejects unsupported per-rule fields before publishing", async () =
     for (const maxMatches of [1, null, false]) {
       await assert.rejects(
         call(tool, { path: file, replacements: [{ find: "foo", replace: "bar", maxMatches }] }),
-        /rule 0: .*maxMatches.*not supported/,
+        /Validation failed for tool "replace".*maxMatches/,
       );
       assert.equal(await readFile(file, "utf8"), before);
     }
@@ -351,7 +351,7 @@ test("replace: empty find throws", async () => {
     await writeFile(join(dir, "f.txt"), "a\n");
     await assert.rejects(
       call(makeReplaceTool(dir), { path: "f.txt", replacements: [{ find: "", replace: "x" }] }),
-      /`find` is empty/,
+      /Validation failed for tool "replace".*find/,
     );
   });
 });
@@ -390,7 +390,7 @@ test("replace: invalid flag char throws", async () => {
         path: "f.txt",
         replacements: [{ find: "a", replace: "x", flags: "z" }],
       }),
-      /invalid regex flag/,
+      /Validation failed for tool "replace".*flags/,
     );
   });
 });
@@ -608,7 +608,7 @@ test("replacement batches use one snapshot and return anchors for the final cont
     assert.equal(await readFile(file, "utf8"), "\uFEFFbar\r\nchained\nbar");
   }));
 
-test("invalid batches reject every change and skip the fused command", async () =>
+test("invalid batches reject every change and never run a fused command", async () =>
   withDir(async (dir) => {
     const file = join(dir, "batch.txt");
     const before = "foo bar foo";
@@ -623,33 +623,45 @@ test("invalid batches reject every change and skip the fused command", async () 
     );
     const first = { find: "bar", replace: "changed" };
     const cases = [
-      { replacements: [first, { find: "missing", replace: "x" }] },
-      { replacements: [first, { find: "(", replace: "x", regex: true }] },
-      { replacements: [first, { find: "bar foo", replace: "x" }] },
-      { replacements: [first, { find: "bar", replace: "x" }] },
-      { replacements: [first, { find: "foo", replace: "\0" }] },
-      { replacements: [first, { find: "foo", replace: "\ud800" }] },
-      { replacements: [first, { find: "", replace: "x" }] },
-      { replacements: [first, { find: "foo" }] },
-      { replacements: [] },
-      { replacements: [first], find: "foo", replace: "x" },
-      { replacements: [first], flags: "i" },
-      {},
-    ];
-    for (const args of cases) {
-      await assert.rejects(
-        tool.execute(
-          "0",
-          { path: file, ...args, then_run: { command: "check" } } as Parameters<
-            typeof tool.execute
-          >[1],
-          undefined,
-          undefined,
-          { cwd: dir } as Parameters<typeof tool.execute>[4],
-        ),
+      [
         /then_run:skipped/,
-      );
-      assert.equal(await readFile(file, "utf8"), before);
+        [
+          { replacements: [first, { find: "missing", replace: "x" }] },
+          { replacements: [first, { find: "(", replace: "x", regex: true }] },
+          { replacements: [first, { find: "bar foo", replace: "x" }] },
+          { replacements: [first, { find: "bar", replace: "x" }] },
+          { replacements: [first, { find: "foo", replace: "\0" }] },
+          { replacements: [first, { find: "foo", replace: "\ud800" }] },
+        ],
+      ],
+      [
+        /Validation failed for tool "replace"/,
+        [
+          { replacements: [first, { find: "", replace: "x" }] },
+          { replacements: [first, { find: "foo" }] },
+          { replacements: [] },
+          { replacements: [first], find: "foo", replace: "x" },
+          { replacements: [first], flags: "i" },
+          {},
+        ],
+      ],
+    ] as const;
+    for (const [expected, inputs] of cases) {
+      for (const args of inputs) {
+        await assert.rejects(
+          tool.execute(
+            "0",
+            { path: file, ...args, then_run: { command: "check" } } as Parameters<
+              typeof tool.execute
+            >[1],
+            undefined,
+            undefined,
+            { cwd: dir } as Parameters<typeof tool.execute>[4],
+          ),
+          expected,
+        );
+        assert.equal(await readFile(file, "utf8"), before);
+      }
     }
     assert.equal(commands, 0);
   }));
@@ -797,7 +809,7 @@ test("replace rejects JSON-string rules without publishing", async () =>
         path: "f.txt",
         replacements: JSON.stringify([{ find: "foo", replace: "bar" }]),
       }),
-      /replacements must be a non-empty array/,
+      /Validation failed for tool "replace".*replacements/,
     );
     assert.equal(await readFile(file, "utf8"), "hello foo world");
   }));

@@ -58,6 +58,7 @@ import {
   generateMutationDetails,
   postProcessMutation,
 } from "./mutation-result.ts";
+import { parseToolInput } from "./tool-input.ts";
 type ReplaceDetails = ReturnType<typeof generateMutationDetails> & {
   actionFusion?: ActionFusionDetails;
 };
@@ -120,29 +121,6 @@ function createReplaceSchema(actionFusion: boolean) {
     : replaceSchema;
 }
 type ReplaceParams = Static<typeof replaceSchema> & { then_run?: ThenRunInput };
-
-function replacementRules(params: ReplaceParams): Replacement[] {
-  if (Object.keys(replacementSchema.properties).some((key) => key in params))
-    throw new Error("top-level replacement fields are not supported; use replacements");
-  const rules = params.replacements;
-  if (!Array.isArray(rules) || rules.length === 0)
-    throw new Error("replacements must be a non-empty array");
-  for (const [index, rule] of rules.entries()) {
-    if (!rule || typeof rule.find !== "string" || typeof rule.replace !== "string")
-      throw new Error(`rule ${index}: find and replace must be strings`);
-    if (rule.find === "") throw new Error(`rule ${index}: \`find\` is empty`);
-    const unsupported = Object.keys(rule).filter((key) => !(key in replacementSchema.properties));
-    if (unsupported.length)
-      throw new Error(
-        `rule ${index}: ${unsupported.join(", ")} not supported${unsupported.includes("maxMatches") ? "; maxMatches was removed" : ""}`,
-      );
-    if (rule.regex !== undefined && typeof rule.regex !== "boolean")
-      throw new Error(`rule ${index}: regex must be a boolean`);
-    if (rule.flags !== undefined && typeof rule.flags !== "string")
-      throw new Error(`rule ${index}: flags must be a string`);
-  }
-  return rules;
-}
 
 const REGEX_TIMEOUT_MS = 5_000;
 
@@ -294,9 +272,10 @@ export function makeReplaceTool(
       onUpdate: AgentToolUpdateCallback<ReplaceDetails> | undefined,
       ctx: ExtensionContext,
     ) {
-      const { then_run, ...mutationParams } = params;
-      if (!fusion && then_run !== undefined)
+      if (!fusion && params.then_run !== undefined)
         throw new Error("then_run is unavailable because hashlineEdit.actionFusion is disabled");
+      params = parseToolInput("replace", parameters, params);
+      const { then_run, ...mutationParams } = params;
       const path = mutationParams.path;
       const absolutePath = canonicalPath(cwd, path);
       let mutationAnchors = "";
@@ -331,14 +310,7 @@ async function runReplace(
   onAnchors: (anchors: string) => void,
 ) {
   const anchorFormatter = createAnchorFormatter();
-  let rules: Replacement[];
-  try {
-    rules = replacementRules(params);
-  } catch (error) {
-    throw new Error(
-      `Replace ${displayPath}: ${error instanceof Error ? error.message : String(error)}`,
-    );
-  }
+  const rules = params.replacements;
 
   const { text: currentText, baseRevision } = await readEditableSnapshot(absPath, displayPath);
   // honor cancel after read: if aborted, don't proceed to match/replace; the file stays untouched
