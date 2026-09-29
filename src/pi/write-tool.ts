@@ -2,22 +2,19 @@ import { Type, type Static } from "typebox";
 import type { AgentToolResult, AgentToolUpdateCallback } from "@earendil-works/pi-agent-core";
 import {
   createWriteToolDefinition,
-  withFileMutationQueue,
   type ExtensionContext,
   type Theme,
   type ToolRenderResultOptions,
 } from "@earendil-works/pi-coding-agent";
 import {
   ACTION_FUSION_GUIDELINES,
-  createActionFusionExecutor,
-  createThenRunSchema,
+  withThenRunSchema,
   type ThenRunInput,
   type ActionFusionDetails,
 } from "./action-fusion.ts";
 import { commitFile, type CommitMode, type CommitResult } from "./file-commit.ts";
 import { postProcessMutation } from "./mutation-result.ts";
-import { canonicalPath } from "./path.ts";
-import { parseToolInput } from "./tool-input.ts";
+import { executeMutation, type ActionFusionExecutor } from "./mutation-runner.ts";
 
 const writeSchema = Type.Object(
   {
@@ -37,17 +34,11 @@ const writeSchema = Type.Object(
 );
 
 function createWriteSchema(actionFusion: boolean) {
-  return actionFusion
-    ? Type.Object(
-        {
-          ...writeSchema.properties,
-          then_run: createThenRunSchema(
-            "Command to run after write succeeds; failure does not roll back the write.",
-          ),
-        },
-        { additionalProperties: false },
-      )
-    : writeSchema;
+  return withThenRunSchema(
+    writeSchema,
+    "Command to run after write succeeds; failure does not roll back the write.",
+    actionFusion,
+  );
 }
 type WriteParams = Static<typeof writeSchema> & { then_run?: ThenRunInput };
 type WriteDetails = CommitResult & { path: string; actionFusion?: ActionFusionDetails };
@@ -55,10 +46,7 @@ type WriteRenderContext = Parameters<
   NonNullable<ReturnType<typeof createWriteToolDefinition>["renderCall"]>
 >[2];
 
-export function makeWriteOverride(
-  cwd: string,
-  fusion?: ReturnType<typeof createActionFusionExecutor>,
-) {
+export function makeWriteOverride(cwd: string, fusion?: ActionFusionExecutor) {
   const parameters = createWriteSchema(fusion !== undefined);
   const builtin = createWriteToolDefinition(cwd);
   return {
@@ -91,33 +79,38 @@ export function makeWriteOverride(
       onUpdate: AgentToolUpdateCallback<WriteDetails> | undefined,
       ctx: ExtensionContext,
     ) {
-      if (!fusion && params.then_run !== undefined)
-        throw new Error("then_run is unavailable because hashlineEdit.actionFusion is disabled");
-      params = parseToolInput("write", parameters, params);
-      const { then_run, ...mutationParams } = params;
-      const absolutePath = canonicalPath(cwd, mutationParams.path);
-      const mutate = (): Promise<AgentToolResult<WriteDetails>> =>
-        withFileMutationQueue(absolutePath, async () => {
-          signal?.throwIfAborted();
-          const result = await commitFile(absolutePath, mutationParams.content, {
-            mode: mutationParams.mode as CommitMode | undefined,
-            signal,
-          });
-          return postProcessMutation("write", result.publication, () => ({
-            content: [
-              {
-                type: "text" as const,
-                text:
-                  result.publication === "NOT_PUBLISHED"
-                    ? `Wrote ${mutationParams.path} (no net change).`
-                    : `${result.created ? "Created" : "Wrote"} ${mutationParams.path}.`,
-              },
-            ],
-            details: { path: mutationParams.path, ...result },
-          }));
-        });
-      if (!fusion) return mutate();
-      return fusion({ toolCallId, absolutePath, thenRun: then_run, mutate, signal, ctx, onUpdate });
+      return executeMutation<Omit<WriteParams, "then_run">, WriteDetails>(
+        {
+          name: "write",
+          cwd,
+          parameters,
+          fusion,
+          // Write results carry no anchors; stale revisions are reported by then_run.
+          reportsAnchors: false,
+          async run(mutationParams, { absolutePath, displayPath, signal }) {
+            signal?.throwIfAborted();
+            const result = await commitFile(absolutePath, mutationParams.content, {
+              mode: mutationParams.mode as CommitMode | undefined,
+              signal,
+            });
+            return {
+              result: postProcessMutation("write", result.publication, () => ({
+                content: [
+                  {
+                    type: "text" as const,
+                    text:
+                      result.publication === "NOT_PUBLISHED"
+                        ? `Wrote ${displayPath} (no net change).`
+                        : `${result.created ? "Created" : "Wrote"} ${displayPath}.`,
+                  },
+                ],
+                details: { path: displayPath, ...result },
+              })),
+            };
+          },
+        },
+        { toolCallId, params, signal, onUpdate, ctx },
+      );
     },
   };
 }

@@ -1,0 +1,180 @@
+/**
+ * Shared execution pipeline for the file mutation tools (edit, replace, write).
+ *
+ * Owns the sequencing every mutation tool must keep identical: then_run
+ * availability, schema validation, path resolution, the shared file mutation
+ * queue, and the hand-off to Action Fusion or plain finalization. Anchor
+ * publication is an explicit outcome field rather than a side channel, so the
+ * freshness rule (anchors only for an unchanged published revision) lives here.
+ *
+ * `runTextMutation` adds the read-modify-write sequence shared by edit and
+ * replace: snapshot bound to the bytes read, cancellation before apply and
+ * before write, revision-checked commit, and result generation that keeps the
+ * publication status on failure. Tools supply only the text transformation.
+ *
+ * @module pi-hashline-edit/pi
+ */
+
+import { withFileMutationQueue, type ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { AgentToolResult, AgentToolUpdateCallback } from "@earendil-works/pi-agent-core";
+import type { TSchema } from "typebox";
+import type {
+  ActionFusionDetails,
+  createActionFusionExecutor,
+  ThenRunInput,
+} from "./action-fusion.ts";
+import { commitReplacement, readEditableSnapshot } from "./file-commit.ts";
+import {
+  appendMutationAnchors,
+  finalizeMutationResult,
+  generateMutationDetails,
+  postProcessMutation,
+} from "./mutation-result.ts";
+import { canonicalPath } from "./path.ts";
+import { parseToolInput } from "./tool-input.ts";
+
+export type ActionFusionExecutor = ReturnType<typeof createActionFusionExecutor>;
+export type MutationToolName = "edit" | "replace" | "write";
+
+/** Result details shared by the read-modify-write tools. */
+export type TextMutationDetails = ReturnType<typeof generateMutationDetails> & {
+  actionFusion?: ActionFusionDetails;
+};
+
+/** The file a mutation targets, resolved once per call. */
+export interface MutationTarget {
+  readonly absolutePath: string;
+  /** The caller-supplied path, used in result text and diffs. */
+  readonly displayPath: string;
+  readonly signal: AbortSignal | undefined;
+}
+
+export interface MutationOutcome<TDetails> {
+  readonly result: AgentToolResult<TDetails>;
+  /** Fresh anchor report; appended to the summary only once freshness is confirmed. */
+  readonly anchors?: string;
+}
+
+export interface MutationToolSpec<TParams extends { path: string }, TDetails> {
+  readonly name: MutationToolName;
+  readonly cwd: string;
+  /** The schema exposed to Pi; direct execute calls are validated against it. */
+  readonly parameters: TSchema;
+  readonly fusion: ActionFusionExecutor | undefined;
+  /**
+   * Whether results carry fresh anchors. Anchor-reporting tools append a stale
+   * notice when freshness is unconfirmed; others leave staleness to then_run.
+   */
+  readonly reportsAnchors: boolean;
+  /** Perform the mutation. Runs inside the file mutation queue. */
+  run(params: TParams, target: MutationTarget): Promise<MutationOutcome<TDetails>>;
+}
+
+export interface MutationCall<TDetails> {
+  readonly toolCallId: string;
+  readonly params: unknown;
+  readonly signal: AbortSignal | undefined;
+  readonly onUpdate: AgentToolUpdateCallback<TDetails> | undefined;
+  readonly ctx: ExtensionContext;
+}
+
+/** Validate, queue, and publish one mutation call, then run its then_run command when fused. */
+export async function executeMutation<TParams extends { path: string }, TDetails>(
+  spec: MutationToolSpec<TParams, TDetails>,
+  call: MutationCall<TDetails>,
+): Promise<AgentToolResult<TDetails>> {
+  const { name, cwd, fusion, parameters } = spec;
+  const { toolCallId, signal, onUpdate, ctx } = call;
+  if (!fusion && (call.params as { then_run?: unknown }).then_run !== undefined)
+    throw new Error("then_run is unavailable because hashlineEdit.actionFusion is disabled");
+  const { then_run, ...mutationParams } = parseToolInput(
+    name,
+    parameters,
+    call.params,
+  ) as TParams & {
+    then_run?: ThenRunInput;
+  };
+  const absolutePath = canonicalPath(cwd, mutationParams.path);
+  const target: MutationTarget = { absolutePath, displayPath: mutationParams.path, signal };
+  let anchors = "";
+  const mutate = (): Promise<AgentToolResult<TDetails>> =>
+    withFileMutationQueue(absolutePath, async () => {
+      const outcome = await spec.run(mutationParams as unknown as TParams, target);
+      anchors = outcome.anchors ?? "";
+      return outcome.result;
+    });
+  const finalizeMutation = spec.reportsAnchors
+    ? (result: AgentToolResult<TDetails>, publishAnchors: boolean) =>
+        appendMutationAnchors(result, anchors, publishAnchors)
+    : undefined;
+  if (!fusion) {
+    const result = await mutate();
+    return finalizeMutation ? finalizeMutationResult(result, finalizeMutation) : result;
+  }
+  return fusion({
+    toolCallId,
+    absolutePath,
+    thenRun: then_run,
+    mutate,
+    finalizeMutation,
+    signal,
+    ctx,
+    onUpdate,
+  });
+}
+
+/** A whole-file text transformation produced from one snapshot. */
+export interface TextChange {
+  /** Complete replacement text; equal to the snapshot for a no-op. */
+  readonly text: string;
+  /** Fresh anchor report for the committed text. Called during result generation. */
+  anchors(): string;
+  /** First result line. Called during result generation. */
+  summary(): string;
+}
+
+/**
+ * Read-modify-write against the bytes read: the commit is rejected if the file
+ * changed since the snapshot, and result-generation failures keep publication.
+ */
+export async function runTextMutation(
+  tool: Exclude<MutationToolName, "write">,
+  target: MutationTarget,
+  change: (currentText: string) => TextChange | Promise<TextChange>,
+): Promise<MutationOutcome<TextMutationDetails>> {
+  const { absolutePath, displayPath, signal } = target;
+  const verb = `${tool[0]!.toUpperCase()}${tool.slice(1)}`;
+
+  const { text: currentText, baseRevision } = await readEditableSnapshot(absolutePath, displayPath);
+  // Cancelled after read: don't transform; the file stays untouched.
+  if (signal?.aborted) throw new Error(`${verb} ${displayPath} aborted before apply.`);
+
+  const next = await change(currentText);
+
+  // Cancelled before write: don't touch the disk.
+  if (signal?.aborted) throw new Error(`${verb} ${displayPath} aborted before write.`);
+
+  const versions = await commitReplacement(
+    absolutePath,
+    displayPath,
+    next.text,
+    baseRevision,
+    signal,
+  );
+  let anchors = "";
+  const result = postProcessMutation(tool, versions.publication, () => {
+    const details = generateMutationDetails(
+      displayPath,
+      currentText,
+      next.text,
+      versions,
+      versions.publication,
+    );
+    anchors = next.anchors();
+    return {
+      content: [{ type: "text" as const, text: next.summary() }],
+      details,
+    };
+  });
+  return { result, anchors };
+}

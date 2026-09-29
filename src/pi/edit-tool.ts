@@ -21,7 +21,6 @@
 
 import {
   truncateHead,
-  withFileMutationQueue,
   type ExtensionContext,
   type Theme,
   type ToolDefinition,
@@ -29,18 +28,10 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import type { AgentToolResult, AgentToolUpdateCallback } from "@earendil-works/pi-agent-core";
 import { Type, type Static } from "typebox";
-import {
-  ACTION_FUSION_GUIDELINES,
-  createActionFusionExecutor,
-  createThenRunSchema,
-  type ThenRunInput,
-  type ActionFusionDetails,
-} from "./action-fusion.ts";
-import { readEditableSnapshot, commitReplacement } from "./file-commit.ts";
+import { ACTION_FUSION_GUIDELINES, withThenRunSchema, type ThenRunInput } from "./action-fusion.ts";
 import { applyEdits } from "../core/index.ts";
 import { splitLines } from "../core/lines.ts";
 import type { Anchor, ApplyFailure, Edit } from "../core/types.ts";
-import { canonicalPath } from "./path.ts";
 import { getState } from "./state.ts";
 import { ANCHOR_PATTERN, createAnchorFormatter, type AnchorFormatter } from "./anchor-format.ts";
 import {
@@ -54,17 +45,15 @@ import {
   MAX_AMBIGUOUS_CANDIDATES,
   MAX_RECOVERY_CANDIDATE_BYTES,
 } from "./failure-context.ts";
+import { formatMutationAnchors } from "./mutation-result.ts";
 import {
-  appendMutationAnchors,
-  finalizeMutationResult,
-  formatMutationAnchors,
-  generateMutationDetails,
-  postProcessMutation,
-} from "./mutation-result.ts";
-import { parseToolInput } from "./tool-input.ts";
-type EditDetails = ReturnType<typeof generateMutationDetails> & {
-  actionFusion?: ActionFusionDetails;
-};
+  executeMutation,
+  runTextMutation,
+  type ActionFusionExecutor,
+  type MutationTarget,
+  type TextMutationDetails,
+} from "./mutation-runner.ts";
+type EditDetails = TextMutationDetails;
 type EditRenderContext = Parameters<
   NonNullable<ToolDefinition<typeof editSchema>["renderCall"]>
 >[2];
@@ -153,17 +142,11 @@ const editSchema = Type.Object(
 );
 
 function createEditSchema(actionFusion: boolean) {
-  return actionFusion
-    ? Type.Object(
-        {
-          ...editSchema.properties,
-          then_run: createThenRunSchema(
-            "Command to run after the edit succeeds; failure does not roll back the edit.",
-          ),
-        },
-        { additionalProperties: false },
-      )
-    : editSchema;
+  return withThenRunSchema(
+    editSchema,
+    "Command to run after the edit succeeds; failure does not roll back the edit.",
+    actionFusion,
+  );
 }
 type EditParams = Static<typeof editSchema> & { then_run?: ThenRunInput };
 
@@ -358,10 +341,7 @@ function editHeader(args: EditParams, theme: Theme, counts?: DiffCounts): string
   return t;
 }
 
-export function makeEditOverride(
-  cwd: string,
-  fusion?: ReturnType<typeof createActionFusionExecutor>,
-) {
+export function makeEditOverride(cwd: string, fusion?: ActionFusionExecutor) {
   const parameters = createEditSchema(fusion !== undefined);
 
   return {
@@ -408,100 +388,54 @@ export function makeEditOverride(
       onUpdate: AgentToolUpdateCallback<EditDetails> | undefined,
       ctx: ExtensionContext,
     ) {
-      if (!fusion && params.then_run !== undefined)
-        throw new Error("then_run is unavailable because hashlineEdit.actionFusion is disabled");
-      params = parseToolInput("edit", parameters, params);
-      const { then_run, ...mutationParams } = params;
-      const absolutePath = canonicalPath(cwd, mutationParams.path);
-      let mutationAnchors = "";
-      const mutate = (): Promise<AgentToolResult<EditDetails>> =>
-        withFileMutationQueue(absolutePath, () =>
-          runHashline(
-            absolutePath,
-            mutationParams.path,
-            mutationParams.edits,
-            signal,
-            (anchors) => {
-              mutationAnchors = anchors;
-            },
-          ),
-        );
-      const finalizeMutation = (result: AgentToolResult<EditDetails>, publishAnchors: boolean) =>
-        appendMutationAnchors(result, mutationAnchors, publishAnchors);
-      if (!fusion) return finalizeMutationResult(await mutate(), finalizeMutation);
-      return fusion({
-        toolCallId,
-        absolutePath,
-        thenRun: then_run,
-        mutate,
-        finalizeMutation,
-        signal,
-        ctx,
-        onUpdate,
-      });
+      return executeMutation<Omit<EditParams, "then_run">, EditDetails>(
+        {
+          name: "edit",
+          cwd,
+          parameters,
+          fusion,
+          reportsAnchors: true,
+          run: (mutationParams, target) => runHashline(target, mutationParams.edits),
+        },
+        { toolCallId, params, signal, onUpdate, ctx },
+      );
     },
   };
 }
 
-async function runHashline(
-  absPath: string,
-  displayPath: string,
-  editOps: readonly EditOpInput[],
-  signal: AbortSignal | undefined,
-  onAnchors: (anchors: string) => void,
-) {
+function runHashline(target: MutationTarget, editOps: readonly EditOpInput[]) {
   const anchorFormatter = createAnchorFormatter();
   const { shiftRadius } = getState().config;
 
-  const { text: currentText, baseRevision } = await readEditableSnapshot(absPath, displayPath);
-  // Check for cancel after read: if the user aborted, don't proceed to parse/apply; the file stays untouched
-  if (signal?.aborted) throw new Error(`Edit ${displayPath} aborted before apply.`);
+  return runTextMutation("edit", target, (currentText) => {
+    const translated = toCoreEdits(editOps);
 
-  const translated = toCoreEdits(editOps);
+    // Recovery reports checksum candidates from nearby lines, then the whole file
+    // if needed. Every failed anchor still rejects the batch; callers inspect
+    // candidates and resubmit with fresh anchors.
+    const result = applyEdits(currentText, translated, anchorFormatter.hashLen, shiftRadius);
+    if (!result.ok) {
+      throw new Error(
+        formatFailure(
+          result.failure,
+          { currentText, anchors: anchorFormatter },
+          translated.length > 1,
+        ),
+      );
+    }
 
-  // Recovery reports checksum candidates from nearby lines, then the whole file
-  // if needed. Every failed anchor still rejects the batch; callers inspect
-  // candidates and resubmit with fresh anchors.
-  const result = applyEdits(currentText, translated, anchorFormatter.hashLen, shiftRadius);
-  if (!result.ok) {
-    throw new Error(
-      formatFailure(
-        result.failure,
-        { currentText, anchors: anchorFormatter },
-        translated.length > 1,
-      ),
-    );
-  }
-
-  // Check for cancel before write: if aborted, don't touch the disk; the file stays untouched
-  if (signal?.aborted) throw new Error(`Edit ${displayPath} aborted before write.`);
-
-  const versions = await commitReplacement(absPath, displayPath, result.text, baseRevision, signal);
-  return postProcessMutation("edit", versions.publication, () => {
-    const details = generateMutationDetails(
-      displayPath,
-      currentText,
-      result.text,
-      versions,
-      versions.publication,
-    );
-    onAnchors(
-      formatUpdatedAnchors(
-        currentText,
-        result.text,
-        result.touchedLines,
-        result.contextLines,
-        anchorFormatter,
-      ),
-    );
     return {
-      content: [
-        {
-          type: "text" as const,
-          text: `Edited ${displayPath} (${translated.length} op(s)${result.changed ? "" : ", no net change"}).`,
-        },
-      ],
-      details,
+      text: result.text,
+      anchors: () =>
+        formatUpdatedAnchors(
+          currentText,
+          result.text,
+          result.touchedLines,
+          result.contextLines,
+          anchorFormatter,
+        ),
+      summary: () =>
+        `Edited ${target.displayPath} (${translated.length} op(s)${result.changed ? "" : ", no net change"}).`,
     };
   });
 }

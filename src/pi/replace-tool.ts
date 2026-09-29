@@ -16,7 +16,7 @@
  * - `replacements` batches rules against one original snapshot; conflicting
  *   ranges or a failing rule reject the entire batch before publication.
  *
- * Concurrency: read-modify-write is wrapped in {@link withFileMutationQueue}
+ * Concurrency: read-modify-write is wrapped in Pi's withFileMutationQueue
  * (shared with `edit`), so a `replace` and an `edit` on the same file never
  * interleave. Regex batches run in a cancellable worker with a time limit.
  *
@@ -24,7 +24,6 @@
  */
 
 import {
-  withFileMutationQueue,
   type ExtensionContext,
   type Theme,
   type ToolDefinition,
@@ -35,33 +34,23 @@ import { Type, type Static } from "typebox";
 import { Worker } from "node:worker_threads";
 import { splitLines } from "../core/lines.ts";
 import { applyReplacements } from "./replace-apply.ts";
-import {
-  ACTION_FUSION_GUIDELINES,
-  createActionFusionExecutor,
-  createThenRunSchema,
-  type ThenRunInput,
-  type ActionFusionDetails,
-} from "./action-fusion.ts";
-import { readEditableSnapshot, commitReplacement } from "./file-commit.ts";
+import { ACTION_FUSION_GUIDELINES, withThenRunSchema, type ThenRunInput } from "./action-fusion.ts";
 import { createAnchorFormatter, type AnchorFormatter } from "./anchor-format.ts";
-import { canonicalPath } from "./path.ts";
 import {
   formatDiffCounts,
   renderMutationCall,
   renderMutationResult,
   type DiffCounts,
 } from "./render.ts";
+import { formatMutationAnchors } from "./mutation-result.ts";
 import {
-  appendMutationAnchors,
-  finalizeMutationResult,
-  formatMutationAnchors,
-  generateMutationDetails,
-  postProcessMutation,
-} from "./mutation-result.ts";
-import { parseToolInput } from "./tool-input.ts";
-type ReplaceDetails = ReturnType<typeof generateMutationDetails> & {
-  actionFusion?: ActionFusionDetails;
-};
+  executeMutation,
+  runTextMutation,
+  type ActionFusionExecutor,
+  type MutationTarget,
+  type TextMutationDetails,
+} from "./mutation-runner.ts";
+type ReplaceDetails = TextMutationDetails;
 type ReplaceRenderContext = Parameters<
   NonNullable<ToolDefinition<typeof replaceSchema>["renderCall"]>
 >[2];
@@ -108,17 +97,11 @@ const replaceSchema = Type.Object(
 );
 
 function createReplaceSchema(actionFusion: boolean) {
-  return actionFusion
-    ? Type.Object(
-        {
-          ...replaceSchema.properties,
-          then_run: createThenRunSchema(
-            "Command to run once after all replacements succeed; failure does not roll back the replacement.",
-          ),
-        },
-        { additionalProperties: false },
-      )
-    : replaceSchema;
+  return withThenRunSchema(
+    replaceSchema,
+    "Command to run once after all replacements succeed; failure does not roll back the replacement.",
+    actionFusion,
+  );
 }
 type ReplaceParams = Static<typeof replaceSchema> & { then_run?: ThenRunInput };
 
@@ -226,10 +209,7 @@ function replaceHeader(args: ReplaceParams, theme: Theme, counts?: DiffCounts): 
   return t;
 }
 
-export function makeReplaceTool(
-  cwd: string,
-  fusion?: ReturnType<typeof createActionFusionExecutor>,
-) {
+export function makeReplaceTool(cwd: string, fusion?: ActionFusionExecutor) {
   const parameters = createReplaceSchema(fusion !== undefined);
   return {
     name: "replace" as const,
@@ -272,86 +252,51 @@ export function makeReplaceTool(
       onUpdate: AgentToolUpdateCallback<ReplaceDetails> | undefined,
       ctx: ExtensionContext,
     ) {
-      if (!fusion && params.then_run !== undefined)
-        throw new Error("then_run is unavailable because hashlineEdit.actionFusion is disabled");
-      params = parseToolInput("replace", parameters, params);
-      const { then_run, ...mutationParams } = params;
-      const path = mutationParams.path;
-      const absolutePath = canonicalPath(cwd, path);
-      let mutationAnchors = "";
-      const mutate = (): Promise<AgentToolResult<ReplaceDetails>> =>
-        withFileMutationQueue(absolutePath, () =>
-          runReplace(absolutePath, path, mutationParams, signal, (value) => {
-            mutationAnchors = value;
-          }),
-        );
-      const finalizeMutation = (result: AgentToolResult<ReplaceDetails>, publishAnchors: boolean) =>
-        appendMutationAnchors(result, mutationAnchors, publishAnchors);
-      if (!fusion) return finalizeMutationResult(await mutate(), finalizeMutation);
-      return fusion({
-        toolCallId,
-        absolutePath,
-        thenRun: then_run,
-        mutate,
-        finalizeMutation,
-        signal,
-        ctx,
-        onUpdate,
-      });
+      return executeMutation<Omit<ReplaceParams, "then_run">, ReplaceDetails>(
+        {
+          name: "replace",
+          cwd,
+          parameters,
+          fusion,
+          reportsAnchors: true,
+          run: (mutationParams, target) => runReplace(target, mutationParams.replacements),
+        },
+        { toolCallId, params, signal, onUpdate, ctx },
+      );
     },
   };
 }
 
-async function runReplace(
-  absPath: string,
-  displayPath: string,
-  params: ReplaceParams,
-  signal: AbortSignal | undefined,
-  onAnchors: (anchors: string) => void,
-) {
+function runReplace(target: MutationTarget, rules: ReplaceParams["replacements"]) {
   const anchorFormatter = createAnchorFormatter();
-  const rules = params.replacements;
 
-  const { text: currentText, baseRevision } = await readEditableSnapshot(absPath, displayPath);
-  // honor cancel after read: if aborted, don't proceed to match/replace; the file stays untouched
-  if (signal?.aborted) throw new Error(`Replace ${displayPath} aborted before apply.`);
+  return runTextMutation("replace", target, async (currentText) => {
+    let newText: string;
+    let count: number;
+    try {
+      ({ text: newText, count } = rules.some((rule) => rule.regex === true)
+        ? await applyRegexReplacements(currentText, rules, target.signal)
+        : applyReplacements(currentText, rules));
+    } catch (error) {
+      throw new Error(
+        `Replace ${target.displayPath}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+    const changed = newText !== currentText;
 
-  let newText: string;
-  let count: number;
-  try {
-    ({ text: newText, count } = rules.some((rule) => rule.regex === true)
-      ? await applyRegexReplacements(currentText, rules, signal)
-      : applyReplacements(currentText, rules));
-  } catch (error) {
-    throw new Error(
-      `Replace ${displayPath}: ${error instanceof Error ? error.message : String(error)}`,
-    );
-  }
-  const changed = newText !== currentText;
-
-  // honor cancel before write: if aborted, don't touch the disk
-  if (signal?.aborted) throw new Error(`Replace ${displayPath} aborted before write.`);
-
-  const versions = await commitReplacement(absPath, displayPath, newText, baseRevision, signal);
-  const { publication } = versions;
-
-  return postProcessMutation("replace", publication, () => {
-    const details = generateMutationDetails(
-      displayPath,
-      currentText,
-      newText,
-      versions,
-      publication,
-    );
-    const oldLines = splitLines(currentText);
-    const newLines = splitLines(newText);
-    const span = changed ? anchorSpan(oldLines, newLines) : null;
-    onAnchors(span ? formatSpanAnchors(oldLines, newLines, span, anchorFormatter) : "");
-    const matchWord = `match${count !== 1 ? "es" : ""}`;
-    const note = changed ? `${count} ${matchWord}` : `${count} ${matchWord}, no net change`;
     return {
-      content: [{ type: "text" as const, text: `Replaced ${displayPath} (${note}).` }],
-      details,
+      text: newText,
+      anchors: () => {
+        const oldLines = splitLines(currentText);
+        const newLines = splitLines(newText);
+        const span = changed ? anchorSpan(oldLines, newLines) : null;
+        return span ? formatSpanAnchors(oldLines, newLines, span, anchorFormatter) : "";
+      },
+      summary: () => {
+        const matchWord = `match${count !== 1 ? "es" : ""}`;
+        const note = changed ? `${count} ${matchWord}` : `${count} ${matchWord}, no net change`;
+        return `Replaced ${target.displayPath} (${note}).`;
+      },
     };
   });
 }

@@ -2,7 +2,7 @@ import { realpath } from "node:fs/promises";
 import { basename, dirname, resolve } from "node:path";
 import type { AgentToolResult, AgentToolUpdateCallback } from "@earendil-works/pi-agent-core";
 import { createBashToolDefinition, type ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { Type, type Static } from "typebox";
+import { Type, type Static, type TObject, type TProperties } from "typebox";
 import { fileRevision, FileMutationError, type PublicationStatus } from "./file-commit.ts";
 import { finalizeMutationResult, observedFreshness } from "./mutation-result.ts";
 import { parseToolInput } from "./tool-input.ts";
@@ -68,6 +68,19 @@ export function createThenRunSchema(description: string) {
       { description, additionalProperties: false },
     ),
   );
+}
+/** Add the optional then_run field to a mutation schema when Action Fusion is enabled. */
+export function withThenRunSchema<P extends TProperties>(
+  schema: TObject<P>,
+  description: string,
+  actionFusion: boolean,
+): TObject<P> | TObject<P & { then_run: ReturnType<typeof createThenRunSchema> }> {
+  return actionFusion
+    ? Type.Object(
+        { ...schema.properties, then_run: createThenRunSchema(description) },
+        { additionalProperties: false },
+      )
+    : schema;
 }
 const thenRunInputSchema = createThenRunSchema("Command to run");
 export type ThenRunInput = NonNullable<Static<typeof thenRunInputSchema>>;
