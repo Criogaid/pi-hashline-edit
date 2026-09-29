@@ -11,7 +11,7 @@ import {
   runRgPaths,
   type RgRunResult,
 } from "./rg-process.ts";
-import { errorMessage, throwIfCancelled } from "./error-text.ts";
+import { errorMessage, searchChangedError, throwIfCancelled } from "./error-text.ts";
 
 /** CRLF snapshot batches flush after this many files or source bytes (README: 64 files / 8 MiB). */
 const SNAPSHOT_BATCH_FILES = 64;
@@ -30,7 +30,7 @@ async function writeLfSnapshot(source: string, destination: string, signal?: Abo
       },
       signal,
     );
-    if (stats.hasNul) throw new Error("File changed during search; rerun the query.");
+    if (stats.hasNul) throw searchChangedError();
     if (pendingCr) await handle.writeFile(pendingCr);
   } finally {
     await handle.close();

@@ -1,4 +1,5 @@
 import { mergeRanges, type HalfOpenRange } from "../core/ranges.ts";
+import { searchChangedError } from "./error-text.ts";
 
 interface RgSubmatch {
   start: number;
@@ -57,7 +58,7 @@ export function submatchesToLineRanges(
     if (start === end) {
       if (fileLineCount === 0) continue;
       const line = eventStartLine + countLfBefore(lineBreaks, start);
-      if (line > fileLineCount) throw new Error("File changed during search; rerun the query.");
+      if (line > fileLineCount) throw searchChangedError();
       ranges.push([line, line + 1]);
       recordColumn(line, start);
       continue;
@@ -65,7 +66,7 @@ export function submatchesToLineRanges(
     const first = eventStartLine + countLfBefore(lineBreaks, start);
     const last = eventStartLine + countLfBefore(lineBreaks, end - 1);
     if (first > fileLineCount || last > fileLineCount) {
-      throw new Error("File changed during search; rerun the query.");
+      throw searchChangedError();
     }
     ranges.push([first, last + 1]);
     recordColumn(first, start);

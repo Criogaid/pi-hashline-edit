@@ -6,6 +6,7 @@ import { createAnchorFormatter, displayCarriageReturns } from "./anchor-format.t
 import { fileReadWarning, type RgMatch } from "./grep-search.ts";
 import { scanTextLines } from "./text-stream.ts";
 import { formatKiB, MAX_SEARCH_DIAGNOSTIC_BYTES } from "./budgets.ts";
+import { searchChangedError } from "./error-text.ts";
 
 /** Maximum UTF-16 units in a line preview, excluding its partial-line label. */
 const GREP_MAX_LINE_LENGTH = 500;
@@ -98,7 +99,7 @@ export async function formatMatches(options: FormatMatchesOptions) {
                   if (line.text === undefined) return;
                   const matchedText = matchedTexts.get(line.number);
                   if (matchedText !== undefined && matchedText !== line.text) {
-                    throw new Error("File changed during search; rerun the query.");
+                    throw searchChangedError();
                   }
                   if (matchedTexts.has(line.number)) matchedRows.add(line.number);
                   const { text: display, wasTruncated } = previewLine(
@@ -112,11 +113,11 @@ export async function formatMatches(options: FormatMatchesOptions) {
               );
               if (stats.hasNul) throw new Error(UNSUPPORTED_TEXT_NUL);
               if (matchLines.some(({ lineNumber }) => !matchedRows.has(lineNumber))) {
-                throw new Error("File changed during search; rerun the query.");
+                throw searchChangedError();
               }
               const searchRevision = searchRevisions.get(filePath);
               if (searchRevision && searchRevision !== hash.digest("hex")) {
-                throw new Error("File changed during search; rerun the query.");
+                throw searchChangedError();
               }
               const header = `${formatPath(filePath)} · ${matchLines.length} match${matchLines.length !== 1 ? "es" : ""}\n`;
               fileResults[current] = { block: header + rows.join("\n") };

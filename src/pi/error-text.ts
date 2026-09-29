@@ -15,6 +15,16 @@ export function throwIfCancelled(signal: AbortSignal | undefined, detail?: strin
   if (signal?.aborted) throw cancellationError(detail);
 }
 
+/**
+ * A searched file no longer matches what ripgrep reported. grep binds matches to
+ * one snapshot per file: rg-line-ranges checks line counts, the CRLF text view
+ * checks the snapshot copy, and grep-output checks matched text and the
+ * revision recorded by grep-search. All of them report this one error.
+ */
+export function searchChangedError(): Error {
+  return new Error("File changed during search; rerun the query.");
+}
+
 /** Rejection from a tool's prepareArguments for a check the schema cannot express. */
 export function invalidArgument(path: string, reason: string): Error {
   return new Error(`Invalid argument ${path}: ${reason}`);
