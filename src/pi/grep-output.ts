@@ -5,11 +5,9 @@ import { UNSUPPORTED_TEXT_NUL } from "../core/text.ts";
 import { createAnchorFormatter, displayCarriageReturns } from "./anchor-format.ts";
 import { fileReadWarning, type RgMatch } from "./grep-search.ts";
 import { scanTextLines } from "./text-stream.ts";
-import { formatKiB, MAX_SEARCH_DIAGNOSTIC_BYTES } from "./budgets.ts";
+import { formatKiB, GREP_MAX_LINE_LENGTH, MAX_SEARCH_DIAGNOSTIC_BYTES } from "./budgets.ts";
 import { searchChangedError } from "./error-text.ts";
 
-/** Maximum UTF-16 units in a line preview, excluding its partial-line label. */
-const GREP_MAX_LINE_LENGTH = 500;
 /** UTF-16 units kept before the match column when a preview window is cut. */
 const GREP_PREVIEW_LEAD = 100;
 const MAX_CONCURRENT_FILE_READS = 16;
