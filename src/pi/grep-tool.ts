@@ -248,6 +248,7 @@ export function makeGrepOverrideWithBackend(
               patterns,
               modes,
               limit: effectiveLimit,
+              outputMode,
               signal,
               warnings,
             });

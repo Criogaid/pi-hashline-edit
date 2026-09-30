@@ -11,7 +11,8 @@ export async function scanTextFile(
   decoding: Utf8Decoding = "strict",
 ) {
   const decode = createUtf8Decoder();
-  const preview = decoding === "preview" ? createUtf8Decoder("preview") : undefined;
+  // Strict decoding always decides validity; lossy text is decoded only for a chunk consumer.
+  const preview = decoding === "preview" && onChunk ? createUtf8Decoder("preview") : undefined;
   let byteLength = 0;
   let lineFeeds = 0;
   let lastByte = -1;
@@ -34,7 +35,7 @@ export async function scanTextFile(
       }
       // NUL takes precedence even when an earlier chunk contained malformed UTF-8.
       if (hasNul) continue;
-      let text = "";
+      let text: string | undefined;
       if (!decodingError) {
         try {
           text = decode(bytes, true);
@@ -43,8 +44,7 @@ export async function scanTextFile(
         }
       }
       if (preview) text = preview(bytes, true);
-      else if (decodingError) continue;
-      await onChunk?.(text);
+      if (text !== undefined) await onChunk?.(text);
     }
   } catch (error) {
     // Node's stream abort raises its own AbortError; report the shared cancellation text.
@@ -53,7 +53,7 @@ export async function scanTextFile(
   }
   throwIfCancelled(signal);
   if (!hasNul) {
-    let tail = "";
+    let tail: string | undefined;
     if (!decodingError) {
       try {
         tail = decode();
@@ -61,11 +61,9 @@ export async function scanTextFile(
         decodingError = error;
       }
     }
-    if (!preview && tail) await onChunk?.(tail);
-    if (preview) {
-      tail = preview();
-      if (tail) await onChunk?.(tail);
-    } else if (decodingError) throw decodingError;
+    if (preview) tail = preview();
+    else if (decodingError && decoding === "strict") throw decodingError;
+    if (tail) await onChunk?.(tail);
   }
   return {
     byteLength,

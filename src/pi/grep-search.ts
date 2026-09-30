@@ -91,6 +91,7 @@ interface SearchMatchesOptions {
   patterns: readonly string[];
   modes: SearchModes;
   limit: number;
+  outputMode: "content" | "files" | "count";
   signal?: AbortSignal;
   warnings: string[];
 }
@@ -119,7 +120,9 @@ export function fileReadWarning(
 }
 
 export async function searchMatches(options: SearchMatchesOptions) {
-  const { backend, rgPath, scope, patterns, modes, limit, signal, warnings } = options;
+  const { backend, rgPath, scope, patterns, modes, limit, outputMode, signal, warnings } = options;
+  // Content rows and multiline line mapping read the file; the text view already skips NUL files.
+  const needsSnapshot = outputMode === "content" || modes.multiline;
   const raw: RgMatch[] = [];
   const snapshots = new Map<string, SearchFileSnapshot>();
   let matchLimitReached = false;
@@ -154,7 +157,7 @@ export async function searchMatches(options: SearchMatchesOptions) {
       const filePath = resolve(rgText(data.path));
       if (unreadableFiles.has(filePath)) return true;
       let snapshot = snapshots.get(filePath);
-      if (!snapshot) {
+      if (!snapshot && needsSnapshot) {
         try {
           snapshot = await scanFileRevision(filePath, signal);
           if (snapshot.hasNul) {
@@ -174,10 +177,9 @@ export async function searchMatches(options: SearchMatchesOptions) {
       const bytes = rgBytes(data.lines);
       const text = bytes.toString("utf8");
       // Valid text is already the LF view; normalizing it twice would strip a content CR.
-      const matchedText = (snapshot.validUtf8 ? text : normalizeLineEndings(text)).replace(
-        /\n$/,
-        "",
-      );
+      const matchedText = (
+        snapshot?.validUtf8 === false ? normalizeLineEndings(text) : text
+      ).replace(/\n$/, "");
       const addMatch = (match: RgMatch) => {
         const matchKey = `${filePath}\0${match.lineNumber}`;
         if (seenMatches.has(matchKey)) return true;
@@ -204,7 +206,8 @@ export async function searchMatches(options: SearchMatchesOptions) {
         bytes,
         startLine,
         submatches,
-        snapshot.totalLines,
+        // Multiline always loads a snapshot above.
+        snapshot!.totalLines,
         columns,
       );
       const texts = matchedText.split("\n");
