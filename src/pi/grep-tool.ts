@@ -70,7 +70,7 @@ function createGrepSchema({ defaultLimit, defaultContext }: HashlineEditConfig["
       literal: Type.Optional(
         Type.Boolean({
           description:
-            "true: match the text literally. false: ripgrep Rust regex. Omitted: regex when the pattern has metacharacters; a single invalid pattern falls back to a literal search of the whole string, an invalid array fails.",
+            "true: match the text literally. false: ripgrep Rust regex. Omitted: regex when the query contains metacharacters; valid regexes run without notice (foo(0) matches foo0, not foo(0)). A single invalid pattern falls back to a literal search of the whole string; an invalid array fails.",
         }),
       ),
       ignoreCase: Type.Optional(
