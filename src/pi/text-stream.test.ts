@@ -117,7 +117,7 @@ test("streamed reads propagate cancellation", async () =>
     );
   }));
 
-test("preview decoding reports invalid UTF-8 across chunk boundaries and preserves raw revisions", async () =>
+test("lossy decoding reports invalid UTF-8 across chunk boundaries and preserves raw revisions", async () =>
   withFile(async (path) => {
     const source = Buffer.concat([
       Buffer.from("\uFEFF" + "a".repeat(65532)),
@@ -134,7 +134,7 @@ test("preview decoding reports invalid UTF-8 across chunk boundaries and preserv
       () => true,
       (line) => lines.push(line.text ?? ""),
       {
-        decoding: "preview",
+        decoding: "lossy",
         onBytes: (bytes) => hash.update(bytes),
       },
     );
@@ -144,4 +144,128 @@ test("preview decoding reports invalid UTF-8 across chunk boundaries and preserv
     assert.deepEqual(lines, splitLines(source.toString("utf8")));
     assert.equal(hash.digest("hex"), byteRevision(source));
     await assert.rejects(scanTextFile(path), /UNSUPPORTED_ENCODING/);
+  }));
+
+test("strict scans read all bytes but stop emitting text after a decoding error", async () =>
+  withFile(async (path) => {
+    const chunkBytes = 64 * 1024;
+    const prefix = Buffer.alloc(chunkBytes, "a");
+    const invalid = Buffer.alloc(chunkBytes, "b");
+    invalid[0] = 0xff;
+    const source = Buffer.concat([prefix, invalid, Buffer.from("later text\n")]);
+    await writeFile(path, source);
+    const emitted: string[] = [];
+    const scanned: Buffer[] = [];
+    await assert.rejects(
+      scanTextFile(
+        path,
+        (text) => {
+          emitted.push(text);
+        },
+        undefined,
+        (bytes) => scanned.push(bytes),
+      ),
+      /UNSUPPORTED_ENCODING/,
+    );
+    assert.equal(emitted.join(""), prefix.toString("utf8"));
+    assert.deepEqual(Buffer.concat(scanned), source);
+  }));
+
+test("lossy scans flush a multibyte sequence split across chunks and incomplete at EOF", async () =>
+  withFile(async (path) => {
+    const chunkBytes = 64 * 1024;
+    const prefix = Buffer.alloc(chunkBytes - 1, "a");
+    const source = Buffer.concat([prefix, Buffer.from([0xf0, 0x9f])]);
+    await writeFile(path, source);
+    const emitted: string[] = [];
+    const stats = await scanTextFile(
+      path,
+      (text) => {
+        emitted.push(text);
+      },
+      undefined,
+      undefined,
+      "lossy",
+    );
+    assert.equal(emitted.join(""), prefix.toString("utf8") + "�");
+    assert.equal(emitted.at(-1), "�");
+    assert.equal(stats.validUtf8, false);
+    assert.equal(stats.hasNul, false);
+    assert.equal(stats.byteLength, source.length);
+  }));
+
+test("lossy scans without a text consumer report validity and retain all raw bytes", async () =>
+  withFile(async (path) => {
+    const source = Buffer.concat([
+      Buffer.from("\ufeffbefore\r\n"),
+      Buffer.from([0xff, 0xf0, 0x9f]),
+    ]);
+    await writeFile(path, source);
+    const scanned: Buffer[] = [];
+    const stats = await scanTextFile(
+      path,
+      undefined,
+      undefined,
+      (bytes) => scanned.push(bytes),
+      "lossy",
+    );
+    assert.deepEqual(Buffer.concat(scanned), source);
+    assert.equal(stats.validUtf8, false);
+    assert.equal(stats.hasNul, false);
+    assert.equal(stats.hasCrLf, true);
+    assert.equal(stats.totalLines, 2);
+    assert.equal(stats.finalNewline, false);
+    assert.equal(stats.byteLength, source.length);
+  }));
+
+test("NUL suppresses its chunk and all later text without flushing a pending sequence", async () =>
+  withFile(async (path) => {
+    const chunkBytes = 64 * 1024;
+    const prefix = Buffer.alloc(chunkBytes - 1, "a");
+    const source = Buffer.concat([
+      prefix,
+      Buffer.from([0xf0, 0, 0x9f]),
+      Buffer.alloc(chunkBytes, "b"),
+    ]);
+    await writeFile(path, source);
+    for (const decoding of ["strict", "lossy"] as const) {
+      const emitted: string[] = [];
+      const scanned: Buffer[] = [];
+      const stats = await scanTextFile(
+        path,
+        (text) => {
+          emitted.push(text);
+        },
+        undefined,
+        (bytes) => scanned.push(bytes),
+        decoding,
+      );
+      assert.equal(stats.hasNul, true);
+      assert.equal(emitted.join(""), prefix.toString("utf8"));
+      assert.deepEqual(Buffer.concat(scanned), source);
+    }
+  }));
+
+test("NUL takes precedence over earlier malformed UTF-8 in strict and lossy scans", async () =>
+  withFile(async (path) => {
+    const chunkBytes = 64 * 1024;
+    const invalid = Buffer.alloc(chunkBytes, "a");
+    invalid[0] = 0xff;
+    const source = Buffer.concat([invalid, Buffer.from("\0later\n")]);
+    await writeFile(path, source);
+    for (const decoding of ["strict", "lossy"] as const) {
+      const emitted: string[] = [];
+      const stats = await scanTextFile(
+        path,
+        (text) => {
+          emitted.push(text);
+        },
+        undefined,
+        undefined,
+        decoding,
+      );
+      assert.equal(stats.hasNul, true);
+      assert.equal(stats.validUtf8, false);
+      assert.equal(emitted.join(""), decoding === "strict" ? "" : invalid.toString("utf8"));
+    }
   }));

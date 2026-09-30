@@ -11,6 +11,7 @@ import { makeWriteOverride } from "./write-tool.ts";
 import { generateMutationDetails } from "./mutation-result.ts";
 import type { ActionFusionDetails } from "./action-fusion.ts";
 import { DEFAULT_CONFIG } from "./config.ts";
+import { toDisplayLines } from "./grep-render.ts";
 
 const versions = { publishedRevision: "r", observedRevision: "r" };
 const mutationDetails = (actionFusion?: ActionFusionDetails) => ({
@@ -251,4 +252,40 @@ test("withMutationStatus renderResult initializes mutationShell defensively", ()
   assert.ok(container);
   assert.ok(context.state.mutationShell);
   assert.ok(context.state.mutationShell.box);
+});
+
+test("grep renders anchored and plain groups with shared width and folded indentation", () => {
+  initTheme("dark");
+  const notice =
+    "[Invalid UTF-8: replacement characters shown; plain line numbers cannot be used as edit anchors]";
+  const raw = [
+    "valid.ts · 2 matches",
+    "9#ABCD│  alpha",
+    "10#ABCD│    beta",
+    "",
+    "invalid.txt · 2 matches",
+    "100│\tbad �",
+    "7│\t\tother",
+    notice,
+  ].join("\n");
+  assert.deepEqual(toDisplayLines(raw, theme), [
+    theme.fg("success", "valid.ts") + theme.fg("dim", " · 2 matches"),
+    theme.fg("dim", "     9: ") + theme.fg("dim", "›") + " " + theme.fg("toolOutput", "alpha"),
+    theme.fg("dim", "    10: ") + theme.fg("dim", "›") + " " + theme.fg("toolOutput", "  beta"),
+    theme.fg("toolOutput", ""),
+    theme.fg("success", "invalid.txt") + theme.fg("dim", " · 2 matches"),
+    theme.fg("dim", "   100: ") + theme.fg("dim", "›") + " " + theme.fg("toolOutput", "bad �"),
+    theme.fg("dim", "     7: ") + theme.fg("dim", "›") + " " + theme.fg("toolOutput", "\tother"),
+    theme.fg("warning", notice),
+  ]);
+});
+
+test("grep renders plain and anchored rows in one group without exposing hashes", () => {
+  initTheme("dark");
+  const raw = "mixed.txt · 2 matches\n1#ABCD│alpha\n12│  7#ABCD│literal content";
+  assert.deepEqual(toDisplayLines(raw, theme), [
+    theme.fg("success", "mixed.txt") + theme.fg("dim", " · 2 matches"),
+    theme.fg("dim", "    1: ") + theme.fg("toolOutput", "alpha"),
+    theme.fg("dim", "   12: ") + theme.fg("toolOutput", "  7#ABCD│literal content"),
+  ]);
 });

@@ -945,7 +945,7 @@ test("long candidate lines remain countable without content previews", async () 
   });
 });
 
-test("grep previews invalid UTF-8 without anchors and skips NUL matches", async () => {
+test("grep previews invalid UTF-8 without anchors and skips NUL hits that require snapshots", async () => {
   await withDir(async (dir) => {
     const invalid = join(dir, "invalid.txt");
     const source = Buffer.from([0x61, 0x0a, 0xc3, 0x28, 0x0a]);
@@ -966,19 +966,51 @@ test("grep previews invalid UTF-8 without anchors and skips NUL matches", async 
     const binarySource = Buffer.from("a\nb\0c");
     await writeFile(binary, binarySource);
     const binaryBackend = fakeBackend({ lines: [rgMatch(binary, 1, "a\n")], paths: [binary] });
-    for (const outputMode of ["content", "files", "count"] as const) {
+    // Single-line files/count filtering belongs to runRgTextView and is covered by real-rg tests.
+    for (const { outputMode, multiline } of [
+      { outputMode: "content", multiline: false },
+      { outputMode: "content", multiline: true },
+      { outputMode: "files", multiline: true },
+      { outputMode: "count", multiline: true },
+    ] as const) {
       const skipped = await call(
         makeGrepOverrideWithBackend(dir, DEFAULT_CONFIG, binaryBackend.backend),
-        {
-          literal: true,
-          pattern: "a",
-          path: binary,
-          outputMode,
-        },
+        { literal: true, pattern: "a", path: binary, outputMode, multiline },
       );
       assert.equal(text(skipped), "No matches found");
     }
     assert.deepEqual(await readFile(binary), binarySource);
+  });
+});
+
+test("single-line files and count modes do not reread a matched file after it disappears", async () => {
+  await withDir(async (dir) => {
+    const file = join(dir, "listed.txt");
+    for (const outputMode of ["files", "count"] as const) {
+      await writeFile(file, "needle\n");
+      const fake = fakeBackend({ lines: [rgMatch(file, 1, "needle\n")] });
+      const backend: GrepBackend = {
+        ...fake.backend,
+        async search(...args) {
+          // Scope resolution has succeeded; the backend can still deliver a hit already read by rg.
+          await rm(file);
+          return fake.backend.search(...args);
+        },
+      };
+      const result = await call(makeGrepOverrideWithBackend(dir, DEFAULT_CONFIG, backend), {
+        literal: true,
+        pattern: "needle",
+        path: file,
+        outputMode,
+      });
+      assert.equal(
+        text(result),
+        outputMode === "files" ? "listed.txt" : "listed.txt: 1\nTotal: 1 match in 1 file",
+      );
+      assert.equal(result.details, undefined);
+      assert.equal(fake.calls.length, 1);
+      await assert.rejects(readFile(file), { code: "ENOENT" });
+    }
   });
 });
 

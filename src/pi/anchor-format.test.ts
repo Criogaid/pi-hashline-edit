@@ -6,6 +6,8 @@ import {
   createAnchorFormatter,
   parseAnchorToken,
   parseHashline,
+  parseDisplayRow,
+  plainRow,
 } from "./anchor-format.ts";
 
 test("anchor formatter binds the supplied hash length and hashes undisplayed content", () => {
@@ -58,5 +60,49 @@ test("display rows accept supported hash lengths and preserve nested anchor-like
   }
   for (const row of ["0#ABCD│text", "01#ABCD│text", "12#A│text", "12#AAAAAAAAA│text"]) {
     assert.equal(parseHashline(row), null);
+  }
+});
+
+test("plain rows expose carriage returns without creating editable anchors", () => {
+  assert.equal(plainRow(12, "a\rb│12#ABCD│nested"), "12│a␍b│12#ABCD│nested");
+  assert.equal(plainRow(1, ""), "1│");
+  assert.equal(parseHashline(plainRow(12, "content")), null);
+  assert.equal(parseAnchorToken("12"), undefined);
+});
+
+test("display row parsing accepts plain and anchored rows without changing their content", () => {
+  for (const hashLen of [2, 4, 6, 8]) {
+    const anchored = createAnchorFormatter(hashLen).row(12, "  nested 7#ABCD│content");
+    assert.deepEqual(parseDisplayRow(anchored), {
+      lineNo: "12",
+      content: "  nested 7#ABCD│content",
+    });
+    assert.deepEqual(parseDisplayRow(anchored), parseHashline(anchored));
+  }
+  assert.deepEqual(parseDisplayRow("123│  �│7#ABCD│nested"), {
+    lineNo: "123",
+    content: "  �│7#ABCD│nested",
+  });
+  assert.deepEqual(parseDisplayRow(plainRow(9, "a\rb")), { lineNo: "9", content: "a␍b" });
+  assert.deepEqual(parseDisplayRow("1│"), { lineNo: "1", content: "" });
+});
+
+test("display row parsing rejects headers, notices, and invalid line references", () => {
+  for (const row of [
+    "",
+    "file.txt · 2 matches",
+    "[Invalid UTF-8: plain preview]",
+    "No matches found",
+    "0│text",
+    "01│text",
+    "-1│text",
+    " 1│text",
+    "1:text",
+    "0#ABCD│text",
+    "01#ABCD│text",
+    "1#A│text",
+    "1#IIII│text",
+  ]) {
+    assert.equal(parseDisplayRow(row), null, row);
   }
 });
