@@ -175,8 +175,6 @@ interface AssembleGrepOutputOptions {
   blocks: readonly string[];
   warnings: readonly string[];
   outputMode: "content" | "files" | "count";
-  /** Notice for an invalid regex that was searched literally; undefined when no fallback happened. */
-  literalFallbackNotice: string | undefined;
   matchLimitReached: boolean;
   effectiveLimit: number;
   linesTruncated: boolean;
@@ -186,15 +184,8 @@ export function assembleGrepOutput(options: AssembleGrepOutputOptions): {
   content: [{ type: "text"; text: string }];
   details: { incomplete: true } | undefined;
 } {
-  const {
-    blocks,
-    warnings,
-    outputMode,
-    literalFallbackNotice,
-    matchLimitReached,
-    effectiveLimit,
-    linesTruncated,
-  } = options;
+  const { blocks, warnings, outputMode, matchLimitReached, effectiveLimit, linesTruncated } =
+    options;
 
   if (!blocks.length && warnings.length) {
     throw new Error(`No matches could be displayed.${formatSearchWarnings(warnings)}`);
@@ -203,7 +194,7 @@ export function assembleGrepOutput(options: AssembleGrepOutputOptions): {
   const truncation = truncateHead(output, { maxBytes: DEFAULT_MAX_BYTES });
   output = truncation.content;
 
-  const notices: string[] = literalFallbackNotice ? [literalFallbackNotice] : [];
+  const notices: string[] = [];
   if (matchLimitReached) {
     notices.push(
       `${effectiveLimit} matches limit reached. Use limit=${effectiveLimit * 2} for more, or refine pattern`,

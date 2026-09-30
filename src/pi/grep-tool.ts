@@ -16,10 +16,8 @@ import { createAnchorFormatter } from "./anchor-format.ts";
 import { renderToolError } from "./render.ts";
 import { assembleGrepOutput, formatMatches, formatSearchWarnings } from "./grep-output.ts";
 import {
+  assertValidRegex,
   filterExplicitFilesByGlob,
-  literalFallbackNotice as formatLiteralFallbackNotice,
-  REGEX_SYNTAX,
-  resolveLiteralMode,
   toArray,
   resolveSearchPaths,
 } from "./grep-scope.ts";
@@ -67,12 +65,10 @@ function createGrepSchema({ defaultLimit, defaultContext }: HashlineEditConfig["
           },
         ),
       ),
-      literal: Type.Optional(
-        Type.Boolean({
-          description:
-            "true: match the text literally. false: ripgrep Rust regex. Omitted: regex when the query contains metacharacters; valid regexes run without notice (foo(0) matches foo0, not foo(0)). A single invalid pattern falls back to a literal search of the whole string; an invalid array fails.",
-        }),
-      ),
+      literal: Type.Boolean({
+        description:
+          "true: match the text exactly, including regex punctuation. false: ripgrep Rust regex, where foo(0) matches foo0.",
+      }),
       ignoreCase: Type.Optional(
         Type.Boolean({
           description:
@@ -206,22 +202,8 @@ export function makeGrepOverrideWithBackend(
       const outputMode: "content" | "files" | "count" = params.outputMode ?? "content";
       const multiline = params.multiline ?? false;
       const globs = toArray(params.glob);
-      const literal = await resolveLiteralMode(
-        patterns,
-        params.literal,
-        multiline,
-        rgPath,
-        backend,
-        signal,
-        patterns.length === 1,
-      );
-      const literalFallback =
-        params.literal === undefined &&
-        literal &&
-        patterns.some((pattern) => REGEX_SYNTAX.test(pattern));
-      const literalFallbackNotice = literalFallback
-        ? formatLiteralFallbackNotice(patterns)
-        : undefined;
+      const { literal } = params;
+      if (!literal) await assertValidRegex(patterns, multiline, rgPath, backend, signal);
       const matcherIgnoreCase = await backend.resolveIgnoreCase(
         rgPath,
         patterns,
@@ -271,14 +253,7 @@ export function makeGrepOverrideWithBackend(
         if (warnings.length)
           throw new Error(`No matches confirmed.${formatSearchWarnings(warnings)}`);
         return {
-          content: [
-            {
-              type: "text" as const,
-              text:
-                "No matches found" +
-                (literalFallbackNotice ? `\n\n[${literalFallbackNotice}]` : ""),
-            },
-          ],
+          content: [{ type: "text" as const, text: "No matches found" }],
           details: undefined,
         };
       }
@@ -297,7 +272,6 @@ export function makeGrepOverrideWithBackend(
         blocks,
         warnings,
         outputMode,
-        literalFallbackNotice,
         matchLimitReached,
         effectiveLimit,
         linesTruncated,
