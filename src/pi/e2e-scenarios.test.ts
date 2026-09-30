@@ -70,6 +70,7 @@ test("E2E Dev D1: Search-and-edit single function without separate read call", a
     const grepResult = await call(grep, {
       path: "calc.ts",
       pattern: "calculateDiscount",
+      literal: true,
       context: 3,
     });
     const grepText = grepResult.content[0].text;

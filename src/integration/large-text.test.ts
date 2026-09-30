@@ -33,11 +33,9 @@ test("read and line-based grep retain anchors on LF and CRLF files over 100 MiB"
       assert.ok(first.content[0].text.includes(`1#${computeLineHash(1, "needle", 4)}│needle`));
       const last: any = await call(read, { path, offset: 103426, limit: 1 });
       assert.ok(last.content[0].text.includes(`103426#${computeLineHash(103426, "tail", 4)}│tail`));
-      for (const modes of [{}, { literal: true }]) {
-        const result: any = await call(grep, { path, pattern: "needle", ...modes });
-        assert.ok(result.content[0].text.includes(`1#${computeLineHash(1, "needle", 4)}│needle`));
-        assert.doesNotMatch(result.content[0].text, /Search incomplete/);
-      }
+      const result: any = await call(grep, { path, pattern: "needle", literal: true });
+      assert.ok(result.content[0].text.includes(`1#${computeLineHash(1, "needle", 4)}│needle`));
+      assert.doesNotMatch(result.content[0].text, /Search incomplete/);
     }
   } finally {
     await rm(directory, { recursive: true, force: true });

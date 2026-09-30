@@ -101,7 +101,7 @@ test("file tools share Pi-style URL and @ path resolution", async () => {
     );
     const matches = await callTool(
       makeGrepOverride(dir, DEFAULT_CONFIG),
-      { path: `@${url}`, pattern: "edited" },
+      { path: `@${url}`, pattern: "edited", literal: true },
       { toolCallId: "grep" },
     );
     assert.match(matches.content[0].text, /edited/);
