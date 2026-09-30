@@ -1,15 +1,17 @@
 import { createReadStream } from "node:fs";
-import { createUtf8Decoder } from "../core/text.ts";
+import { createUtf8Decoder, type Utf8Decoding } from "../core/text.ts";
 import { throwIfCancelled } from "./error-text.ts";
 
-/** Scan and validate the whole file with bounded chunks, preserving BOM and raw line endings. */
+/** Scan whole-file bytes; preview decoding reports validity without rejecting malformed UTF-8. */
 export async function scanTextFile(
   path: string,
   onChunk?: (text: string) => void | Promise<void>,
   signal?: AbortSignal,
   onBytes?: (bytes: Buffer) => void,
+  decoding: Utf8Decoding = "strict",
 ) {
   const decode = createUtf8Decoder();
+  const preview = decoding === "preview" ? createUtf8Decoder("preview") : undefined;
   let byteLength = 0;
   let lineFeeds = 0;
   let lastByte = -1;
@@ -31,14 +33,17 @@ export async function scanTextFile(
         offset++;
       }
       // NUL takes precedence even when an earlier chunk contained malformed UTF-8.
-      if (hasNul || decodingError) continue;
-      let text: string;
-      try {
-        text = decode(bytes, true);
-      } catch (error) {
-        decodingError = error;
-        continue;
+      if (hasNul) continue;
+      let text = "";
+      if (!decodingError) {
+        try {
+          text = decode(bytes, true);
+        } catch (error) {
+          decodingError = error;
+        }
       }
+      if (preview) text = preview(bytes, true);
+      else if (decodingError) continue;
       await onChunk?.(text);
     }
   } catch (error) {
@@ -48,9 +53,19 @@ export async function scanTextFile(
   }
   throwIfCancelled(signal);
   if (!hasNul) {
-    if (decodingError) throw decodingError;
-    const tail = decode();
-    if (tail) await onChunk?.(tail);
+    let tail = "";
+    if (!decodingError) {
+      try {
+        tail = decode();
+      } catch (error) {
+        decodingError = error;
+      }
+    }
+    if (!preview && tail) await onChunk?.(tail);
+    if (preview) {
+      tail = preview();
+      if (tail) await onChunk?.(tail);
+    } else if (decodingError) throw decodingError;
   }
   return {
     byteLength,
@@ -58,6 +73,7 @@ export async function scanTextFile(
     finalNewline: lastByte === -1 || lastByte === 10,
     hasNul,
     hasCrLf,
+    validUtf8: !decodingError,
   };
 }
 
@@ -74,7 +90,12 @@ export async function scanTextLines(
   path: string,
   select: (number: number) => boolean,
   onLine: (line: ScannedLine) => void,
-  options: { signal?: AbortSignal; maxLineBytes?: number; onBytes?: (bytes: Buffer) => void } = {},
+  options: {
+    signal?: AbortSignal;
+    maxLineBytes?: number;
+    onBytes?: (bytes: Buffer) => void;
+    decoding?: Utf8Decoding;
+  } = {},
 ) {
   const maxBytes = options.maxLineBytes ?? Infinity;
   let number = 1;
@@ -130,6 +151,7 @@ export async function scanTextLines(
     },
     options.signal,
     options.onBytes,
+    options.decoding,
   );
   if (!stats.hasNul && byteLength > 0) finish(false);
   return stats;

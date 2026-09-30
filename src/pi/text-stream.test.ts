@@ -116,3 +116,32 @@ test("streamed reads propagate cancellation", async () =>
       { message: "Operation aborted" },
     );
   }));
+
+test("preview decoding reports invalid UTF-8 across chunk boundaries and preserves raw revisions", async () =>
+  withFile(async (path) => {
+    const source = Buffer.concat([
+      Buffer.from("\uFEFF" + "a".repeat(65532)),
+      Buffer.from([0xf0, 0x9f]),
+      Buffer.from("\r\nneedle "),
+      Buffer.from([0xff]),
+      Buffer.from("\r\nlast"),
+    ]);
+    await writeFile(path, source);
+    const hash = createHash("sha256");
+    const lines: string[] = [];
+    const stats = await scanTextLines(
+      path,
+      () => true,
+      (line) => lines.push(line.text ?? ""),
+      {
+        decoding: "preview",
+        onBytes: (bytes) => hash.update(bytes),
+      },
+    );
+    assert.equal(stats.validUtf8, false);
+    assert.equal(stats.hasNul, false);
+    assert.equal(stats.hasCrLf, true);
+    assert.deepEqual(lines, splitLines(source.toString("utf8")));
+    assert.equal(hash.digest("hex"), byteRevision(source));
+    await assert.rejects(scanTextFile(path), /UNSUPPORTED_ENCODING/);
+  }));

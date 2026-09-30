@@ -9,9 +9,11 @@ export function unwritableTextReason(text: string): string | undefined {
   return undefined;
 }
 
-/** Create an independent UTF-8 decoder; streaming calls preserve split code points and the BOM. */
-export function createUtf8Decoder() {
-  const decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
+export type Utf8Decoding = "strict" | "preview";
+
+/** Streaming UTF-8 decoding preserves BOM; preview mode replaces malformed bytes. */
+export function createUtf8Decoder(mode: Utf8Decoding = "strict") {
+  const decoder = new TextDecoder("utf-8", { fatal: mode === "strict", ignoreBOM: true });
   return (bytes?: Uint8Array, stream = false): string => {
     try {
       return decoder.decode(bytes, { stream });

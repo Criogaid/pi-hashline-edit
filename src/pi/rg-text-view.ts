@@ -43,7 +43,7 @@ async function writeLfSnapshot(source: string, destination: string, signal?: Abo
 export const runRgTextView: SearchRunner = async (rgPath, { matcher, scope }, signal, onLine) => {
   let directory: string | undefined;
   const result: RgRunResult = { code: 1, stderr: "", stopped: false };
-  // LF-only files pass through to rg directly; only CRLF files need temp snapshots.
+  // Only valid UTF-8 CRLF files use LF snapshots; malformed UTF-8 keeps its raw search view.
   const snapshots = new Map<string, string>();
   const batchPaths: string[] = [];
   let batchBytes = 0;
@@ -109,15 +109,15 @@ export const runRgTextView: SearchRunner = async (rgPath, { matcher, scope }, si
       const original = resolve(path);
       if (directory && original.startsWith(directory + sep)) return true;
       try {
-        const info = await scanTextFile(original, undefined, signal);
-        if (info.hasCrLf && !info.hasNul) {
+        const info = await scanTextFile(original, undefined, signal, undefined, "preview");
+        if (info.hasNul) return true;
+        if (info.hasCrLf && info.validUtf8) {
           const dir = await ensureDirectory();
           const snapshot = join(dir, String(snapshots.size));
           await writeLfSnapshot(original, snapshot, signal);
           snapshots.set(snapshot, original);
           batchPaths.push(snapshot);
         } else {
-          // Binary files retain their raw bytes; confirmed content hits are rejected later.
           batchPaths.push(original);
         }
         batchBytes += info.byteLength;

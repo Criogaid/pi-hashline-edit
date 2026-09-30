@@ -1,5 +1,5 @@
 /**
- * Override grep: anchored `LINE#HASH│` results feed edit without a re-read.
+ * Override grep: valid UTF-8 results feed edit; malformed UTF-8 uses non-editable previews.
  * Scope and paths live in grep-scope; search requests and ripgrep events in
  * grep-search; the rg process layer in rg-process; result formatting in
  * grep-output; TUI presentation in grep-render. This module owns the tool
@@ -21,7 +21,12 @@ import {
   toArray,
   resolveSearchPaths,
 } from "./grep-scope.ts";
-import { searchMatches, type GrepBackend, type SearchScope } from "./grep-search.ts";
+import {
+  searchMatches,
+  type GrepBackend,
+  type SearchScope,
+  type SearchFileSnapshot,
+} from "./grep-search.ts";
 export type { GrepBackend } from "./grep-search.ts";
 import { toDisplayLines } from "./grep-render.ts";
 import { probeRegex, resolveIgnoreCase, runRgPaths, type SearchModes } from "./rg-process.ts";
@@ -78,13 +83,13 @@ function createGrepSchema({ defaultLimit, defaultContext }: HashlineEditConfig["
       multiline: Type.Optional(
         Type.Boolean({
           description:
-            "Match across lines (default false); every line a match touches is anchored. The . wildcard does not match newlines; use \\n or (?s).",
+            "Match across lines (default false); content mode returns every line a match touches. The . wildcard does not match newlines; use \\n or (?s).",
         }),
       ),
       context: Type.Optional(
         Type.Number({
           ...GREP_CONTEXT_RANGE,
-          description: `Anchored lines shown before and after each match (${GREP_CONTEXT_RANGE.minimum}-${GREP_CONTEXT_RANGE.maximum}, default ${defaultContext}); display only, not matched.`,
+          description: `Lines shown before and after each match (${GREP_CONTEXT_RANGE.minimum}-${GREP_CONTEXT_RANGE.maximum}, default ${defaultContext}); display only, not matched.`,
         }),
       ),
       limit: Type.Optional(
@@ -96,7 +101,7 @@ function createGrepSchema({ defaultLimit, defaultContext }: HashlineEditConfig["
       outputMode: Type.Optional(
         Type.Union([Type.Literal("content"), Type.Literal("files"), Type.Literal("count")], {
           description:
-            '"content" (default): anchored lines; "files": paths; "count": matching lines per file and total. All modes share limit.',
+            '"content" (default): matches/context with anchors for valid UTF-8 or plain previews otherwise; "files": paths; "count": matching lines per file and total. All modes share limit.',
         }),
       ),
     },
@@ -131,7 +136,7 @@ export function makeGrepOverrideWithBackend(
     name: "grep" as const,
     label: "grep",
     description:
-      "Search file contents with ripgrep. Content mode returns LINE#HASH anchors usable by edit; files/count modes return paths or matching-line counts. CRLF is searched as LF. Directory searches respect ignore rules and skip linked directories.",
+      "Search file contents with ripgrep. Content mode returns LINE#HASH edit anchors for valid UTF-8; invalid UTF-8 uses replacement characters and plain line numbers. NUL-containing files are skipped. Files/count modes return paths or matching-line counts. Valid UTF-8 CRLF is searched as LF; invalid UTF-8 is searched as raw bytes. Directory searches respect ignore rules and skip linked directories.",
     promptSnippet: "Search file contents with ripgrep",
     promptGuidelines: [
       "Prefer grep for file-content searches; use another tool for ignored or linked directories.",
@@ -235,7 +240,7 @@ export function makeGrepOverrideWithBackend(
 
       const result =
         scope.searchPaths.length === 0
-          ? { raw: [], matchLimitReached: false, revisions: new Map<string, string>() }
+          ? { raw: [], matchLimitReached: false, snapshots: new Map<string, SearchFileSnapshot>() }
           : await searchMatches({
               backend,
               rgPath,
@@ -243,7 +248,6 @@ export function makeGrepOverrideWithBackend(
               patterns,
               modes,
               limit: effectiveLimit,
-              outputMode,
               signal,
               warnings,
             });
@@ -266,7 +270,7 @@ export function makeGrepOverrideWithBackend(
         anchors,
         signal,
         warnings,
-        searchRevisions: result.revisions,
+        searchSnapshots: result.snapshots,
       });
       return assembleGrepOutput({
         blocks,

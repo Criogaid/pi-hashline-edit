@@ -1,9 +1,8 @@
 import { truncateHead, formatSize, DEFAULT_MAX_BYTES } from "@earendil-works/pi-coding-agent";
 import { createHash } from "node:crypto";
 import { isAbsolute, relative, resolve, sep } from "node:path";
-import { UNSUPPORTED_TEXT_NUL } from "../core/errors.ts";
 import { createAnchorFormatter, displayCarriageReturns } from "./anchor-format.ts";
-import { fileReadWarning, type RgMatch } from "./grep-search.ts";
+import { fileReadWarning, type RgMatch, type SearchFileSnapshot } from "./grep-search.ts";
 import { scanTextLines } from "./text-stream.ts";
 import { formatKiB, GREP_MAX_LINE_LENGTH, MAX_SEARCH_DIAGNOSTIC_BYTES } from "./budgets.ts";
 import { searchChangedError } from "./error-text.ts";
@@ -11,6 +10,8 @@ import { searchChangedError } from "./error-text.ts";
 /** UTF-16 units kept before the match column when a preview window is cut. */
 const GREP_PREVIEW_LEAD = 100;
 const MAX_CONCURRENT_FILE_READS = 16;
+const INVALID_UTF8_PREVIEW_NOTICE =
+  "Invalid UTF-8: replacement characters shown; plain line numbers cannot be used as edit anchors";
 
 /** Content-mode file header: `<path> · <N> match(es)`. parseFileHeader is its TUI parser. */
 function formatFileHeader(path: string, matches: number): string {
@@ -57,11 +58,11 @@ interface FormatMatchesOptions {
   anchors: ReturnType<typeof createAnchorFormatter>;
   signal?: AbortSignal;
   warnings: string[];
-  searchRevisions: ReadonlyMap<string, string>;
+  searchSnapshots: ReadonlyMap<string, SearchFileSnapshot>;
 }
 
 export async function formatMatches(options: FormatMatchesOptions) {
-  const { cwd, raw, outputMode, context, anchors, signal, warnings, searchRevisions } = options;
+  const { cwd, raw, outputMode, context, anchors, signal, warnings, searchSnapshots } = options;
   const byFile = new Map<string, RgMatch[]>();
   for (const match of raw) {
     const lines = byFile.get(match.filePath) ?? [];
@@ -106,6 +107,8 @@ export async function formatMatches(options: FormatMatchesOptions) {
             const matchedRows = new Set<number>();
             const hash = createHash("sha256");
             try {
+              const snapshot = searchSnapshots.get(filePath);
+              if (!snapshot) throw searchChangedError();
               const stats = await scanTextLines(
                 filePath,
                 (number) => windowSet.has(number),
@@ -121,20 +124,24 @@ export async function formatMatches(options: FormatMatchesOptions) {
                     columns.get(line.number),
                   );
                   if (wasTruncated) linesTruncated = true;
-                  rows.push(anchors.row(line.number, line.text, display));
+                  rows.push(
+                    snapshot.validUtf8
+                      ? anchors.row(line.number, line.text, display)
+                      : `${line.number}│${display}`,
+                  );
                 },
-                { signal: scanSignal, onBytes: (bytes) => hash.update(bytes) },
+                { signal: scanSignal, onBytes: (bytes) => hash.update(bytes), decoding: "preview" },
               );
-              if (stats.hasNul) throw new Error(UNSUPPORTED_TEXT_NUL);
+              if (stats.hasNul) throw searchChangedError();
               if (matchLines.some(({ lineNumber }) => !matchedRows.has(lineNumber))) {
                 throw searchChangedError();
               }
-              const searchRevision = searchRevisions.get(filePath);
-              if (searchRevision && searchRevision !== hash.digest("hex")) {
+              if (snapshot.revision !== hash.digest("hex")) {
                 throw searchChangedError();
               }
               const header = `${formatFileHeader(formatPath(filePath), matchLines.length)}\n`;
-              fileResults[current] = { block: header + rows.join("\n") };
+              const notice = snapshot.validUtf8 ? "" : `\n[${INVALID_UTF8_PREVIEW_NOTICE}]`;
+              fileResults[current] = { block: header + rows.join("\n") + notice };
             } catch (error) {
               const warning = fileReadWarning(filePath, error, scanSignal);
               if (!warning) throw error;

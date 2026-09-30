@@ -945,30 +945,40 @@ test("long candidate lines remain countable without content previews", async () 
   });
 });
 
-test("grep rejects malformed UTF-8 and NUL bytes instead of hashing binary text", async () => {
+test("grep previews invalid UTF-8 without anchors and skips NUL matches", async () => {
   await withDir(async (dir) => {
-    const cases = [
-      {
-        name: "invalid.txt",
-        bytes: Buffer.from([0x61, 0x0a, 0xc3, 0x28, 0x0a]),
-        error: /UNSUPPORTED_ENCODING/,
-      },
-      { name: "nul.txt", bytes: Buffer.from([0x61, 0x00, 0x62]), error: /UNSUPPORTED_TEXT/ },
-    ];
-    for (const fixture of cases) {
-      const file = join(dir, fixture.name);
-      await writeFile(file, fixture.bytes);
-      const fake = fakeBackend({ lines: [rgMatch(file, 1, "a\n")], paths: [file] });
-      await assert.rejects(
-        call(makeGrepOverrideWithBackend(dir, DEFAULT_CONFIG, fake.backend), {
+    const invalid = join(dir, "invalid.txt");
+    const source = Buffer.from([0x61, 0x0a, 0xc3, 0x28, 0x0a]);
+    await writeFile(invalid, source);
+    const fake = fakeBackend({ lines: [rgMatch(invalid, 1, "a\n")], paths: [invalid] });
+    const result = await call(makeGrepOverrideWithBackend(dir, DEFAULT_CONFIG, fake.backend), {
+      literal: true,
+      pattern: "a",
+      path: invalid,
+      context: 1,
+    });
+    assert.match(text(result), /1│a\n2│�\(/);
+    assert.match(text(result), /Invalid UTF-8.*cannot be used as edit anchors/);
+    assert.doesNotMatch(text(result), /\d+#|Search incomplete/);
+    assert.deepEqual(await readFile(invalid), source);
+
+    const binary = join(dir, "nul.txt");
+    const binarySource = Buffer.from("a\nb\0c");
+    await writeFile(binary, binarySource);
+    const binaryBackend = fakeBackend({ lines: [rgMatch(binary, 1, "a\n")], paths: [binary] });
+    for (const outputMode of ["content", "files", "count"] as const) {
+      const skipped = await call(
+        makeGrepOverrideWithBackend(dir, DEFAULT_CONFIG, binaryBackend.backend),
+        {
           literal: true,
           pattern: "a",
-          path: file,
-        }),
-        fixture.error,
+          path: binary,
+          outputMode,
+        },
       );
-      assert.deepEqual(await readFile(file), fixture.bytes);
+      assert.equal(text(skipped), "No matches found");
     }
+    assert.deepEqual(await readFile(binary), binarySource);
   });
 });
 

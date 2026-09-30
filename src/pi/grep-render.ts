@@ -3,12 +3,9 @@ import { parseHashline } from "./anchor-format.ts";
 import { isNoticeLine, parseFileHeader } from "./grep-output.ts";
 
 /**
- * Convert the anchored grep output (grouped, `LINE#HASH│`) into a human-readable
- * form for the TUI: drop the hash, keep file headers and line numbers. Within each
- * file group, the common leading whitespace shared by all matched lines is folded
- * into a single marker (›) so deep, repeated indentation doesn't eat display width;
- * each line's indentation relative to that common base is preserved. The model still
- * receives the anchored `content` text verbatim — this only affects what the user sees.
+ * Render grouped grep results for the TUI. Anchored rows lose their hashes and
+ * share folded leading indentation; plain preview rows pass through unchanged.
+ * The model receives the original content text, including preview notices.
  */
 function countLeading(s: string): number {
   const m = s.match(/^[ \t]*/);

@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { resolve } from "node:path";
-import { UNSUPPORTED_TEXT_NUL } from "../core/errors.ts";
+import { normalizeLineEndings } from "../core/lines.ts";
 import { scanTextFile } from "./text-stream.ts";
 import {
   type RgRunResult,
@@ -91,16 +91,23 @@ interface SearchMatchesOptions {
   patterns: readonly string[];
   modes: SearchModes;
   limit: number;
-  outputMode: "content" | "files" | "count";
   signal?: AbortSignal;
   warnings: string[];
 }
 
 async function scanFileRevision(filePath: string, signal?: AbortSignal) {
   const hash = createHash("sha256");
-  const stats = await scanTextFile(filePath, undefined, signal, (bytes) => hash.update(bytes));
+  const stats = await scanTextFile(
+    filePath,
+    undefined,
+    signal,
+    (bytes) => hash.update(bytes),
+    "preview",
+  );
   return { ...stats, revision: hash.digest("hex") };
 }
+
+export type SearchFileSnapshot = Awaited<ReturnType<typeof scanFileRevision>>;
 
 export function fileReadWarning(
   filePath: string,
@@ -112,10 +119,9 @@ export function fileReadWarning(
 }
 
 export async function searchMatches(options: SearchMatchesOptions) {
-  const { backend, rgPath, scope, patterns, modes, limit, outputMode, signal, warnings } = options;
+  const { backend, rgPath, scope, patterns, modes, limit, signal, warnings } = options;
   const raw: RgMatch[] = [];
-  const revisions = new Map<string, string>();
-  const lineCounts = new Map<string, number>();
+  const snapshots = new Map<string, SearchFileSnapshot>();
   let matchLimitReached = false;
   const unreadableFiles = new Set<string>();
   const seenMatches = new Set<string>();
@@ -146,26 +152,36 @@ export async function searchMatches(options: SearchMatchesOptions) {
       )
         return true;
       const filePath = resolve(rgText(data.path));
-      const startLine = data.line_number;
-      const bytes = rgBytes(data.lines);
-      const addMatch = async (match: RgMatch) => {
-        if (unreadableFiles.has(filePath)) return true;
-        const matchKey = `${filePath}\0${match.lineNumber}`;
-        if (seenMatches.has(matchKey)) return true;
-        seenMatches.add(matchKey);
-        if (outputMode === "content" && !revisions.has(filePath)) {
-          try {
-            const stats = await scanFileRevision(filePath, signal);
-            if (stats.hasNul) throw new Error(UNSUPPORTED_TEXT_NUL);
-            revisions.set(filePath, stats.revision);
-          } catch (error) {
-            const warning = fileReadWarning(filePath, error, signal);
-            if (!warning) throw error;
-            warnings.push(warning);
+      if (unreadableFiles.has(filePath)) return true;
+      let snapshot = snapshots.get(filePath);
+      if (!snapshot) {
+        try {
+          snapshot = await scanFileRevision(filePath, signal);
+          if (snapshot.hasNul) {
             unreadableFiles.add(filePath);
             return true;
           }
+          snapshots.set(filePath, snapshot);
+        } catch (error) {
+          const warning = fileReadWarning(filePath, error, signal);
+          if (!warning) throw error;
+          warnings.push(warning);
+          unreadableFiles.add(filePath);
+          return true;
         }
+      }
+      const startLine = data.line_number;
+      const bytes = rgBytes(data.lines);
+      const text = bytes.toString("utf8");
+      // Valid text is already the LF view; normalizing it twice would strip a content CR.
+      const matchedText = (snapshot.validUtf8 ? text : normalizeLineEndings(text)).replace(
+        /\n$/,
+        "",
+      );
+      const addMatch = (match: RgMatch) => {
+        const matchKey = `${filePath}\0${match.lineNumber}`;
+        if (seenMatches.has(matchKey)) return true;
+        seenMatches.add(matchKey);
         raw.push(match);
         if (raw.length >= limit) {
           matchLimitReached = true;
@@ -178,45 +194,29 @@ export async function searchMatches(options: SearchMatchesOptions) {
           filePath,
           lineNumber: startLine,
           column: bytes.subarray(0, data.submatches?.[0]?.start ?? 0).toString("utf8").length,
-          matchedText: bytes.toString("utf8").replace(/\n$/, ""),
+          matchedText,
         });
       }
-      if (unreadableFiles.has(filePath)) return true;
       if (!Array.isArray(data.submatches)) throw new Error("Invalid rg multiline match event");
-      let lineCount = lineCounts.get(filePath);
-      if (lineCount === undefined) {
-        try {
-          const stats =
-            outputMode === "content"
-              ? await scanFileRevision(filePath, signal)
-              : await scanTextFile(filePath, undefined, signal);
-          if (stats.hasNul) throw new Error(UNSUPPORTED_TEXT_NUL);
-          lineCount = stats.totalLines;
-          lineCounts.set(filePath, lineCount);
-          if ("revision" in stats && typeof stats.revision === "string") {
-            revisions.set(filePath, stats.revision);
-          }
-        } catch (error) {
-          const warning = fileReadWarning(filePath, error, signal);
-          if (!warning) throw error;
-          warnings.push(warning);
-          unreadableFiles.add(filePath);
-          return true;
-        }
-      }
       const columns = new Map<number, number>();
       const submatches = data.submatches.length ? data.submatches : [{ start: 0, end: 0 }];
-      const ranges = submatchesToLineRanges(bytes, startLine, submatches, lineCount, columns);
-      const texts = bytes.toString("utf8").replace(/\n$/, "").split("\n");
+      const ranges = submatchesToLineRanges(
+        bytes,
+        startLine,
+        submatches,
+        snapshot.totalLines,
+        columns,
+      );
+      const texts = matchedText.split("\n");
       for (const [start, end] of ranges) {
         for (let lineNumber = start; lineNumber < end; lineNumber++) {
           if (
-            !(await addMatch({
+            !addMatch({
               filePath,
               lineNumber,
               column: columns.get(lineNumber),
               matchedText: texts[lineNumber - startLine],
-            }))
+            })
           )
             return false;
         }
@@ -227,5 +227,5 @@ export async function searchMatches(options: SearchMatchesOptions) {
     recordSearchDiagnostics(run, warnings);
     if (matchLimitReached) break;
   }
-  return { raw, matchLimitReached, revisions };
+  return { raw, matchLimitReached, snapshots };
 }

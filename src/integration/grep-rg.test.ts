@@ -1233,7 +1233,7 @@ test("visible source escapes remain readable and searchable while real CRLF stay
   }
 });
 
-test("normalized grep batches retain original paths, literal option markers, and decode diagnostics", async () => {
+test("normalized grep batches retain original paths and ignore unmatched invalid UTF-8", async () => {
   const directory = await mkdtemp(join(tmpdir(), "hl-grep-snapshots-"));
   try {
     await Promise.all(
@@ -1249,59 +1249,122 @@ test("normalized grep batches retain original paths, literal option markers, and
       undefined,
     );
     assert.equal((result.content[0].text.match(/file \d+\.txt: 1/g) ?? []).length, 70);
-    assert.match(result.content[0].text, /Search incomplete/);
-    assert.match(result.content[0].text, /invalid\.txt/);
-    assert.match(result.content[0].text, /UNSUPPORTED_ENCODING/);
+    assert.doesNotMatch(
+      result.content[0].text,
+      /Search incomplete|invalid\.txt|UNSUPPORTED_ENCODING/,
+    );
     assert.doesNotMatch(result.content[0].text, /hashline-grep-/);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
 });
 
-test("NUL files are rejected on a confirmed hit, not reported as no match", async () => {
+test("NUL files are silently skipped across search scopes and output modes", async () => {
   const directory = await mkdtemp(join(tmpdir(), "hl-grep-nul-"));
   try {
     const binary = join(directory, "binary.txt");
-    await writeFile(binary, Buffer.from("needle\r\nother\0needle\n"));
-    const grep = makeGrepOverrideWithBackend(directory, DEFAULT_CONFIG, {});
-    await assert.rejects(
-      invoke(
-        grep,
-        "grep",
-        { path: binary, pattern: "needle", literal: true },
-        undefined,
-        undefined,
-      ),
-      /UNSUPPORTED_TEXT/,
-    );
-    const absent = await invoke(
-      grep,
-      "grep",
-      { path: binary, pattern: "absent", literal: true },
-      undefined,
-      undefined,
-    );
-    assert.equal(absent.content[0].type, "text");
-    if (absent.content[0].type === "text") assert.equal(absent.content[0].text, "No matches found");
+    const source = Buffer.concat([
+      Buffer.from("needle\r\n"),
+      Buffer.alloc(65536, 97),
+      Buffer.from("\0needle\n"),
+    ]);
+    await writeFile(binary, source);
     await writeFile(join(directory, "valid.txt"), "needle\n");
-    await assert.rejects(
-      invoke(
+    const grep = makeGrepOverrideWithBackend(directory, DEFAULT_CONFIG, {});
+    for (const outputMode of ["content", "files", "count"] as const) {
+      for (const multiline of [false, true]) {
+        const skipped = await invoke(
+          grep,
+          "binary",
+          { path: binary, pattern: "needle", literal: true, outputMode, multiline },
+          undefined,
+          undefined,
+        );
+        assert.equal(skipped.content[0].text, "No matches found");
+        const result = await invoke(
+          grep,
+          "directory",
+          { path: directory, pattern: "needle", literal: true, outputMode, multiline, limit: 1 },
+          undefined,
+          undefined,
+        );
+        assert.match(result.content[0].text, /valid\.txt/);
+        assert.doesNotMatch(
+          result.content[0].text,
+          /binary\.txt|UNSUPPORTED_TEXT|Search incomplete/,
+        );
+      }
+    }
+    assert.deepEqual(await readFile(binary), source);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("invalid UTF-8 matches use plain previews while valid files retain edit anchors", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "hl-grep-preview-"));
+  try {
+    const grep = makeGrepOverrideWithBackend(directory, DEFAULT_CONFIG, {});
+    const invalid = join(directory, "invalid.txt");
+    for (const separator of ["\n", "\r\n"]) {
+      const source = Buffer.concat([
+        Buffer.from(`before${separator}needle `),
+        Buffer.from([0xff]),
+        Buffer.from(`${separator}after${separator}`),
+      ]);
+      await writeFile(invalid, source);
+      const result = await invoke(
         grep,
-        "grep",
-        { path: directory, pattern: "needle", literal: true },
+        "preview",
+        { path: invalid, pattern: "needle", literal: true, context: 1 },
         undefined,
         undefined,
-      ),
-      /UNSUPPORTED_TEXT/,
-    );
-    const filesMode: any = await invoke(
+      );
+      assert.match(result.content[0].text, /1│before\n2│needle �\n3│after/);
+      assert.match(result.content[0].text, /Invalid UTF-8.*cannot be used as edit anchors/);
+      assert.doesNotMatch(result.content[0].text, /\d+#|Search incomplete/);
+      assert.deepEqual(await readFile(invalid), source);
+    }
+    await writeFile(join(directory, "valid.txt"), "needle\n");
+    const mixed = await invoke(
       grep,
-      "grep",
-      { path: binary, pattern: "needle", literal: true, outputMode: "files" },
+      "mixed",
+      { path: directory, pattern: "needle", literal: true },
       undefined,
       undefined,
     );
-    assert.match(filesMode.content[0].text, /binary\.txt/);
+    assert.match(mixed.content[0].text, /valid\.txt · 1 match\n1#[A-Z0-9]+│needle/);
+    assert.match(mixed.content[0].text, /invalid\.txt · 1 match\n2│needle �/);
+    for (const outputMode of ["files", "count"] as const) {
+      const result = await invoke(
+        grep,
+        "summary",
+        { path: directory, pattern: "needle", literal: true, outputMode },
+        undefined,
+        undefined,
+      );
+      assert.match(result.content[0].text, /invalid\.txt/);
+      assert.match(result.content[0].text, /valid\.txt/);
+      assert.doesNotMatch(result.content[0].text, /Search incomplete/);
+    }
+    const multiline = await invoke(
+      grep,
+      "multiline",
+      { path: invalid, pattern: "needle.*\\r\\nafter", literal: false, multiline: true },
+      undefined,
+      undefined,
+    );
+    // Raw-byte regex matching follows rg semantics: dot does not match malformed UTF-8.
+    assert.equal(multiline.content[0].text, "No matches found");
+    const rawBoundary = await invoke(
+      grep,
+      "raw-boundary",
+      { path: invalid, pattern: "(?-u:needle[^\\r]*\\r\\nafter)", literal: false, multiline: true },
+      undefined,
+      undefined,
+    );
+    assert.match(rawBoundary.content[0].text, /2│needle �\n3│after/);
+    assert.doesNotMatch(rawBoundary.content[0].text, /\d+#/);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
