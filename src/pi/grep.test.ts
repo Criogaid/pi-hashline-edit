@@ -96,8 +96,14 @@ const call = (tool: any, params: any, signal?: AbortSignal) =>
 test("grep guidance covers query syntax, search scope, and edit anchors", () => {
   const tool = makeGrepOverrideWithBackend(process.cwd(), DEFAULT_CONFIG, {});
   for (const [topic, terms] of [
-    ["literal code", [/literal:true/, /regex punctuation/]],
-    ["Rust regex", [/ripgrep \(Rust\)/, /lookaround/, /backreferences/]],
+    ["exact text", [/literal:true for exact text/, /names/, /paths/, /code snippets/]],
+    [
+      "intentional Rust regex",
+      [
+        /literal:false only for intentional ripgrep \(Rust\) regex/,
+        /no lookaround or backreferences/,
+      ],
+    ],
     ["pattern alternatives", [/pattern array/, /alternatives/, /\|/]],
     ["edit context", [/context:3-5/, /code to edit/]],
     [
@@ -123,6 +129,7 @@ test("grep guidance covers query syntax, search scope, and edit anchors", () => 
   assert.match(description("pattern"), /ripgrep.*Rust/);
   assert.match(description("pattern"), /not JavaScript/);
   assert.match(description("pattern"), /\^ and \$.*line boundaries/);
+  assert.match(description("literal"), /Omitted:.*valid regexes run without notice/);
   assert.match(description("literal"), /single invalid pattern.*falls back.*literal/);
   assert.match(description("literal"), /invalid array fails/);
   assert.match(description("path"), /omit.*working directory/);

@@ -140,7 +140,7 @@ export function makeGrepOverrideWithBackend(
     promptGuidelines: [
       "Prefer grep for file-content searches; use another tool for ignored or linked directories.",
       'In grep, omit path to search the working directory (never pass ""); use glob for filename wildcards.',
-      "In grep, set literal:true for code with regex punctuation; grep regex is ripgrep (Rust) syntax without lookaround or backreferences.",
+      "In grep, use literal:true for exact text, including names, paths, and code snippets; use literal:false only for intentional ripgrep (Rust) regex, which has no lookaround or backreferences.",
       "In grep, use a pattern array for alternatives instead of joining them with |, and context:3-5 when searching code to edit.",
       "In grep, use multiline:true for cross-line matches and outputMode files or count when only paths or counts are needed.",
       "Copy grep anchors directly into edit; read the full line before rewriting from a partial preview.",
