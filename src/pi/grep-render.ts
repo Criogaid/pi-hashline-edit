@@ -1,22 +1,22 @@
 import type { Theme } from "@earendil-works/pi-coding-agent";
-import { parseHashline } from "./anchor-format.ts";
+import { parseDisplayRow } from "./anchor-format.ts";
 import { isNoticeLine, parseFileHeader } from "./grep-output.ts";
 
-/**
- * Render grouped grep results for the TUI. Anchored rows lose their hashes and
- * share folded leading indentation; plain preview rows pass through unchanged.
- * The model receives the original content text, including preview notices.
- */
 function countLeading(s: string): number {
   const m = s.match(/^[ \t]*/);
   return m ? m[0].length : 0;
 }
 
+/**
+ * Render grouped grep results for the TUI. Anchored and plain preview rows share
+ * aligned line numbers and folded leading indentation; anchored rows lose their
+ * hashes. The model receives the original content text, including preview notices.
+ */
 export function toDisplayLines(raw: string, theme: Theme): string[] {
   const out: string[] = [];
   const lines = raw.split("\n");
   const lineNoWidth = lines.reduce(
-    (width, line) => Math.max(width, parseHashline(line)?.lineNo.length ?? 0),
+    (width, line) => Math.max(width, parseDisplayRow(line)?.lineNo.length ?? 0),
     0,
   );
   let i = 0;
@@ -29,7 +29,7 @@ export function toDisplayLines(raw: string, theme: Theme): string[] {
       const group: { lineNo: string; content: string }[] = [];
       let j = i + 1;
       while (j < lines.length) {
-        const a = parseHashline(lines[j]);
+        const a = parseDisplayRow(lines[j]);
         if (!a) break;
         group.push({ lineNo: a.lineNo, content: a.content });
         j++;

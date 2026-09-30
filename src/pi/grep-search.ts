@@ -96,19 +96,29 @@ interface SearchMatchesOptions {
   warnings: string[];
 }
 
-async function scanFileRevision(filePath: string, signal?: AbortSignal) {
+/** What a matched file looked like when searched; content output re-verifies it before display. */
+export interface SearchFileSnapshot {
+  revision: string;
+  validUtf8: boolean;
+  totalLines: number;
+}
+
+/** Snapshot a matched file; undefined when it contains NUL and must be skipped. */
+async function scanFileSnapshot(
+  filePath: string,
+  signal?: AbortSignal,
+): Promise<SearchFileSnapshot | undefined> {
   const hash = createHash("sha256");
   const stats = await scanTextFile(
     filePath,
     undefined,
     signal,
     (bytes) => hash.update(bytes),
-    "preview",
+    "lossy",
   );
-  return { ...stats, revision: hash.digest("hex") };
+  if (stats.hasNul) return undefined;
+  return { revision: hash.digest("hex"), validUtf8: stats.validUtf8, totalLines: stats.totalLines };
 }
-
-export type SearchFileSnapshot = Awaited<ReturnType<typeof scanFileRevision>>;
 
 export function fileReadWarning(
   filePath: string,
@@ -159,8 +169,8 @@ export async function searchMatches(options: SearchMatchesOptions) {
       let snapshot = snapshots.get(filePath);
       if (!snapshot && needsSnapshot) {
         try {
-          snapshot = await scanFileRevision(filePath, signal);
-          if (snapshot.hasNul) {
+          snapshot = await scanFileSnapshot(filePath, signal);
+          if (!snapshot) {
             unreadableFiles.add(filePath);
             return true;
           }

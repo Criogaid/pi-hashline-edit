@@ -109,7 +109,7 @@ export const runRgTextView: SearchRunner = async (rgPath, { matcher, scope }, si
       const original = resolve(path);
       if (directory && original.startsWith(directory + sep)) return true;
       try {
-        const info = await scanTextFile(original, undefined, signal, undefined, "preview");
+        const info = await scanTextFile(original, undefined, signal, undefined, "lossy");
         if (info.hasNul) return true;
         if (info.hasCrLf && info.validUtf8) {
           const dir = await ensureDirectory();

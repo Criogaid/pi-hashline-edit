@@ -9,8 +9,12 @@ export function anchorPattern(hashLen: number): string {
   return `^${anchorSource(`{${hashLen}}`)}$`;
 }
 
+/** Separates a row's line reference from its displayed content. */
+const ROW_SEPARATOR = "│";
 const ANCHOR_TOKEN = new RegExp(`^${anchorSource("+")}$`);
-const HASHLINE_ROW = new RegExp(`^${anchorSource(`{${HASH_LEN_MIN},${HASH_LEN_MAX}}`)}│(.*)$`);
+const HASHLINE_ROW = new RegExp(
+  `^${anchorSource(`{${HASH_LEN_MIN},${HASH_LEN_MAX}}`)}${ROW_SEPARATOR}(.*)$`,
+);
 
 /** Split a `LINE#HASH` token of any hash length; undefined when the shape is wrong. */
 export function parseAnchorToken(value: string): { line: number; hash: string } | undefined {
@@ -31,6 +35,16 @@ export function parseHashline(line: string): HashlineRow | null {
   return match ? { lineNo: match[1], content: match[3] } : null;
 }
 
+const PLAIN_ROW = new RegExp(`^([1-9][0-9]*)${ROW_SEPARATOR}(.*)$`);
+
+/** Parse an anchored row or a non-editable `LINE│content` row; null for other text. */
+export function parseDisplayRow(line: string): HashlineRow | null {
+  const anchored = parseHashline(line);
+  if (anchored) return anchored;
+  const match = PLAIN_ROW.exec(line);
+  return match ? { lineNo: match[1], content: match[2] } : null;
+}
+
 /** Anchor serialization bound to a caller-supplied hash length. */
 export interface AnchorFormatter {
   reference(line: number, hash: string): string;
@@ -43,6 +57,11 @@ export function displayCarriageReturns(text: string): string {
   return text.replace(/\r/g, "␍");
 }
 
+/** Non-editable `LINE│content` row for text that cannot carry an anchor. */
+export function plainRow(line: number, displayContent: string): string {
+  return `${line}${ROW_SEPARATOR}${displayCarriageReturns(displayContent)}`;
+}
+
 export function createAnchorFormatter(hashLen: number): AnchorFormatter {
   const reference = (line: number, hash: string) => `${line}#${hash}`;
   const token = (line: number, content: string) =>
@@ -51,6 +70,6 @@ export function createAnchorFormatter(hashLen: number): AnchorFormatter {
     token,
     reference,
     row: (line, content, displayContent = content) =>
-      `${token(line, content)}│${displayCarriageReturns(displayContent)}`,
+      `${token(line, content)}${ROW_SEPARATOR}${displayCarriageReturns(displayContent)}`,
   };
 }

@@ -1,7 +1,7 @@
 import { truncateHead, formatSize, DEFAULT_MAX_BYTES } from "@earendil-works/pi-coding-agent";
 import { createHash } from "node:crypto";
 import { isAbsolute, relative, resolve, sep } from "node:path";
-import { createAnchorFormatter, displayCarriageReturns } from "./anchor-format.ts";
+import { createAnchorFormatter, displayCarriageReturns, plainRow } from "./anchor-format.ts";
 import { fileReadWarning, type RgMatch, type SearchFileSnapshot } from "./grep-search.ts";
 import { scanTextLines } from "./text-stream.ts";
 import { formatKiB, GREP_MAX_LINE_LENGTH, MAX_SEARCH_DIAGNOSTIC_BYTES } from "./budgets.ts";
@@ -107,8 +107,8 @@ export async function formatMatches(options: FormatMatchesOptions) {
             const matchedRows = new Set<number>();
             const hash = createHash("sha256");
             try {
-              const snapshot = searchSnapshots.get(filePath);
-              if (!snapshot) throw searchChangedError();
+              // Content-mode search snapshots every file before recording its matches.
+              const snapshot = searchSnapshots.get(filePath)!;
               const stats = await scanTextLines(
                 filePath,
                 (number) => windowSet.has(number),
@@ -127,10 +127,10 @@ export async function formatMatches(options: FormatMatchesOptions) {
                   rows.push(
                     snapshot.validUtf8
                       ? anchors.row(line.number, line.text, display)
-                      : `${line.number}│${display}`,
+                      : plainRow(line.number, display),
                   );
                 },
-                { signal: scanSignal, onBytes: (bytes) => hash.update(bytes), decoding: "preview" },
+                { signal: scanSignal, onBytes: (bytes) => hash.update(bytes), decoding: "lossy" },
               );
               if (stats.hasNul) throw searchChangedError();
               if (matchLines.some(({ lineNumber }) => !matchedRows.has(lineNumber))) {

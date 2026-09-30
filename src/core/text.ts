@@ -9,11 +9,14 @@ export function unwritableTextReason(text: string): string | undefined {
   return undefined;
 }
 
-export type Utf8Decoding = "strict" | "preview";
+export type Utf8Decoding = "strict" | "lossy";
 
-/** Streaming UTF-8 decoding preserves BOM; preview mode replaces malformed bytes. */
+/** Streaming UTF-8 decoding preserves BOM; lossy mode replaces malformed bytes with U+FFFD. */
 export function createUtf8Decoder(mode: Utf8Decoding = "strict") {
   const decoder = new TextDecoder("utf-8", { fatal: mode === "strict", ignoreBOM: true });
+  if (mode === "lossy") {
+    return (bytes?: Uint8Array, stream = false): string => decoder.decode(bytes, { stream });
+  }
   return (bytes?: Uint8Array, stream = false): string => {
     try {
       return decoder.decode(bytes, { stream });

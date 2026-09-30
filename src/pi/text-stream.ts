@@ -2,7 +2,7 @@ import { createReadStream } from "node:fs";
 import { createUtf8Decoder, type Utf8Decoding } from "../core/text.ts";
 import { throwIfCancelled } from "./error-text.ts";
 
-/** Scan whole-file bytes; preview decoding reports validity without rejecting malformed UTF-8. */
+/** Scan whole-file bytes; lossy decoding reports validity without rejecting malformed UTF-8. */
 export async function scanTextFile(
   path: string,
   onChunk?: (text: string) => void | Promise<void>,
@@ -12,7 +12,7 @@ export async function scanTextFile(
 ) {
   const decode = createUtf8Decoder();
   // Strict decoding always decides validity; lossy text is decoded only for a chunk consumer.
-  const preview = decoding === "preview" && onChunk ? createUtf8Decoder("preview") : undefined;
+  const lossy = decoding === "lossy" && onChunk ? createUtf8Decoder("lossy") : undefined;
   let byteLength = 0;
   let lineFeeds = 0;
   let lastByte = -1;
@@ -43,7 +43,7 @@ export async function scanTextFile(
           decodingError = error;
         }
       }
-      if (preview) text = preview(bytes, true);
+      if (lossy) text = lossy(bytes, true);
       if (text !== undefined) await onChunk?.(text);
     }
   } catch (error) {
@@ -61,7 +61,7 @@ export async function scanTextFile(
         decodingError = error;
       }
     }
-    if (preview) tail = preview();
+    if (lossy) tail = lossy();
     else if (decodingError && decoding === "strict") throw decodingError;
     if (tail) await onChunk?.(tail);
   }
