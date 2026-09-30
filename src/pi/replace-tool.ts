@@ -210,7 +210,7 @@ export function makeReplaceTool(
       "Replace every match of one or more literal or JavaScript-regex rules in a file. Overlapping matches or a rule with no match reject the whole call. Returns a diff and fresh anchors.",
     promptSnippet: "Replace matching text across a file",
     promptGuidelines: [
-      "Use replace for bulk changes; prefer edit for a specific, anchor-verified location.",
+      "Use replace for repeated literal or regex substitutions, or short changes inside long lines; use edit for line or block changes, insertions, and deletions.",
       ...(fusion ? ACTION_FUSION_GUIDELINES : []),
     ],
     parameters,

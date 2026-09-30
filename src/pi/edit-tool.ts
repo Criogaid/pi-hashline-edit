@@ -265,7 +265,7 @@ export function makeEditOverride(
       "Edit file lines by LINE#HASH anchors checked against the current file. Returns fresh anchors for changed lines. On anchor failure, shows current context and recovery candidates; nothing is retried automatically.",
     promptSnippet: "Edit file lines using verified anchors",
     promptGuidelines: [
-      "Batch related edits to one file in a single edit call; all its anchors are checked against one snapshot.",
+      "Batch all edits to one file in a single edit call; all its anchors are checked against one snapshot.",
       "Reuse anchors while their line number and content are unchanged; inserts and deletes shift later lines, so use the edit's Updated anchors or re-read shifted lines.",
       "On edit anchor failure, inspect the recovery candidates before retrying or re-reading.",
       ...(fusion ? ACTION_FUSION_GUIDELINES : []),
