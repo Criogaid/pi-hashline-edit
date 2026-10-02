@@ -16,6 +16,8 @@ import { Text, type Component } from "@earendil-works/pi-tui";
 
 /** Max diff lines shown when a result is rendered collapsed. */
 const MAX_COLLAPSED_DIFF_LINES = 24;
+/** Collapsed tool output and errors share a bounded preview. */
+const MAX_COLLAPSED_OUTPUT_LINES = 15;
 
 /**
  * Render a pi-format diff (`+N`/`-N`/` N` content) for the TUI, reusing pi's
@@ -105,14 +107,35 @@ export function renderMutationCall<TArgs>(
   return text;
 }
 
-/** Keep model-facing diagnostic details out of the compact error row. */
+/** Render a bounded preview; expanding reveals every supplied line. */
+export function renderOutputPreview(
+  lines: readonly string[],
+  expanded: boolean,
+  theme: Theme,
+): Text {
+  const shown = expanded ? lines : lines.slice(0, MAX_COLLAPSED_OUTPUT_LINES);
+  const more =
+    shown.length < lines.length
+      ? `\n${theme.fg("muted", `… (${lines.length - shown.length} more lines)`)}`
+      : "";
+  return new Text(shown.join("\n") + more, 0, 0);
+}
+
+/** Preserve diagnostic causes and recovery hints from every text block. */
 export function renderToolError(
   result: Pick<AgentToolResult<unknown>, "content">,
   theme: Theme,
+  expanded: boolean,
 ): Text {
-  const content = result.content?.[0];
-  const text = content?.type === "text" ? content.text.split("\n")[0] : "Error";
-  return new Text(theme.fg("error", text), 0, 0);
+  const text = result.content
+    .filter((block) => block.type === "text")
+    .map((block) => block.text)
+    .join("\n");
+  return renderOutputPreview(
+    (text || "Error").split("\n").map((line) => theme.fg("error", line)),
+    expanded,
+    theme,
+  );
 }
 
 /** Render mutation status or a diff, refreshing the call header's counts in place. */
@@ -132,7 +155,7 @@ export function renderMutationResult<TArgs>(
   if (isPartial && result.details?.actionFusion?.publication !== "PUBLISHED")
     return new Text(theme.fg("warning", pending), 0, 0);
   const content = result.content?.[0];
-  if (context.isError) return renderToolError(result, theme);
+  if (context.isError) return renderToolError(result, theme, expanded);
   const diff: string | undefined = result.details?.displayDiff ?? result.details?.diff;
   // Refresh in place: invalidation inside a renderer re-enters updateDisplay.
   publishDiffCounts(diff, context, (counts) => {

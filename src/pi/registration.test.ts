@@ -173,7 +173,11 @@ test("mutation cards use Fusion by default and explicit false removes command su
             `${name} mutation failure should turn red`,
           );
           assert.ok(!output.includes(theme.getBgAnsi("toolPendingBg")));
-          assert.doesNotMatch(output, /the command was not run|then_run:skipped/);
+          failedCard.setExpanded(true);
+          const expandedError = failedCard.render(400).join("\n");
+          for (const line of error.message.split("\n")) {
+            assert.ok(expandedError.includes(line), `${name} hid a failure diagnostic`);
+          }
           assert.match(output, name === "write" ? /does not exist/ : /Error reading/);
           const entry = entries.find(
             (entry) =>

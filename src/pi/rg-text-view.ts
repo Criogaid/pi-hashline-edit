@@ -1,3 +1,4 @@
+import { DiagnosticBuffer } from "./diagnostic-buffer.ts";
 import { mkdtemp, open, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve, sep } from "node:path";
@@ -43,12 +44,14 @@ async function writeLfSnapshot(source: string, destination: string, signal?: Abo
 export const runRgTextView: SearchRunner = async (rgPath, { matcher, scope }, signal, onLine) => {
   let directory: string | undefined;
   const result: RgRunResult = { code: 1, stderr: "", stopped: false };
+  const diagnostics = new DiagnosticBuffer(MAX_RG_STDERR_BYTES);
   // Only valid UTF-8 CRLF files use LF snapshots; malformed UTF-8 keeps its raw search view.
   const snapshots = new Map<string, string>();
   const batchPaths: string[] = [];
   let batchBytes = 0;
   const record = (run: RgRunResult) => {
-    result.stderr = (result.stderr + run.stderr).slice(0, MAX_RG_STDERR_BYTES);
+    diagnostics.append(run.stderr);
+    result.stderr = diagnostics.toString();
     if (run.code !== 0 && run.code !== 1 && !run.stopped) result.code = run.code;
     else if (run.code === 0 && result.code === 1) result.code = 0;
     result.stopped ||= run.stopped;

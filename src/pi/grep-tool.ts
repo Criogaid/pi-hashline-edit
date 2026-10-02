@@ -11,6 +11,7 @@ import { type ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { rgPath as bundledRgPath } from "@vscode/ripgrep";
 import { Type, type Static } from "typebox";
 import { Text } from "@earendil-works/pi-tui";
+import { renderOutputPreview, renderToolError } from "./render.ts";
 import { normalizeLineEndings } from "../core/lines.ts";
 import { createAnchorFormatter } from "./anchor-format.ts";
 import { assembleGrepOutput, formatMatches, formatSearchWarnings } from "./grep-output.ts";
@@ -177,17 +178,9 @@ export function makeGrepOverrideWithBackend(
       context: Parameters<NonNullable<GrepTool["renderResult"]>>[3],
     ) {
       if (isPartial) return new Text(theme.fg("warning", "Searching…"), 0, 0);
+      if (context?.isError) return renderToolError(result, theme, expanded);
       const out = result.content?.[0]?.type === "text" ? result.content[0].text : "";
-      const styled = context?.isError
-        ? (out || "Error").split("\n").map((line) => theme.fg("error", line))
-        : toDisplayLines(out, theme);
-      const maxLines = expanded ? styled.length : 15;
-      const shown = styled.slice(0, maxLines);
-      const more =
-        !expanded && styled.length > maxLines
-          ? `\n${theme.fg("muted", `… (${styled.length - maxLines} more lines)`)}`
-          : "";
-      return new Text(shown.join("\n") + more, 0, 0);
+      return renderOutputPreview(toDisplayLines(out, theme), expanded, theme);
     },
 
     async execute(

@@ -186,10 +186,10 @@ export function withMutationStatus<TParams extends TSchema, TDetails>(
         | { actionFusion?: { mutationCompleted?: boolean; freshness?: string } }
         | undefined;
       const isPartial = options.isPartial && details?.actionFusion?.mutationCompleted !== true;
-      // Fused errors retain combined details for the model; show the mutation's summary here.
+      // Pi serializes fused failures into one diagnostic; retain it when the card expands.
       const fusedError = context.isError && (context.args as { then_run?: unknown })?.then_run;
       shell.result = fusedError
-        ? renderToolError(result, theme)
+        ? renderToolError(result, theme, options.expanded)
         : tool.renderResult!(result, { ...options, isPartial }, theme, {
             ...context,
             isPartial,

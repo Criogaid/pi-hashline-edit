@@ -1,10 +1,11 @@
 import { truncateHead, formatSize, DEFAULT_MAX_BYTES } from "@earendil-works/pi-coding-agent";
+import { DiagnosticBuffer } from "./diagnostic-buffer.ts";
 import { createHash } from "node:crypto";
 import { isAbsolute, relative, resolve, sep } from "node:path";
 import { createAnchorFormatter, displayCarriageReturns, plainRow } from "./anchor-format.ts";
 import { fileReadWarning, type RgMatch, type SearchFileSnapshot } from "./grep-search.ts";
 import { scanTextLines } from "./text-stream.ts";
-import { formatKiB, GREP_MAX_LINE_LENGTH, MAX_SEARCH_DIAGNOSTIC_BYTES } from "./budgets.ts";
+import { GREP_MAX_LINE_LENGTH, MAX_SEARCH_DIAGNOSTIC_BYTES } from "./budgets.ts";
 import { searchChangedError } from "./error-text.ts";
 
 /** UTF-16 units kept before the match column when a preview window is cut. */
@@ -31,10 +32,9 @@ export function isNoticeLine(line: string): boolean {
 
 export function formatSearchWarnings(warnings: readonly string[]): string {
   if (!warnings.length) return "";
-  const summary = truncateHead([...new Set(warnings)].join("\n"), {
-    maxBytes: MAX_SEARCH_DIAGNOSTIC_BYTES,
-  });
-  return `\n\n[Search incomplete; results and counts cover only confirmed matches.\n${summary.content}${summary.truncated ? `\nAdditional search diagnostics omitted (${formatKiB(MAX_SEARCH_DIAGNOSTIC_BYTES)} limit).` : ""}]`;
+  const diagnostics = new DiagnosticBuffer(MAX_SEARCH_DIAGNOSTIC_BYTES);
+  for (const warning of new Set(warnings)) diagnostics.append(`${warning}\n`);
+  return `\n\n[Search incomplete; results and counts cover only confirmed matches.\n${diagnostics.toString().trimEnd()}]`;
 }
 
 function previewLine(text: string, column = 0): { text: string; wasTruncated: boolean } {

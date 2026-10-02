@@ -17,6 +17,7 @@ import { postProcessMutation } from "./mutation-result.ts";
 import { executeMutation, type ActionFusionExecutor } from "./mutation-runner.ts";
 import { invalidArgument, throwIfCancelled } from "./error-text.ts";
 import { unwritableTextReason } from "../core/text.ts";
+import { renderToolError } from "./render.ts";
 
 const writeSchema = Type.Object(
   {
@@ -78,6 +79,7 @@ export function makeWriteOverride(cwd: string, fusion?: ActionFusionExecutor) {
       theme: Theme,
       context: WriteRenderContext,
     ) {
+      if (context.isError) return renderToolError(result, theme, options.expanded);
       return builtin.renderResult!({ ...result, details: undefined }, options, theme, context);
     },
     async execute(

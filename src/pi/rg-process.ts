@@ -6,6 +6,8 @@
  * @module pi-hashline-edit/pi
  */
 
+import { StringDecoder } from "node:string_decoder";
+import { DiagnosticBuffer } from "./diagnostic-buffer.ts";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import type { Readable } from "node:stream";
 import { escapeRegex } from "../core/text.ts";
@@ -14,7 +16,7 @@ import { throwIfCancelled } from "./error-text.ts";
 export const COMMON_RG_ARGS = ["--no-config", "--color=never", "--no-crlf"];
 export const MAX_RG_RECORD_BYTES = 16 * 1024 * 1024;
 const RG_RECORD_LIMIT_MESSAGE = `ripgrep output record exceeds ${MAX_RG_RECORD_BYTES / 1024 ** 2} MiB`;
-/** Retained ripgrep stderr; diagnostics beyond this are dropped. */
+/** Bounded ripgrep stderr retains the beginning and end with an omission notice. */
 export const MAX_RG_STDERR_BYTES = 64 * 1024;
 /** Probe runs read only a short stdout; more means an unexpected rg mode. */
 const MAX_RG_PROBE_OUTPUT_BYTES = 64 * 1024;
@@ -52,7 +54,8 @@ function startRg(rgPath: string, args: readonly string[], signal?: AbortSignal):
     shell: false,
     env,
   });
-  let stderr = "";
+  const stderr = new DiagnosticBuffer(MAX_RG_STDERR_BYTES);
+  const stderrDecoder = new StringDecoder("utf8");
   let error: Error | undefined;
   let closed = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -66,8 +69,7 @@ function startRg(rgPath: string, args: readonly string[], signal?: AbortSignal):
   };
 
   child.stderr.on("data", (chunk: Buffer) => {
-    if (stderr.length < MAX_RG_STDERR_BYTES)
-      stderr += chunk.toString("utf8").slice(0, MAX_RG_STDERR_BYTES - stderr.length);
+    stderr.append(stderrDecoder.write(chunk));
   });
   child.on("error", (cause) => {
     error = cause;
@@ -83,7 +85,8 @@ function startRg(rgPath: string, args: readonly string[], signal?: AbortSignal):
       closed = true;
       if (timer) clearTimeout(timer);
       signal?.removeEventListener("abort", kill);
-      resolve({ code, stderr, error });
+      stderr.append(stderrDecoder.end());
+      resolve({ code, stderr: stderr.toString(), error });
     });
   });
   signal?.addEventListener("abort", kill, { once: true });

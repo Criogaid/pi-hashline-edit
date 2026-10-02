@@ -1,6 +1,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { generateDiffString, initTheme } from "@earendil-works/pi-coding-agent";
+import {
+  generateDiffString,
+  initTheme,
+  type ToolDefinition,
+} from "@earendil-works/pi-coding-agent";
+import type { TSchema } from "typebox";
 import { theme } from "../../node_modules/@earendil-works/pi-coding-agent/dist/modes/interactive/theme/theme.js";
 import { displayCarriageReturns } from "./anchor-format.ts";
 import { makeEditOverride } from "./edit-tool.ts";
@@ -12,6 +17,9 @@ import { generateMutationDetails } from "./mutation-result.ts";
 import type { ActionFusionDetails } from "./action-fusion.ts";
 import { DEFAULT_CONFIG } from "./config.ts";
 import { toDisplayLines } from "./grep-render.ts";
+import { makeReadOverride } from "./read-tool.ts";
+import { callTool } from "./tool-call.testing.ts";
+import { renderToolError } from "./render.ts";
 
 const versions = { publishedRevision: "r", observedRevision: "r" };
 const mutationDetails = (actionFusion?: ActionFusionDetails) => ({
@@ -288,4 +296,85 @@ test("grep renders plain and anchored rows in one group without exposing hashes"
     theme.fg("dim", "    1: ") + theme.fg("toolOutput", "alpha"),
     theme.fg("dim", "   12: ") + theme.fg("toolOutput", "  7#ABCD│literal content"),
   ]);
+});
+
+test("all file tools expose validation causes in collapsed and expanded error cards", async () => {
+  initTheme("dark");
+  const cwd = process.cwd();
+  const tools = [
+    makeReadOverride(cwd, DEFAULT_CONFIG),
+    withMutationStatus(makeEditOverride(cwd, DEFAULT_CONFIG)),
+    withMutationStatus(makeReplaceTool(cwd, DEFAULT_CONFIG)),
+    withMutationStatus(makeWriteOverride(cwd)),
+  ];
+  for (const tool of tools) {
+    for (const fused of [false, true]) {
+      const args = {
+        path: "unused.txt",
+        content: "unused",
+        edits: [{ op: "append" as const, body: ["unused"] }],
+        replacements: [{ find: "unused", replace: "unused" }],
+        unexpected: true,
+        ...(fused ? { then_run: { command: "must-not-run" } } : {}),
+      };
+      let errorText = "";
+      await assert.rejects(callTool(tool, args), (error: unknown) => {
+        assert.ok(error instanceof Error);
+        errorText = error.message;
+        return true;
+      });
+      const cause = errorText.split("\n").find((line) => line.includes("unexpected"));
+      assert.ok(cause);
+      for (const expanded of [false, true]) {
+        const context = {
+          args,
+          state: {},
+          toolCallId: "validation",
+          invalidate() {},
+          lastComponent: undefined,
+          cwd,
+          executionStarted: true,
+          argsComplete: true,
+          isPartial: false,
+          expanded,
+          showImages: false,
+          isError: true,
+        };
+        const call = tool.renderCall?.(args, theme, context);
+        // Pi supplies no tool-specific details when argument validation fails.
+        const renderError = tool.renderResult as NonNullable<
+          ToolDefinition<TSchema, undefined>["renderResult"]
+        >;
+        const result = renderError(
+          { content: [{ type: "text", text: errorText }], details: undefined },
+          { isPartial: false, expanded },
+          theme,
+          context,
+        );
+        const card = tool.renderShell === "self" ? call : result;
+        assert.ok(card);
+        assert.ok(
+          card.render(200).join("\n").includes(cause),
+          `${tool.name} hid the validation cause`,
+        );
+      }
+    }
+  }
+});
+
+test("expanded errors retain every text block while collapsed errors stay bounded", () => {
+  initTheme("dark");
+  const diagnosticLineCount = 80;
+  const result = {
+    content: [
+      { type: "text" as const, text: "Error header\n" + "context\n".repeat(diagnosticLineCount) },
+      { type: "text" as const, text: "Final cause: permission denied" },
+    ],
+  };
+  const collapsed = renderToolError(result, theme, false).render(120).join("\n");
+  const expanded = renderToolError(result, theme, true).render(120).join("\n");
+  assert.match(collapsed, /Error header/);
+  assert.doesNotMatch(collapsed, /Final cause/);
+  assert.match(expanded, /Final cause: permission denied/);
+  assert.ok(collapsed.split("\n").length < expanded.split("\n").length);
 });

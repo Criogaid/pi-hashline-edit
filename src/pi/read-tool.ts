@@ -159,7 +159,7 @@ export function makeReadOverride(
       const { isPartial, expanded } = options;
       if (isPartial) return new Text(theme.fg("warning", "Reading…"), 0, 0);
       const content = result.content?.[0];
-      if (context?.isError) return renderToolError(result, theme);
+      if (context?.isError) return renderToolError(result, theme, expanded);
       if (result.details?.nativeRead) return builtin.renderResult!(result, options, theme, context);
       // Collapsed (not expanded): show nothing — the call line carries the
       // title, matching the built-in read's fold behavior.
