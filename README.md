@@ -194,6 +194,8 @@ Files with invalid UTF-8 and no NUL remain searchable as raw bytes, without CRLF
 
 Search diagnostics are preserved even when a result limit stops ripgrep. Readable, confirmed matches remain available with a `Search incomplete` notice and `details.incomplete: true`; counts then cover only confirmed matches. If no results can be returned, the tool reports an error rather than claiming there are no matches. Search diagnostics have a separate 4 KiB display budget.
 
+Grep errors retain their full diagnostic text in the TUI, including the cause and recovery hints. Short errors are shown in full when collapsed; longer errors use the same collapsed preview and expansion as search results.
+
 Long lines show a labeled partial preview of up to 500 UTF-16 units near a reported match column when available; context-only lines and matches without a recorded column show their beginning. Labels report 1-based UTF-16 column ranges, and slicing preserves surrogate pairs. The anchor hashes the entire current line, not the preview; use `read` before reconstructing a line from its content.
 
 ### Replace

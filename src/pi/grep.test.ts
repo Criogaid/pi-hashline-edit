@@ -11,6 +11,8 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { rgPath } from "@vscode/ripgrep";
+import { initTheme } from "@earendil-works/pi-coding-agent";
+import { theme } from "../../node_modules/@earendil-works/pi-coding-agent/dist/modes/interactive/theme/theme.js";
 import { computeLineHash } from "../core/hash.ts";
 import { makeGrepOverrideWithBackend, type GrepBackend } from "./grep-tool.ts";
 import { scopeArgs, type SearchRequest } from "./grep-search.ts";
@@ -613,6 +615,66 @@ test("passes output flags and formats files and counts", async () => {
     assert.equal(text(count), "a.ts: 1\nb.ts: 1\nTotal: 2 matches in 2 files");
   });
 });
+
+for (const diagnosticLineCount of [0, 80]) {
+  test(`grep renders ${diagnosticLineCount ? "long errors fully when expanded" : "short errors fully when collapsed"}`, async () => {
+    initTheme("dark");
+    const diagnostic = [
+      "rg: regex parse error:",
+      "    (",
+      "    ^",
+      ...Array.from({ length: diagnosticLineCount }, (_, index) => `diagnostic ${index}`),
+      "error: unclosed group",
+    ].join("\n");
+    const fake = fakeBackend({ validation: { code: 2, stderr: diagnostic } });
+    const tool = makeGrepOverrideWithBackend(process.cwd(), DEFAULT_CONFIG, fake.backend);
+    const args = { pattern: "(", literal: false };
+    let errorText = "";
+    await assert.rejects(callTool(tool, args), (error: unknown) => {
+      assert.ok(error instanceof Error);
+      errorText = error.message;
+      return true;
+    });
+
+    const render = (expanded: boolean) =>
+      tool
+        .renderResult(
+          { content: [{ type: "text", text: errorText }], details: undefined },
+          { isPartial: false, expanded },
+          theme,
+          {
+            args,
+            toolCallId: "test",
+            invalidate() {},
+            lastComponent: undefined,
+            state: {},
+            cwd: process.cwd(),
+            executionStarted: true,
+            argsComplete: true,
+            isPartial: false,
+            expanded,
+            showImages: false,
+            isError: true,
+          },
+        )
+        .render(120)
+        .join("\n");
+
+    const collapsed = render(false);
+    const expanded = render(true);
+    for (const line of errorText.split("\n")) {
+      assert.ok(expanded.includes(line), `Expanded error omitted ${JSON.stringify(line)}`);
+      if (!diagnosticLineCount) {
+        assert.ok(collapsed.includes(line), `Collapsed error omitted ${JSON.stringify(line)}`);
+      }
+    }
+    if (diagnosticLineCount) {
+      assert.match(collapsed, /regex parse error/);
+      assert.doesNotMatch(collapsed, /unclosed group/);
+      assert.ok(collapsed.split("\n").length < expanded.split("\n").length);
+    }
+  });
+}
 
 test("aligns TUI line numbers across files to the widest result", () => {
   const tool = makeGrepOverrideWithBackend(process.cwd(), DEFAULT_CONFIG, fakeBackend().backend);
