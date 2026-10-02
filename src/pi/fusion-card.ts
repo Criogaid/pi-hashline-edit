@@ -22,7 +22,7 @@ const RESULT_TYPE = "hashline-then-run-result";
 
 type CommandCardData = Pick<
   ActionFusionProgress,
-  "toolCallId" | "commandText" | "command" | "output" | "reason"
+  "toolCallId" | "commandText" | "command" | "output" | "reason" | "timing"
 >;
 
 function commandCardData({
@@ -31,8 +31,16 @@ function commandCardData({
   command,
   output,
   reason,
+  timing,
 }: ActionFusionProgress): CommandCardData {
-  return { toolCallId, commandText, command, output, ...(reason ? { reason } : {}) };
+  return {
+    toolCallId,
+    commandText,
+    command,
+    output,
+    ...(reason ? { reason } : {}),
+    ...(timing ? { timing } : {}),
+  };
 }
 
 /** Render one durable transcript card per fused command without adding model context. */
@@ -82,6 +90,10 @@ export function registerFusionCards(pi: ExtensionAPI) {
         const pending = current.command === "waiting" || current.command === "running";
         const interrupted = pending && !active.has(current.toolCallId);
         const status = interrupted ? "interrupted (final status unknown)" : current.command;
+        const countdown =
+          current.command === "running" && !interrupted && current.timing
+            ? ` · ${current.timing.remainingSeconds}s remaining`
+            : "";
         const failed = current.command === "failed" || current.command === "timeout";
         const color =
           pending || current.command === "cancelled"
@@ -101,10 +113,13 @@ export function registerFusionCards(pi: ExtensionAPI) {
                 : "customMessageBg";
         box.setBgFn((line) => theme.bg(background, line));
         statusText.setText(
-          `${theme.fg("toolTitle", theme.bold("then_run"))} · ${theme.fg(color, status)}`,
+          `${theme.fg("toolTitle", theme.bold("then_run"))} · ${theme.fg(color, status + countdown)}`,
         );
         const context = {
-          args: { command: current.commandText },
+          args: {
+            command: current.commandText,
+            ...(current.timing ? { timeout: current.timing.timeoutSeconds } : {}),
+          },
           toolCallId: current.toolCallId,
           cwd: currentCwd,
           state: rendererState,

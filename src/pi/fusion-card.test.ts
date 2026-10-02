@@ -139,3 +139,29 @@ test("skips and cancellations stay neutral and restore their own reason", () => 
     }
   }
 });
+
+test("timed command cards show remaining seconds only while actively running", () => {
+  const h = harness();
+  h.report(waiting);
+  const card = h.card(h.entries[0]);
+  assert.doesNotMatch(card.render(160).join("\n"), /remaining/);
+  const running: ActionFusionProgress = {
+    ...waiting,
+    command: "running",
+    publication: "PUBLISHED",
+    mutationCompleted: true,
+    timing: { timeoutSeconds: 10, remainingSeconds: 10 },
+  };
+  h.report(running);
+  assert.match(card.render(160).join("\n"), /10s remaining/);
+  h.report({ ...running, timing: { timeoutSeconds: 10, remainingSeconds: 7 } });
+  assert.match(card.render(160).join("\n"), /7s remaining/);
+  assert.equal(h.entries.length, 1);
+  h.report({ ...running, timing: { timeoutSeconds: 10, remainingSeconds: 0 } });
+  assert.match(card.render(160).join("\n"), /0s remaining/);
+  h.report({ ...running, command: "timeout", output: "Command timed out after 10 seconds" });
+  assert.doesNotMatch(card.render(160).join("\n"), /remaining/);
+  const restored = harness(h.entries);
+  restored.restore();
+  assert.doesNotMatch(restored.card(h.entries[0]).render(160).join("\n"), /remaining/);
+});

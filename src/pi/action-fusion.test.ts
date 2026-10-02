@@ -28,7 +28,12 @@ async function tempDir(): Promise<string> {
   return mkdtemp(join(tmpdir(), "hashline-action-fusion-"));
 }
 
-const ctx = (cwd: string) => ({ cwd }) as ExtensionContext;
+// Only the context fields consumed by Fusion and Pi Bash are needed by these tests.
+const ctx = (cwd: string) =>
+  ({
+    cwd,
+    sessionManager: { getSessionId: () => "test", getSessionFile: () => undefined },
+  }) as ExtensionContext;
 
 type Fusion = Parameters<typeof makeWriteOverride>[1];
 const mutationFactories = [
@@ -239,10 +244,7 @@ test("default runner executes a real local command", async () => {
         });
       },
       signal: undefined,
-      ctx: {
-        ...ctx(dir),
-        sessionManager: { getSessionId: () => "test", getSessionFile: () => undefined },
-      } as any,
+      ctx: ctx(dir),
     });
     const output = result.content
       .filter((block) => block.type === "text")
@@ -647,6 +649,140 @@ test("Fusion uses commit facts when details omit or contradict publication and r
         assert.equal(await readFile(target, "utf8"), "same\n");
       }
     }
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("timed command progress ticks during silence, preserves output, and stops at every outcome", async (t) => {
+  for (const outcome of ["succeeded", "failed", "timeout", "cancelled"] as const) {
+    await t.test(outcome, async (t) => {
+      const dir = await tempDir();
+      t.mock.timers.enable({ apis: ["Date", "setInterval"], now: 0 });
+      const started = Promise.withResolvers<void>();
+      const finished = Promise.withResolvers<string>();
+      const controller = new AbortController();
+      const events: ActionFusionProgress[] = [];
+      const updates: unknown[] = [];
+      try {
+        const fusion = createActionFusionExecutor(
+          async (_id, input, _signal, _ctx, onUpdate) => {
+            assert.equal(input.timeout, 10);
+            started.resolve();
+            onUpdate?.({ content: [{ type: "text", text: "latest output" }], details: undefined });
+            return finished.promise;
+          },
+          (event) => events.push(event),
+        );
+        const execution = fusion({
+          toolCallId: outcome,
+          absolutePath: join(dir, "target.txt"),
+          thenRun: { command: "check", timeout: 10 },
+          mutate: async () => {
+            // Mutation time must not consume the command's timeout.
+            t.mock.timers.tick(5_000);
+            await writeFile(join(dir, "target.txt"), "saved\n");
+            return publishedMutation("saved\n", { content: [], details: undefined });
+          },
+          signal: controller.signal,
+          ctx: ctx(dir),
+          onUpdate: (update) => updates.push(update),
+        });
+        await started.promise;
+        assert.equal(events[0].timing, undefined);
+        assert.deepEqual(events.at(-1)?.timing, { timeoutSeconds: 10, remainingSeconds: 10 });
+        const updateCount = updates.length;
+        t.mock.timers.tick(2_000);
+        assert.equal(updates.length, updateCount + 2);
+        assert.equal(events.at(-1)?.timing?.remainingSeconds, 8);
+        assert.equal(events.at(-1)?.output, "latest output");
+        if (outcome === "succeeded") finished.resolve("complete");
+        else {
+          if (outcome === "cancelled") controller.abort();
+          finished.reject(
+            new Error(
+              outcome === "timeout" ? "Command timed out" : "command stopped\nunderlying cause",
+            ),
+          );
+        }
+        await execution;
+        assert.equal(events.at(-1)?.command, outcome);
+        const terminalCount = updates.length;
+        t.mock.timers.tick(20_000);
+        assert.equal(updates.length, terminalCount);
+      } finally {
+        finished.resolve("");
+        await rm(dir, { recursive: true, force: true });
+      }
+    });
+  }
+});
+
+test("commands without an explicit timeout do not start countdown updates", async (t) => {
+  const dir = await tempDir();
+  t.mock.timers.enable({ apis: ["Date", "setInterval"], now: 0 });
+  const started = Promise.withResolvers<void>();
+  const finished = Promise.withResolvers<string>();
+  const events: ActionFusionProgress[] = [];
+  try {
+    const fusion = createActionFusionExecutor(
+      async (_id, input) => {
+        assert.equal(input.timeout, undefined);
+        started.resolve();
+        return finished.promise;
+      },
+      (event) => events.push(event),
+    );
+    const execution = fusion({
+      toolCallId: "untimed",
+      absolutePath: join(dir, "target.txt"),
+      thenRun: { command: "check" },
+      mutate: async () => {
+        await writeFile(join(dir, "target.txt"), "saved\n");
+        return publishedMutation("saved\n", { content: [], details: undefined });
+      },
+      signal: undefined,
+      ctx: ctx(dir),
+    });
+    await started.promise;
+    const count = events.length;
+    t.mock.timers.tick(20_000);
+    assert.equal(events.length, count);
+    assert.equal(events.at(-1)?.timing, undefined);
+    finished.resolve("complete");
+    await execution;
+  } finally {
+    finished.resolve("");
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("Pi Bash timeout returns the cause to the model while keeping the published file", async () => {
+  const dir = await tempDir();
+  try {
+    await writeFile(join(dir, "slow.mjs"), "setTimeout(() => {}, 10_000);\n");
+    const events: ActionFusionProgress[] = [];
+    const fusion = createActionFusionExecutor(undefined, (event) => events.push(event));
+    const tool = makeWriteOverride(dir, fusion);
+    const result = await callTool(
+      tool,
+      {
+        path: "saved.txt",
+        content: "published\n",
+        then_run: { command: "node slow.mjs", timeout: 0.2 },
+      },
+      { ctx: ctx(dir) },
+    );
+    assert.equal(await readFile(join(dir, "saved.txt"), "utf8"), "published\n");
+    assert.equal(result.details.actionFusion.command, "timeout");
+    assert.equal(result.details.actionFusion.publication, "PUBLISHED");
+    const text = result.content
+      .filter((block: { type: string }) => block.type === "text")
+      .map((block: { text: string }) => block.text)
+      .join("\n");
+    assert.match(text, /timed out after 0\.2 seconds/);
+    assert.match(text, /File changes.*saved/);
+    assert.equal(events.at(-1)?.command, "timeout");
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

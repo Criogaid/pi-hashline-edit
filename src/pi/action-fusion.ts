@@ -29,6 +29,8 @@ import { commitFreshness, finalizeMutation, type MutationOutcome } from "./mutat
 import { errorMessage } from "../core/errors.ts";
 import { OPERATION_ABORTED, throwIfCancelled } from "./error-text.ts";
 
+const MILLISECONDS_PER_SECOND = 1_000;
+
 export const THEN_RUN_SUCCEEDED = "[then_run:succeeded]";
 export const THEN_RUN_FAILED = "[then_run:failed]";
 export const THEN_RUN_SKIPPED = "[then_run:skipped]";
@@ -70,6 +72,8 @@ export interface ActionFusionProgress extends Omit<ActionFusionDetails, "command
   reason?: string;
   /** True only after mutation execution and result generation both succeed. */
   mutationCompleted: boolean;
+  /** Present once a command with an explicit timeout starts; refreshed during silent execution. */
+  timing?: { readonly timeoutSeconds: number; readonly remainingSeconds: number };
 }
 
 type ProgressReporter = (progress: ActionFusionProgress, ctx: ExtensionContext) => void;
@@ -290,6 +294,7 @@ export function createActionFusionExecutor(
   }): Promise<MutationResult<TDetails>> {
     let completedMutation: MutationOutcome<TDetails> | undefined;
     let progressFailure: string | undefined;
+    let commandTiming: { readonly timeoutSeconds: number; readonly deadlineMs: number } | undefined;
     const report = (
       command: ActionFusionProgress["command"],
       publication: PublicationStatus,
@@ -308,6 +313,17 @@ export function createActionFusionExecutor(
         output,
         ...(reason ? { reason } : {}),
         mutationCompleted: completedMutation !== undefined,
+        ...(commandTiming
+          ? {
+              timing: {
+                timeoutSeconds: commandTiming.timeoutSeconds,
+                remainingSeconds: Math.max(
+                  0,
+                  Math.ceil((commandTiming.deadlineMs - Date.now()) / MILLISECONDS_PER_SECOND),
+                ),
+              },
+            }
+          : {}),
       };
       // Display callbacks are observers: their failures must not change publication or command execution.
       for (const notify of [
@@ -400,20 +416,37 @@ export function createActionFusionExecutor(
         );
       }
 
+      if (thenRun.timeout !== undefined) {
+        commandTiming = {
+          timeoutSeconds: thenRun.timeout,
+          deadlineMs: Date.now() + thenRun.timeout * MILLISECONDS_PER_SECOND,
+        };
+      }
       report("running", publication, "unchanged");
-      let output: string;
+      let output = "";
       let commandError: unknown;
+      // The executor owns the heartbeat lifetime; Pi Bash owns timeout and process cleanup.
+      const heartbeat =
+        commandTiming && (onProgress || onUpdate)
+          ? setInterval(
+              () => report("running", publication, "unknown", output),
+              MILLISECONDS_PER_SECOND,
+            )
+          : undefined;
+      heartbeat?.unref();
       try {
         output = await commandRunner(toolCallId, thenRun, signal, ctx, (partial) => {
-          const text = partial.content
+          output = partial.content
             .filter((block) => block.type === "text")
             .map((block) => block.text)
             .join("\n");
-          report("running", publication, "unknown", text);
+          report("running", publication, "unknown", output);
         });
       } catch (error) {
         commandError = error;
         output = "";
+      } finally {
+        if (heartbeat) clearInterval(heartbeat);
       }
       const freshness = await readFreshness(absolutePath, baseline);
       if (commandError !== undefined) {

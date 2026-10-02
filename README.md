@@ -308,6 +308,10 @@ Once the mutation completes, it stays successful whatever happens to the command
 
 In the TUI, the mutation card owns the mutation's result or error diagnostics, publication status, and freshness warnings. It turns successful when mutation execution and result generation finish. The command card owns command output and execution status; skipped or cancelled commands are neutral and show a short reason when execution never started. Mutation diagnostics never become command output, and command failure leaves a successful mutation card intact. RPC hosts receive the same progress and choose their own rendering.
 
+When `then_run.timeout` is supplied, the command card shows the remaining seconds and refreshes once per second even without command output. The countdown starts when the command starts, after mutation and queue waiting. It stops when execution ends; restored unfinished cards show an unknown final status without a countdown. Pi Bash enforces the timeout. Without `timeout`, there is no countdown or implicit time limit. RPC progress includes `timing.timeoutSeconds` and `timing.remainingSeconds` after a timed command starts.
+
+Command failures return Pi Bash's diagnostic text to the LLM, including exit or timeout details and whether file changes were saved. Collapsing a TUI card does not shorten the model's result.
+
 The Fusion queue holds a file from mutation until its command finishes, so another fused call on the same file cannot change it in between. Commands invoke Pi's built-in Bash definition directly, without a separate Bash tool call; Bash-only approval/sandbox extensions must explicitly cover these tools' `then_run` inputs.
 
 ## Safety and design
