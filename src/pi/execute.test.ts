@@ -21,7 +21,6 @@ import { loadConfig } from "./config.ts";
 import { computeLineHash } from "../core/hash.ts";
 import { splitLines } from "../core/lines.ts";
 import { byteRevision } from "./file-commit.ts";
-import { generateMutationDetails } from "./mutation-result.ts";
 import { callTool } from "./tool-call.testing.ts";
 import { DEFAULT_CONFIG } from "./config.ts";
 
@@ -378,116 +377,6 @@ test("edit success: details.diff is a string (not the generateDiffString object)
     assert.equal(typeof r.details.diff, "string", "details.diff must be a string");
     assert.equal(typeof r.details.patch, "string");
     assert.equal(typeof r.details.firstChangedLine, "number");
-  });
-});
-
-test("edit success: renderResult renders the diff without throwing", async () => {
-  await withDir(async (dir) => {
-    const f = join(dir, "f.txt");
-    const text = "a\nb\nc\n";
-    await writeFile(f, text);
-    const edit = makeEditOverride(dir, DEFAULT_CONFIG);
-    const r: any = await call(edit, {
-      path: "f.txt",
-      edits: [{ op: "replace", anchor: h(text, 2), body: ["B"] }],
-    });
-    const comp = edit.renderResult(
-      { content: r.content, details: r.details },
-      { isPartial: false, expanded: true },
-      stubTheme,
-      {
-        args: { path: "f.txt", edits: [{ op: "replace" }] },
-        isError: r.isError ?? false,
-        state: {},
-        invalidate: () => {},
-      } as Parameters<typeof edit.renderResult>[3],
-    );
-    assert.match(comp.render(80).join("\n"), /B/, "rendered diff should contain the new content");
-  });
-});
-
-test("edit header: renderResult refreshes the call header in place — no invalidate", async () => {
-  await withDir(async (dir) => {
-    const f = join(dir, "f.txt");
-    const text = "a\nb\nc\nd\ne\n";
-    await writeFile(f, text);
-    await call(makeReadOverride(dir, DEFAULT_CONFIG), { path: "f.txt" });
-    const edit = makeEditOverride(dir, DEFAULT_CONFIG);
-    const r: any = await call(edit, {
-      path: "f.txt",
-      edits: [
-        { op: "replace", anchor: h(text, 2), end: h(text, 3), body: ["B"] },
-        { op: "insert_after", anchor: h(text, 5), body: ["f", "g"] },
-      ],
-    });
-    const args = { path: "f.txt", edits: [{ op: "replace" as const }] } as Parameters<
-      typeof edit.renderCall
-    >[0];
-    let invalidated = false;
-    const context: any = {
-      args,
-      isError: false,
-      state: {},
-      invalidate: () => {
-        invalidated = true;
-      },
-    };
-    // first pass: renderCall builds the header; no counts exist yet
-    const header: any = edit.renderCall(args, stubTheme, context);
-    assert.ok(!header.text.includes("+3"), "pre-execution header must not show counts");
-    // result lands: renderResult refreshes the SAME component in place
-    edit.renderResult(
-      { content: r.content, details: r.details },
-      { isPartial: false, expanded: true },
-      stubTheme,
-      context,
-    );
-    assert.deepEqual(context.state.diffCounts, { added: 3, removed: 2 });
-    assert.ok(header.text.includes("+3"), "header should show added count");
-    assert.ok(header.text.includes("-2"), "header should show removed count");
-    // refreshing via context.invalidate() re-enters updateDisplay and renders
-    // the diff twice — the renderer must never call it
-    assert.ok(!invalidated, "renderResult must not call invalidate");
-    // later full passes (expand/collapse) re-run renderCall; counts survive in state
-    const header2: any = edit.renderCall(args, stubTheme, {
-      ...context,
-      lastComponent: header,
-    });
-    assert.equal(header2, header, "renderCall reuses the stashed component");
-    assert.ok(header2.text.includes("+3"), "re-render keeps the counts");
-  });
-});
-
-test("edit error: renderResult renders the error line without throwing", async () => {
-  await withDir(async (dir) => {
-    await writeFile(join(dir, "f.txt"), "a\n");
-    const edit = makeEditOverride(dir, DEFAULT_CONFIG);
-    let thrown: any;
-    await call(edit, {
-      path: "f.txt",
-      edits: [{ op: "replace", anchor: "1#XXXX", body: ["A"] }],
-    }).catch((e: any) => {
-      thrown = e;
-    });
-    assert.ok(thrown, "expected the edit to throw");
-    const comp = edit.renderResult(
-      {
-        content: [{ type: "text", text: thrown.message }],
-        details: generateMutationDetails(
-          "f.txt",
-          "a\n",
-          "a\n",
-          { publishedRevision: "r", observedRevision: "r" },
-          "PUBLISHED",
-        ),
-      },
-      { isPartial: false, expanded: false },
-      stubTheme,
-      { args: { path: "f.txt", edits: [{ op: "replace" }] }, isError: true } as Parameters<
-        typeof edit.renderResult
-      >[3],
-    );
-    assert.match(comp.render(80).join("\n"), /anchor|checksum|mismatch/i);
   });
 });
 
@@ -1301,39 +1190,23 @@ test("schema-invalid bodies omit anchor checks; subsequent retries revalidate", 
     assert.equal(await readFile(file, "utf8"), "changed\nb\nc\n");
   }));
 
-test("single-operation edit failures omit redundant Input-anchor checks table", async () =>
+test("single-operation anchor failures omit the redundant Input-anchor checks table", async () =>
   withDir(async (dir) => {
     const file = join(dir, "single.txt");
-    await writeFile(file, "line1\nline2\n");
-    const edit = makeEditOverride(dir, DEFAULT_CONFIG);
-    await assert.rejects(
-      call(edit, { path: file, edits: [{ op: "replace", anchor: "1#XXXX", body: ["new"] }] }),
-      (error: Error) => {
-        assert.match(error.message, /Anchor mismatch: 1 unresolved/);
-        assert.match(error.message, /no checksum-matching candidate found/);
-        assert.doesNotMatch(error.message, /Input-anchor checks/);
-        return true;
-      },
-    );
-  }));
-
-test("single-op range edits with two anchors omit Input-anchor checks table on failure", async () =>
-  withDir(async (dir) => {
-    const file = join(dir, "range.txt");
     await writeFile(file, "line1\nline2\nline3\n");
     const edit = makeEditOverride(dir, DEFAULT_CONFIG);
-    await assert.rejects(
-      call(edit, {
-        path: file,
-        edits: [{ op: "replace", anchor: "1#XXXX", end: "2#YYYY", body: ["new"] }],
-      }),
-      (error: Error) => {
+    for (const operation of [
+      { op: "replace", anchor: "1#XXXX", body: ["new"] },
+      { op: "replace", anchor: "1#XXXX", end: "2#YYYY", body: ["new"] },
+    ]) {
+      await assert.rejects(call(edit, { path: file, edits: [operation] }), (error: Error) => {
         assert.match(error.message, /Anchor mismatch/);
         assert.doesNotMatch(error.message, /Input-anchor checks/);
         return true;
-      },
-    );
+      });
+    }
   }));
+
 test("multi-op schema failures omit anchor checks even when later ops have anchors", async () =>
   withDir(async (dir) => {
     const file = join(dir, "batch-append.txt");

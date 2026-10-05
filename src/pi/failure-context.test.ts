@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { computeLineHash } from "../core/hash.ts";
 import type { AnchorFailure } from "../core/types.ts";
+import { MAX_BLOCK_BYTES } from "./budgets.ts";
 import { createAnchorFormatter } from "./anchor-format.ts";
 import { formatAmbiguousCandidateNeighborhoods } from "./failure-context.ts";
 
@@ -86,7 +87,7 @@ test("ambiguous context uses the same first eight candidates as the detail list"
 });
 
 test("ambiguous context preserves complete rows at the byte budget", () => {
-  const exact = "x".repeat(16 * 1024 - Buffer.byteLength("1#XXXX│\n"));
+  const exact = "x".repeat(MAX_BLOCK_BYTES - Buffer.byteLength("1#XXXX│\n"));
   const lines = [exact, "target", "last"];
   const byteLimited = format(lines.join("\n"), [ambiguous(lines, [2, 3])]).text;
   assert.ok(byteLimited.includes(`1#${computeLineHash(1, exact, 4)}│${exact}\n`));
@@ -143,10 +144,10 @@ test("unique candidates inside ambiguous neighborhoods retain the candidate row 
 });
 
 test("neighborhoods keep shorter later rows when the remaining budget cannot fit a row", () => {
-  const lines = ["x".repeat(16 * 1024 - 100), "y".repeat(200), "target", "other"];
+  const lines = ["x".repeat(MAX_BLOCK_BYTES - 100), "y".repeat(200), "target", "other"];
   const output = format(lines.join("\n"), [ambiguous(lines, [3, 4])]);
   assert.deepEqual([...output.shownLines], [1, 3, 4]);
   assert.match(output.text, /Candidate-neighborhood rows: 3\/4; 1 omitted/);
   const rows = output.text.match(/^\d+#[0-9A-Z]+│.*$/gm) ?? [];
-  assert.ok(Buffer.byteLength(rows.join("\n") + "\n") <= 16 * 1024);
+  assert.ok(Buffer.byteLength(rows.join("\n") + "\n") <= MAX_BLOCK_BYTES);
 });
