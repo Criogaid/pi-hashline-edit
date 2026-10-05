@@ -139,21 +139,22 @@ export function registerForgetTool(pi: ExtensionAPI): void {
 
   pi.on("context", (event) => {
     forgettable = new Map();
-    const colliding = new Set<string>();
     const lastAssistant = event.messages.findLastIndex((message) => message.role === "assistant");
-    for (const message of event.messages.slice(lastAssistant + 1)) {
+    // Every tag still visible, older batches included: an id the model can see on more
+    // than one result cannot name a single one, so none of them is forgettable.
+    const visible = new Map<string, number>();
+    event.messages.forEach((message, index) => {
       if (
         message.role !== "toolResult" ||
         message.isError ||
         !isResultTag(message.content.at(-1), message.toolCallId)
       )
-        continue;
+        return;
       const id = resultId(message.toolCallId);
-      if (forgettable.has(id)) colliding.add(id);
-      forgettable.set(id, message.toolCallId);
-    }
-    // An id shared within one batch cannot name a single result; keep both.
-    for (const id of colliding) forgettable.delete(id);
+      visible.set(id, (visible.get(id) ?? 0) + 1);
+      if (index > lastAssistant) forgettable.set(id, message.toolCallId);
+    });
+    for (const [id, count] of visible) if (count > 1) forgettable.delete(id);
   });
 
   pi.on("turn_end", (event) => {
