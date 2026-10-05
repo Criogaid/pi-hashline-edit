@@ -6,8 +6,10 @@
  * image) with a `[result rXXXXX]` block derived from the tool call id. Before each
  * request, the `context` handler records the tagged results that follow the last
  * assistant message: the batch the coming response is the first to see. forget may
- * name only those ids. At `turn_end` of a completed response, each named result is
- * replaced by a short notice through Pi's branch-local context edits.
+ * name only those ids. At `turn_end` of a completed response, each named result loses
+ * only its document content through Pi's branch-local context edits: file rows and
+ * images are dropped, while headers, pagination, truncation and search notices stay,
+ * so the model still knows what the call returned and how to fetch it again.
  *
  * Restricting forget to the newest batch keeps prompt-cache cost bounded: the edit
  * sits right before the response that requested it, so the next request re-sends only
@@ -30,6 +32,7 @@ import { Text } from "@earendil-works/pi-tui";
 import { Type, type Static } from "typebox";
 import { FORGET_MIN_BYTES, formatKiB } from "./budgets.ts";
 import { renderToolError } from "./render.ts";
+import { parseDisplayRow } from "./anchor-format.ts";
 
 const RESULT_ID = "r[0-9a-f]{5}";
 const RESULT_TAG = new RegExp(`^\\[result ${RESULT_ID}\\]$`);
@@ -71,6 +74,42 @@ export function withoutResultTag<T extends { content: ResultContent }>(result: T
   const last = result.content.at(-1);
   if (last?.type !== "text" || !RESULT_TAG.test(last.text)) return result;
   return { ...result, content: result.content.slice(0, -1) };
+}
+
+function forgottenLines(count: number): string {
+  return `… ${count} line${count === 1 ? "" : "s"} forgotten`;
+}
+
+/**
+ * Drop the document content of a tagged result. Runs of anchored or plain file rows
+ * collapse to one `… N lines forgotten` line and images are dropped; other text stays.
+ * A text block with no rows (Pi's built-in read of a NUL-containing file) is document
+ * content as a whole unless the result also carries an image, whose text is its note.
+ */
+function forgetDocumentContent(content: ResultContent, id: string): ResultContent {
+  const hasImage = content.some((block) => block.type === "image");
+  const kept: ResultContent = [];
+  for (const block of content.slice(0, -1)) {
+    if (block.type !== "text") continue;
+    const lines: string[] = [];
+    let run = 0;
+    let rows = 0;
+    for (const line of block.text.split("\n")) {
+      if (parseDisplayRow(line)) {
+        run++;
+        continue;
+      }
+      if (run) lines.push(forgottenLines(run));
+      rows += run;
+      run = 0;
+      lines.push(line);
+    }
+    if (run) lines.push(forgottenLines(run));
+    rows += run;
+    if (rows > 0 || hasImage) kept.push({ type: "text", text: lines.join("\n") });
+  }
+  const notice = `[Result ${id}: document content forgotten; rerun the call to see it again.]`;
+  return [...kept, { type: "text", text: notice }];
 }
 
 const forgetSchema = Type.Object(
@@ -122,19 +161,18 @@ export function registerForgetTool(pi: ExtensionAPI): void {
     pending = new Set();
     if (event.outcome !== "completed" || targets.size === 0) return;
     const entries: ContextEditEntryDraft[] = [];
-    for (const { sourceEntry } of event.context.contextEntries) {
-      if (
-        sourceEntry.type !== "message" ||
-        sourceEntry.message.role !== "toolResult" ||
-        !targets.has(sourceEntry.message.toolCallId)
-      )
-        continue;
-      const id = resultId(sourceEntry.message.toolCallId);
+    for (const { sourceEntry, messages } of event.context.contextEntries) {
+      if (sourceEntry.type !== "message") continue;
+      // Edit what the model saw: the projected message, which carries the tag.
+      const message = messages.find(
+        (candidate) => candidate.role === "toolResult" && targets.has(candidate.toolCallId),
+      );
+      if (message?.role !== "toolResult") continue;
       entries.push({
         type: "context_edit",
         targetId: sourceEntry.id,
         replacement: {
-          content: [{ type: "text", text: `[Result ${id} forgotten; rerun the call if needed.]` }],
+          content: forgetDocumentContent(message.content, resultId(message.toolCallId)),
         },
       });
     }
@@ -144,10 +182,10 @@ export function registerForgetTool(pi: ExtensionAPI): void {
   pi.registerTool({
     name: "forget",
     label: "forget",
-    description: `Remove read or grep results from your context once you have taken what you need. Only results from the previous step tagged [result rXXXXX] (${formatKiB(FORGET_MIN_BYTES)} or larger, or images) can be forgotten. Each is replaced by a short notice after this response; files and session history are unchanged. Calling forget alone ends your turn; call it together with your next tool calls to keep working.`,
+    description: `Remove the file content of read or grep results from your context once you have taken what you need. Only results from the previous step tagged [result rXXXXX] (${formatKiB(FORGET_MIN_BYTES)} or larger, or images) can be forgotten. After this response their file rows and images are removed; headers, pagination and search notices stay. Files and session history are unchanged. Calling forget alone ends your turn; call it together with your next tool calls to keep working.`,
     promptSnippet: "Forget read or grep results you no longer need",
     promptGuidelines: [
-      "Right after a read or grep result tagged [result rXXXXX], call forget with its id if you will not need its text or anchors again; put facts you still need in note. Results from earlier steps cannot be forgotten.",
+      "Right after a read or grep result tagged [result rXXXXX], call forget with its id if you will not need its file content or anchors again; put facts you still need in note. Results from earlier steps cannot be forgotten.",
     ],
     parameters: forgetSchema,
     renderShell: "default" as const,

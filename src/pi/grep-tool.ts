@@ -267,17 +267,16 @@ export function makeGrepOverrideWithBackend(
         warnings,
         searchSnapshots: result.snapshots,
       });
-      return withResultTag(
-        toolCallId,
-        assembleGrepOutput({
-          blocks,
-          warnings,
-          outputMode,
-          matchLimitReached,
-          effectiveLimit,
-          linesTruncated,
-        }),
-      );
+      const output = assembleGrepOutput({
+        blocks,
+        warnings,
+        outputMode,
+        matchLimitReached,
+        effectiveLimit,
+        linesTruncated,
+      });
+      // Only content mode returns file text; paths and counts have nothing to forget.
+      return outputMode === "content" ? withResultTag(toolCallId, output) : output;
     },
   } satisfies GrepTool;
 }
