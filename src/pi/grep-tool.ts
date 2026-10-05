@@ -12,6 +12,7 @@ import { rgPath as bundledRgPath } from "@vscode/ripgrep";
 import { Type, type Static } from "typebox";
 import { Text } from "@earendil-works/pi-tui";
 import { renderOutputPreview, renderToolError } from "./render.ts";
+import { withResultTag } from "./forget-tool.ts";
 import { normalizeLineEndings } from "../core/lines.ts";
 import { createAnchorFormatter } from "./anchor-format.ts";
 import { assembleGrepOutput, formatMatches, formatSearchWarnings } from "./grep-output.ts";
@@ -184,7 +185,7 @@ export function makeGrepOverrideWithBackend(
     },
 
     async execute(
-      _toolCallId: string,
+      toolCallId: string,
       params: Static<GrepSchema>,
       signal: AbortSignal | undefined,
       _onUpdate: Parameters<GrepTool["execute"]>[3],
@@ -266,14 +267,17 @@ export function makeGrepOverrideWithBackend(
         warnings,
         searchSnapshots: result.snapshots,
       });
-      return assembleGrepOutput({
-        blocks,
-        warnings,
-        outputMode,
-        matchLimitReached,
-        effectiveLimit,
-        linesTruncated,
-      });
+      return withResultTag(
+        toolCallId,
+        assembleGrepOutput({
+          blocks,
+          warnings,
+          outputMode,
+          matchLimitReached,
+          effectiveLimit,
+          linesTruncated,
+        }),
+      );
     },
   } satisfies GrepTool;
 }

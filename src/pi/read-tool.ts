@@ -26,6 +26,7 @@ import { scanTextLines } from "./text-stream.ts";
 import { createAnchorFormatter, displayCarriageReturns, parseHashline } from "./anchor-format.ts";
 import { canonicalPath } from "./path.ts";
 import { renderToolError } from "./render.ts";
+import { withoutResultTag, withResultTag } from "./forget-tool.ts";
 import { POSITIVE_SAFE_INTEGER } from "./schema.ts";
 import { throwIfCancelled } from "./error-text.ts";
 import { formatKiB } from "./budgets.ts";
@@ -160,7 +161,8 @@ export function makeReadOverride(
       if (isPartial) return new Text(theme.fg("warning", "Reading…"), 0, 0);
       const content = result.content?.[0];
       if (context?.isError) return renderToolError(result, theme, expanded);
-      if (result.details?.nativeRead) return builtin.renderResult!(result, options, theme, context);
+      if (result.details?.nativeRead)
+        return builtin.renderResult!(withoutResultTag(result), options, theme, context);
       // Collapsed (not expanded): show nothing — the call line carries the
       // title, matching the built-in read's fold behavior.
       if (!expanded) return new Text("", 0, 0);
@@ -181,7 +183,10 @@ export function makeReadOverride(
       const anchors = createAnchorFormatter(hashLen);
       const readNative = async () => {
         const result = await builtin.execute(toolCallId, params, signal, onUpdate, ctx);
-        return { ...result, details: { ...result.details, nativeRead: true as const } };
+        return withResultTag(toolCallId, {
+          ...result,
+          details: { ...result.details, nativeRead: true as const },
+        });
       };
 
       const absPath = canonicalPath(cwd, params.path as string);
@@ -265,10 +270,10 @@ export function makeReadOverride(
       const header = `${formatReadHeader(params.path, stats.totalLines, start, stats.finalNewline)}\n`;
       const body = truncation.content;
 
-      return {
+      return withResultTag(toolCallId, {
         content: [{ type: "text" as const, text: header + body + tail }],
         details: truncation.truncated ? { truncation } : pagination ? { pagination } : undefined,
-      };
+      });
     },
   };
 }
