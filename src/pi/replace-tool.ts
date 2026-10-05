@@ -47,12 +47,12 @@ import {
 import { formatMutationAnchors } from "./mutation-result.ts";
 import {
   executeMutation,
-  MUTATION_TOOL_GUIDELINE,
   runTextMutation,
   type ActionFusionExecutor,
   type MutationTarget,
   type TextMutationDetails,
 } from "./mutation-runner.ts";
+import { MUTATION_TOOL_GUIDELINE } from "./tool-prompts.ts";
 import { errorMessage } from "../core/errors.ts";
 import { invalidArgument, throwIfCancelled } from "./error-text.ts";
 type ReplaceDetails = TextMutationDetails;

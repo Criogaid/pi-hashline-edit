@@ -26,7 +26,6 @@ import { createBashToolDefinition, type ExtensionContext } from "@earendil-works
 import { Type, type Static, type TObject, type TProperties } from "typebox";
 import { fileRevision, FileMutationError, type PublicationStatus } from "./file-commit.ts";
 import { commitFreshness, finalizeMutation, type MutationOutcome } from "./mutation-result.ts";
-import type { MutationToolName } from "./mutation-runner.ts";
 import { errorMessage } from "../core/errors.ts";
 import { OPERATION_ABORTED, throwIfCancelled } from "./error-text.ts";
 
@@ -79,6 +78,9 @@ export interface ActionFusionProgress extends Omit<ActionFusionDetails, "command
 
 type ProgressReporter = (progress: ActionFusionProgress, ctx: ExtensionContext) => void;
 
+/** The tools that accept then_run. */
+export type MutationToolName = "edit" | "replace" | "write";
+
 export function createThenRunSchema(tool: MutationToolName) {
   return Type.Optional(
     Type.Object(
@@ -93,7 +95,7 @@ export function createThenRunSchema(tool: MutationToolName) {
         ),
       },
       {
-        description: `Command to run once after ${tool} succeeds; failure does not roll back its changes.`,
+        description: `Command to run once after ${tool} succeeds; failure does not roll back the file.`,
         additionalProperties: false,
       },
     ),

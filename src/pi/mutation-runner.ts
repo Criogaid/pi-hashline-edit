@@ -21,6 +21,7 @@ import type { AgentToolResult, AgentToolUpdateCallback } from "@earendil-works/p
 import type {
   ActionFusionDetails,
   createActionFusionExecutor,
+  MutationToolName,
   ThenRunInput,
 } from "./action-fusion.ts";
 import { commitReplacement, readEditableSnapshot } from "./file-commit.ts";
@@ -34,12 +35,7 @@ import {
 import { canonicalPath } from "./path.ts";
 import { throwIfCancelled } from "./error-text.ts";
 
-/** Model guideline shared by edit, replace, and write; Pi lists an identical guideline once. */
-export const MUTATION_TOOL_GUIDELINE =
-  "For file changes, use edit for line or block changes, insertions, and deletions; replace for repeated literal or regex substitutions and short changes inside long lines; write for new files and whole-file rewrites.";
-
 export type ActionFusionExecutor = ReturnType<typeof createActionFusionExecutor>;
-export type MutationToolName = "edit" | "replace" | "write";
 
 /** Result details shared by the read-modify-write tools. */
 export type TextMutationDetails = ReturnType<typeof generateMutationDetails> & {
