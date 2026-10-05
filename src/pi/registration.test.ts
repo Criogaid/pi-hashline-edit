@@ -1,3 +1,9 @@
+import { createEditTool } from "@earendil-works/pi-coding-agent";
+import { validateToolArguments } from "@earendil-works/pi-ai";
+import { makeEditOverride } from "./edit-tool.ts";
+import { makeReadOverride } from "./read-tool.ts";
+import { loadConfig } from "./config.ts";
+import { DEFAULT_CONFIG } from "./config.ts";
 import { mkdir, mkdtemp, rm, writeFile, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -287,3 +293,107 @@ test("mutation cards use Fusion by default and explicit false removes command su
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+async function withDir<T>(fn: (dir: string) => Promise<T>): Promise<T> {
+  const dir = await mkdtemp(join(tmpdir(), "hl-"));
+  try {
+    return await fn(dir);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+}
+
+/** Call a tool through Pi's argument preparation and schema validation, as production does. */
+const call = (tool: any, params: any) => callTool(tool, params, { toolCallId: "0" });
+
+/** Extract a `LINE#HASH` anchor from a read/edit result text block. */
+function anchorLine(block: string, line: number) {
+  const m = new RegExp(`^${line}#([0-9A-Z]+)(?:│|$)`, "m").exec(block);
+  if (!m) throw new Error(`line ${line} anchor not found in block`);
+  return `${line}#${m[1]}`;
+}
+
+test("disabled config registers no tools — built-ins remain", async () => {
+  await withDir(async (dir) => {
+    const oldCwd = process.cwd();
+    try {
+      await mkdir(join(dir, ".pi"));
+      await writeFile(
+        join(dir, ".pi", "settings.json"),
+        JSON.stringify({ hashlineEdit: { enabled: false } }),
+      );
+      await writeFile(join(dir, "f.txt"), "old value\n");
+      process.chdir(dir);
+      const registered: string[] = [];
+      registerHashline({
+        on() {},
+        registerTool(tool: { name: string }) {
+          registered.push(tool.name);
+        },
+      } as any);
+      assert.deepEqual(registered, []);
+      const builtin = createEditTool(dir);
+      const params = validateToolArguments(builtin, {
+        name: "edit",
+        arguments: { path: "f.txt", edits: [{ oldText: "old value", newText: "new value" }] },
+      } as any);
+      await call(builtin, params);
+      assert.equal(await readFile(join(dir, "f.txt"), "utf-8"), "new value\n");
+    } finally {
+      process.chdir(oldCwd);
+    }
+  });
+});
+
+test("loaded configuration controls hash length and recovery radius", async () =>
+  withDir(async (dir) => {
+    const text = "changed\ntarget\npadding\ntarget\n";
+    await mkdir(join(dir, ".pi"));
+    await writeFile(join(dir, "configured.txt"), text);
+    for (const [hashLen, shiftRadius, expected] of [
+      [6, 0, /no checksum-matching candidate found/],
+      [6, 1, /checksum-matching candidate 2#/],
+      [8, 3, /ambiguous checksum matches/],
+    ] as const) {
+      await writeFile(
+        join(dir, ".pi", "settings.json"),
+        JSON.stringify({ hashlineEdit: { hashLen, shiftRadius } }),
+      );
+      const config = loadConfig(dir);
+      const read = await call(makeReadOverride(dir, config), { path: "configured.txt" });
+      assert.equal(anchorLine(read.content[0].text, 1).split("#")[1].length, hashLen);
+      await assert.rejects(
+        call(makeEditOverride(dir, config), {
+          path: "configured.txt",
+          edits: [{ op: "delete", anchor: `1#${computeLineHash(1, "target", hashLen)}` }],
+        }),
+        expected,
+      );
+      assert.equal(await readFile(join(dir, "configured.txt"), "utf8"), text);
+    }
+  }));
+
+test("configured read defaults bound omitted limits and returned bytes", async () =>
+  withDir(async (dir) => {
+    const read = makeReadOverride(dir, {
+      ...DEFAULT_CONFIG,
+      read: { defaultLimit: 2, maxKiB: 1 },
+    });
+    const description: unknown = Reflect.get(read.parameters.properties.limit, "description");
+    assert.ok(typeof description === "string");
+    assert.match(description, /default 2\)/);
+    await writeFile(join(dir, "short.txt"), "a\nb\nc\n");
+    const paged = await call(read, { path: "short.txt" });
+    assert.deepEqual(paged.details.pagination, { start: 1, end: 2, totalLines: 3, nextOffset: 3 });
+    assert.match(paged.content[0].text, /offset 3/);
+    assert.match(paged.content[0].text, /^2#[0-9A-Z]+│b$/m);
+    assert.doesNotMatch(paged.content[0].text, /^3#/m);
+    const explicit = await call(read, { path: "short.txt", limit: 3 });
+    assert.match(explicit.content[0].text, /^3#[0-9A-Z]+│c$/m);
+    await writeFile(join(dir, "wide.txt"), `${"x".repeat(2048)}\n`);
+    const wide = await call(read, { path: "wide.txt" });
+    assert.equal(wide.details.truncation.firstLineExceedsLimit, true);
+    assert.equal(wide.details.truncation.outputLines, 0);
+    assert.equal(wide.details.truncation.maxBytes, 1024);
+    assert.equal(wide.details.truncation.outputBytes, 0);
+  }));

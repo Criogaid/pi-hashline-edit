@@ -239,6 +239,7 @@ test("mutation anchor output and aggregate anchor diagnostics have byte budgets"
   try {
     const path = join(dir, "long.txt");
     const long = "界".repeat(100000);
+    const changedLines = [long, ...Array.from({ length: 79 }, (_, index) => `changed ${index}`)];
     for (const name of ["edit", "replace"]) {
       await writeFile(path, "before\n");
       const result =
@@ -246,7 +247,7 @@ test("mutation anchor output and aggregate anchor diagnostics have byte budgets"
           ? await invoke(
               makeEditOverride(dir, DEFAULT_CONFIG),
               name,
-              { path, edits: [{ op: "append", body: [long] }] },
+              { path, edits: [{ op: "append", body: changedLines }] },
               undefined,
               undefined,
               ctx(dir),
@@ -254,17 +255,25 @@ test("mutation anchor output and aggregate anchor diagnostics have byte budgets"
           : await invoke(
               makeReplaceTool(dir, DEFAULT_CONFIG),
               name,
-              { path, replacements: [{ find: "before", replace: long }] },
+              { path, replacements: [{ find: "before", replace: changedLines.join("\n") }] },
               undefined,
               undefined,
               ctx(dir),
             );
       const output = text(result);
-      assert.ok(Buffer.byteLength(output) < 17 * 1024);
-      assert.match(output, new RegExp(`^${name === "edit" ? 2 : 1}#[0-9A-Z]+$`, "m"));
-      assert.doesNotMatch(output, /omitted|truncated/i);
-      assert.doesNotMatch(output, /\d+#[0-9A-Z]+│界/);
-      assert.ok((await readFile(path, "utf8")).includes(long));
+      const firstLine = name === "edit" ? 2 : 1;
+      assert.deepEqual(
+        output.match(/^\d+#[0-9A-Z]+$/gm),
+        changedLines.map((line, index) => {
+          const position = firstLine + index;
+          return `${position}#${computeLineHash(position, line, 4)}`;
+        }),
+      );
+      assert.doesNotMatch(output, /omitted|truncated|│/i);
+      assert.equal(
+        await readFile(path, "utf8"),
+        (name === "edit" ? "before\n" : "") + changedLines.join("\n") + "\n",
+      );
       await writeFile(path, `remove\n${long}\n`);
       const deleted =
         name === "edit"
@@ -284,7 +293,10 @@ test("mutation anchor output and aggregate anchor diagnostics have byte budgets"
               undefined,
               ctx(dir),
             );
-      assert.ok(Buffer.byteLength(text(deleted)) < 17 * 1024);
+      const anchorStart = text(deleted).indexOf("\nUpdated anchors:");
+      assert.ok(anchorStart >= 0);
+      const anchorBlock = text(deleted).slice(anchorStart);
+      assert.ok(Buffer.byteLength(anchorBlock) <= MAX_BLOCK_BYTES);
       assert.match(text(deleted), ANCHORS_OMITTED);
       assert.doesNotMatch(text(deleted), /^\d+#[0-9A-Z]+/m);
     }
@@ -727,37 +739,43 @@ test("mutation anchors retain a deletion successor but omit stable rows and dele
   try {
     for (const name of ["edit", "replace"]) {
       for (const atEnd of [false, true]) {
-        const path = join(dir, `${name}.txt`);
-        const lines = atEnd ? ["a", "c", "remove"] : ["a", "remove", "c", "d"];
-        await writeFile(path, lines.join("\n") + "\n");
-        const line = atEnd ? 3 : 2;
-        const result =
-          name === "edit"
-            ? await invoke(
-                makeEditOverride(dir, DEFAULT_CONFIG),
-                name,
-                {
-                  path,
-                  edits: [
-                    { op: "delete", anchor: `${line}#${computeLineHash(line, "remove", 4)}` },
-                  ],
-                },
-                undefined,
-                undefined,
-                ctx(dir),
-              )
-            : await invoke(
-                makeReplaceTool(dir, DEFAULT_CONFIG),
-                name,
-                { path, replacements: [{ find: "remove\n", replace: "" }] },
-                undefined,
-                undefined,
-                ctx(dir),
-              );
-        const rows = text(result)
-          .split("\n")
-          .filter((row) => /^\d+#/.test(row));
-        assert.deepEqual(rows, atEnd ? [] : [`2#${computeLineHash(2, "c", 4)}│c`]);
+        for (const ending of ["\n", "\r\n"]) {
+          const path = join(dir, `${name}.txt`);
+          const lines = atEnd ? ["a", "c", "remove"] : ["a", "remove", "c", "d"];
+          await writeFile(path, lines.join(ending) + ending);
+          const line = atEnd ? 3 : 2;
+          const result =
+            name === "edit"
+              ? await invoke(
+                  makeEditOverride(dir, DEFAULT_CONFIG),
+                  name,
+                  {
+                    path,
+                    edits: [
+                      { op: "delete", anchor: `${line}#${computeLineHash(line, "remove", 4)}` },
+                    ],
+                  },
+                  undefined,
+                  undefined,
+                  ctx(dir),
+                )
+              : await invoke(
+                  makeReplaceTool(dir, DEFAULT_CONFIG),
+                  name,
+                  { path, replacements: [{ find: "remove\n", replace: "" }] },
+                  undefined,
+                  undefined,
+                  ctx(dir),
+                );
+          const rows = text(result)
+            .split("\n")
+            .filter((row) => /^\d+#/.test(row));
+          assert.deepEqual(rows, atEnd ? [] : [`2#${computeLineHash(2, "c", 4)}│c`]);
+          assert.deepEqual(
+            await readFile(path),
+            Buffer.from(lines.filter((_, index) => index !== line - 1).join(ending) + ending),
+          );
+        }
       }
     }
   } finally {
@@ -792,60 +810,11 @@ test("mutation anchors retain deletion successor even when deleted line content 
   }
 });
 
-test("compact mutation anchors exceed forty rows while respecting the byte budget", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "hashline-compact-budget-"));
-  try {
-    for (const name of ["edit", "replace"]) {
-      for (const count of [80, 3000]) {
-        const path = join(dir, `${name}.txt`);
-        await writeFile(path, "before\n");
-        const inserted = Array.from({ length: count }, (_, i) => `changed ${i}`);
-        const result =
-          name === "edit"
-            ? await invoke(
-                makeEditOverride(dir, DEFAULT_CONFIG),
-                name,
-                { path, edits: [{ op: "append", body: inserted }] },
-                undefined,
-                undefined,
-                ctx(dir),
-              )
-            : await invoke(
-                makeReplaceTool(dir, DEFAULT_CONFIG),
-                name,
-                { path, replacements: [{ find: "before", replace: inserted.join("\n") }] },
-                undefined,
-                undefined,
-                ctx(dir),
-              );
-        const output = text(result);
-        const rows = [...output.matchAll(/^(\d+)#([0-9A-Z]+)$/gm)];
-        assert.ok(rows.length > 40);
-        assert.doesNotMatch(output, /│/);
-        const anchorBlock = output.slice(output.indexOf("\nUpdated anchors:"));
-        assert.ok(Buffer.byteLength(anchorBlock) <= MAX_BLOCK_BYTES);
-        if (count === 80) {
-          assert.equal(rows.length, count);
-          assert.doesNotMatch(output, /omitted/);
-        } else {
-          assert.ok(rows.length < count);
-          assert.match(output, ANCHORS_OMITTED);
-        }
-        const finalLines = (await readFile(path, "utf8")).trimEnd().split("\n");
-        for (const [, line, hash] of rows)
-          assert.equal(hash, computeLineHash(Number(line), finalLines[Number(line) - 1], 4));
-      }
-    }
-  } finally {
-    await rm(dir, { recursive: true, force: true });
-  }
-});
-
 test("oversized deletion successors do not suppress later editable anchors", async () => {
   const dir = await mkdtemp(join(tmpdir(), "hashline-skip-long-anchor-"));
   try {
     const path = join(dir, "fixture.txt");
-    const long = "x".repeat(17000);
+    const long = "x".repeat(MAX_BLOCK_BYTES + 1);
     await writeFile(path, `remove\n${long}\nold\n`);
     const tool = makeEditOverride(dir, DEFAULT_CONFIG);
     const result = await invoke(

@@ -84,3 +84,26 @@ test("mutation anchors reserve the notice after overflow and retain later fittin
     assert.ok(report.includes(`${anchors.row(2, lines[1])}\n${anchors.row(3, lines[2])}`));
   }
 });
+
+test("compact mutation anchors have no row cap and stop at the byte budget", () => {
+  const anchors = createAnchorFormatter(4);
+  for (const count of [80, 3000]) {
+    const lines = Array.from({ length: count }, (_, index) => `changed ${index}`);
+    const report = formatMutationAnchors([], lines, lines.keys(), anchors, "Updated anchors:");
+    const rows = report.match(/^\d+#[0-9A-Z]+$/gm) ?? [];
+    assert.ok(rows.length > 40);
+    assert.doesNotMatch(report, /│/);
+    assert.ok(Buffer.byteLength(report) <= MAX_BLOCK_BYTES);
+    if (count === 80) {
+      assert.equal(rows.length, count);
+      assert.doesNotMatch(report, /omitted/);
+    } else {
+      assert.ok(rows.length < count);
+      assert.match(report, /additional anchors omitted/);
+    }
+    assert.deepEqual(
+      rows,
+      lines.slice(0, rows.length).map((line, index) => anchors.token(index + 1, line)),
+    );
+  }
+});
