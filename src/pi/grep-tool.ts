@@ -54,7 +54,7 @@ function createGrepSchema({ defaultLimit, defaultContext }: HashlineEditConfig["
           ],
           {
             description:
-              "Existing file or directory, or an array of them; omit to search the working directory. Wildcards are not expanded; use glob.",
+              "Existing file or directory, or an array of them; omit to search the working directory. Wildcards are not expanded.",
           },
         ),
       ),
@@ -140,8 +140,8 @@ export function makeGrepOverrideWithBackend(
     promptSnippet: "Search file contents with ripgrep",
     promptGuidelines: [
       "Prefer grep for file-content searches; use another tool for ignored or linked directories.",
-      'In grep, omit path to search the working directory (never pass ""); use glob for filename wildcards.',
-      "In grep, use literal:true for exact text, including names, paths, and code snippets; use literal:false only for intentional ripgrep (Rust) regex, which has no lookaround or backreferences.",
+      "In grep, use glob for filename wildcards.",
+      "In grep, use literal:true for exact text, including names, paths, and code snippets; use literal:false only for intentional regex.",
       "In grep, use a pattern array for alternatives instead of joining them with |, and context:3-5 when searching code to edit.",
       "In grep, use multiline:true for cross-line matches and outputMode files or count when only paths or counts are needed.",
       "Copy grep anchors directly into edit; read the full line before rewriting from a partial preview.",

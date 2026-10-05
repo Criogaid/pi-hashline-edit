@@ -50,6 +50,7 @@ import { formatFailure } from "./failure-context.ts";
 import { formatMutationAnchors } from "./mutation-result.ts";
 import {
   executeMutation,
+  MUTATION_TOOL_GUIDELINE,
   runTextMutation,
   type ActionFusionExecutor,
   type MutationTarget,
@@ -80,8 +81,7 @@ function buildEditSchema(hashLen: number) {
   );
   const bodyLines = Type.Array(Type.String({ pattern: "^[^\\r\\n]*$" }), {
     minItems: 1,
-    description:
-      'New lines, one per element, without CR/LF. At least one; [""] is one blank line. Use delete to remove lines.',
+    description: 'New lines, one per element, without CR/LF. At least one; [""] is one blank line.',
   });
   const editOpSchema = Type.Union([
     Type.Object(
@@ -139,11 +139,7 @@ function buildEditSchema(hashLen: number) {
 type EditSchema = ReturnType<typeof buildEditSchema>;
 
 function createEditSchema(actionFusion: boolean, hashLen: number) {
-  return withThenRunSchema(
-    buildEditSchema(hashLen),
-    "Command to run after the edit succeeds; failure does not roll back the edit.",
-    actionFusion,
-  );
+  return withThenRunSchema(buildEditSchema(hashLen), "edit", actionFusion);
 }
 type EditParams = Static<EditSchema> & { then_run?: ThenRunInput };
 
@@ -276,6 +272,7 @@ export function makeEditOverride(
       "Edit file lines by LINE#HASH anchors checked against the current file. Returns fresh anchors for changed lines. On anchor failure, shows current context and recovery candidates; nothing is retried automatically.",
     promptSnippet: "Edit file lines using verified anchors",
     promptGuidelines: [
+      MUTATION_TOOL_GUIDELINE,
       "Batch all edits to one file in a single edit call; all its anchors are checked against one snapshot.",
       "Reuse anchors while their line number and content are unchanged; inserts and deletes shift later lines, so use the edit's Updated anchors or re-read shifted lines.",
       "On edit anchor failure, inspect the recovery candidates before retrying or re-reading.",

@@ -26,6 +26,7 @@ import { createBashToolDefinition, type ExtensionContext } from "@earendil-works
 import { Type, type Static, type TObject, type TProperties } from "typebox";
 import { fileRevision, FileMutationError, type PublicationStatus } from "./file-commit.ts";
 import { commitFreshness, finalizeMutation, type MutationOutcome } from "./mutation-result.ts";
+import type { MutationToolName } from "./mutation-runner.ts";
 import { errorMessage } from "../core/errors.ts";
 import { OPERATION_ABORTED, throwIfCancelled } from "./error-text.ts";
 
@@ -78,7 +79,7 @@ export interface ActionFusionProgress extends Omit<ActionFusionDetails, "command
 
 type ProgressReporter = (progress: ActionFusionProgress, ctx: ExtensionContext) => void;
 
-export function createThenRunSchema(description: string) {
+export function createThenRunSchema(tool: MutationToolName) {
   return Type.Optional(
     Type.Object(
       {
@@ -91,19 +92,22 @@ export function createThenRunSchema(description: string) {
           }),
         ),
       },
-      { description, additionalProperties: false },
+      {
+        description: `Command to run once after ${tool} succeeds; failure does not roll back its changes.`,
+        additionalProperties: false,
+      },
     ),
   );
 }
 /** Add the optional then_run field to a mutation schema when Action Fusion is enabled. */
 export function withThenRunSchema<P extends TProperties>(
   schema: TObject<P>,
-  description: string,
+  tool: MutationToolName,
   actionFusion: boolean,
 ): TObject<P> | TObject<P & { then_run: ReturnType<typeof createThenRunSchema> }> {
   return actionFusion
     ? Type.Object(
-        { ...schema.properties, then_run: createThenRunSchema(description) },
+        { ...schema.properties, then_run: createThenRunSchema(tool) },
         { additionalProperties: false },
       )
     : schema;
