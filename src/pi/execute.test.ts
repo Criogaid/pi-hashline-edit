@@ -1,23 +1,17 @@
-/**
- * pi integration execute tests: drive the real makeReadOverride/makeEditOverride
- * execute, covering text read with anchors, the hashline edit round-trip,
- * chained edits via returned anchors, and error returns with isError.
- */
+/** Tool-level edit and shared mutation workflow tests. */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, rm, readFile, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createEditTool, initTheme } from "@earendil-works/pi-coding-agent";
+import { initTheme } from "@earendil-works/pi-coding-agent";
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import { validateToolArguments } from "@earendil-works/pi-ai";
-import registerHashline from "../index.ts";
 import { makeEditOverride } from "./edit-tool.ts";
 import { makeReadOverride } from "./read-tool.ts";
 import { makeWriteOverride } from "./write-tool.ts";
 import { makeReplaceTool } from "./replace-tool.ts";
 import { createActionFusionExecutor } from "./action-fusion.ts";
-import { loadConfig } from "./config.ts";
 import { computeLineHash } from "../core/hash.ts";
 import { splitLines } from "../core/lines.ts";
 import { byteRevision } from "./file-commit.ts";
@@ -64,43 +58,6 @@ test("edit guidance keeps insert anchors and warns about shifted lines", () => {
       (rule) => /inserts and deletes/.test(rule) && /shift later lines/.test(rule),
     ),
   );
-});
-
-test("read execute: text outputs LINE#HASH│content", async () => {
-  await withDir(async (dir) => {
-    await writeFile(join(dir, "f.txt"), "line1\nline2\n");
-    const r: any = await call(makeReadOverride(dir, DEFAULT_CONFIG), { path: "f.txt" });
-    const text = r.content[0];
-    assert.equal(text.type, "text");
-    assert.match(text.text, /1#[0-9A-Z]+│line1/);
-    assert.match(text.text, /2#[0-9A-Z]+│line2/);
-    assert.match(text.text, /f\.txt · 2 lines/);
-  });
-});
-
-test("read execute: Pi-supported images without NUL bypass text decoding", async () =>
-  withDir(async (dir) => {
-    for (const [name, bytes, mime] of [
-      ["picture.jpg", Buffer.from([0xff, 0xd8, 0xff, 0xd9]), "image/jpeg"],
-      ["picture.gif", Buffer.from("GIF89a"), "image/gif"],
-    ] as const) {
-      await writeFile(join(dir, name), bytes);
-      const result: any = await call(makeReadOverride(dir, DEFAULT_CONFIG), { path: name });
-      assert.ok(result.content[0].text.startsWith(`Read image file [${mime}]`));
-      assert.deepEqual(await readFile(join(dir, name)), bytes);
-    }
-  }));
-
-test("read execute: a missing final newline is stated in the header", async () => {
-  await withDir(async (dir) => {
-    await writeFile(join(dir, "f.txt"), "line1\nline2");
-    const bare: any = await call(makeReadOverride(dir, DEFAULT_CONFIG), { path: "f.txt" });
-    assert.match(bare.content[0].text, /f\.txt · 2 lines · no trailing newline/);
-
-    await writeFile(join(dir, "g.txt"), "line1\nline2\n");
-    const terminated: any = await call(makeReadOverride(dir, DEFAULT_CONFIG), { path: "g.txt" });
-    assert.doesNotMatch(terminated.content[0].text, /no trailing newline/);
-  });
 });
 
 test("edit execute: a file without a final newline stays byte-exact", async () => {
@@ -324,38 +281,6 @@ test("edit execute: delete op", async () => {
   });
 });
 
-test("disabled config registers no tools — built-ins remain", async () => {
-  await withDir(async (dir) => {
-    const oldCwd = process.cwd();
-    try {
-      await mkdir(join(dir, ".pi"));
-      await writeFile(
-        join(dir, ".pi", "settings.json"),
-        JSON.stringify({ hashlineEdit: { enabled: false } }),
-      );
-      await writeFile(join(dir, "f.txt"), "old value\n");
-      process.chdir(dir);
-      const registered: string[] = [];
-      registerHashline({
-        on() {},
-        registerTool(tool: { name: string }) {
-          registered.push(tool.name);
-        },
-      } as any);
-      assert.deepEqual(registered, []);
-      const builtin = createEditTool(dir);
-      const params = validateToolArguments(builtin, {
-        name: "edit",
-        arguments: { path: "f.txt", edits: [{ oldText: "old value", newText: "new value" }] },
-      } as any);
-      await call(builtin, params);
-      assert.equal(await readFile(join(dir, "f.txt"), "utf-8"), "new value\n");
-    } finally {
-      process.chdir(oldCwd);
-    }
-  });
-});
-
 // --- renderer regression guards (details.diff must be a string, renderResult must not throw) ---
 
 const stubTheme = { fg: (_k: string, s: string) => s, bold: (s: string) => s } as Theme;
@@ -379,199 +304,6 @@ test("edit success: details.diff is a string (not the generateDiffString object)
     assert.equal(typeof r.details.firstChangedLine, "number");
   });
 });
-
-test("hash length stays 4 even for runs of identical lines (no explosion)", async () => {
-  await withDir(async (dir) => {
-    const f = join(dir, "f.txt");
-    await writeFile(f, "\n\n\n\ncode\n");
-    const r: any = await call(makeReadOverride(dir, DEFAULT_CONFIG), { path: "f.txt" });
-    const text: string = r.content[0].text;
-    for (const m of text.matchAll(/\d+#([0-9A-Z]+)│/g)) {
-      assert.equal(m[1].length, 4, `anchor ${m[0]} hash is not 4 chars`);
-    }
-  });
-});
-
-test("read byte truncation counts UTF-8 and separators without cutting anchors", async () =>
-  withDir(async (dir) => {
-    const maxBytes = 256 * 1024;
-    const hashLen = DEFAULT_CONFIG.hashLen;
-    const prefixBytes = Buffer.byteLength(`1#${"X".repeat(hashLen)}│`);
-    const first = "界".repeat(40000);
-    const second = "x".repeat(maxBytes - Buffer.byteLength(first) - 2 * prefixBytes);
-    await writeFile(join(dir, "large.txt"), `${first}\n${second}\n`);
-    const result = await call(makeReadOverride(dir, DEFAULT_CONFIG), { path: "large.txt" });
-    assert.equal(result.details.truncation.outputLines, 1);
-    assert.equal(result.details.truncation.truncatedBy, "bytes");
-    assert.match(result.content[0].text, /truncated at 256 KiB/);
-    assert.ok(
-      result.content[0].text.includes(`1#${computeLineHash(1, first, hashLen)}│${first}\n`),
-    );
-    assert.doesNotMatch(result.content[0].text, /\n2#/);
-    const next = await call(makeReadOverride(dir, DEFAULT_CONFIG), {
-      path: "large.txt",
-      offset: 2,
-      limit: 1,
-    });
-    assert.ok(next.content[0].text.includes(`2#${computeLineHash(2, second, hashLen)}│${second}`));
-  }));
-
-test("read reports an oversized first row without suggesting an ineffective retry", async () =>
-  withDir(async (dir) => {
-    await writeFile(join(dir, "long.txt"), "x".repeat(256 * 1024));
-    const result = await call(makeReadOverride(dir, DEFAULT_CONFIG), { path: "long.txt" });
-    assert.equal(result.details.truncation.firstLineExceedsLimit, true);
-    assert.equal(result.details.truncation.outputLines, 0);
-    assert.match(result.content[0].text, /cannot return a complete anchor row/);
-    assert.doesNotMatch(result.content[0].text, /use offset\/limit/);
-    assert.match(result.content[0].text, /Reducing limit cannot split a physical line/);
-    assert.match(result.content[0].text, /use bash to inspect it in chunks, or replace/);
-  }));
-
-test("read preserves empty files and explicit limits above the native default", async () =>
-  withDir(async (dir) => {
-    await writeFile(join(dir, "empty.txt"), "");
-    const empty = await call(makeReadOverride(dir, DEFAULT_CONFIG), { path: "empty.txt" });
-    assert.match(empty.content[0].text, /0 lines/);
-    assert.equal(empty.details, undefined);
-    await writeFile(join(dir, "many.txt"), "x\n".repeat(2001));
-    const many = await call(makeReadOverride(dir, DEFAULT_CONFIG), {
-      path: "many.txt",
-      limit: 2001,
-    });
-    assert.match(many.content[0].text, /\n2001#[0-9A-Z]+│x/);
-    assert.equal(many.details, undefined);
-  }));
-
-test("read defaults to 500 lines when limit is omitted and respects explicit limits", async () =>
-  withDir(async (dir) => {
-    await writeFile(
-      join(dir, "large.txt"),
-      Array.from({ length: 600 }, (_, i) => `line${i + 1}\n`).join(""),
-    );
-    const def = await call(makeReadOverride(dir, DEFAULT_CONFIG), { path: "large.txt" });
-    assert.match(def.content[0].text, /large\.txt · 600 lines/);
-    assert.match(def.content[0].text, /\n500#[0-9A-Z]+│line500/);
-    assert.doesNotMatch(def.content[0].text, /\n501#[0-9A-Z]+│/);
-    assert.match(def.content[0].text, /showing lines 1-500 of 600; use offset 501 to continue/);
-    assert.deepEqual(def.details, {
-      pagination: { start: 1, end: 500, totalLines: 600, nextOffset: 501 },
-    });
-
-    const custom = await call(makeReadOverride(dir, DEFAULT_CONFIG), {
-      path: "large.txt",
-      limit: 550,
-    });
-    assert.match(custom.content[0].text, /\n550#[0-9A-Z]+│line550/);
-    assert.doesNotMatch(custom.content[0].text, /\n551#[0-9A-Z]+│/);
-    assert.match(custom.content[0].text, /showing lines 1-550 of 600; use offset 551 to continue/);
-    assert.deepEqual(custom.details, {
-      pagination: { start: 1, end: 550, totalLines: 600, nextOffset: 551 },
-    });
-  }));
-
-test("read pagination supports offset windows and stops suggesting continuation at EOF", async () =>
-  withDir(async (dir) => {
-    await writeFile(
-      join(dir, "pages.txt"),
-      Array.from({ length: 600 }, (_, i) => `line${i + 1}\n`).join(""),
-    );
-    const read = makeReadOverride(dir, DEFAULT_CONFIG);
-    const page = await call(read, { path: "pages.txt", offset: 20 });
-    assert.match(page.content[0].text, /showing lines 20-519 of 600; use offset 520 to continue/);
-    assert.deepEqual(page.details, {
-      pagination: { start: 20, end: 519, totalLines: 600, nextOffset: 520 },
-    });
-    const next = await call(read, {
-      path: "pages.txt",
-      offset: page.details.pagination.nextOffset,
-    });
-    assert.match(next.content[0].text, /\n520#[0-9A-Z]+│line520/);
-    assert.match(next.content[0].text, /\n600#[0-9A-Z]+│line600/);
-    assert.equal(next.details, undefined);
-    assert.doesNotMatch(next.content[0].text, /to continue/);
-    for (const offset of [101, 601]) {
-      const result = await call(read, { path: "pages.txt", offset });
-      assert.equal(result.details, undefined);
-      assert.doesNotMatch(result.content[0].text, /to continue/);
-    }
-  }));
-
-test("read rejects noninteger and nonpositive offsets and limits before reading", async () =>
-  withDir(async (dir) => {
-    await writeFile(join(dir, "pages.txt"), "first\nsecond\nthird\n");
-    const read = makeReadOverride(dir, DEFAULT_CONFIG);
-    for (const key of ["offset", "limit"] as const) {
-      const schema = read.parameters.properties[key];
-      assert.equal(schema.type, "number");
-      assert.equal("minimum" in schema ? schema.minimum : undefined, 1);
-      assert.equal("multipleOf" in schema ? schema.multipleOf : undefined, 1);
-      assert.equal("maximum" in schema ? schema.maximum : undefined, Number.MAX_SAFE_INTEGER);
-      for (const invalid of [
-        0,
-        -4,
-        0.5,
-        1.5,
-        NaN,
-        Infinity,
-        -Infinity,
-        Number.MAX_SAFE_INTEGER + 1,
-      ]) {
-        const params = { path: "pages.txt", [key]: invalid };
-        await assert.rejects(
-          call(read, params),
-          new RegExp(`Validation failed for tool "read":\\n {2}- ${key}: `),
-        );
-      }
-    }
-    assert.deepEqual(
-      validateToolArguments(read as any, {
-        type: "toolCall",
-        id: "valid",
-        name: "read",
-        arguments: { path: "pages.txt", offset: 2, limit: 550 },
-      }),
-      { path: "pages.txt", offset: 2, limit: 550 },
-    );
-    await assert.rejects(
-      call(read, { path: "missing.txt", offset: 1.5 }),
-      /Validation failed for tool "read"/,
-    );
-    const page = await call(read, { path: "pages.txt", offset: 2, limit: 1 });
-    assert.match(page.content[0].text, /\n2#[0-9A-Z]+│second/);
-    assert.match(page.content[0].text, /showing lines 2-2 of 3; use offset 3 to continue/);
-    assert.deepEqual(page.details, {
-      pagination: { start: 2, end: 2, totalLines: 3, nextOffset: 3 },
-    });
-    await writeFile(join(dir, "long.txt"), "x".repeat(300 * 1024));
-    const long = await call(read, { path: "long.txt", offset: 1, limit: 1 });
-    assert.match(long.content[0].text, /line 1 exceeds 256 KiB/);
-  }));
-
-test("read schema rejects empty paths and unknown fields before file access", async () =>
-  withDir(async (dir) => {
-    const read = makeReadOverride(dir, DEFAULT_CONFIG);
-    const invalidArgs: Parameters<typeof validateToolArguments>[1]["arguments"][] = [
-      { path: "" },
-      { path: "missing.txt", offest: 3 },
-    ];
-    for (const args of invalidArgs) {
-      await assert.rejects(call(read, args), /Validation failed for tool "read"/);
-    }
-  }));
-
-test("read byte truncation takes precedence over line pagination", async () =>
-  withDir(async (dir) => {
-    await writeFile(join(dir, "large.txt"), `first\n${"x".repeat(256 * 1024)}\ntail\n`);
-    const result = await call(makeReadOverride(dir, DEFAULT_CONFIG), {
-      path: "large.txt",
-      limit: 2,
-    });
-    assert.equal(result.details.truncation.truncatedBy, "bytes");
-    assert.equal(result.details.pagination, undefined);
-    assert.match(result.content[0].text, /truncated at 256 KiB/);
-    assert.doesNotMatch(result.content[0].text, /showing lines|to continue/);
-  }));
 
 test("native read and write renderers preserve resource titles, previews, and full errors", async () =>
   withDir(async (dir) => {
@@ -1374,41 +1106,6 @@ test("deletion successors and unique candidate rows display CR without altering 
     );
   }));
 
-test("read bounds oversized selected lines while preserving truncation metadata and later anchors", async () =>
-  withDir(async (dir) => {
-    const long = "界".repeat(200_000);
-    await writeFile(join(dir, "long.txt"), `first\r\n${long}\r\nlast`);
-    const read = makeReadOverride(dir, DEFAULT_CONFIG);
-    const result = await call(read, { path: "long.txt" });
-    assert.match(result.content[0].text, /1#[0-9A-Z]+│first/);
-    assert.doesNotMatch(result.content[0].text, /2#[0-9A-Z]+│/);
-    assert.equal(result.details.truncation.firstLineExceedsLimit, false);
-    assert.equal(result.details.truncation.outputLines, 1);
-    const expectedRows = ["first", long, "last"].map(
-      (text, index) => `${index + 1}#${computeLineHash(index + 1, text, 4)}│${text}`,
-    );
-    assert.equal(result.details.truncation.totalBytes, Buffer.byteLength(expectedRows.join("\n")));
-    const oversized = await call(read, { path: "long.txt", offset: 2, limit: 1 });
-    assert.equal(oversized.details.truncation.firstLineExceedsLimit, true);
-    assert.equal(oversized.details.truncation.outputBytes, 0);
-    const last = await call(read, { path: "long.txt", offset: 3, limit: 1 });
-    assert.match(last.content[0].text, /3#[0-9A-Z]+│last/);
-    assert.match(last.content[0].text, /no trailing newline/);
-  }));
-
-test("read budgets visible standalone CR characters using rendered UTF-8 bytes", async () =>
-  withDir(async (dir) => {
-    const content = "\r".repeat(90_000);
-    await writeFile(join(dir, "cr.txt"), content);
-    const result = await call(makeReadOverride(dir, DEFAULT_CONFIG), { path: "cr.txt", limit: 1 });
-    assert.equal(result.details.truncation.firstLineExceedsLimit, true);
-    assert.equal(result.details.truncation.outputBytes, 0);
-    assert.equal(
-      result.details.truncation.totalBytes,
-      Buffer.byteLength(`1#${computeLineHash(1, content, 4)}│${"␍".repeat(content.length)}`),
-    );
-  }));
-
 test("edit tool rejects non-array formats Pi cannot convert", async () =>
   withDir(async (dir) => {
     const file = join(dir, "f.txt");
@@ -1562,44 +1259,6 @@ test("edit rejects impossible checksum characters before accessing the file", as
     }
   }));
 
-test("read renders native content without interpreting anchor-like prefixes", async () =>
-  withDir(async (dir) => {
-    const tool = makeReadOverride(dir, DEFAULT_CONFIG);
-    for (const content of ["12#abc│ordinary content", "12#ABCD│ordinary content"]) {
-      for (const suffix of ["\n", "\n\0tail"]) {
-        await writeFile(join(dir, "prefix.txt"), content + suffix);
-        const result = await call(tool, { path: "prefix.txt" });
-        // Round-trip details as persisted session results do before rendering.
-        const rendered = tool.renderResult!(
-          JSON.parse(JSON.stringify(result)),
-          { expanded: true, isPartial: false },
-          stubTheme as Theme,
-          { args: { path: "prefix.txt" }, state: {}, cwd: dir, isError: false } as any,
-        )
-          .render(120)
-          .join("\n");
-        assert.ok(rendered.includes(content), rendered);
-      }
-    }
-  }));
-
-test("read accepts safe offsets and limits whose sum exceeds the safe integer range", async () =>
-  withDir(async (dir) => {
-    await writeFile(join(dir, "range.txt"), "first\nsecond\nthird\n");
-    const tool = makeReadOverride(dir, DEFAULT_CONFIG);
-    for (const offset of [2, 3, Number.MAX_SAFE_INTEGER]) {
-      const result = await call(tool, {
-        path: "range.txt",
-        offset,
-        limit: Number.MAX_SAFE_INTEGER,
-      });
-      assert.equal(result.details, undefined);
-      assert.doesNotMatch(result.content[0].text, /to continue|│first/);
-      if (offset <= 3) assert.match(result.content[0].text, /│third/);
-      else assert.doesNotMatch(result.content[0].text, /│/);
-    }
-  }));
-
 test("ambiguous failure lists and neighborhoods select the same first eight candidates", async () =>
   withDir(async (dir) => {
     const positions = [4, 14, 24, 34, 44, 54, 64, 74, 84];
@@ -1629,57 +1288,6 @@ test("ambiguous failure lists and neighborhoods select the same first eight cand
       },
     );
     assert.equal(await readFile(join(dir, "candidates.txt"), "utf8"), text);
-  }));
-
-test("loaded configuration controls hash length and recovery radius", async () =>
-  withDir(async (dir) => {
-    const text = "changed\ntarget\npadding\ntarget\n";
-    await mkdir(join(dir, ".pi"));
-    await writeFile(join(dir, "configured.txt"), text);
-    for (const [hashLen, shiftRadius, expected] of [
-      [6, 0, /no checksum-matching candidate found/],
-      [6, 1, /checksum-matching candidate 2#/],
-      [8, 3, /ambiguous checksum matches/],
-    ] as const) {
-      await writeFile(
-        join(dir, ".pi", "settings.json"),
-        JSON.stringify({ hashlineEdit: { hashLen, shiftRadius } }),
-      );
-      const config = loadConfig(dir);
-      const read = await call(makeReadOverride(dir, config), { path: "configured.txt" });
-      assert.equal(anchorLine(read.content[0].text, 1).split("#")[1].length, hashLen);
-      await assert.rejects(
-        call(makeEditOverride(dir, config), {
-          path: "configured.txt",
-          edits: [{ op: "delete", anchor: `1#${computeLineHash(1, "target", hashLen)}` }],
-        }),
-        expected,
-      );
-      assert.equal(await readFile(join(dir, "configured.txt"), "utf8"), text);
-    }
-  }));
-
-test("configured read defaults bound omitted limits and returned bytes", async () =>
-  withDir(async (dir) => {
-    const read = makeReadOverride(dir, {
-      ...DEFAULT_CONFIG,
-      read: { defaultLimit: 2, maxKiB: 1 },
-    });
-    const description: unknown = Reflect.get(read.parameters.properties.limit, "description");
-    assert.ok(typeof description === "string");
-    assert.match(description, /default 2\)/);
-    await writeFile(join(dir, "short.txt"), "a\nb\nc\n");
-    const paged = await call(read, { path: "short.txt" });
-    assert.match(paged.content[0].text, /showing lines 1-2 of 3; use offset 3 to continue/);
-    assert.match(paged.content[0].text, /^2#[0-9A-Z]+│b$/m);
-    assert.doesNotMatch(paged.content[0].text, /^3#/m);
-    const explicit = await call(read, { path: "short.txt", limit: 3 });
-    assert.match(explicit.content[0].text, /^3#[0-9A-Z]+│c$/m);
-    await writeFile(join(dir, "wide.txt"), `${"x".repeat(2048)}\n`);
-    const wide = await call(read, { path: "wide.txt" });
-    assert.match(wide.content[0].text, /line 1 exceeds 1 KiB/);
-    assert.equal(wide.details.truncation.maxBytes, 1024);
-    assert.equal(wide.details.truncation.outputBytes, 0);
   }));
 
 test("edit verification and returned anchors use the supplied hash length", async () =>
