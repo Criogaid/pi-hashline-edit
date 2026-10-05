@@ -7,6 +7,7 @@ import { writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
+import { formatKiB, MAX_BLOCK_BYTES } from "./budgets.ts";
 import { createActionFusionExecutor, THEN_RUN_STALE } from "./action-fusion.ts";
 import { makeReplaceTool } from "./replace-tool.ts";
 import { makeWriteOverride } from "./write-tool.ts";
@@ -22,6 +23,13 @@ import {
 import { callTool } from "./tool-call.testing.ts";
 import { DEFAULT_CONFIG } from "./config.ts";
 import { publishedMutation } from "./mutation-outcome.testing.ts";
+
+const KIB = formatKiB(MAX_BLOCK_BYTES);
+const DIAGNOSTIC_TRUNCATED = new RegExp(`Diagnostic output truncated at ${KIB}`);
+const ANCHOR_CHECK_TRUNCATED = new RegExp(
+  `Anchor-check output truncated at ${KIB}; omitted entries are not implied matched`,
+);
+const ANCHORS_OMITTED = new RegExp(`additional anchors omitted: ${KIB} limit`);
 
 const text = (result: Pick<AgentToolResult<unknown>, "content">): string =>
   result.content.map((block) => (block.type === "text" ? block.text : "")).join("\n");
@@ -41,23 +49,19 @@ function assertFailureByteBudgets(message: string): void {
   const guidanceAt = message.indexOf("\nCheck the intended target before retrying;", checksAt);
   const neighborhoodsAt = message.indexOf("\nAmbiguous-candidate neighborhoods", checksAt);
   assert.ok(checksAt > 0 && guidanceAt > checksAt);
-  assert.ok(Buffer.byteLength(message.slice(0, checksAt)) <= 16 * 1024);
+  assert.ok(Buffer.byteLength(message.slice(0, checksAt)) <= MAX_BLOCK_BYTES);
   assert.ok(
     Buffer.byteLength(
       message.slice(checksAt + 1, neighborhoodsAt < 0 ? guidanceAt : neighborhoodsAt),
-    ) <=
-      16 * 1024,
+    ) <= MAX_BLOCK_BYTES,
   );
   if (neighborhoodsAt >= 0) {
     const rows = message.slice(neighborhoodsAt, guidanceAt).match(/^\d+#[0-9A-Z]+│.*$/gm) ?? [];
     assert.ok(rows.length > 0);
-    assert.ok(Buffer.byteLength(rows.join("\n")) + 1 <= 16 * 1024);
+    assert.ok(Buffer.byteLength(rows.join("\n")) + 1 <= MAX_BLOCK_BYTES);
   }
-  assert.match(message, /Diagnostic output truncated at 16 KiB/);
-  assert.match(
-    message,
-    /Anchor-check output truncated at 16 KiB; omitted entries are not implied matched/,
-  );
+  assert.match(message, DIAGNOSTIC_TRUNCATED);
+  assert.match(message, ANCHOR_CHECK_TRUNCATED);
   const checks = message.match(/^op \d+ \/ anchor \/ .* \/ mismatched$/gm) ?? [];
   assert.ok(checks.length > 40 && checks.length < 1000);
 }
@@ -281,7 +285,7 @@ test("mutation anchor output and aggregate anchor diagnostics have byte budgets"
               ctx(dir),
             );
       assert.ok(Buffer.byteLength(text(deleted)) < 17 * 1024);
-      assert.match(text(deleted), /additional anchors omitted: 16 KiB limit/);
+      assert.match(text(deleted), ANCHORS_OMITTED);
       assert.doesNotMatch(text(deleted), /^\d+#[0-9A-Z]+/m);
     }
     await writeFile(path, "current\n");
@@ -819,13 +823,13 @@ test("compact mutation anchors exceed forty rows while respecting the byte budge
         assert.ok(rows.length > 40);
         assert.doesNotMatch(output, /│/);
         const anchorBlock = output.slice(output.indexOf("\nUpdated anchors:"));
-        assert.ok(Buffer.byteLength(anchorBlock) <= 16 * 1024);
+        assert.ok(Buffer.byteLength(anchorBlock) <= MAX_BLOCK_BYTES);
         if (count === 80) {
           assert.equal(rows.length, count);
           assert.doesNotMatch(output, /omitted/);
         } else {
           assert.ok(rows.length < count);
-          assert.match(output, /additional anchors omitted: 16 KiB limit/);
+          assert.match(output, ANCHORS_OMITTED);
         }
         const finalLines = (await readFile(path, "utf8")).trimEnd().split("\n");
         for (const [, line, hash] of rows)
@@ -862,8 +866,10 @@ test("oversized deletion successors do not suppress later editable anchors", asy
     assert.doesNotMatch(output, /^1#[0-9A-Z]+/m);
     const anchor = output.match(/^2#[0-9A-Z]+$/m)?.[0];
     assert.equal(anchor, `2#${computeLineHash(2, "new", 4)}`);
-    assert.match(output, /additional anchors omitted: 16 KiB limit/);
-    assert.ok(Buffer.byteLength(output.slice(output.indexOf("\nUpdated anchors:"))) <= 16 * 1024);
+    assert.match(output, ANCHORS_OMITTED);
+    assert.ok(
+      Buffer.byteLength(output.slice(output.indexOf("\nUpdated anchors:"))) <= MAX_BLOCK_BYTES,
+    );
     await invoke(
       tool,
       "retry",
