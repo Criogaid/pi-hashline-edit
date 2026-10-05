@@ -21,6 +21,7 @@ import type { AgentToolResult, AgentToolUpdateCallback } from "@earendil-works/p
 import type {
   ActionFusionDetails,
   createActionFusionExecutor,
+  MutationToolName,
   ThenRunInput,
 } from "./action-fusion.ts";
 import { commitReplacement, readEditableSnapshot } from "./file-commit.ts";
@@ -35,7 +36,6 @@ import { canonicalPath } from "./path.ts";
 import { throwIfCancelled } from "./error-text.ts";
 
 export type ActionFusionExecutor = ReturnType<typeof createActionFusionExecutor>;
-export type MutationToolName = "edit" | "replace" | "write";
 
 /** Result details shared by the read-modify-write tools. */
 export type TextMutationDetails = ReturnType<typeof generateMutationDetails> & {

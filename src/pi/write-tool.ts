@@ -15,6 +15,7 @@ import {
 import { commitFile, type CommitMode, type CommitResult } from "./file-commit.ts";
 import { postProcessMutation } from "./mutation-result.ts";
 import { executeMutation, type ActionFusionExecutor } from "./mutation-runner.ts";
+import { MUTATION_TOOL_GUIDELINE } from "./tool-prompts.ts";
 import { invalidArgument, throwIfCancelled } from "./error-text.ts";
 import { unwritableTextReason } from "../core/text.ts";
 import { renderToolError } from "./render.ts";
@@ -36,11 +37,7 @@ const writeSchema = Type.Object(
 );
 
 function createWriteSchema(actionFusion: boolean) {
-  return withThenRunSchema(
-    writeSchema,
-    "Command to run after write succeeds; failure does not roll back the write.",
-    actionFusion,
-  );
+  return withThenRunSchema(writeSchema, "write", actionFusion);
 }
 type WriteParams = Static<typeof writeSchema> & { then_run?: ThenRunInput };
 type WriteDetails = CommitResult & { path: string; actionFusion?: ActionFusionDetails };
@@ -55,12 +52,9 @@ export function makeWriteOverride(cwd: string, fusion?: ActionFusionExecutor) {
     name: "write" as const,
     label: "write",
     description:
-      "Write a whole file exactly as supplied, including LF/CRLF, so it also converts line endings. By default, creates missing files and parent directories and overwrites existing files.",
+      "Write a whole file exactly as supplied, including its line endings. By default, creates missing files and parent directories and overwrites existing files.",
     promptSnippet: "Write complete file content to a path",
-    promptGuidelines: [
-      "Use write for creating new files or whole-file overwrites; for targeted changes, prefer edit or replace to preserve surrounding content.",
-      ...(fusion ? ACTION_FUSION_GUIDELINES : []),
-    ],
+    promptGuidelines: [MUTATION_TOOL_GUIDELINE, ...(fusion ? ACTION_FUSION_GUIDELINES : [])],
     parameters,
     /** Reject content that cannot be written as UTF-8 before Pi's schema validation; never rewrites. */
     prepareArguments(args: unknown): WriteParams {

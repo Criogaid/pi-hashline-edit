@@ -54,7 +54,7 @@ function createGrepSchema({ defaultLimit, defaultContext }: HashlineEditConfig["
           ],
           {
             description:
-              "Existing file or directory, or an array of them; omit to search the working directory. Wildcards are not expanded; use glob.",
+              "Existing file or directory, or an array of them; omit to search the working directory. Wildcards are not expanded.",
           },
         ),
       ),
@@ -136,12 +136,12 @@ export function makeGrepOverrideWithBackend(
     name: "grep" as const,
     label: "grep",
     description:
-      "Search file contents with ripgrep. Content mode returns LINE#HASH edit anchors for valid UTF-8; invalid UTF-8 uses replacement characters and plain line numbers. NUL-containing files are skipped. Files/count modes return paths or matching-line counts. Valid UTF-8 CRLF is searched as LF; invalid UTF-8 is searched as raw bytes. Directory searches respect ignore rules and skip linked directories.",
+      "Search file contents with ripgrep. Content mode returns LINE#HASH edit anchors for valid UTF-8 and plain line numbers without anchors otherwise; files/count modes return paths or matching-line counts. Valid UTF-8 CRLF is searched as LF; invalid UTF-8 is searched as raw bytes. NUL-containing files are skipped. Directory searches respect ignore rules and skip linked directories.",
     promptSnippet: "Search file contents with ripgrep",
     promptGuidelines: [
       "Prefer grep for file-content searches; use another tool for ignored or linked directories.",
-      'In grep, omit path to search the working directory (never pass ""); use glob for filename wildcards.',
-      "In grep, use literal:true for exact text, including names, paths, and code snippets; use literal:false only for intentional ripgrep (Rust) regex, which has no lookaround or backreferences.",
+      "In grep, use glob for filename wildcards.",
+      "In grep, use literal:true for exact text, including names, paths, and code snippets; use literal:false only for intentional regex.",
       "In grep, use a pattern array for alternatives instead of joining them with |, and context:3-5 when searching code to edit.",
       "In grep, use multiline:true for cross-line matches and outputMode files or count when only paths or counts are needed.",
       "Copy grep anchors directly into edit; read the full line before rewriting from a partial preview.",

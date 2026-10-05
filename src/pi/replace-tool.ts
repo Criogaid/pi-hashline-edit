@@ -52,6 +52,7 @@ import {
   type MutationTarget,
   type TextMutationDetails,
 } from "./mutation-runner.ts";
+import { MUTATION_TOOL_GUIDELINE } from "./tool-prompts.ts";
 import { errorMessage } from "../core/errors.ts";
 import { invalidArgument, throwIfCancelled } from "./error-text.ts";
 type ReplaceDetails = TextMutationDetails;
@@ -66,7 +67,7 @@ const replacementSchema = Type.Object(
     find: Type.String({
       minLength: 1,
       description:
-        "Text, or a JavaScript regex when regex is true (not grep's ripgrep syntax). CRLF in the file reads as LF, so a line break is \\n; in literal mode a backslash followed by n matches those two characters. In regex mode, ^ and $ need the m flag to match per line; \\d, \\w, and \\b are ASCII-based.",
+        "Text, or a JavaScript regex when regex is true. CRLF in the file reads as LF, so a line break is \\n; in literal mode a backslash followed by n matches those two characters. In regex mode, ^ and $ need the m flag to match per line; \\d, \\w, and \\b are ASCII-based.",
     }),
     replace: Type.String({
       description:
@@ -100,11 +101,7 @@ const replaceSchema = Type.Object(
 );
 
 function createReplaceSchema(actionFusion: boolean) {
-  return withThenRunSchema(
-    replaceSchema,
-    "Command to run once after all replacements succeed; failure does not roll back the replacement.",
-    actionFusion,
-  );
+  return withThenRunSchema(replaceSchema, "replace", actionFusion);
 }
 type ReplaceParams = Static<typeof replaceSchema> & { then_run?: ThenRunInput };
 
@@ -209,10 +206,7 @@ export function makeReplaceTool(
     description:
       "Replace every match of one or more literal or JavaScript-regex rules in a file. Overlapping matches or a rule with no match reject the whole call. Returns a diff and fresh anchors.",
     promptSnippet: "Replace matching text across a file",
-    promptGuidelines: [
-      "Use replace for repeated literal or regex substitutions, or short changes inside long lines; use edit for line or block changes, insertions, and deletions.",
-      ...(fusion ? ACTION_FUSION_GUIDELINES : []),
-    ],
+    promptGuidelines: [MUTATION_TOOL_GUIDELINE, ...(fusion ? ACTION_FUSION_GUIDELINES : [])],
     parameters,
     prepareArguments(args: unknown): ReplaceParams {
       checkReplaceArguments(args);

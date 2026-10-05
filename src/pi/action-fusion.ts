@@ -78,7 +78,10 @@ export interface ActionFusionProgress extends Omit<ActionFusionDetails, "command
 
 type ProgressReporter = (progress: ActionFusionProgress, ctx: ExtensionContext) => void;
 
-export function createThenRunSchema(description: string) {
+/** The tools that accept then_run. */
+export type MutationToolName = "edit" | "replace" | "write";
+
+export function createThenRunSchema(tool: MutationToolName) {
   return Type.Optional(
     Type.Object(
       {
@@ -91,19 +94,22 @@ export function createThenRunSchema(description: string) {
           }),
         ),
       },
-      { description, additionalProperties: false },
+      {
+        description: `Command to run once after ${tool} succeeds; failure does not roll back the file.`,
+        additionalProperties: false,
+      },
     ),
   );
 }
 /** Add the optional then_run field to a mutation schema when Action Fusion is enabled. */
 export function withThenRunSchema<P extends TProperties>(
   schema: TObject<P>,
-  description: string,
+  tool: MutationToolName,
   actionFusion: boolean,
 ): TObject<P> | TObject<P & { then_run: ReturnType<typeof createThenRunSchema> }> {
   return actionFusion
     ? Type.Object(
-        { ...schema.properties, then_run: createThenRunSchema(description) },
+        { ...schema.properties, then_run: createThenRunSchema(tool) },
         { additionalProperties: false },
       )
     : schema;
