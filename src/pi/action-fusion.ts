@@ -22,7 +22,10 @@
 import { realpath } from "node:fs/promises";
 import { basename, dirname, resolve } from "node:path";
 import type { AgentToolResult, AgentToolUpdateCallback } from "@earendil-works/pi-agent-core";
-import { createBashToolDefinition, type ExtensionContext } from "@earendil-works/pi-coding-agent";
+import {
+  createBashToolDefinition,
+  type ExtensionToolContext,
+} from "@earendil-works/pi-coding-agent";
 import { Type, type Static, type TObject, type TProperties } from "typebox";
 import { fileRevision, FileMutationError, type PublicationStatus } from "./file-commit.ts";
 import { commitFreshness, finalizeMutation, type MutationOutcome } from "./mutation-result.ts";
@@ -76,7 +79,7 @@ export interface ActionFusionProgress extends Omit<ActionFusionDetails, "command
   timing?: { readonly timeoutSeconds: number; readonly remainingSeconds: number };
 }
 
-type ProgressReporter = (progress: ActionFusionProgress, ctx: ExtensionContext) => void;
+type ProgressReporter = (progress: ActionFusionProgress, ctx: ExtensionToolContext) => void;
 
 /** The tools that accept then_run. */
 export type MutationToolName = "edit" | "replace" | "write";
@@ -120,7 +123,7 @@ type CommandRunner = (
   toolCallId: string,
   input: ThenRunInput,
   signal: AbortSignal | undefined,
-  ctx: ExtensionContext,
+  ctx: ExtensionToolContext,
   onUpdate?: AgentToolUpdateCallback<unknown>,
 ) => Promise<string>;
 
@@ -219,7 +222,7 @@ async function defaultCommandRunner(
   toolCallId: string,
   input: ThenRunInput,
   signal: AbortSignal | undefined,
-  ctx: ExtensionContext,
+  ctx: ExtensionToolContext,
   onUpdate?: AgentToolUpdateCallback<unknown>,
 ): Promise<string> {
   const bash = createBashToolDefinition(ctx.cwd);
@@ -295,7 +298,7 @@ export function createActionFusionExecutor(
     thenRun: ThenRunInput | undefined;
     mutate: () => Promise<MutationOutcome<TDetails>>;
     signal: AbortSignal | undefined;
-    ctx: ExtensionContext;
+    ctx: ExtensionToolContext;
     onUpdate?: AgentToolUpdateCallback<TDetails>;
   }): Promise<MutationResult<TDetails>> {
     let completedMutation: MutationOutcome<TDetails> | undefined;

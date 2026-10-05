@@ -19,6 +19,8 @@ Overrides `read`, `grep`, `edit`, and `write`, and adds `replace` for bulk trans
 pi install npm:@criogaid/pi-hashline-edit
 ```
 
+Requires Pi **0.99.1 or later** for native context edits.
+
 This extension works on **local files**. For remote/custom-storage operations, disable it in [configuration](#configuration) and reload Pi to use the built-in tools.
 
 ## Quick start
@@ -71,6 +73,24 @@ All tools accept relative and absolute paths, `file://` URLs, a leading `@` pref
 Valid UTF-8 text inspection and matching uses one logical representation: CRLF boundaries become LF; standalone CR and source-code escape sequences such as the four characters `\r\n` remain content. `read` and `grep` hash the same logical lines that `edit` verifies; literal and regex `replace` both match this LF view. Mutation offsets map back to the original text. `edit` and `replace` share separator restoration: reuse internal separators positionally, repeat the last for extra gaps, or use the file style (CRLF if present, otherwise LF) when none exist. Boundaries outside the replacement stay unchanged. Invalid UTF-8 grep previews use raw-byte matching as described below.
 
 `write` is the full-content boundary: its supplied bytes are authoritative, so it preserves their explicit LF/CRLF choices. Use it for intentional whole-file line-ending conversion. To inspect actual line-ending bytes, use a raw byte reader; anchored line displays intentionally do not distinguish LF from CRLF.
+
+### Ephemeral reads
+
+Use `ephemeral: true` when the model only needs a read result for its next response:
+
+```json
+{ "path": "build.log", "offset": 1, "limit": 500, "ephemeral": true }
+```
+
+The next model request includes the returned content. After that response completes successfully, later requests receive a fixed receipt containing the path, offset, and limit instead of the content. A successful response may include tool calls; the model must preserve any conclusions it needs in that response. Results first returned by those new tool calls remain available for the following response.
+
+Failed, cancelled, and output-limit responses keep the content for retry. Read errors are not expired. Omitting `ephemeral` or passing `false` keeps the usual retention. The option also applies to successful reads delegated to Pi's built-in reader.
+
+The TUI call title appends `— read once` when `ephemeral: true`, using the same dim suffix style as edit operation counts. The marker identifies the requested retention mode and remains visible in the call history.
+
+This changes future model context only. The original file, saved session history, and visible tool result remain intact. Pi persists expiry as a branch-local context edit, so it survives reload; switching to a branch before expiry restores that branch's content. Compaction uses the edited context. Read the file again if its content is needed later.
+
+Expiry makes no extra model request and runs no summarizer. Replacing a result changes the cache prefix from that result onward; it does not guarantee a lower charge for the immediately following request.
 
 ### Edit operations
 

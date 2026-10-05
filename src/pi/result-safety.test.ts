@@ -1,6 +1,6 @@
 import { computeLineHash } from "../core/hash.ts";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
-import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionToolContext } from "@earendil-works/pi-coding-agent";
 import assert from "node:assert/strict";
 import { mkdtemp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { writeFileSync } from "node:fs";
@@ -33,7 +33,7 @@ const ANCHORS_OMITTED = new RegExp(`additional anchors omitted: ${KIB} limit`);
 
 const text = (result: Pick<AgentToolResult<unknown>, "content">): string =>
   result.content.map((block) => (block.type === "text" ? block.text : "")).join("\n");
-const ctx = (cwd: string) => ({ cwd }) as ExtensionContext;
+const ctx = (cwd: string) => ({ cwd }) as ExtensionToolContext;
 
 const invoke = (
   tool: any,

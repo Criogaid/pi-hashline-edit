@@ -2,7 +2,7 @@ import { Type, type Static } from "typebox";
 import type { AgentToolResult, AgentToolUpdateCallback } from "@earendil-works/pi-agent-core";
 import {
   createWriteToolDefinition,
-  type ExtensionContext,
+  type ExtensionToolContext,
   type Theme,
   type ToolRenderResultOptions,
 } from "@earendil-works/pi-coding-agent";
@@ -81,7 +81,7 @@ export function makeWriteOverride(cwd: string, fusion?: ActionFusionExecutor) {
       params: WriteParams,
       signal: AbortSignal | undefined,
       onUpdate: AgentToolUpdateCallback<WriteDetails> | undefined,
-      ctx: ExtensionContext,
+      ctx: ExtensionToolContext,
     ) {
       return executeMutation<Omit<WriteParams, "then_run">, WriteDetails>(
         {

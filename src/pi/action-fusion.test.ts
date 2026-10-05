@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionToolContext } from "@earendil-works/pi-coding-agent";
 import { callTool } from "./tool-call.testing.ts";
 import { makeEditOverride } from "./edit-tool.ts";
 import { makeReplaceTool } from "./replace-tool.ts";
@@ -33,7 +33,7 @@ const ctx = (cwd: string) =>
   ({
     cwd,
     sessionManager: { getSessionId: () => "test", getSessionFile: () => undefined },
-  }) as ExtensionContext;
+  }) as ExtensionToolContext;
 
 type Fusion = Parameters<typeof makeWriteOverride>[1];
 const mutationFactories = [

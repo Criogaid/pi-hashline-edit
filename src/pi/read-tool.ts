@@ -14,14 +14,15 @@ import {
   detectSupportedImageMimeTypeFromFile,
   getLanguageFromPath,
   highlightCode,
-  type ReadToolInput,
   type ReadToolDetails,
-  type ExtensionContext,
+  type ExtensionToolContext,
   type Theme,
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import type { AgentToolUpdateCallback } from "@earendil-works/pi-agent-core";
 import { Text } from "@earendil-works/pi-tui";
+import { Type, type Static } from "typebox";
+import { ephemeralReadDetails } from "./read-retention.ts";
 import { scanTextLines } from "./text-stream.ts";
 import { createAnchorFormatter, displayCarriageReturns, parseHashline } from "./anchor-format.ts";
 import { canonicalPath } from "./path.ts";
@@ -33,7 +34,18 @@ import type { HashlineEditConfig } from "./config.ts";
 
 const DEFAULT_OFFSET = 1;
 
-type ReadDetails = ReadToolDetails & { nativeRead?: true };
+type ReadDetails = ReadToolDetails & {
+  nativeRead?: true;
+} & Partial<ReturnType<typeof ephemeralReadDetails>>;
+
+/** Append call metadata before Pi's Text component wraps the native title. */
+class ReadCallText extends Text {
+  retentionLabel = "";
+
+  override setText(text: string): void {
+    super.setText(text + this.retentionLabel);
+  }
+}
 
 /**
  * First result line: `<path> · <N> lines`, optionally ` (from line <offset>)` and
@@ -110,35 +122,36 @@ function renderReadBody(raw: string, path: string, theme: Theme): string {
 }
 
 /** Build the read override (a ToolDefinition fragment for registerTool). */
-export function makeReadOverride(
-  cwd: string,
-  config: HashlineEditConfig,
-): ToolDefinition<
-  ReturnType<typeof createReadToolDefinition>["parameters"],
-  ReadDetails | undefined
-> {
+export function makeReadOverride(cwd: string, config: HashlineEditConfig) {
   const { hashLen } = config;
   const { defaultLimit } = config.read;
   const maxBytes = config.read.maxKiB * 1024;
   const builtin = createReadToolDefinition(cwd);
-  const parameters = {
-    ...builtin.parameters,
-    additionalProperties: false,
-    properties: {
+  const parameters = Type.Object(
+    {
       ...builtin.parameters.properties,
-      path: { ...builtin.parameters.properties.path, minLength: 1 },
-      offset: {
-        ...builtin.parameters.properties.offset,
-        ...POSITIVE_SAFE_INTEGER,
-        description: `1-based line to start from (default ${DEFAULT_OFFSET}).`,
-      },
-      limit: {
-        ...builtin.parameters.properties.limit,
-        ...POSITIVE_SAFE_INTEGER,
-        description: `Maximum lines to read (default ${defaultLimit}).`,
-      },
+      path: Type.String({ ...builtin.parameters.properties.path, minLength: 1 }),
+      offset: Type.Optional(
+        Type.Number({
+          ...POSITIVE_SAFE_INTEGER,
+          description: `1-based line to start from (default ${DEFAULT_OFFSET}).`,
+        }),
+      ),
+      limit: Type.Optional(
+        Type.Number({
+          ...POSITIVE_SAFE_INTEGER,
+          description: `Maximum lines to read (default ${defaultLimit}).`,
+        }),
+      ),
+      ephemeral: Type.Optional(
+        Type.Boolean({
+          description:
+            "When true, keep this result in model context for one successful response, including a response that calls tools, then replace it with a read receipt. Omitted or false keeps normal retention. Failed, cancelled, or output-limit responses keep it for retry. The file and session history remain intact.",
+        }),
+      ),
     },
-  };
+    { additionalProperties: false },
+  );
 
   return {
     name: "read" as const,
@@ -149,11 +162,19 @@ export function makeReadOverride(
     promptGuidelines: [
       "Prefer read over shell output for files you intend to edit.",
       "For large files, pass read offset and limit to read only the relevant section.",
+      "Use ephemeral: true for one-time inspection of logs or large text; retain any needed conclusions in your response before the read body expires.",
     ],
-    parameters: parameters as typeof builtin.parameters,
+    parameters,
     renderShell: "default" as const,
 
-    renderCall: builtin.renderCall,
+    renderCall(args, theme, context) {
+      const call =
+        context.lastComponent instanceof ReadCallText
+          ? context.lastComponent
+          : new ReadCallText("", 0, 0);
+      call.retentionLabel = args?.ephemeral === true ? theme.fg("dim", " — read once") : "";
+      return builtin.renderCall!(args, theme, { ...context, lastComponent: call });
+    },
 
     renderResult(result, options, theme, context) {
       const { isPartial, expanded } = options;
@@ -170,18 +191,24 @@ export function makeReadOverride(
 
     async execute(
       toolCallId: string,
-      params: ReadToolInput,
+      params: Static<typeof parameters>,
       signal: AbortSignal | undefined,
       onUpdate: AgentToolUpdateCallback<ReadToolDetails | undefined> | undefined,
-      ctx: ExtensionContext,
+      ctx: ExtensionToolContext,
     ) {
       throwIfCancelled(signal);
       const offset = params.offset ?? DEFAULT_OFFSET;
       const limit = params.limit ?? defaultLimit;
+      const retention = params.ephemeral
+        ? ephemeralReadDetails(params.path, offset, limit)
+        : undefined;
       const anchors = createAnchorFormatter(hashLen);
       const readNative = async () => {
         const result = await builtin.execute(toolCallId, params, signal, onUpdate, ctx);
-        return { ...result, details: { ...result.details, nativeRead: true as const } };
+        return {
+          ...result,
+          details: { ...result.details, ...retention, nativeRead: true as const },
+        };
       };
 
       const absPath = canonicalPath(cwd, params.path as string);
@@ -267,8 +294,17 @@ export function makeReadOverride(
 
       return {
         content: [{ type: "text" as const, text: header + body + tail }],
-        details: truncation.truncated ? { truncation } : pagination ? { pagination } : undefined,
+        details: retention
+          ? {
+              ...(truncation.truncated ? { truncation } : pagination ? { pagination } : {}),
+              ...retention,
+            }
+          : truncation.truncated
+            ? { truncation }
+            : pagination
+              ? { pagination }
+              : undefined,
       };
     },
-  };
+  } satisfies ToolDefinition<typeof parameters, ReadDetails | undefined>;
 }

@@ -16,7 +16,7 @@
  * @module pi-hashline-edit/pi
  */
 
-import { withFileMutationQueue, type ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { withFileMutationQueue, type ExtensionToolContext } from "@earendil-works/pi-coding-agent";
 import type { AgentToolResult, AgentToolUpdateCallback } from "@earendil-works/pi-agent-core";
 import type {
   ActionFusionDetails,
@@ -63,7 +63,7 @@ export interface MutationCall<TParams, TDetails> {
   readonly params: TParams & { then_run?: ThenRunInput };
   readonly signal: AbortSignal | undefined;
   readonly onUpdate: AgentToolUpdateCallback<TDetails> | undefined;
-  readonly ctx: ExtensionContext;
+  readonly ctx: ExtensionToolContext;
 }
 
 /** Queue and publish one validated mutation call, then run its then_run command when fused. */
