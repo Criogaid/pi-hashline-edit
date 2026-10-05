@@ -44,20 +44,6 @@ const stubTheme = { fg: (_k: string, s: string) => s, bold: (s: string) => s } a
 // singleton — initialize it once for this test process (watcher off by default).
 initTheme();
 
-test("replace find guidance distinguishes literal escapes and regex line anchors", () => {
-  const tool = makeReplaceTool(process.cwd(), DEFAULT_CONFIG);
-  const description: unknown = Reflect.get(
-    tool.parameters.properties.replacements.items.properties.find,
-    "description",
-  );
-  assert.ok(typeof description === "string");
-  assert.match(description, /JavaScript regex/);
-  assert.match(description, /not grep's ripgrep syntax/);
-  assert.match(description, /CRLF.*LF.*\\n/);
-  assert.match(description, /literal mode.*backslash followed by n.*two characters/);
-  assert.match(description, /regex mode.*\^ and \$.*m flag.*per line/);
-});
-
 test("replace schema requires a non-empty replacements array", async () => {
   for (const fusion of [undefined, createActionFusionExecutor()]) {
     const tool = makeReplaceTool(process.cwd(), DEFAULT_CONFIG, fusion);

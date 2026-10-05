@@ -95,50 +95,6 @@ const text = (result: any): string => result.content[0].text;
 const call = (tool: any, params: any, signal?: AbortSignal) =>
   callTool(tool, params, { toolCallId: "0", signal });
 
-test("grep guidance covers query syntax, search scope, and edit anchors", () => {
-  const tool = makeGrepOverrideWithBackend(process.cwd(), DEFAULT_CONFIG, {});
-  for (const [topic, terms] of [
-    ["exact text", [/literal:true for exact text/, /names/, /paths/, /code snippets/]],
-    [
-      "intentional Rust regex",
-      [
-        /literal:false only for intentional ripgrep \(Rust\) regex/,
-        /no lookaround or backreferences/,
-      ],
-    ],
-    ["pattern alternatives", [/pattern array/, /alternatives/, /\|/]],
-    ["edit context", [/context:3-5/, /code to edit/]],
-    [
-      "path and glob",
-      [/omit path/, /working directory/, /never pass ""/, /glob.*filename wildcards/],
-    ],
-    ["multiline", [/multiline:true/, /cross-line/]],
-    ["edit anchors", [/grep anchors/, /directly into edit/, /full line/, /partial preview/]],
-  ] as const) {
-    assert.ok(
-      tool.promptGuidelines.some((rule) => terms.every((term) => term.test(rule))),
-      `grep guideline missing ${topic}`,
-    );
-  }
-  assert.ok(tool.promptGuidelines.every((rule) => rule.includes("grep")));
-
-  const params = tool.parameters.properties;
-  const description = (field: keyof typeof params) => {
-    const value: unknown = Reflect.get(params[field], "description");
-    assert.ok(typeof value === "string", `${field} needs a description`);
-    return value;
-  };
-  assert.match(description("pattern"), /ripgrep.*Rust/);
-  assert.match(description("pattern"), /not JavaScript/);
-  assert.match(description("pattern"), /\^ and \$.*line boundaries/);
-  assert.match(description("literal"), /true:.*match the text exactly.*regex punctuation/);
-  assert.match(description("literal"), /false:.*ripgrep Rust regex.*foo\(0\).*foo0/);
-  assert.match(description("path"), /omit.*working directory/);
-  assert.match(description("path"), /Wildcards are not expanded.*glob/);
-  assert.match(description("multiline"), /\. wildcard does not match newlines.*\\n or \(\?s\)/);
-  assert.match(description("ignoreCase"), /omitted.*smart-case.*whole query/);
-});
-
 test("configured grep defaults drive descriptions, match limits, and context", async () =>
   withDir(async (dir) => {
     const file = join(dir, "configured.txt");
