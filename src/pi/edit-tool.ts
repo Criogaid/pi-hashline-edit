@@ -20,7 +20,7 @@
  */
 
 import {
-  type ExtensionContext,
+  type ExtensionToolContext,
   type Theme,
   type ToolDefinition,
   type ToolRenderResultOptions,
@@ -336,7 +336,7 @@ export function makeEditOverride(
       params: EditParams,
       signal: AbortSignal | undefined,
       onUpdate: AgentToolUpdateCallback<EditDetails> | undefined,
-      ctx: ExtensionContext,
+      ctx: ExtensionToolContext,
     ) {
       return executeMutation<Omit<EditParams, "then_run">, EditDetails>(
         {

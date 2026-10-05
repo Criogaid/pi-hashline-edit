@@ -16,7 +16,7 @@ import {
   highlightCode,
   type ReadToolInput,
   type ReadToolDetails,
-  type ExtensionContext,
+  type ExtensionToolContext,
   type Theme,
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
@@ -173,7 +173,7 @@ export function makeReadOverride(
       params: ReadToolInput,
       signal: AbortSignal | undefined,
       onUpdate: AgentToolUpdateCallback<ReadToolDetails | undefined> | undefined,
-      ctx: ExtensionContext,
+      ctx: ExtensionToolContext,
     ) {
       throwIfCancelled(signal);
       const offset = params.offset ?? DEFAULT_OFFSET;

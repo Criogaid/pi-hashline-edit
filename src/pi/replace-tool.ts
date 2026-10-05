@@ -24,7 +24,7 @@
  */
 
 import {
-  type ExtensionContext,
+  type ExtensionToolContext,
   type Theme,
   type ToolDefinition,
   type ToolRenderResultOptions,
@@ -240,7 +240,7 @@ export function makeReplaceTool(
       params: ReplaceParams & { then_run?: ThenRunInput },
       signal: AbortSignal | undefined,
       onUpdate: AgentToolUpdateCallback<ReplaceDetails> | undefined,
-      ctx: ExtensionContext,
+      ctx: ExtensionToolContext,
     ) {
       return executeMutation<Omit<ReplaceParams, "then_run">, ReplaceDetails>(
         {
