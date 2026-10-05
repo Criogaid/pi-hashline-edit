@@ -48,6 +48,7 @@ test("mutation cards use Fusion by default and explicit false removes command su
     const grep = tools.find((tool) => tool.name === "grep");
     assert.deepEqual(Object.keys(grep.parameters.properties).sort(), [
       "context",
+      "ephemeral",
       "glob",
       "ignoreCase",
       "limit",

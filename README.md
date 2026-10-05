@@ -74,21 +74,29 @@ Valid UTF-8 text inspection and matching uses one logical representation: CRLF b
 
 `write` is the full-content boundary: its supplied bytes are authoritative, so it preserves their explicit LF/CRLF choices. Use it for intentional whole-file line-ending conversion. To inspect actual line-ending bytes, use a raw byte reader; anchored line displays intentionally do not distinguish LF from CRLF.
 
-### Ephemeral reads
+### Ephemeral read and grep results
 
-Use `ephemeral: true` when the model only needs a read result for its next response:
+Both `read` and `grep` accept `ephemeral: true` when the model only needs the result for its next response. For a one-time file read:
 
 ```json
 { "path": "build.log", "offset": 1, "limit": 500, "ephemeral": true }
 ```
 
-The next model request includes the returned content. After that response completes successfully, later requests receive a fixed receipt containing the path, offset, and limit instead of the content. A successful response may include tool calls; the model must preserve any conclusions it needs in that response. Results first returned by those new tool calls remain available for the following response.
+For a one-time log search:
 
-Failed, cancelled, and output-limit responses keep the content for retry. Read errors are not expired. Omitting `ephemeral` or passing `false` keeps the usual retention. The option also applies to successful reads delegated to Pi's built-in reader.
+```json
+{ "pattern": "ERROR", "path": "logs", "literal": true, "ephemeral": true }
+```
 
-The TUI call title appends `— read once` when `ephemeral: true`, using the same dim suffix style as edit operation counts. The marker identifies the requested retention mode and remains visible in the call history.
+Grep supports this option in `content`, `files`, and `count` modes. Keep normal retention when later steps need the returned content or edit anchors.
 
-This changes future model context only. The original file, saved session history, and visible tool result remain intact. Pi persists expiry as a branch-local context edit, so it survives reload; switching to a branch before expiry restores that branch's content. Compaction uses the edited context. Read the file again if its content is needed later.
+The next model request includes the returned content. After that response completes successfully, later requests receive a fixed receipt instead of the content. Read receipts identify the path, offset, and limit; grep receipts identify the search patterns and paths. Original tool-call arguments remain available. A successful response may include tool calls; the model must preserve any conclusions it needs in that response. Results first returned by those new tool calls remain available for the following response.
+
+Failed, cancelled, and output-limit model responses keep the content for retry. Tool errors and grep results marked as incomplete keep their results and diagnostics. Omitting `ephemeral` or passing `false` keeps the usual retention. The option also applies to successful reads delegated to Pi's built-in reader.
+
+Both tools show `[read once]` at the start of the TUI call title when `ephemeral: true`, using the same bold label style and theme color as Pi's `[skill]` marker. The original tool title and arguments follow the marker; read titles still use Pi's renderer. The marker identifies the requested retention mode and remains visible in the call history.
+
+This changes future model context only. Original files, saved session history, and visible tool results remain intact. Pi persists expiry as a branch-local context edit, so it survives reload; switching to a branch before expiry restores that branch's content. Compaction uses the edited context. Run the original read or grep again if its content is needed later.
 
 Expiry makes no extra model request and runs no summarizer. Replacing a result changes the cache prefix from that result onward; it does not guarantee a lower charge for the immediately following request.
 

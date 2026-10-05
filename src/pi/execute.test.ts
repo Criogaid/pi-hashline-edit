@@ -308,8 +308,8 @@ test("native read and write renderers preserve resource titles, previews, and fu
       } as Parameters<typeof read.renderCall>[2]);
       const title = readCall.render(120).join("\n").trimEnd();
       assert.match(title, /\[skill\]/);
-      assert.equal(title.endsWith(" — read once"), ephemeral === true);
-      assert.equal(title.split(" — read once").length - 1, ephemeral === true ? 1 : 0);
+      assert.equal(title.startsWith("[read once] "), ephemeral === true);
+      assert.equal(title.split("[read once]").length - 1, ephemeral === true ? 1 : 0);
     }
     const write = makeWriteOverride(dir);
     const writeCall = write.renderCall(

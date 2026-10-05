@@ -22,11 +22,12 @@ import {
 import type { AgentToolUpdateCallback } from "@earendil-works/pi-agent-core";
 import { Text } from "@earendil-works/pi-tui";
 import { Type, type Static } from "typebox";
-import { ephemeralReadDetails } from "./read-retention.ts";
+import { ephemeralParameter, ephemeralReadDetails } from "./result-retention.ts";
+import { EPHEMERAL_TOOL_GUIDELINE } from "./tool-prompts.ts";
 import { scanTextLines } from "./text-stream.ts";
 import { createAnchorFormatter, displayCarriageReturns, parseHashline } from "./anchor-format.ts";
 import { canonicalPath } from "./path.ts";
-import { renderToolError } from "./render.ts";
+import { formatEphemeralLabel, renderToolError } from "./render.ts";
 import { POSITIVE_SAFE_INTEGER } from "./schema.ts";
 import { throwIfCancelled } from "./error-text.ts";
 import { formatKiB } from "./budgets.ts";
@@ -38,12 +39,12 @@ type ReadDetails = ReadToolDetails & {
   nativeRead?: true;
 } & Partial<ReturnType<typeof ephemeralReadDetails>>;
 
-/** Append call metadata before Pi's Text component wraps the native title. */
+/** Prefix call metadata before Pi's Text component wraps the native title. */
 class ReadCallText extends Text {
   retentionLabel = "";
 
   override setText(text: string): void {
-    super.setText(text + this.retentionLabel);
+    super.setText(this.retentionLabel + text);
   }
 }
 
@@ -143,12 +144,7 @@ export function makeReadOverride(cwd: string, config: HashlineEditConfig) {
           description: `Maximum lines to read (default ${defaultLimit}).`,
         }),
       ),
-      ephemeral: Type.Optional(
-        Type.Boolean({
-          description:
-            "When true, keep this result in model context for one successful response, including a response that calls tools, then replace it with a read receipt. Omitted or false keeps normal retention. Failed, cancelled, or output-limit responses keep it for retry. The file and session history remain intact.",
-        }),
-      ),
+      ephemeral: ephemeralParameter,
     },
     { additionalProperties: false },
   );
@@ -162,7 +158,7 @@ export function makeReadOverride(cwd: string, config: HashlineEditConfig) {
     promptGuidelines: [
       "Prefer read over shell output for files you intend to edit.",
       "For large files, pass read offset and limit to read only the relevant section.",
-      "Use ephemeral: true for one-time inspection of logs or large text; retain any needed conclusions in your response before the read body expires.",
+      EPHEMERAL_TOOL_GUIDELINE,
     ],
     parameters,
     renderShell: "default" as const,
@@ -172,7 +168,7 @@ export function makeReadOverride(cwd: string, config: HashlineEditConfig) {
         context.lastComponent instanceof ReadCallText
           ? context.lastComponent
           : new ReadCallText("", 0, 0);
-      call.retentionLabel = args?.ephemeral === true ? theme.fg("dim", " — read once") : "";
+      call.retentionLabel = formatEphemeralLabel(args?.ephemeral, theme);
       return builtin.renderCall!(args, theme, { ...context, lastComponent: call });
     },
 

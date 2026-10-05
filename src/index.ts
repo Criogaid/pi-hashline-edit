@@ -17,7 +17,7 @@ import type { TSchema } from "typebox";
 import { loadConfig } from "./pi/config.ts";
 import { makeEditOverride } from "./pi/edit-tool.ts";
 import { makeReadOverride } from "./pi/read-tool.ts";
-import { registerReadRetention } from "./pi/read-retention.ts";
+import { registerResultRetention } from "./pi/result-retention.ts";
 import { makeGrepOverride } from "./pi/grep-tool.ts";
 import { makeReplaceTool } from "./pi/replace-tool.ts";
 import { makeWriteOverride } from "./pi/write-tool.ts";
@@ -33,7 +33,7 @@ export default function (pi: ExtensionAPI) {
   // `enabled: false` leaves the extension fully inert — pi's built-in
   // read/edit/grep/replace/write stay in place, as if this package were not installed.
   if (config.enabled) {
-    registerReadRetention(pi);
+    registerResultRetention(pi);
     const reportProgress = registerFusionCards(pi);
     const fusion = config.actionFusion
       ? createActionFusionExecutor(undefined, reportProgress)

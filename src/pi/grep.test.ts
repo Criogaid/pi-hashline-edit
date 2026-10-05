@@ -137,12 +137,13 @@ test("configured grep defaults drive descriptions, match limits, and context", a
     assert.match(text(explicit), /configured\.txt · 2 matches\n/);
   }));
 
-test("grep exposes nine parameters and rejects only the six removed fields", async () => {
+test("grep exposes supported parameters and rejects removed fields", async () => {
   await withDir(async (dir) => {
     const fake = fakeBackend();
     const tool = makeGrepOverrideWithBackend(dir, DEFAULT_CONFIG, fake.backend);
     assert.deepEqual(Object.keys(tool.parameters.properties).sort(), [
       "context",
+      "ephemeral",
       "glob",
       "ignoreCase",
       "limit",

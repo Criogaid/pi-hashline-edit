@@ -11,7 +11,9 @@ import { type ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { rgPath as bundledRgPath } from "@vscode/ripgrep";
 import { Type, type Static } from "typebox";
 import { Text } from "@earendil-works/pi-tui";
-import { renderOutputPreview, renderToolError } from "./render.ts";
+import { formatEphemeralLabel, renderOutputPreview, renderToolError } from "./render.ts";
+import { ephemeralParameter, ephemeralGrepDetails } from "./result-retention.ts";
+import { EPHEMERAL_TOOL_GUIDELINE } from "./tool-prompts.ts";
 import { normalizeLineEndings } from "../core/lines.ts";
 import { createAnchorFormatter } from "./anchor-format.ts";
 import { assembleGrepOutput, formatMatches, formatSearchWarnings } from "./grep-output.ts";
@@ -39,6 +41,7 @@ import type { HashlineEditConfig } from "./config.ts";
 function createGrepSchema({ defaultLimit, defaultContext }: HashlineEditConfig["grep"]) {
   return Type.Object(
     {
+      ephemeral: ephemeralParameter,
       pattern: Type.Union(
         [Type.String({ minLength: 1 }), Type.Array(Type.String({ minLength: 1 }), { minItems: 1 })],
         {
@@ -109,7 +112,8 @@ function createGrepSchema({ defaultLimit, defaultContext }: HashlineEditConfig["
   );
 }
 type GrepSchema = ReturnType<typeof createGrepSchema>;
-type GrepTool = ToolDefinition<GrepSchema, { incomplete?: true } | undefined>;
+type GrepDetails = { incomplete?: true } & Partial<ReturnType<typeof ephemeralGrepDetails>>;
+type GrepTool = ToolDefinition<GrepSchema, GrepDetails | undefined>;
 
 /** Build the production grep override (a ToolDefinition fragment for registerTool). */
 export function makeGrepOverride(cwd: string, config: HashlineEditConfig) {
@@ -145,6 +149,7 @@ export function makeGrepOverrideWithBackend(
       "In grep, use a pattern array for alternatives instead of joining them with |, and context:3-5 when searching code to edit.",
       "In grep, use multiline:true for cross-line matches and outputMode files or count when only paths or counts are needed.",
       "Copy grep anchors directly into edit; read the full line before rewriting from a partial preview.",
+      EPHEMERAL_TOOL_GUIDELINE,
     ],
     parameters: grepSchema,
 
@@ -161,6 +166,7 @@ export function makeGrepOverrideWithBackend(
       const rawPath = args?.path;
       const pathText = Array.isArray(rawPath) ? rawPath.join(" ") : String(rawPath ?? ".");
       let text =
+        formatEphemeralLabel(args?.ephemeral, theme) +
         theme.fg("toolTitle", theme.bold("grep ")) +
         theme.fg("accent", `/${patternText}/`) +
         theme.fg("toolOutput", ` in ${pathText}`);
@@ -252,7 +258,7 @@ export function makeGrepOverrideWithBackend(
           throw new Error(`No matches confirmed.${formatSearchWarnings(warnings)}`);
         return {
           content: [{ type: "text" as const, text: "No matches found" }],
-          details: undefined,
+          details: params.ephemeral ? ephemeralGrepDetails(patterns, searchPaths) : undefined,
         };
       }
 
@@ -266,7 +272,7 @@ export function makeGrepOverrideWithBackend(
         warnings,
         searchSnapshots: result.snapshots,
       });
-      return assembleGrepOutput({
+      const output = assembleGrepOutput({
         blocks,
         warnings,
         outputMode,
@@ -274,6 +280,11 @@ export function makeGrepOverrideWithBackend(
         effectiveLimit,
         linesTruncated,
       });
+      if (!params.ephemeral || output.details?.incomplete) return output;
+      return {
+        ...output,
+        details: ephemeralGrepDetails(patterns, searchPaths),
+      };
     },
   } satisfies GrepTool;
 }

@@ -19,6 +19,11 @@ const MAX_COLLAPSED_DIFF_LINES = 24;
 /** Collapsed tool output and errors share a bounded preview. */
 const MAX_COLLAPSED_OUTPUT_LINES = 15;
 
+/** Match Pi's skill label while leaving each tool's title renderer in control. */
+export function formatEphemeralLabel(ephemeral: boolean | undefined, theme: Theme): string {
+  return ephemeral === true ? theme.fg("customMessageLabel", theme.bold("[read once]")) + " " : "";
+}
+
 /**
  * Render a pi-format diff (`+N`/`-N`/` N` content) for the TUI, reusing pi's
  * built-in renderer: semantic diff colors plus intra-line (word-level) change
