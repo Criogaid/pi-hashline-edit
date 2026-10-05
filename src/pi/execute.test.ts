@@ -789,21 +789,29 @@ test("invalid anchors and conflicting fields fail before changing the file", asy
     }
   }));
 
-test("edit execute accepts empty insertion bodies and empty replacements delete the anchored range", async () =>
+test("edit execute rejects empty bodies for every operation and deletes only through delete", async () =>
   withDir(async (dir) => {
     const original = "a\nb\nc\n";
     await writeFile(join(dir, "empty_body.txt"), original);
     const edit = makeEditOverride(dir, DEFAULT_CONFIG);
     const anchor = h(original, 1);
-    for (const op of ["insert_after", "insert_before", "append", "prepend"] as const) {
-      const editOp =
-        op === "append" || op === "prepend" ? { op, body: [] } : { op, anchor, body: [] };
-      await call(edit, { path: "empty_body.txt", edits: [editOp] });
+    const empties = [
+      { op: "insert_after", anchor, body: [] },
+      { op: "insert_before", anchor, body: [] },
+      { op: "append", body: [] },
+      { op: "prepend", body: [] },
+      { op: "replace", anchor, end: h(original, 2), body: [] },
+    ];
+    for (const operation of empties) {
+      await assert.rejects(
+        call(edit, { path: "empty_body.txt", edits: [operation] }),
+        /edits\[0\]\.body: is empty/,
+      );
       assert.equal(await readFile(join(dir, "empty_body.txt"), "utf8"), original);
     }
     const result = await call(edit, {
       path: "empty_body.txt",
-      edits: [{ op: "replace", anchor, end: h(original, 2), body: [] }],
+      edits: [{ op: "delete", anchor, end: h(original, 2) }],
     });
     assert.equal(await readFile(join(dir, "empty_body.txt"), "utf8"), "c\n");
     assert.match(result.content[0].text, /1#[0-9A-Z]+│c/);
