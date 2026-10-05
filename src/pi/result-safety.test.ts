@@ -53,8 +53,7 @@ function assertFailureByteBudgets(message: string): void {
   assert.ok(
     Buffer.byteLength(
       message.slice(checksAt + 1, neighborhoodsAt < 0 ? guidanceAt : neighborhoodsAt),
-    ) <=
-      MAX_BLOCK_BYTES,
+    ) <= MAX_BLOCK_BYTES,
   );
   if (neighborhoodsAt >= 0) {
     const rows = message.slice(neighborhoodsAt, guidanceAt).match(/^\d+#[0-9A-Z]+│.*$/gm) ?? [];
