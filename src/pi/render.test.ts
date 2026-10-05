@@ -66,23 +66,53 @@ test("mutation headers refresh in place and retain isolated per-call counts", ()
   }
 });
 
-test("edit call titles show structured batches and tolerate invalid partial input", () => {
+test("edit call titles count each operation type and refresh with partial input", () => {
   initTheme("dark");
   const tool = makeEditOverride(process.cwd(), DEFAULT_CONFIG);
   const edits = [
-    { op: "replace" as const, anchor: "1#AB", body: ["new"] },
-    { op: "append" as const, body: ["more"] },
+    { op: "replace", anchor: "1#AB", body: ["new"] },
+    { op: "append", body: ["more"] },
+    { op: "replace", anchor: "3#CD", body: ["changed"] },
+    { op: "delete", anchor: "5#EF" },
+    { op: "insert_before", anchor: "7#GH", body: ["before"] },
+    { op: "insert_after", anchor: "9#JK", body: ["after"] },
+    { op: "prepend", body: ["first"] },
   ];
-  const render = (value: unknown) =>
-    tool
-      .renderCall({ path: "f.txt", edits: value } as Parameters<typeof tool.renderCall>[0], theme, {
-        state: {},
-      } as Parameters<typeof tool.renderCall>[2])
-      .render(120)
-      .join("\n");
-  assert.match(render(edits), /2 ops: replace/);
-  assert.doesNotMatch(render(JSON.stringify(edits)), /ops:/);
-  assert.doesNotMatch(render("[{bad"), /ops:/);
+  let header: ReturnType<typeof tool.renderCall> | undefined;
+  const context = { state: {} } as Parameters<typeof tool.renderCall>[2];
+  const render = (value: unknown) => {
+    header = tool.renderCall(
+      // Streaming arguments reach the renderer before schema validation.
+      { path: "f.txt", edits: value } as Parameters<typeof tool.renderCall>[0],
+      theme,
+      { ...context, lastComponent: header },
+    );
+    return header.render(240).join("\n");
+  };
+  assert.match(render([edits[0], {}]), /unknown ×1/);
+  const mixed = render(edits);
+  assert.match(mixed, /7 ops:/);
+  for (const [kind, count] of [
+    ["replace", 2],
+    ["delete", 1],
+    ["insert_before", 1],
+    ["insert_after", 1],
+    ["append", 1],
+    ["prepend", 1],
+  ]) {
+    assert.ok(mixed.includes(`${kind} ×${count}`), mixed);
+  }
+  assert.doesNotMatch(mixed, /unknown/);
+  const single = render([edits[0]]);
+  assert.match(single, /1 op: replace ×1/);
+  assert.doesNotMatch(single, /append|delete|insert_before|insert_after|prepend/);
+  assert.match(
+    render([null, { op: "rep" }, { op: "__proto__" }, { op: { toString: null } }]),
+    /4 ops: unknown ×4/,
+  );
+  for (const invalid of [[], undefined, JSON.stringify(edits), "[{bad"]) {
+    assert.doesNotMatch(render(invalid), /ops?:/);
+  }
 });
 
 test("mutation card owns stale-anchor notices without internal status", () => {

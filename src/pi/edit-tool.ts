@@ -249,15 +249,33 @@ function formatUpdatedAnchors(
   );
 }
 
-/** Call-header line: `edit path — N ops: op`, plus `+N -N` once the result's diff counts are known. */
+/** Call header with total/per-kind operation counts and the result's diff counts. */
 function editHeader(args: EditParams, theme: Theme, counts?: DiffCounts): string {
   let t = theme.fg("toolTitle", theme.bold("edit "));
   t += theme.fg("accent", args.path);
   const edits = Array.isArray(args.edits) ? args.edits : [];
   const n = edits.length;
   if (n) {
-    const kind = typeof edits[0]?.op === "string" ? edits[0].op : "unknown";
-    t += theme.fg("dim", ` — ${n} op${n > 1 ? "s" : ""}: ${kind}`);
+    const opCounts: Record<EditOpInput["op"] | "unknown", number> = {
+      replace: 0,
+      delete: 0,
+      insert_before: 0,
+      insert_after: 0,
+      append: 0,
+      prepend: 0,
+      unknown: 0,
+    };
+    // Renderers receive partial arguments; fixed buckets keep one-pass counting O(1) in space.
+    for (const edit of edits) {
+      const kind = edit?.op;
+      if (typeof kind === "string" && Object.hasOwn(opCounts, kind)) opCounts[kind]++;
+      else opCounts.unknown++;
+    }
+    const summary = Object.entries(opCounts)
+      .filter(([, count]) => count > 0)
+      .map(([kind, count]) => `${kind} ×${count}`)
+      .join(", ");
+    t += theme.fg("dim", ` — ${n} op${n > 1 ? "s" : ""}: ${summary}`);
   }
   if (counts && (counts.added || counts.removed)) t += formatDiffCounts(counts, theme);
   return t;

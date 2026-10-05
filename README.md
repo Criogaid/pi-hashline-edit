@@ -87,6 +87,8 @@ Every `body` holds at least one line; `[""]` is a single blank line. Remove line
 
 All operations in a batch use the same snapshot. Validation failure rejects the whole batch. Unknown fields, conflicting fields, and overlapping operations are rejected; some touching operations also conflict and need separate calls with fresh anchors. For insertion, **do not repeat the anchor line in `body`**. `edit` uses structured operations, not `oldText`/`newText` pairs.
 
+The TUI edit header shows the total operation count and counts by type, for example `4 ops: replace ×2, delete ×1, append ×1`. During argument streaming, incomplete or unrecognized operation types count as `unknown`; the counts refresh as arguments change.
+
 For multi-operation batches that reach snapshot verification, rejected edits report each supplied anchor's status: `matched` or `mismatched`. Schema-invalid inputs fail before reading the file and have no anchor-status table. Single-operation edits omit the summary table and report the failure directly. Entries identify the zero-based operation index, `anchor` or `end`, and the cited token. The bounded list reports omitted entries explicitly. These statuses do not establish range/overlap validity, semantic intent, publication, command success, or validity on a later retry.
 
 When an anchor no longer matches, `edit` looks for where the line went. Recovery only reports; it never edits or retries by itself:
