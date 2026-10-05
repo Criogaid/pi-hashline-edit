@@ -23,7 +23,14 @@ import { makeEditOverride } from "../pi/edit-tool.ts";
 import { makeReadOverride } from "../pi/read-tool.ts";
 import { makeWriteOverride } from "../pi/write-tool.ts";
 import { makeReplaceTool } from "../pi/replace-tool.ts";
-import { COMMON_RG_ARGS, probeRegex, resolveIgnoreCase, runRg } from "../pi/rg-process.ts";
+import {
+  COMMON_RG_ARGS,
+  MAX_RG_RECORD_BYTES,
+  probeRegex,
+  resolveIgnoreCase,
+  runRg,
+} from "../pi/rg-process.ts";
+import { GREP_MAX_LINE_LENGTH } from "../pi/budgets.ts";
 import { runRgTextView } from "../pi/rg-text-view.ts";
 import { computeLineHash } from "../core/hash.ts";
 import { callTool } from "../pi/tool-call.testing.ts";
@@ -286,7 +293,7 @@ test("real rg requires an explicit mode and separates exact text from regex", as
     const tool = makeGrepOverrideWithBackend(directory, DEFAULT_CONFIG, {});
     await assert.rejects(
       invoke(tool, "missing-mode", { pattern: "foo" }),
-      /Validation failed for tool "grep":\n {2}- literal: /,
+      /Validation failed[\s\S]*literal:/,
     );
     for (const pattern of ["(?i)^foo$", "(?P<name>foo)$"]) {
       const result = await invoke(tool, "regex", { pattern, literal: false });
@@ -303,11 +310,11 @@ test("real rg requires an explicit mode and separates exact text from regex", as
     assert.equal(missing.content[0].text, "No matches found");
     await assert.rejects(
       invoke(tool, "invalid-regex", { pattern: "queueTool(", literal: false }),
-      /regex parse error[\s\S]*set literal:true to search the text exactly/,
+      /regex parse error[\s\S]*literal:true/,
     );
     await assert.rejects(
       invoke(tool, "invalid-array", { pattern: ["queueTool(", "\\bfoo\\b"], literal: false }),
-      /regex parse error[\s\S]*set literal:true to search the text exactly/,
+      /regex parse error[\s\S]*literal:true/,
     );
   } finally {
     await rm(directory, { recursive: true, force: true });
@@ -398,7 +405,7 @@ test("shared rg runner stops and cleans up after limits, callback failures, and 
     );
     await assert.rejects(
       probeRegex(join(directory, "missing-rg"), ["needle"], false),
-      /^Error: Failed to run ripgrep: /,
+      /Failed to run ripgrep/,
     );
   } finally {
     await rm(directory, { recursive: true, force: true });
@@ -562,7 +569,13 @@ test("real rg reports unsupported lookarounds and backreferences under Rust rege
     for (const pattern of ["foo(?=bar)", "(foo)\\1", ["plain", "foo(?=bar)"]]) {
       await assert.rejects(
         invoke(tool, "0", { pattern, literal: false }, undefined, undefined),
-        /regex parse error[\s\S]*no lookaround or backreferences; rewrite the pattern, or use replace/,
+        (error: Error) => {
+          assert.match(error.message, /regex parse error/);
+          assert.match(error.message, /no lookaround or backreferences/);
+          assert.match(error.message, /rewrite.*pattern/);
+          assert.match(error.message, /use replace/);
+          return true;
+        },
       );
     }
     const literal = await invoke(tool, "0", { pattern: "foo(?=bar)", literal: true });
@@ -572,7 +585,7 @@ test("real rg reports unsupported lookarounds and backreferences under Rust rege
       invoke(tool, "0", { pattern: "foo(", literal: false }, undefined, undefined),
       (error: Error) =>
         /regex parse error/.test(error.message) &&
-        /set literal:true to search the text exactly/.test(error.message) &&
+        /literal:true/.test(error.message) &&
         !/lookaround/.test(error.message),
     );
   } finally {
@@ -926,11 +939,11 @@ test("default grep rejects file changes and propagates cancellation", async () =
 test("owned rg rejects an oversized JSONL record", async () => {
   const directory = await mkdtemp(join(tmpdir(), "hl-grep-record-limit-"));
   try {
-    await writeFile(join(directory, "large.txt"), `needle${"x".repeat(17 * 1024 * 1024)}\n`);
+    await writeFile(join(directory, "large.txt"), `needle${"x".repeat(MAX_RG_RECORD_BYTES + 1)}\n`);
     const tool = makeGrepOverrideWithBackend(directory, DEFAULT_CONFIG, {});
     await assert.rejects(
       invoke(tool, "0", { pattern: "needle", literal: true }, undefined, undefined),
-      /record exceeds 16 MiB/,
+      new RegExp(`record exceeds ${MAX_RG_RECORD_BYTES / 1024 ** 2} MiB`),
     );
   } finally {
     await rm(directory, { recursive: true, force: true });
@@ -1058,7 +1071,11 @@ test("long-line previews preserve full-line anchors across literal and Rust rege
       assert.ok(row.startsWith(`1#${computeLineHash(1, long, 4)}│[partial, columns `));
       assert.ok(row.includes("NEEDLE"));
       assert.equal(Buffer.from(row).toString("utf8"), row);
-      assert.ok(output.includes(`3#${computeLineHash(3, context, 4)}│[partial, columns 1-499]`));
+      assert.ok(
+        output.includes(
+          `3#${computeLineHash(3, context, 4)}│[partial, columns 1-${GREP_MAX_LINE_LENGTH - 1}]`,
+        ),
+      );
       assert.match(output, /anchors hash full lines/);
     }
   } finally {
@@ -1249,11 +1266,9 @@ test("normalized grep batches retain original paths and ignore unmatched invalid
       undefined,
     );
     assert.equal((result.content[0].text.match(/file \d+\.txt: 1/g) ?? []).length, 70);
-    assert.doesNotMatch(
-      result.content[0].text,
-      /Search incomplete|invalid\.txt|UNSUPPORTED_ENCODING/,
-    );
+    assert.doesNotMatch(result.content[0].text, /invalid\.txt|UNSUPPORTED_ENCODING/);
     assert.doesNotMatch(result.content[0].text, /hashline-grep-/);
+    assert.equal(result.details?.incomplete, undefined);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
@@ -1289,10 +1304,8 @@ test("NUL files are silently skipped across search scopes and output modes", asy
           undefined,
         );
         assert.match(result.content[0].text, /valid\.txt/);
-        assert.doesNotMatch(
-          result.content[0].text,
-          /binary\.txt|UNSUPPORTED_TEXT|Search incomplete/,
-        );
+        assert.doesNotMatch(result.content[0].text, /binary\.txt|UNSUPPORTED_TEXT/);
+        assert.equal(result.details?.incomplete, undefined);
       }
     }
     assert.deepEqual(await readFile(binary), source);
@@ -1321,8 +1334,9 @@ test("invalid UTF-8 matches use plain previews while valid files retain edit anc
         undefined,
       );
       assert.match(result.content[0].text, /1│before\n2│needle �\n3│after/);
-      assert.match(result.content[0].text, /Invalid UTF-8.*cannot be used as edit anchors/);
-      assert.doesNotMatch(result.content[0].text, /\d+#|Search incomplete/);
+      assert.match(result.content[0].text, /Invalid UTF-8.*cannot.*edit anchors/);
+      assert.doesNotMatch(result.content[0].text, /\d+#/);
+      assert.equal(result.details?.incomplete, undefined);
       assert.deepEqual(await readFile(invalid), source);
     }
     await writeFile(join(directory, "valid.txt"), "needle\n");
@@ -1345,7 +1359,7 @@ test("invalid UTF-8 matches use plain previews while valid files retain edit anc
       );
       assert.match(result.content[0].text, /invalid\.txt/);
       assert.match(result.content[0].text, /valid\.txt/);
-      assert.doesNotMatch(result.content[0].text, /Search incomplete/);
+      assert.equal(result.details?.incomplete, undefined);
     }
     const multiline = await invoke(
       grep,

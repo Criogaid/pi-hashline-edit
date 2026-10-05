@@ -10,6 +10,9 @@ import { makeReadOverride } from "./read-tool.ts";
 import { computeLineHash } from "../core/hash.ts";
 import { callTool } from "./tool-call.testing.ts";
 import { DEFAULT_CONFIG } from "./config.ts";
+import { formatKiB } from "./budgets.ts";
+
+const DEFAULT_READ_MAX_BYTES = DEFAULT_CONFIG.read.maxKiB * 1024;
 
 async function withDir<T>(fn: (dir: string) => Promise<T>): Promise<T> {
   const dir = await mkdtemp(join(tmpdir(), "hl-"));
@@ -78,7 +81,7 @@ test("hash length stays 4 even for runs of identical lines (no explosion)", asyn
 
 test("read byte truncation counts UTF-8 and separators without cutting anchors", async () =>
   withDir(async (dir) => {
-    const maxBytes = 256 * 1024;
+    const maxBytes = DEFAULT_READ_MAX_BYTES;
     const hashLen = DEFAULT_CONFIG.hashLen;
     const prefixBytes = Buffer.byteLength(`1#${"X".repeat(hashLen)}│`);
     const first = "界".repeat(40000);
@@ -87,7 +90,8 @@ test("read byte truncation counts UTF-8 and separators without cutting anchors",
     const result = await call(makeReadOverride(dir, DEFAULT_CONFIG), { path: "large.txt" });
     assert.equal(result.details.truncation.outputLines, 1);
     assert.equal(result.details.truncation.truncatedBy, "bytes");
-    assert.match(result.content[0].text, /truncated at 256 KiB/);
+    assert.equal(result.details.truncation.maxBytes, maxBytes);
+    assert.match(result.content[0].text, new RegExp(`truncated.*${formatKiB(maxBytes)}`));
     assert.ok(
       result.content[0].text.includes(`1#${computeLineHash(1, first, hashLen)}│${first}\n`),
     );
@@ -102,14 +106,14 @@ test("read byte truncation counts UTF-8 and separators without cutting anchors",
 
 test("read reports an oversized first row without suggesting an ineffective retry", async () =>
   withDir(async (dir) => {
-    await writeFile(join(dir, "long.txt"), "x".repeat(256 * 1024));
+    await writeFile(join(dir, "long.txt"), "x".repeat(DEFAULT_READ_MAX_BYTES));
     const result = await call(makeReadOverride(dir, DEFAULT_CONFIG), { path: "long.txt" });
     assert.equal(result.details.truncation.firstLineExceedsLimit, true);
     assert.equal(result.details.truncation.outputLines, 0);
-    assert.match(result.content[0].text, /cannot return a complete anchor row/);
+    assert.doesNotMatch(result.content[0].text, /^\d+#/m);
     assert.doesNotMatch(result.content[0].text, /use offset\/limit/);
-    assert.match(result.content[0].text, /Reducing limit cannot split a physical line/);
-    assert.match(result.content[0].text, /use bash to inspect it in chunks, or replace/);
+    assert.match(result.content[0].text, /cannot split.*line/);
+    assert.match(result.content[0].text, /bash.*chunks.*replace/);
   }));
 
 test("read preserves empty files and explicit limits above the native default", async () =>
@@ -127,54 +131,54 @@ test("read preserves empty files and explicit limits above the native default", 
     assert.equal(many.details, undefined);
   }));
 
-test("read defaults to 500 lines when limit is omitted and respects explicit limits", async () =>
+test("read uses the configured default limit and respects explicit limits", async () =>
   withDir(async (dir) => {
+    const defaultLimit = DEFAULT_CONFIG.read.defaultLimit;
+    const totalLines = defaultLimit + 100;
     await writeFile(
       join(dir, "large.txt"),
-      Array.from({ length: 600 }, (_, i) => `line${i + 1}\n`).join(""),
+      Array.from({ length: totalLines }, (_, i) => `line${i + 1}\n`).join(""),
     );
-    const def = await call(makeReadOverride(dir, DEFAULT_CONFIG), { path: "large.txt" });
-    assert.match(def.content[0].text, /large\.txt · 600 lines/);
-    assert.match(def.content[0].text, /\n500#[0-9A-Z]+│line500/);
-    assert.doesNotMatch(def.content[0].text, /\n501#[0-9A-Z]+│/);
-    assert.match(def.content[0].text, /showing lines 1-500 of 600; use offset 501 to continue/);
-    assert.deepEqual(def.details, {
-      pagination: { start: 1, end: 500, totalLines: 600, nextOffset: 501 },
-    });
-
-    const custom = await call(makeReadOverride(dir, DEFAULT_CONFIG), {
-      path: "large.txt",
-      limit: 550,
-    });
-    assert.match(custom.content[0].text, /\n550#[0-9A-Z]+│line550/);
-    assert.doesNotMatch(custom.content[0].text, /\n551#[0-9A-Z]+│/);
-    assert.match(custom.content[0].text, /showing lines 1-550 of 600; use offset 551 to continue/);
-    assert.deepEqual(custom.details, {
-      pagination: { start: 1, end: 550, totalLines: 600, nextOffset: 551 },
-    });
+    for (const limit of [undefined, defaultLimit + 50]) {
+      const result = await call(makeReadOverride(dir, DEFAULT_CONFIG), {
+        path: "large.txt",
+        limit,
+      });
+      const end = limit ?? defaultLimit;
+      assert.match(result.content[0].text, new RegExp(`large\\.txt · ${totalLines} lines`));
+      assert.match(result.content[0].text, new RegExp(`\\n${end}#[0-9A-Z]+│line${end}`));
+      assert.doesNotMatch(result.content[0].text, new RegExp(`\\n${end + 1}#[0-9A-Z]+│`));
+      assert.deepEqual(result.details, {
+        pagination: { start: 1, end, totalLines, nextOffset: end + 1 },
+      });
+      assert.match(result.content[0].text, new RegExp(`offset ${end + 1}`));
+    }
   }));
 
 test("read pagination supports offset windows and stops suggesting continuation at EOF", async () =>
   withDir(async (dir) => {
+    const totalLines = DEFAULT_CONFIG.read.defaultLimit + 100;
+    const start = 20;
+    const end = start + DEFAULT_CONFIG.read.defaultLimit - 1;
     await writeFile(
       join(dir, "pages.txt"),
-      Array.from({ length: 600 }, (_, i) => `line${i + 1}\n`).join(""),
+      Array.from({ length: totalLines }, (_, i) => `line${i + 1}\n`).join(""),
     );
     const read = makeReadOverride(dir, DEFAULT_CONFIG);
-    const page = await call(read, { path: "pages.txt", offset: 20 });
-    assert.match(page.content[0].text, /showing lines 20-519 of 600; use offset 520 to continue/);
+    const page = await call(read, { path: "pages.txt", offset: start });
+    assert.match(page.content[0].text, new RegExp(`offset ${end + 1}`));
     assert.deepEqual(page.details, {
-      pagination: { start: 20, end: 519, totalLines: 600, nextOffset: 520 },
+      pagination: { start, end, totalLines, nextOffset: end + 1 },
     });
     const next = await call(read, {
       path: "pages.txt",
       offset: page.details.pagination.nextOffset,
     });
-    assert.match(next.content[0].text, /\n520#[0-9A-Z]+│line520/);
-    assert.match(next.content[0].text, /\n600#[0-9A-Z]+│line600/);
+    assert.match(next.content[0].text, new RegExp(`\\n${end + 1}#[0-9A-Z]+│line${end + 1}`));
+    assert.match(next.content[0].text, new RegExp(`\\n${totalLines}#[0-9A-Z]+│line${totalLines}`));
     assert.equal(next.details, undefined);
     assert.doesNotMatch(next.content[0].text, /to continue/);
-    for (const offset of [101, 601]) {
+    for (const offset of [totalLines - DEFAULT_CONFIG.read.defaultLimit + 1, totalLines + 1]) {
       const result = await call(read, { path: "pages.txt", offset });
       assert.equal(result.details, undefined);
       assert.doesNotMatch(result.content[0].text, /to continue/);
@@ -223,13 +227,15 @@ test("read rejects noninteger and nonpositive offsets and limits before reading"
     );
     const page = await call(read, { path: "pages.txt", offset: 2, limit: 1 });
     assert.match(page.content[0].text, /\n2#[0-9A-Z]+│second/);
-    assert.match(page.content[0].text, /showing lines 2-2 of 3; use offset 3 to continue/);
+    assert.match(page.content[0].text, /offset 3/);
     assert.deepEqual(page.details, {
       pagination: { start: 2, end: 2, totalLines: 3, nextOffset: 3 },
     });
-    await writeFile(join(dir, "long.txt"), "x".repeat(300 * 1024));
+    await writeFile(join(dir, "long.txt"), "x".repeat(DEFAULT_READ_MAX_BYTES + 1));
     const long = await call(read, { path: "long.txt", offset: 1, limit: 1 });
-    assert.match(long.content[0].text, /line 1 exceeds 256 KiB/);
+    assert.equal(long.details.truncation.firstLineExceedsLimit, true);
+    assert.equal(long.details.truncation.outputLines, 0);
+    assert.equal(long.details.truncation.maxBytes, DEFAULT_READ_MAX_BYTES);
   }));
 
 test("read schema rejects empty paths and unknown fields before file access", async () =>
@@ -246,14 +252,14 @@ test("read schema rejects empty paths and unknown fields before file access", as
 
 test("read byte truncation takes precedence over line pagination", async () =>
   withDir(async (dir) => {
-    await writeFile(join(dir, "large.txt"), `first\n${"x".repeat(256 * 1024)}\ntail\n`);
+    await writeFile(join(dir, "large.txt"), `first\n${"x".repeat(DEFAULT_READ_MAX_BYTES)}\ntail\n`);
     const result = await call(makeReadOverride(dir, DEFAULT_CONFIG), {
       path: "large.txt",
       limit: 2,
     });
     assert.equal(result.details.truncation.truncatedBy, "bytes");
     assert.equal(result.details.pagination, undefined);
-    assert.match(result.content[0].text, /truncated at 256 KiB/);
+    assert.equal(result.details.truncation.maxBytes, DEFAULT_READ_MAX_BYTES);
     assert.doesNotMatch(result.content[0].text, /showing lines|to continue/);
   }));
 

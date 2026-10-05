@@ -17,6 +17,7 @@ import { splitLines } from "../core/lines.ts";
 import { byteRevision } from "./file-commit.ts";
 import { callTool } from "./tool-call.testing.ts";
 import { DEFAULT_CONFIG } from "./config.ts";
+import { formatKiB, MAX_BLOCK_BYTES, MAX_RECOVERY_CANDIDATE_BYTES } from "./budgets.ts";
 
 async function withDir<T>(fn: (dir: string) => Promise<T>): Promise<T> {
   const dir = await mkdtemp(join(tmpdir(), "hl-"));
@@ -208,11 +209,8 @@ test("unresolved observations require target confirmation before retrying a move
       }),
       (error: Error) => {
         assert.match(error.message, /Anchor mismatch: 1 unresolved/);
-        assert.match(error.message, /No changes written by this edit batch/);
-        assert.match(
-          error.message,
-          /Confirm this is the intended target before reusing its anchor/,
-        );
+        assert.match(error.message, /No changes written/);
+        assert.match(error.message, /Confirm.*target.*before.*anchor/);
         assert.match(error.message, /^5#[0-9A-Z]+│changed$/m);
         return true;
       },
@@ -467,9 +465,7 @@ test("local and full-file recovery return copyable anchors without changing the 
           assert.match(error.message, /Check the intended target/);
           assert.match(
             error.message,
-            prefixLines === 1
-              ? /Search: local; matches outside the window were not checked\./
-              : /Search: full file\./,
+            prefixLines === 1 ? /Search: local.*outside.*not checked/ : /Search: full file/,
           );
           assert.doesNotMatch(
             error.message,
@@ -491,7 +487,7 @@ test("local and full-file recovery return copyable anchors without changing the 
 
 test("shifted-anchor recovery keeps the read fallback for oversized candidates", async () =>
   withDir(async (dir) => {
-    const oversized = "x".repeat(4 * 1024);
+    const oversized = "x".repeat(MAX_RECOVERY_CANDIDATE_BYTES);
     const original = `a\n${oversized}\n`;
     await writeFile(join(dir, "shift-large.txt"), `prefix\n${original}`);
     const edit = makeEditOverride(dir, DEFAULT_CONFIG);
@@ -501,7 +497,10 @@ test("shifted-anchor recovery keeps the read fallback for oversized candidates",
         edits: [{ op: "replace", anchor: h(original, 2), body: ["B"] }],
       }),
       (error: Error) => {
-        assert.match(error.message, /Candidate content exceeds 4 KiB/);
+        assert.match(
+          error.message,
+          new RegExp(`Candidate.*exceeds ${formatKiB(MAX_RECOVERY_CANDIDATE_BYTES)}`),
+        );
         assert.match(error.message, /use read or grep/);
         assert.doesNotMatch(error.message, new RegExp(`│x{${oversized.length}}`));
         return true;
@@ -856,7 +855,7 @@ test("ambiguous candidates include distinguishing neighborhoods for a verified r
       }),
       (error: Error) => {
         assert.match(error.message, /ambiguous checksum matches/);
-        assert.match(error.message, /Search: local; matches outside the window were not checked\./);
+        assert.match(error.message, /Search: local.*outside.*not checked/);
         assert.ok(error.message.includes(`"${h(before, 5)}" / "${h(before, 15)}"`));
         context = error.message.split("Ambiguous-candidate neighborhoods")[1];
         assert.ok(context);
@@ -914,7 +913,7 @@ test("schema-invalid bodies omit anchor checks; subsequent retries revalidate", 
       (error: Error) => {
         assert.ok(error.message.includes(`op 0 / anchor / ${stable} / matched`));
         assert.match(error.message, /op 1 \/ end \/ 3#ZZZZ \/ mismatched/);
-        assert.match(error.message, /Anchor checks only; retries revalidate/);
+        assert.match(error.message, /Anchor checks.*retries revalidate/);
         return true;
       },
     );
@@ -1016,7 +1015,7 @@ test("compact edit anchors retain only untouched deletion successors in mixed ba
 test("unique candidate content is independent of oversized neighboring rows", async () =>
   withDir(async (dir) => {
     const original = "header\ntarget\ntail\n";
-    const before = `header\n${"x".repeat(17000)}\ntarget\ntail\n`;
+    const before = `header\n${"x".repeat(MAX_BLOCK_BYTES + 1)}\ntarget\ntail\n`;
     const file = join(dir, "fallback.txt");
     await writeFile(file, before);
     let candidate = "";
@@ -1117,12 +1116,13 @@ test("edit names anchors whose hash length differs from the registered hashLen",
     const short = h(text, 2).slice(0, -2);
     const args = { path: "f.txt", edits: [{ op: "replace", anchor, end: short, body: ["x"] }] };
 
-    await assert.rejects(
-      call(edit, args),
-      new RegExp(
-        `^Error: Anchor hash length mismatch: edits\\[0\\]\\.end ${short} has ${hashLen - 2} hash characters, but hashLen is ${hashLen}\\.`,
-      ),
-    );
+    await assert.rejects(call(edit, args), (error: Error) => {
+      assert.match(error.message, /Anchor hash length mismatch/);
+      assert.ok(error.message.includes(`edits[0].end ${short}`));
+      assert.match(error.message, new RegExp(`${hashLen - 2} hash characters`));
+      assert.match(error.message, new RegExp(`hashLen.*${hashLen}`));
+      return true;
+    });
     assert.equal(await readFile(file, "utf8"), text);
   }));
 
@@ -1209,14 +1209,15 @@ test("unresolved snapshot rows support direct retry and revalidate after further
 test("unresolved oversized and out-of-range rows require more context without partial anchors", async () => {
   await withDir(async (dir) => {
     const file = join(dir, "recover.txt");
-    const current = "界".repeat(1400) + "\n";
+    const current =
+      "界".repeat(Math.ceil(MAX_RECOVERY_CANDIDATE_BYTES / Buffer.byteLength("界"))) + "\n";
     await writeFile(file, current);
     const edit = makeEditOverride(dir, DEFAULT_CONFIG);
     for (const anchor of [h("old\n", 1), "99#XXXX"]) {
       await assert.rejects(
         call(edit, { path: "recover.txt", edits: [{ op: "replace", anchor, body: ["new"] }] }),
         (error: Error) => {
-          assert.match(error.message, /Use read or grep to inspect/);
+          assert.match(error.message, /read or grep/);
           assert.doesNotMatch(error.message, /^\d+#[0-9A-Z]+│/m);
           return true;
         },

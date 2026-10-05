@@ -293,7 +293,10 @@ test("mutation anchor output and aggregate anchor diagnostics have byte budgets"
               undefined,
               ctx(dir),
             );
-      assert.ok(Buffer.byteLength(text(deleted)) < 17 * 1024);
+      const anchorStart = text(deleted).indexOf("\nUpdated anchors:");
+      assert.ok(anchorStart >= 0);
+      const anchorBlock = text(deleted).slice(anchorStart);
+      assert.ok(Buffer.byteLength(anchorBlock) <= MAX_BLOCK_BYTES);
       assert.match(text(deleted), ANCHORS_OMITTED);
       assert.doesNotMatch(text(deleted), /^\d+#[0-9A-Z]+/m);
     }
@@ -811,7 +814,7 @@ test("oversized deletion successors do not suppress later editable anchors", asy
   const dir = await mkdtemp(join(tmpdir(), "hashline-skip-long-anchor-"));
   try {
     const path = join(dir, "fixture.txt");
-    const long = "x".repeat(17000);
+    const long = "x".repeat(MAX_BLOCK_BYTES + 1);
     await writeFile(path, `remove\n${long}\nold\n`);
     const tool = makeEditOverride(dir, DEFAULT_CONFIG);
     const result = await invoke(

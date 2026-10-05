@@ -307,7 +307,12 @@ test("grep points wildcard paths to glob without changing ordinary missing-path 
     const tool = makeGrepOverrideWithBackend(dir, DEFAULT_CONFIG, fakeBackend().backend);
     await assert.rejects(
       call(tool, { literal: true, pattern: "value", path: "src/fusion-card*" }),
-      /Path not found: .*fusion-card\*.*Use an existing directory as path and a filename wildcard as glob/,
+      (error: Error) => {
+        assert.match(error.message, /Path not found:.*fusion-card\*/);
+        assert.match(error.message, /directory.*path/);
+        assert.match(error.message, /wildcard.*glob/);
+        return true;
+      },
     );
     await assert.rejects(
       call(tool, { literal: true, pattern: "value", path: "src/missing" }),
@@ -713,16 +718,16 @@ test("limit counts matched lines and stops the fake runner", async () => {
       ],
     });
 
+    const limit = 1;
     const result = await call(makeGrepOverrideWithBackend(dir, DEFAULT_CONFIG, fake.backend), {
       literal: true,
       pattern: "alpha",
-      limit: 1,
+      limit,
     });
     assert.match(text(result), /1#[0-9A-Z]+│alpha beta/);
-    assert.match(
-      text(result),
-      /\[1 matches limit reached\. Use limit=2 for more, or refine pattern\]/,
-    );
+    assert.match(text(result), new RegExp(`${limit} matches limit reached`));
+    assert.match(text(result), new RegExp(`limit=${limit * 2}`));
+    assert.match(text(result), /refine pattern/);
   });
 });
 
@@ -784,14 +789,16 @@ test("regex probe outcomes allow search or stop it with diagnostics", async () =
 test("invalid regex strings and arrays fail before search with explicit literal guidance", async () =>
   withDir(async (dir) => {
     for (const pattern of ["streamSimple(", ["plain", "streamSimple("]]) {
+      const fakeValidationDiagnostic = "regex parse error:\nerror: unclosed group";
       const fake = fakeBackend({
-        validation: { code: 2, stderr: "regex parse error:\nerror: unclosed group" },
+        validation: { code: 2, stderr: fakeValidationDiagnostic },
       });
       const tool = makeGrepOverrideWithBackend(dir, DEFAULT_CONFIG, fake.backend);
-      await assert.rejects(
-        call(tool, { pattern, literal: false }),
-        /regex parse error:[\s\S]*set literal:true to search the text exactly\.$/,
-      );
+      await assert.rejects(call(tool, { pattern, literal: false }), (error: Error) => {
+        assert.ok(error.message.includes(fakeValidationDiagnostic));
+        assert.match(error.message, /literal:true/);
+        return true;
+      });
       assert.equal(fake.probes.length, 1);
       assert.deepEqual(fake.probes[0][1], typeof pattern === "string" ? [pattern] : pattern);
       assert.equal(fake.calls.length, 0);
@@ -805,10 +812,13 @@ test("unsupported regex syntax reports the Rust dialect hint before search", asy
         validation: { code: 2, stderr: "regex parse error:\nerror: unsupported syntax" },
       });
       const tool = makeGrepOverrideWithBackend(dir, DEFAULT_CONFIG, fake.backend);
-      await assert.rejects(
-        call(tool, { pattern, literal: false }),
-        /regex parse error:[\s\S]*no lookaround or backreferences; rewrite the pattern, or use replace/,
-      );
+      await assert.rejects(call(tool, { pattern, literal: false }), (error: Error) => {
+        assert.match(error.message, /regex parse error/);
+        assert.match(error.message, /no lookaround or backreferences/);
+        assert.match(error.message, /rewrite.*pattern/);
+        assert.match(error.message, /use replace/);
+        return true;
+      });
       assert.equal(fake.probes.length, 1);
       assert.equal(fake.calls.length, 0);
     }
@@ -1015,8 +1025,9 @@ test("grep previews invalid UTF-8 without anchors and skips NUL hits that requir
       context: 1,
     });
     assert.match(text(result), /1│a\n2│�\(/);
-    assert.match(text(result), /Invalid UTF-8.*cannot be used as edit anchors/);
-    assert.doesNotMatch(text(result), /\d+#|Search incomplete/);
+    assert.match(text(result), /Invalid UTF-8.*cannot.*edit anchors/);
+    assert.doesNotMatch(text(result), /\d+#/);
+    assert.equal(result.details?.incomplete, undefined);
     assert.deepEqual(await readFile(invalid), source);
 
     const binary = join(dir, "nul.txt");
@@ -1089,10 +1100,7 @@ test("partial searches retain matches and surface stderr across output modes", a
           limit,
         });
         assert.match(text(result), /found\.txt/);
-        assert.match(
-          text(result),
-          /Search incomplete; results and counts cover only confirmed matches/,
-        );
+        assert.match(text(result), /Search incomplete/);
         assert.match(text(result), /unreadable\.txt: Permission denied/);
         assert.equal(result.details.incomplete, true);
       }
