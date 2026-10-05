@@ -789,31 +789,94 @@ test("invalid anchors and conflicting fields fail before changing the file", asy
     }
   }));
 
-test("edit execute rejects empty bodies for every operation and deletes only through delete", async () =>
+test("edit rejects empty bodies before file access for arrays and Pi-converted objects", async () =>
   withDir(async (dir) => {
     const original = "a\nb\nc\n";
-    await writeFile(join(dir, "empty_body.txt"), original);
+    const file = join(dir, "empty_body.txt");
+    await writeFile(file, original);
     const edit = makeEditOverride(dir, DEFAULT_CONFIG);
     const anchor = h(original, 1);
-    const empties = [
+    for (const operation of [
       { op: "insert_after", anchor, body: [] },
       { op: "insert_before", anchor, body: [] },
       { op: "append", body: [] },
       { op: "prepend", body: [] },
       { op: "replace", anchor, end: h(original, 2), body: [] },
-    ];
-    for (const operation of empties) {
-      await assert.rejects(
-        call(edit, { path: "empty_body.txt", edits: [operation] }),
-        /edits\[0\]\.body: is empty/,
-      );
-      assert.equal(await readFile(join(dir, "empty_body.txt"), "utf8"), original);
+    ]) {
+      for (const path of [file, join(dir, "missing.txt")]) {
+        for (const edits of [[operation], operation]) {
+          await assert.rejects(call(edit, { path, edits }), /edits\[0\]\.body: is empty/);
+          assert.equal(await readFile(file, "utf8"), original);
+        }
+      }
     }
-    const result = await call(edit, {
-      path: "empty_body.txt",
-      edits: [{ op: "delete", anchor, end: h(original, 2) }],
+  }));
+
+test("mixed empty-body batches name every rejected edit without publishing or running commands", async () =>
+  withDir(async (dir) => {
+    const file = join(dir, "batch.txt");
+    const original = "a\nb\nc\nd\ne\n";
+    await writeFile(file, original);
+    let commandRuns = 0;
+    const fusion = createActionFusionExecutor(async () => {
+      commandRuns++;
+      return "ran";
     });
-    assert.equal(await readFile(join(dir, "empty_body.txt"), "utf8"), "c\n");
+    const edit = makeEditOverride(dir, DEFAULT_CONFIG, fusion);
+    await assert.rejects(
+      callTool(
+        edit,
+        {
+          path: file,
+          edits: [
+            { op: "replace", anchor: h(original, 1), body: ["must not be written"] },
+            { op: "insert_before", anchor: h(original, 3), body: [] },
+            { op: "append", body: ["must not be written"] },
+            { op: "replace", anchor: h(original, 4), body: [] },
+          ],
+          then_run: { command: "must-not-run" },
+        },
+        { ctx: { cwd: dir } },
+      ),
+      (error: Error) => {
+        assert.match(error.message, /edits\[1\]\.body:.*\[""\]/);
+        assert.match(error.message, /edits\[3\]\.body:.*delete/);
+        return true;
+      },
+    );
+    assert.equal(await readFile(file, "utf8"), original);
+    assert.equal(commandRuns, 0);
+  }));
+
+test("blank edit bodies preserve a real blank line for every body-bearing operation", async () =>
+  withDir(async (dir) => {
+    const file = join(dir, "blank_line.txt");
+    const original = "a\nb\nc\n";
+    const anchor = h(original, 1);
+    const edit = makeEditOverride(dir, DEFAULT_CONFIG);
+    for (const [operation, expected] of [
+      [{ op: "replace", anchor, body: [""] }, "\nb\nc\n"],
+      [{ op: "insert_before", anchor, body: [""] }, "\na\nb\nc\n"],
+      [{ op: "insert_after", anchor, body: [""] }, "a\n\nb\nc\n"],
+      [{ op: "append", body: [""] }, "a\nb\nc\n\n"],
+      [{ op: "prepend", body: [""] }, "\na\nb\nc\n"],
+    ] as const) {
+      await writeFile(file, original);
+      await call(edit, { path: file, edits: [operation] });
+      assert.equal(await readFile(file, "utf8"), expected);
+    }
+  }));
+
+test("explicit delete removes an inclusive range and returns its successor anchor", async () =>
+  withDir(async (dir) => {
+    const original = "a\nb\nc\n";
+    const file = join(dir, "delete_range.txt");
+    await writeFile(file, original);
+    const result = await call(makeEditOverride(dir, DEFAULT_CONFIG), {
+      path: file,
+      edits: [{ op: "delete", anchor: h(original, 1), end: h(original, 2) }],
+    });
+    assert.equal(await readFile(file, "utf8"), "c\n");
     assert.match(result.content[0].text, /1#[0-9A-Z]+│c/);
   }));
 
