@@ -727,37 +727,43 @@ test("mutation anchors retain a deletion successor but omit stable rows and dele
   try {
     for (const name of ["edit", "replace"]) {
       for (const atEnd of [false, true]) {
-        const path = join(dir, `${name}.txt`);
-        const lines = atEnd ? ["a", "c", "remove"] : ["a", "remove", "c", "d"];
-        await writeFile(path, lines.join("\n") + "\n");
-        const line = atEnd ? 3 : 2;
-        const result =
-          name === "edit"
-            ? await invoke(
-                makeEditOverride(dir, DEFAULT_CONFIG),
-                name,
-                {
-                  path,
-                  edits: [
-                    { op: "delete", anchor: `${line}#${computeLineHash(line, "remove", 4)}` },
-                  ],
-                },
-                undefined,
-                undefined,
-                ctx(dir),
-              )
-            : await invoke(
-                makeReplaceTool(dir, DEFAULT_CONFIG),
-                name,
-                { path, replacements: [{ find: "remove\n", replace: "" }] },
-                undefined,
-                undefined,
-                ctx(dir),
-              );
-        const rows = text(result)
-          .split("\n")
-          .filter((row) => /^\d+#/.test(row));
-        assert.deepEqual(rows, atEnd ? [] : [`2#${computeLineHash(2, "c", 4)}│c`]);
+        for (const ending of ["\n", "\r\n"]) {
+          const path = join(dir, `${name}.txt`);
+          const lines = atEnd ? ["a", "c", "remove"] : ["a", "remove", "c", "d"];
+          await writeFile(path, lines.join(ending) + ending);
+          const line = atEnd ? 3 : 2;
+          const result =
+            name === "edit"
+              ? await invoke(
+                  makeEditOverride(dir, DEFAULT_CONFIG),
+                  name,
+                  {
+                    path,
+                    edits: [
+                      { op: "delete", anchor: `${line}#${computeLineHash(line, "remove", 4)}` },
+                    ],
+                  },
+                  undefined,
+                  undefined,
+                  ctx(dir),
+                )
+              : await invoke(
+                  makeReplaceTool(dir, DEFAULT_CONFIG),
+                  name,
+                  { path, replacements: [{ find: "remove\n", replace: "" }] },
+                  undefined,
+                  undefined,
+                  ctx(dir),
+                );
+          const rows = text(result)
+            .split("\n")
+            .filter((row) => /^\d+#/.test(row));
+          assert.deepEqual(rows, atEnd ? [] : [`2#${computeLineHash(2, "c", 4)}│c`]);
+          assert.deepEqual(
+            await readFile(path),
+            Buffer.from(lines.filter((_, index) => index !== line - 1).join(ending) + ending),
+          );
+        }
       }
     }
   } finally {

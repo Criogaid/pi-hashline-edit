@@ -507,31 +507,37 @@ test("grep rejects changed context even when the matched line stays the same", a
 test("grep in a subdirectory returns a path that edits the matching file", async () => {
   await withDir(async (dir) => {
     await mkdir(join(dir, "src"));
-    const original = "export const status = 1;\n";
+    const original = "export const status = 1;\nexport const context = 1;\n";
     const rootFile = join(dir, "status.ts");
     const matchedFile = join(dir, "src", "status.ts");
     await writeFile(rootFile, original);
     await writeFile(matchedFile, original);
-    const fake = fakeBackend({ lines: [rgMatch(matchedFile, 1, original)] });
+    const fake = fakeBackend({ lines: [rgMatch(matchedFile, 1, original.split("\n")[0])] });
     const result = await call(makeGrepOverrideWithBackend(dir, DEFAULT_CONFIG, fake.backend), {
       literal: true,
       pattern: "status",
       path: "src",
+      context: 1,
     });
     const output = text(result);
     const displayPath = output.split(" · ")[0];
+    const contextAnchor = /^(2#[0-9A-Z]+)│/m.exec(output)?.[1];
+    assert.ok(contextAnchor);
     const edit: any = makeEditOverride(dir, DEFAULT_CONFIG);
     await call(edit, {
       path: displayPath,
       edits: [
         {
           op: "replace",
-          anchor: `1#${computeLineHash(1, original.trimEnd(), 4)}`,
-          body: ["export const status = 2;"],
+          anchor: contextAnchor,
+          body: ["export const context = 2;"],
         },
       ],
     });
-    assert.equal(await readFile(matchedFile, "utf-8"), "export const status = 2;\n");
+    assert.equal(
+      await readFile(matchedFile, "utf-8"),
+      "export const status = 1;\nexport const context = 2;\n",
+    );
     assert.equal(await readFile(rootFile, "utf-8"), original);
   });
 });

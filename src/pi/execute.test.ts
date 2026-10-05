@@ -886,6 +886,12 @@ test("failed commands preserve mutation results and stay out of all main card re
       const { result, rendered } = await run();
       assert.equal("isError" in result, false);
       assert.equal(result.details.actionFusion?.command, "failed");
+      assert.equal(result.details.actionFusion?.publication, "PUBLISHED");
+      if (path !== "write.txt") {
+        const mutation = result.content[0];
+        assert.ok(mutation.type === "text");
+        assert.match(mutation.text, /^\d+#[0-9A-Z]+/m);
+      }
       const last = result.content.at(-1);
       assert.ok(last?.type === "text");
       assert.match(last.text, /then_run:failed[\s\S]*command-only diagnostic/);
@@ -992,18 +998,21 @@ test("edit rejects unwritable body lines before reading a missing target", async
 test("edit preserves a UTF-8 BOM and reports bound mutation revisions", async () =>
   withDir(async (dir) => {
     const target = join(dir, "bom.txt");
-    const original = Buffer.from("\ufeffguard\nold\n", "utf8");
-    await writeFile(target, original);
-    const result: any = await call(makeEditOverride(dir, DEFAULT_CONFIG), {
-      path: "bom.txt",
-      edits: [{ op: "replace", anchor: h("\ufeffguard\nold\n", 2), body: ["new"] }],
-    });
-    const expected = Buffer.from("\ufeffguard\nnew\n", "utf8");
-    assert.deepEqual(await readFile(target), expected);
-    assert.equal(result.details.baseRevision, byteRevision(original));
-    assert.equal(result.details.publishedRevision, byteRevision(expected));
-    assert.equal(result.details.observedRevision, result.details.publishedRevision);
-    assert.equal("revision" in result.details, false);
+    const source = "\ufeffguard\nold\n";
+    const original = Buffer.from(source, "utf8");
+    for (const line of [1, 2]) {
+      await writeFile(target, original);
+      const result = await call(makeEditOverride(dir, DEFAULT_CONFIG), {
+        path: "bom.txt",
+        edits: [{ op: "replace", anchor: h(source, line), body: ["new"] }],
+      });
+      const expected = Buffer.from(line === 1 ? "\ufeffnew\nold\n" : "\ufeffguard\nnew\n", "utf8");
+      assert.deepEqual(await readFile(target), expected);
+      assert.equal(result.details.baseRevision, byteRevision(original));
+      assert.equal(result.details.publishedRevision, byteRevision(expected));
+      assert.equal(result.details.observedRevision, result.details.publishedRevision);
+      assert.equal("revision" in result.details, false);
+    }
   }));
 
 test("edit and replace reject NUL arguments without rewriting source bytes", async () =>
