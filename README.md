@@ -83,7 +83,7 @@ Valid UTF-8 text inspection and matching uses one logical representation: CRLF b
 | `insert_before` / `insert_after` | `anchor`, `body` | — | Insert beside the anchor; keep the anchor line. |
 | `prepend` / `append` | `body` | — | Insert at the start/end; no anchors. |
 
-Every `body` holds at least one line; `[""]` is a single blank line. Remove lines with `delete`. An empty `body: []` is rejected for every operation before the file is read, and the error names the edit.
+Every `body` holds at least one line; `[""]` is a single blank line. Remove lines with `delete`. An empty `body: []` is rejected for every operation before the file is read; one error names every such edit.
 
 All operations in a batch use the same snapshot. Validation failure rejects the whole batch. Unknown fields, conflicting fields, and overlapping operations are rejected; some touching operations also conflict and need separate calls with fresh anchors. For insertion, **do not repeat the anchor line in `body`**. `edit` uses structured operations, not `oldText`/`newText` pairs.
 

@@ -50,12 +50,12 @@ import { formatFailure } from "./failure-context.ts";
 import { formatMutationAnchors } from "./mutation-result.ts";
 import {
   executeMutation,
-  MUTATION_TOOL_GUIDELINE,
   runTextMutation,
   type ActionFusionExecutor,
   type MutationTarget,
   type TextMutationDetails,
 } from "./mutation-runner.ts";
+import { MUTATION_TOOL_GUIDELINE } from "./tool-prompts.ts";
 type EditDetails = TextMutationDetails;
 type EditRenderContext = Parameters<NonNullable<ToolDefinition<EditSchema>["renderCall"]>>[2];
 
@@ -150,22 +150,27 @@ type EditOpInput = Static<EditSchema>["edits"][number];
  * lines that cannot be written as UTF-8, anchor line numbers beyond the safe-integer
  * range, and names anchors whose hash length differs from `hashLen` (the schema would
  * report only a bare pattern mismatch). Empty bodies are named here for the same reason:
- * the op union would report only that no variant matched. Malformed shapes are left to
- * the schema. Arguments are never changed.
+ * the op union would report only that no variant matched. Every empty body and every
+ * hash-length mismatch is reported in one error. A single edit object is checked as
+ * `edits[0]`, the one-element array Pi's validation converts it to afterwards.
+ * Malformed shapes are left to the schema. Arguments are never changed.
  */
 function checkEditArguments(args: unknown, hashLen: number): void {
-  const edits = (args as { edits?: unknown } | null)?.edits;
-  if (!Array.isArray(edits)) return;
+  const raw = (args as { edits?: unknown } | null)?.edits;
+  const edits = Array.isArray(raw) ? raw : raw !== null && typeof raw === "object" ? [raw] : [];
+  const emptyBodies: string[] = [];
   const mismatches: string[] = [];
   edits.forEach((op, index) => {
     const body = (op as Record<string, unknown> | null)?.body;
     if (Array.isArray(body)) {
       if (body.length === 0) {
-        throw invalidArgument(
-          `edits[${index}].body`,
-          (op as Record<string, unknown>).op === "replace"
-            ? 'is empty; use {"op":"delete"} to remove lines, or supply the replacement lines.'
-            : 'is empty; remove this edit or supply at least one line ([""] for a blank line).',
+        emptyBodies.push(
+          invalidArgument(
+            `edits[${index}].body`,
+            (op as Record<string, unknown>).op === "replace"
+              ? 'is empty; use {"op":"delete"} to remove lines, or supply the replacement lines.'
+              : 'is empty; remove this edit or supply at least one line ([""] for a blank line).',
+          ).message,
         );
       }
       body.forEach((line, lineIndex) => {
@@ -190,11 +195,13 @@ function checkEditArguments(args: unknown, hashLen: number): void {
       }
     }
   });
+  const problems = [...emptyBodies];
   if (mismatches.length) {
-    throw new Error(
+    problems.push(
       `Anchor hash length mismatch: ${mismatches.join("; ")}, but hashLen is ${hashLen}. Anchors from a different hashLen setting cannot be verified; read or grep the file for current anchors.`,
     );
   }
+  if (problems.length) throw new Error(problems.join("\n"));
 }
 
 /** Translate validated public operations into core edits, parsing numeric anchor positions. */
