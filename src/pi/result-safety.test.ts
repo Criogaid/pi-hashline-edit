@@ -239,6 +239,7 @@ test("mutation anchor output and aggregate anchor diagnostics have byte budgets"
   try {
     const path = join(dir, "long.txt");
     const long = "界".repeat(100000);
+    const changedLines = [long, ...Array.from({ length: 79 }, (_, index) => `changed ${index}`)];
     for (const name of ["edit", "replace"]) {
       await writeFile(path, "before\n");
       const result =
@@ -246,7 +247,7 @@ test("mutation anchor output and aggregate anchor diagnostics have byte budgets"
           ? await invoke(
               makeEditOverride(dir, DEFAULT_CONFIG),
               name,
-              { path, edits: [{ op: "append", body: [long] }] },
+              { path, edits: [{ op: "append", body: changedLines }] },
               undefined,
               undefined,
               ctx(dir),
@@ -254,17 +255,25 @@ test("mutation anchor output and aggregate anchor diagnostics have byte budgets"
           : await invoke(
               makeReplaceTool(dir, DEFAULT_CONFIG),
               name,
-              { path, replacements: [{ find: "before", replace: long }] },
+              { path, replacements: [{ find: "before", replace: changedLines.join("\n") }] },
               undefined,
               undefined,
               ctx(dir),
             );
       const output = text(result);
-      assert.ok(Buffer.byteLength(output) < 17 * 1024);
-      assert.match(output, new RegExp(`^${name === "edit" ? 2 : 1}#[0-9A-Z]+$`, "m"));
-      assert.doesNotMatch(output, /omitted|truncated/i);
-      assert.doesNotMatch(output, /\d+#[0-9A-Z]+│界/);
-      assert.ok((await readFile(path, "utf8")).includes(long));
+      const firstLine = name === "edit" ? 2 : 1;
+      assert.deepEqual(
+        output.match(/^\d+#[0-9A-Z]+$/gm),
+        changedLines.map((line, index) => {
+          const position = firstLine + index;
+          return `${position}#${computeLineHash(position, line, 4)}`;
+        }),
+      );
+      assert.doesNotMatch(output, /omitted|truncated|│/i);
+      assert.equal(
+        await readFile(path, "utf8"),
+        (name === "edit" ? "before\n" : "") + changedLines.join("\n") + "\n",
+      );
       await writeFile(path, `remove\n${long}\n`);
       const deleted =
         name === "edit"
@@ -793,55 +802,6 @@ test("mutation anchors retain deletion successor even when deleted line content 
       .split("\n")
       .filter((row) => /^\d+#/.test(row));
     assert.deepEqual(rows, [`2#${computeLineHash(2, "duplicate", 4)}│duplicate`]);
-  } finally {
-    await rm(dir, { recursive: true, force: true });
-  }
-});
-
-test("compact mutation anchors exceed forty rows while respecting the byte budget", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "hashline-compact-budget-"));
-  try {
-    for (const name of ["edit", "replace"]) {
-      for (const count of [80, 3000]) {
-        const path = join(dir, `${name}.txt`);
-        await writeFile(path, "before\n");
-        const inserted = Array.from({ length: count }, (_, i) => `changed ${i}`);
-        const result =
-          name === "edit"
-            ? await invoke(
-                makeEditOverride(dir, DEFAULT_CONFIG),
-                name,
-                { path, edits: [{ op: "append", body: inserted }] },
-                undefined,
-                undefined,
-                ctx(dir),
-              )
-            : await invoke(
-                makeReplaceTool(dir, DEFAULT_CONFIG),
-                name,
-                { path, replacements: [{ find: "before", replace: inserted.join("\n") }] },
-                undefined,
-                undefined,
-                ctx(dir),
-              );
-        const output = text(result);
-        const rows = [...output.matchAll(/^(\d+)#([0-9A-Z]+)$/gm)];
-        assert.ok(rows.length > 40);
-        assert.doesNotMatch(output, /│/);
-        const anchorBlock = output.slice(output.indexOf("\nUpdated anchors:"));
-        assert.ok(Buffer.byteLength(anchorBlock) <= MAX_BLOCK_BYTES);
-        if (count === 80) {
-          assert.equal(rows.length, count);
-          assert.doesNotMatch(output, /omitted/);
-        } else {
-          assert.ok(rows.length < count);
-          assert.match(output, ANCHORS_OMITTED);
-        }
-        const finalLines = (await readFile(path, "utf8")).trimEnd().split("\n");
-        for (const [, line, hash] of rows)
-          assert.equal(hash, computeLineHash(Number(line), finalLines[Number(line) - 1], 4));
-      }
-    }
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

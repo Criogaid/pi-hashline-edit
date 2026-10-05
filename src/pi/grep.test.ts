@@ -25,6 +25,7 @@ type FakeOptions = {
   code?: number | null;
   stderr?: string;
   validation?: Awaited<ReturnType<GrepBackend["probeRegex"]>>;
+  resolvedIgnoreCase?: boolean;
   error?: Error;
   onRun?: () => void;
   paths?: string[];
@@ -46,19 +47,10 @@ function rgMatch(filePath: string, lineNumber: number, text: string): string {
   });
 }
 
-function fakeSmartCase(patterns: readonly string[]): boolean {
-  return patterns.every((pattern) => {
-    const syntaxStripped = pattern
-      .replace(/\\[pP]\{[^}]*\}/g, "")
-      .replace(/\\[A-Z]/g, "")
-      .replace(/\(\?P<[^>]*>/g, "");
-    return syntaxStripped === syntaxStripped.toLowerCase();
-  });
-}
-
 function fakeBackend(options: FakeOptions = {}) {
   const calls: { path: string; request: SearchRequest }[] = [];
   const probes: Parameters<GrepBackend["probeRegex"]>[] = [];
+  const caseProbes: Parameters<GrepBackend["resolveIgnoreCase"]>[] = [];
   const backend: GrepBackend = {
     async search(path, request, _signal, onLine) {
       calls.push({ path, request });
@@ -80,15 +72,16 @@ function fakeBackend(options: FakeOptions = {}) {
       }
       return { code: options.paths?.length ? 0 : 1, stderr: "", stopped: false };
     },
-    async resolveIgnoreCase(_path, patterns, _modes, explicit) {
-      return explicit ?? fakeSmartCase(patterns);
+    async resolveIgnoreCase(...args) {
+      caseProbes.push(args);
+      return args[3] ?? options.resolvedIgnoreCase ?? true;
     },
     async probeRegex(...args) {
       probes.push(args);
       return { code: 1, stderr: "", ...options.validation };
     },
   };
-  return { backend, calls, probes };
+  return { backend, calls, probes, caseProbes };
 }
 
 const text = (result: any): string => result.content[0].text;
@@ -579,6 +572,7 @@ test("passes output flags and formats files and counts", async () => {
     const fake = fakeBackend({
       lines: [rgMatch(a, 1, "Foo a.b\n"), rgMatch(b, 1, "foo a.b\n")],
       paths: [a, b],
+      resolvedIgnoreCase: false,
     });
 
     const files = await call(makeGrepOverrideWithBackend(dir, DEFAULT_CONFIG, fake.backend), {
@@ -760,21 +754,30 @@ test("literal grep searches regex punctuation exactly without a regex probe", as
     assert.ok(fake.calls[0].request.matcher.includes("foo(0)"));
   }));
 
-test("regex grep accepts successful and no-match probe exit codes before searching", async () =>
+test("regex probe outcomes allow search or stop it with diagnostics", async () =>
   withDir(async (dir) => {
     const file = join(dir, "regex.txt");
     await writeFile(file, "foo0\n");
-    for (const code of [0, 1]) {
-      const fake = fakeBackend({
-        lines: [rgMatch(file, 1, "foo0\n")],
-        validation: { code, stderr: "" },
-      });
+    for (const validation of [
+      { code: 0, stderr: "" },
+      { code: 1, stderr: "" },
+      { code: 2, stderr: "Permission denied" },
+      { code: 3, stderr: "" },
+    ]) {
+      const fake = fakeBackend({ lines: [rgMatch(file, 1, "foo0\n")], validation });
       const tool = makeGrepOverrideWithBackend(dir, DEFAULT_CONFIG, fake.backend);
-      const result = await call(tool, { pattern: "foo(0)", literal: false });
-      assert.match(text(result), /1#[0-9A-Z]+│foo0/);
+      const result = call(tool, { pattern: "foo(0)", literal: false });
+      if (validation.code <= 1) {
+        assert.match(text(await result), /1#[0-9A-Z]+│foo0/);
+        assert.equal(fake.calls.length, 1);
+        assert.ok(!fake.calls[0].request.matcher.includes("--fixed-strings"));
+      } else {
+        await assert.rejects(result, {
+          message: validation.stderr || `ripgrep exited with code ${validation.code}`,
+        });
+        assert.equal(fake.calls.length, 0);
+      }
       assert.deepEqual(fake.probes, [[rgPath, ["foo(0)"], false, undefined]]);
-      assert.equal(fake.calls.length, 1);
-      assert.ok(!fake.calls[0].request.matcher.includes("--fixed-strings"));
     }
   }));
 
@@ -811,55 +814,41 @@ test("unsupported regex syntax reports the Rust dialect hint before search", asy
     }
   }));
 
-test("regex probe failures retain diagnostics and never search", async () =>
-  withDir(async (dir) => {
-    for (const [validation, message] of [
-      [{ code: 2, stderr: "Permission denied" }, "Permission denied"],
-      [{ code: 3, stderr: "" }, "ripgrep exited with code 3"],
-    ] as const) {
-      const fake = fakeBackend({ validation });
-      const tool = makeGrepOverrideWithBackend(dir, DEFAULT_CONFIG, fake.backend);
-      await assert.rejects(call(tool, { pattern: "value.*", literal: false }), { message });
-      assert.equal(fake.probes.length, 1);
-      assert.equal(fake.calls.length, 0);
-    }
-  }));
-
-test("uses smart-case across the entire OR pattern array", async () => {
+test("grep forwards whole queries and applies resolved case mode to searches", async () => {
   await withDir(async (dir) => {
     const target = join(dir, "case.ts");
     await writeFile(target, "FOO alpha\n");
-
-    const lower = fakeBackend({ lines: [rgMatch(target, 1, "FOO alpha\n")] });
-    const lowerResult = await call(
-      makeGrepOverrideWithBackend(dir, DEFAULT_CONFIG, lower.backend),
-      { literal: true, pattern: ["foo", "alpha"] },
-    );
-    assert.match(text(lowerResult), /FOO alpha/);
-
-    const mixed = fakeBackend();
-    const mixedResult = await call(
-      makeGrepOverrideWithBackend(dir, DEFAULT_CONFIG, mixed.backend),
-      { literal: true, pattern: ["Foo", "alpha"] },
-    );
-    assert.equal(text(mixedResult), "No matches found");
-
-    const flags = fakeBackend();
-    const tool = makeGrepOverrideWithBackend(dir, DEFAULT_CONFIG, flags.backend);
-    await call(tool, { literal: true, pattern: "lower" });
-    await call(tool, { literal: true, pattern: "Upper" });
-    await call(tool, { pattern: "foo\\S*", literal: false });
-    assert.deepEqual(
-      flags.calls.map(({ request }) => [
-        request.matcher.includes("--ignore-case"),
-        request.matcher.includes("--case-sensitive"),
-      ]),
-      [
-        [true, false],
-        [false, true],
-        [true, false],
-      ],
-    );
+    for (const [pattern, literal, resolvedIgnoreCase] of [
+      [["foo", "alpha"], true, true],
+      [["Foo", "alpha"], true, false],
+      ["lower", true, true],
+      ["Upper", true, false],
+      ["foo\\S*", false, true],
+    ] as const) {
+      const fake = fakeBackend({
+        resolvedIgnoreCase,
+        lines: resolvedIgnoreCase ? [rgMatch(target, 1, "FOO alpha\n")] : [],
+      });
+      const result = await call(makeGrepOverrideWithBackend(dir, DEFAULT_CONFIG, fake.backend), {
+        pattern,
+        literal,
+      });
+      assert.deepEqual(fake.caseProbes, [
+        [
+          rgPath,
+          typeof pattern === "string" ? [pattern] : pattern,
+          { literal, multiline: false },
+          undefined,
+          undefined,
+        ],
+      ]);
+      assert.equal(fake.calls.length, 1);
+      const matcher = fake.calls[0].request.matcher;
+      assert.equal(matcher.includes("--ignore-case"), resolvedIgnoreCase);
+      assert.equal(matcher.includes("--case-sensitive"), !resolvedIgnoreCase);
+      if (resolvedIgnoreCase) assert.match(text(result), /FOO alpha/);
+      else assert.equal(text(result), "No matches found");
+    }
   });
 });
 

@@ -13,65 +13,46 @@ test("explicit case settings bypass the smart-case probe", async () => {
   assert.equal(await resolveIgnoreCase("rg", ["foo"], modes, false, undefined, run), false);
 });
 
-test("standard smart-case probe distinguishes its sensor from user matches", async () => {
-  const calls: { args: readonly string[]; input: Buffer }[] = [];
-  const insensitive: RunText = async (_path, args, input) => {
-    calls.push({ args, input });
-    return { code: 0, stdout: "a\n\n", stderr: "" };
-  };
-  assert.equal(
-    await resolveIgnoreCase("rg", ["(a)|Foo"], lineModes, undefined, undefined, insensitive),
-    true,
-  );
-  assert.deepEqual(calls[0].input, Buffer.from("a\n"));
-  assert.ok(calls[0].args.includes("--smart-case"));
-  assert.ok(calls[0].args.includes("--no-config"));
-  assert.ok(calls[0].args.includes("--no-multiline"));
-
-  const sensitive: RunText = async () => ({ code: 0, stdout: "\n", stderr: "" });
-  assert.equal(
-    await resolveIgnoreCase("rg", ["(a)|Foo"], lineModes, undefined, undefined, sensitive),
-    false,
-  );
-});
-
-test("literal smart-case escapes user patterns before probing", async () => {
-  let args: readonly string[] = [];
-  const run: RunText = async (_path, received) => {
-    args = received;
-    return { code: 1, stdout: "", stderr: "" };
-  };
-  await resolveIgnoreCase(
-    "rg",
-    ["foo\\S*"],
-    { ...lineModes, literal: true },
-    undefined,
-    undefined,
-    run,
-  );
-  const patterns = args.flatMap((arg, index) => (args[index - 1] === "-e" ? [arg] : []));
-  assert.deepEqual(patterns, ["(\\p{Lu})", "foo\\\\S\\*"]);
-});
-
-test("multiline smart-case probe uses the same mode as matching", async () => {
-  let args: readonly string[] = [];
-  const run: RunText = async (_path, received) => {
-    args = received;
-    return { code: 0, stdout: "a\n\n", stderr: "" };
-  };
-  assert.equal(
-    await resolveIgnoreCase(
-      "rg",
-      ["foo\\nbar"],
-      { literal: false, multiline: true },
-      undefined,
-      undefined,
-      run,
-    ),
-    true,
-  );
-  assert.ok(args.includes("--multiline"));
-  assert.ok(!args.includes("--no-multiline"));
+test("smart-case probes preserve modes and distinguish the sensor from user matches", async () => {
+  for (const { patterns, modes, expectedPatterns } of [
+    { patterns: ["(a)|Foo"], modes: lineModes, expectedPatterns: ["(\\p{Lu})", "(a)|Foo"] },
+    {
+      patterns: ["foo\\S*"],
+      modes: { ...lineModes, literal: true },
+      expectedPatterns: ["(\\p{Lu})", "foo\\\\S\\*"],
+    },
+    {
+      patterns: ["foo\\nbar"],
+      modes: { ...lineModes, multiline: true },
+      expectedPatterns: ["(\\p{Lu})", "foo\\nbar"],
+    },
+  ]) {
+    for (const [code, stdout, expected] of [
+      [0, "a\n\n", true],
+      [0, "\n", false],
+      [1, "", false],
+    ] as const) {
+      let calls = 0;
+      const run: RunText = async (_path, args, input) => {
+        calls++;
+        assert.deepEqual(input, Buffer.from("a\n"));
+        assert.ok(args.includes("--smart-case"));
+        assert.ok(args.includes("--no-config"));
+        assert.equal(args.includes("--multiline"), modes.multiline);
+        assert.equal(args.includes("--no-multiline"), !modes.multiline);
+        assert.deepEqual(
+          args.flatMap((arg, index) => (args[index - 1] === "-e" ? [arg] : [])),
+          expectedPatterns,
+        );
+        return { code, stdout, stderr: "" };
+      };
+      assert.equal(
+        await resolveIgnoreCase("rg", patterns, modes, undefined, undefined, run),
+        expected,
+      );
+      assert.equal(calls, 1);
+    }
+  }
 });
 
 test("smart-case probe propagates parser errors and rejects unknown output", async () => {

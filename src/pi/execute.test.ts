@@ -884,20 +884,25 @@ test("schema-invalid bodies omit anchor checks; subsequent retries revalidate", 
     await writeFile(file, before);
     const edit = makeEditOverride(dir, DEFAULT_CONFIG);
     const stable = h(before, 1);
-    await assert.rejects(
-      call(edit, {
-        path: file,
-        edits: [
-          { op: "replace", anchor: stable, body: ["bad\nline"] },
-          { op: "replace", anchor: "2#XXXX", body: ["B"] },
-        ],
-      }),
-      (error: Error) => {
-        assert.match(error.message, /Validation failed for tool "edit"/);
-        assert.doesNotMatch(error.message, /Input-anchor checks|\/ matched|\/ mismatched/);
-        return true;
-      },
-    );
+    for (const operation of [
+      { op: "replace", anchor: stable, body: ["bad\nline"] },
+      { op: "append", body: ["bad\nline"] },
+    ]) {
+      for (const laterAnchor of [h(before, 2), "2#XXXX"]) {
+        await assert.rejects(
+          call(edit, {
+            path: file,
+            edits: [operation, { op: "replace", anchor: laterAnchor, body: ["B"] }],
+          }),
+          (error: Error) => {
+            assert.match(error.message, /Validation failed for tool "edit"/);
+            assert.doesNotMatch(error.message, /Input-anchor checks|\/ matched|\/ mismatched/);
+            return true;
+          },
+        );
+        assert.equal(await readFile(file, "utf8"), before);
+      }
+    }
     await assert.rejects(
       call(edit, {
         path: file,
@@ -946,30 +951,6 @@ test("single-operation anchor failures omit the redundant Input-anchor checks ta
         return true;
       });
     }
-  }));
-
-test("multi-op schema failures omit anchor checks even when later ops have anchors", async () =>
-  withDir(async (dir) => {
-    const file = join(dir, "batch-append.txt");
-    await writeFile(file, "line1\nline2\n");
-    const edit = makeEditOverride(dir, DEFAULT_CONFIG);
-    const stable = h("line1\nline2\n", 1);
-    // Static body validation occurs before snapshot-based anchor verification.
-    await assert.rejects(
-      call(edit, {
-        path: file,
-        edits: [
-          { op: "append", body: ["bad\nline"] },
-          { op: "replace", anchor: stable, body: ["new"] },
-        ],
-      }),
-      (error: Error) => {
-        assert.match(error.message, /Validation failed for tool "edit"/);
-        assert.doesNotMatch(error.message, /Input-anchor checks/);
-        return true;
-      },
-    );
-    assert.equal(await readFile(file, "utf8"), "line1\nline2\n");
   }));
 
 test("failed batches return more than forty checks and mappings when byte budgets allow", async () =>
