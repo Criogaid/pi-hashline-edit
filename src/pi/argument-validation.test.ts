@@ -112,6 +112,11 @@ for (const scenario of cases) {
         assert.match(error.message, diagnostic);
       }
       assert.doesNotMatch(error.message, /\n  - path:/);
+      assert.doesNotMatch(error.message, /Received arguments:\n/);
+      const echoedArgs = [...error.message.matchAll(/^Received arguments: (.+)$/gm)].map((match) =>
+        JSON.parse(match[1]),
+      );
+      assert.deepEqual(echoedArgs.at(-1), { unexpected: true });
       return true;
     });
     assert.equal(await readFile(path, "utf8"), original);

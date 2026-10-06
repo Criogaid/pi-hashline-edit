@@ -223,8 +223,10 @@ export function registerForgetTool(pi: ExtensionAPI): void {
     renderShell: "default" as const,
     renderCall(args: ForgetParams, theme: Theme) {
       let text =
-        theme.fg("toolTitle", theme.bold("forget ")) +
-        theme.fg("accent", Array.isArray(args?.ids) ? args.ids.join(", ") : "");
+        theme.fg("toolTitle", theme.bold("forget")) +
+        (Array.isArray(args?.ids)
+          ? theme.fg("dim", ` · ${plural(args.ids.length, "result")}`)
+          : "");
       if (typeof args?.note === "string") text += `\n${theme.fg("dim", args.note)}`;
       return new Text(text, 0, 0);
     },
@@ -235,7 +237,8 @@ export function registerForgetTool(pi: ExtensionAPI): void {
         forgotten
           .map(
             ({ id, receipt }) =>
-              theme.fg("dim", "Forgotten · ") + theme.fg("toolOutput", receipt ?? id),
+              (expanded && receipt ? theme.fg("dim", `${id} · `) : "") +
+              theme.fg("toolOutput", receipt ?? id),
           )
           .join("\n"),
         0,

@@ -74,7 +74,7 @@ for (const { name, filename, body, receiptSuffix } of [
     assertForgotten(forgotten, id);
     const receipt = `${join(f.cwd, filename)}${receiptSuffix}`;
     assert.deepEqual(f.rawResult("forget-call").details, { forgotten: [{ id, receipt }] });
-    assert.ok(f.renderForgetResult().includes(`Forgotten · ${receipt}`));
+    assert.ok(f.renderForgetCard().includes(receipt));
   });
 }
 
@@ -109,8 +109,16 @@ test("forget in a mixed tool batch → work continues and unselected results sta
     receipt: `${join(f.cwd, index === 0 ? "build.log" : "test.log")} · lines 1–2`,
   }));
   assert.deepEqual(f.rawResult("forget-call").details, { forgotten: expected });
-  const displayed = f.renderForgetResult();
-  for (const { receipt } of expected) assert.ok(displayed.includes(`Forgotten · ${receipt}`));
+  const displayed = f.renderForgetCard();
+  assert.equal(displayed.split("\n")[0].trimEnd(), `forget · ${expected.length} results`);
+  assert.doesNotMatch(displayed, /Forgotten ·/);
+  const expanded = f.renderForgetCard(true);
+  for (const { id, receipt } of expected) {
+    assert.ok(id);
+    assert.ok(displayed.includes(receipt));
+    assert.ok(!displayed.includes(id));
+    assert.ok(expanded.includes(`${id} · ${receipt}`));
+  }
   assert.ok(!displayed.includes("keep.log"));
   const payload = JSON.stringify(await f.requestPayload(2));
   assert.doesNotMatch(payload, /"forgetReceipt"|"forgotten":/);
@@ -144,7 +152,7 @@ for (const mode of ["pagination", "byte truncation"] as const) {
     assert.ok(id);
     const receipt = `${path} · lines 2–3${mode === "byte truncation" ? " · truncated" : ""}`;
     assert.deepEqual(f.rawResult("forget-call").details, { forgotten: [{ id, receipt }] });
-    assert.ok(f.renderForgetResult().includes(`Forgotten · ${receipt}`));
+    assert.ok(f.renderForgetCard().includes(receipt));
     assertForgotten(toolResult(f.requests[2], "read-log"), id);
     const details = f.rawResult("read-log").details;
     assert.ok(details && typeof details === "object");

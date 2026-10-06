@@ -62,7 +62,7 @@ for (const encoding of ["UTF-8", "invalid UTF-8"] as const) {
     assert.deepEqual(f.rawResult("forget-call").details, {
       forgotten: [{ id, receipt: displayReceipt }],
     });
-    assert.ok(f.renderForgetResult().includes(`Forgotten · ${displayReceipt}`));
+    assert.ok(f.renderForgetCard().includes(displayReceipt));
   });
 }
 
@@ -93,6 +93,6 @@ test("real grep reaches its limit across files → forget card reports the retur
   assert.ok(id);
   const receipt = `grep /needle | backup/ · ${limit} matches in ${paths.length} files · limit reached`;
   assert.deepEqual(f.rawResult("forget-call").details, { forgotten: [{ id, receipt }] });
-  assert.ok(f.renderForgetResult().includes(`Forgotten · ${receipt}`));
+  assert.ok(f.renderForgetCard().includes(receipt));
   assertForgotten(toolResult(f.requests[2], "search"), id);
 });

@@ -22,6 +22,15 @@ export function argumentItems(value: unknown): readonly unknown[] {
   return Array.isArray(value) ? value : value !== null && typeof value === "object" ? [value] : [];
 }
 
+/** Compact Pi's argument echo while preserving its diagnostic text and unknown error formats. */
+function schemaDiagnostic(error: unknown, args: unknown): string {
+  const message = errorMessage(error);
+  const label = "Received arguments:";
+  const suffix = `\n\n${label}\n${JSON.stringify(args, null, 2)}`;
+  if (!message.endsWith(suffix)) return message;
+  return `${message.slice(0, -suffix.length)}\n${label} ${JSON.stringify(args)}`;
+}
+
 export function createArgumentPreparer<T extends TObject>(
   name: string,
   parameters: T,
@@ -67,7 +76,7 @@ export function createArgumentPreparer<T extends TObject>(
           try {
             validate(schema, value);
           } catch (error) {
-            diagnostics.append(`${errorMessage(error)}\n`);
+            diagnostics.append(`${schemaDiagnostic(error, value)}\n`);
           }
         };
         for (const { field, schema } of fieldSchemas) {
@@ -78,7 +87,7 @@ export function createArgumentPreparer<T extends TObject>(
           Object.fromEntries(entries.filter(([key]) => !fields.includes(key))),
         );
       } else {
-        diagnostics.append(errorMessage(schemaFailure));
+        diagnostics.append(schemaDiagnostic(schemaFailure, args));
       }
       diagnostics.append(
         "\nPi limits schema diagnostics within each field; additional errors may remain.\n",

@@ -180,7 +180,8 @@ export async function openForgetSession(t: TestContext) {
     requests,
     sessionManager,
     rawResult,
-    renderForgetResult(id = "forget-call") {
+    renderForgetCard(expanded = false) {
+      const id = "forget-call";
       const tool = session.getToolDefinition("forget");
       assert.ok(tool?.renderResult);
       const call = session.agent.state.messages
@@ -202,19 +203,21 @@ export async function openForgetSession(t: TestContext) {
         executionStarted: true,
         argsComplete: true,
         isPartial: false,
-        expanded: false,
+        expanded,
         showImages: false,
         isError: result.isError,
       };
       initTheme("dark");
-      tool.renderCall?.(call.arguments, theme, context);
+      const header = tool.renderCall?.(call.arguments, theme, context);
       const component = tool.renderResult(
         { ...result, details: result.details },
-        { expanded: false, isPartial: false },
+        { expanded, isPartial: false },
         theme,
         context,
       );
-      return stripVTControlCharacters(component.render(240).join("\n"));
+      return stripVTControlCharacters(
+        [...(header?.render(240) ?? []), ...component.render(240)].join("\n"),
+      );
     },
     async requestPayload(index: number) {
       assert.equal(model.api, "openai-completions");
