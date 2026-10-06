@@ -81,7 +81,7 @@ Argument diagnostics share the 16 KiB block budget in [`budgets.ts`](src/pi/budg
 
 ### Edit operations
 
-`edit` declares a required `path` and a non-empty structured `edits` array. This extension does not normalize alternate formats: stringified JSON and top-level single-op fields are rejected. Pi's own argument validation may convert a single edit object to a one-element array before the extension sees it. Anchors are `"LINE#HASH"` strings whose hash has exactly `hashLen` characters from uppercase Crockford base32 (digits and A–Z except I, L, O, and U). Line numbers are positive safe integers without leading zeroes. Each `body` element is one logical line without CR or LF. An anchor of a different hash length, such as one copied before a `hashLen` change, is rejected before the file is read, and the error names each such anchor.
+`edit` declares a required `path` and a non-empty structured `edits` array. This extension does not normalize alternate formats: stringified JSON and top-level single-op fields are rejected. Pi's own argument validation may convert a single edit object to a one-element array before the extension sees it. Anchors are `"LINE#HASH"` strings whose hash has exactly `hashLen` characters from uppercase Crockford base32 (digits and A–Z except I, L, O, and U). Line numbers are positive safe integers without leading zeroes. Each `body` element is one logical line without CR or LF. An anchor of a different hash length, such as one copied before a `hashLen` change, is rejected before the file is read, and the error names each such anchor. When several anchors have the wrong hash length, the recovery hint appears only with the first one.
 
 | `op` | Required | Optional | Effect |
 | --- | --- | --- | --- |

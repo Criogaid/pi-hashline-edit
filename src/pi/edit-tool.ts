@@ -153,6 +153,7 @@ type EditOpInput = Static<EditSchema>["edits"][number];
 function checkEditArguments(args: unknown, hashLen: number, report: ReportArgumentIssue): void {
   const raw = (args as { edits?: unknown } | null)?.edits;
   const edits = argumentItems(raw);
+  let hashLengthRecoveryHint = " Read or grep the file for current anchors.";
   edits.forEach((op, index) => {
     const body = (op as Record<string, unknown> | null)?.body;
     if (Array.isArray(body)) {
@@ -182,8 +183,9 @@ function checkEditArguments(args: unknown, hashLen: number, report: ReportArgume
       if (token && token.hash.length !== hashLen) {
         report(
           `edits[${index}].${field}`,
-          `Anchor hash length mismatch: ${value} has ${token.hash.length} hash characters, but hashLen is ${hashLen}. Read or grep the file for current anchors.`,
+          `Anchor hash length mismatch: ${value} has ${token.hash.length} hash characters, but hashLen is ${hashLen}.${hashLengthRecoveryHint}`,
         );
+        hashLengthRecoveryHint = "";
       }
     }
   });
