@@ -1,6 +1,5 @@
 import { computeLineHash } from "../core/hash.ts";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
-import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import assert from "node:assert/strict";
 import { mkdtemp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { writeFileSync } from "node:fs";
@@ -20,7 +19,7 @@ import {
   staleTargetNotice,
   type MutationOutcome,
 } from "./mutation-result.ts";
-import { callTool } from "./tool-call.testing.ts";
+import { callTool, createToolContext as ctx } from "./tool-call.testing.ts";
 import { DEFAULT_CONFIG } from "./config.ts";
 import { publishedMutation } from "./mutation-outcome.testing.ts";
 
@@ -33,7 +32,6 @@ const ANCHORS_OMITTED = new RegExp(`additional anchors omitted: ${KIB} limit`);
 
 const text = (result: Pick<AgentToolResult<unknown>, "content">): string =>
   result.content.map((block) => (block.type === "text" ? block.text : "")).join("\n");
-const ctx = (cwd: string) => ({ cwd }) as ExtensionContext;
 
 const invoke = (
   tool: any,
@@ -66,7 +64,7 @@ function assertFailureByteBudgets(message: string): void {
   assert.ok(checks.length > 40 && checks.length < 1000);
 }
 
-test("replace withholds anchors in progress and after commands change or remove the file", async () => {
+test("replace withholds anchors in progress and after commands change or remove the file", async (t) => {
   const dir = await mkdtemp(join(tmpdir(), "hashline-result-"));
   try {
     for (const state of ["changed", "missing", "unknown"] as const) {
@@ -94,7 +92,7 @@ test("replace withholds anchors in progress and after commands change or remove 
           },
           undefined,
           (update: any) => updates.push(update),
-          { cwd: dir } as Parameters<ReturnType<typeof makeReplaceTool>["execute"]>[4],
+          await ctx(dir, t),
         );
         assert.ok(result.details.actionFusion);
         assert.equal(result.details.actionFusion.freshness, state);
@@ -119,7 +117,7 @@ test("replace withholds anchors in progress and after commands change or remove 
   }
 });
 
-test("progress callback failures preserve publication and do not prevent the command", async () => {
+test("progress callback failures preserve publication and do not prevent the command", async (t) => {
   const dir = await mkdtemp(join(tmpdir(), "hashline-progress-"));
   try {
     for (const callback of ["reporter", "update"]) {
@@ -145,7 +143,7 @@ test("progress callback failures preserve publication and do not prevent the com
         },
         undefined,
         callback === "update" ? fail : undefined,
-        { cwd: dir } as Parameters<ReturnType<typeof makeWriteOverride>["execute"]>[4],
+        await ctx(dir, t),
       );
       assert.equal(commands, 1);
       assert.equal(await readFile(path, "utf8"), "saved\n");
@@ -166,7 +164,7 @@ test("progress callback failures preserve publication and do not prevent the com
           throw new FileMutationError("post_process", "PUBLISHED", "original failure");
         },
         signal: undefined,
-        ctx: ctx(dir),
+        ctx: await ctx(dir, t),
       }),
       (error: any) => error.publication === "PUBLISHED" && /original failure/.test(error.message),
     );
@@ -175,7 +173,7 @@ test("progress callback failures preserve publication and do not prevent the com
   }
 });
 
-test("standalone and Fusion finalizers use commit freshness with or without anchors", async () => {
+test("standalone and Fusion finalizers use commit freshness with or without anchors", async (t) => {
   const dir = await mkdtemp(join(tmpdir(), "hashline-finalizer-"));
   try {
     for (const publication of ["PUBLISHED", "NOT_PUBLISHED"] as const) {
@@ -210,7 +208,7 @@ test("standalone and Fusion finalizers use commit freshness with or without anch
             thenRun: undefined,
             mutate: async () => mutation,
             signal: undefined,
-            ctx: ctx(dir),
+            ctx: await ctx(dir, t),
           });
           const expectedContent = [{ type: "text", text: `saved${fresh ? (anchors ?? "") : ""}` }];
           if (!fresh) expectedContent.push({ type: "text", text: staleTargetNotice() });
@@ -234,7 +232,7 @@ test("standalone and Fusion finalizers use commit freshness with or without anch
   }
 });
 
-test("mutation anchor output and aggregate anchor diagnostics have byte budgets", async () => {
+test("mutation anchor output and aggregate anchor diagnostics have byte budgets", async (t) => {
   const dir = await mkdtemp(join(tmpdir(), "hashline-budget-"));
   try {
     const path = join(dir, "long.txt");
@@ -250,7 +248,7 @@ test("mutation anchor output and aggregate anchor diagnostics have byte budgets"
               { path, edits: [{ op: "append", body: changedLines }] },
               undefined,
               undefined,
-              ctx(dir),
+              await ctx(dir, t),
             )
           : await invoke(
               makeReplaceTool(dir, DEFAULT_CONFIG),
@@ -258,7 +256,7 @@ test("mutation anchor output and aggregate anchor diagnostics have byte budgets"
               { path, replacements: [{ find: "before", replace: changedLines.join("\n") }] },
               undefined,
               undefined,
-              ctx(dir),
+              await ctx(dir, t),
             );
       const output = text(result);
       const firstLine = name === "edit" ? 2 : 1;
@@ -283,7 +281,7 @@ test("mutation anchor output and aggregate anchor diagnostics have byte budgets"
               { path, edits: [{ op: "delete", anchor: `1#${computeLineHash(1, "remove", 4)}` }] },
               undefined,
               undefined,
-              ctx(dir),
+              await ctx(dir, t),
             )
           : await invoke(
               makeReplaceTool(dir, DEFAULT_CONFIG),
@@ -291,7 +289,7 @@ test("mutation anchor output and aggregate anchor diagnostics have byte budgets"
               { path, replacements: [{ find: "remove\n", replace: "" }] },
               undefined,
               undefined,
-              ctx(dir),
+              await ctx(dir, t),
             );
       const anchorStart = text(deleted).indexOf("\nUpdated anchors:");
       assert.ok(anchorStart >= 0);
@@ -311,7 +309,7 @@ test("mutation anchor output and aggregate anchor diagnostics have byte budgets"
         },
         undefined,
         undefined,
-        { cwd: dir } as Parameters<ReturnType<typeof makeEditOverride>["execute"]>[4],
+        await ctx(dir, t),
       ),
       (error: Error) => {
         assertFailureByteBudgets(error.message);
@@ -324,7 +322,7 @@ test("mutation anchor output and aggregate anchor diagnostics have byte budgets"
   }
 });
 
-test("unpaired surrogate arguments are rejected before Fusion", async () => {
+test("unpaired surrogate arguments are rejected before Fusion", async (t) => {
   const dir = await mkdtemp(join(tmpdir(), "hashline-unicode-"));
   try {
     let commands = 0;
@@ -361,7 +359,7 @@ test("unpaired surrogate arguments are rejected before Fusion", async () => {
     ];
     for (const { tool, args, field } of cases) {
       await assert.rejects(
-        callTool(tool, args, { ctx: ctx(dir) }),
+        callTool(tool, args, { ctx: await ctx(dir, t) }),
         (error: unknown) =>
           error instanceof Error &&
           error.message.startsWith(`Invalid argument ${field}: INVALID_UNICODE:`) &&
@@ -376,7 +374,7 @@ test("unpaired surrogate arguments are rejected before Fusion", async () => {
   }
 });
 
-test("ambiguous recovery bounds candidate lists and never claims content identity", async () => {
+test("ambiguous recovery bounds candidate lists and never claims content identity", async (t) => {
   const dir = await mkdtemp(join(tmpdir(), "hashline-candidates-"));
   try {
     const path = join(dir, "file.txt");
@@ -396,7 +394,7 @@ test("ambiguous recovery bounds candidate lists and never claims content identit
         },
         undefined,
         undefined,
-        { cwd: dir } as Parameters<ReturnType<typeof makeEditOverride>["execute"]>[4],
+        await ctx(dir, t),
       ),
       (error: Error) => {
         assertFailureByteBudgets(error.message);
@@ -411,7 +409,7 @@ test("ambiguous recovery bounds candidate lists and never claims content identit
   }
 });
 
-test("NUL arguments are rejected before Fusion for all mutation tools", async () => {
+test("NUL arguments are rejected before Fusion for all mutation tools", async (t) => {
   const dir = await mkdtemp(join(tmpdir(), "hashline-nul-"));
   try {
     const path = join(dir, "file.txt");
@@ -448,7 +446,7 @@ test("NUL arguments are rejected before Fusion for all mutation tools", async ()
     ];
     for (const { tool, args, field } of cases) {
       await assert.rejects(
-        callTool(tool, args, { ctx: ctx(dir) }),
+        callTool(tool, args, { ctx: await ctx(dir, t) }),
         (error: unknown) =>
           error instanceof Error &&
           error.message.startsWith(`Invalid argument ${field}: UNSUPPORTED_TEXT: NUL`) &&
@@ -463,7 +461,7 @@ test("NUL arguments are rejected before Fusion for all mutation tools", async ()
   }
 });
 
-test("Fusion skips the command when a replacement produces unencodable text", async () => {
+test("Fusion skips the command when a replacement produces unencodable text", async (t) => {
   const dir = await mkdtemp(join(tmpdir(), "hashline-derived-unicode-"));
   try {
     const path = join(dir, "file.txt");
@@ -486,7 +484,7 @@ test("Fusion skips the command when a replacement produces unencodable text", as
           replacements: [{ find: "^.", replace: "x", regex: true }],
           then_run: { command: "check" },
         },
-        { ctx: ctx(dir) },
+        { ctx: await ctx(dir, t) },
       ),
       (error: any) =>
         error.publication === "NOT_PUBLISHED" &&
@@ -556,7 +554,7 @@ const noOpCases = [
   { makeTool: makeWriteOverride, params: { content: "same\n" } },
 ];
 
-test("all mutation tools succeed without rewriting on no-op, with and without Fusion", async () => {
+test("all mutation tools succeed without rewriting on no-op, with and without Fusion", async (t) => {
   const dir = await mkdtemp(join(tmpdir(), "hashline-noop-"));
   try {
     for (const { makeTool, params } of noOpCases) {
@@ -576,7 +574,7 @@ test("all mutation tools succeed without rewriting on no-op, with and without Fu
           { path, ...params, ...(mode === "command" ? { then_run: { command: "check" } } : {}) },
           undefined,
           undefined,
-          { cwd: dir },
+          await ctx(dir, t),
         );
         assert.match(text(result), /no net change/);
         assert.equal(result.details.publication, "NOT_PUBLISHED");
@@ -606,7 +604,7 @@ test("all mutation tools succeed without rewriting on no-op, with and without Fu
   }
 });
 
-test("no-op Fusion still detects external changes and reports command failures", async () => {
+test("no-op Fusion still detects external changes and reports command failures", async (t) => {
   const dir = await mkdtemp(join(tmpdir(), "hashline-noop-fusion-"));
   try {
     for (const { makeTool, params } of noOpCases) {
@@ -637,7 +635,7 @@ test("no-op Fusion still detects external changes and reports command failures",
           { path, ...params, then_run: { command: "check" } },
           undefined,
           undefined,
-          { cwd: dir },
+          await ctx(dir, t),
         );
         assert.equal(result.details.publication, "NOT_PUBLISHED");
         assert.equal(commands, scenario === "before" ? 0 : 1);
@@ -656,7 +654,7 @@ test("no-op Fusion still detects external changes and reports command failures",
   }
 });
 
-test("mutation anchors omit unchanged positions across distant changes", async () => {
+test("mutation anchors omit unchanged positions across distant changes", async (t) => {
   const dir = await mkdtemp(join(tmpdir(), "hashline-anchor-delta-"));
   try {
     const before = Array.from({ length: 100 }, (_, index) => `row ${index + 1}`);
@@ -684,7 +682,7 @@ test("mutation anchors omit unchanged positions across distant changes", async (
               },
               undefined,
               undefined,
-              ctx(dir),
+              await ctx(dir, t),
             )
           : await invoke(
               makeReplaceTool(dir, DEFAULT_CONFIG),
@@ -698,7 +696,7 @@ test("mutation anchors omit unchanged positions across distant changes", async (
               },
               undefined,
               undefined,
-              ctx(dir),
+              await ctx(dir, t),
             );
       const returned = [...text(result).matchAll(/^(\d+#[0-9A-Z]+)/gm)].map((match) => match[1]);
       assert.deepEqual(returned, [
@@ -723,7 +721,7 @@ test("mutation anchors omit unchanged positions across distant changes", async (
         },
         undefined,
         undefined,
-        { cwd: dir } as Parameters<ReturnType<typeof makeEditOverride>["execute"]>[4],
+        await ctx(dir, t),
       );
       const final = (await readFile(path, "utf8")).split("\r\n");
       assert.equal(final[49], "stable anchor reused");
@@ -734,7 +732,7 @@ test("mutation anchors omit unchanged positions across distant changes", async (
   }
 });
 
-test("mutation anchors retain a deletion successor but omit stable rows and deleted EOF", async () => {
+test("mutation anchors retain a deletion successor but omit stable rows and deleted EOF", async (t) => {
   const dir = await mkdtemp(join(tmpdir(), "hashline-anchor-delete-"));
   try {
     for (const name of ["edit", "replace"]) {
@@ -757,7 +755,7 @@ test("mutation anchors retain a deletion successor but omit stable rows and dele
                   },
                   undefined,
                   undefined,
-                  ctx(dir),
+                  await ctx(dir, t),
                 )
               : await invoke(
                   makeReplaceTool(dir, DEFAULT_CONFIG),
@@ -765,7 +763,7 @@ test("mutation anchors retain a deletion successor but omit stable rows and dele
                   { path, replacements: [{ find: "remove\n", replace: "" }] },
                   undefined,
                   undefined,
-                  ctx(dir),
+                  await ctx(dir, t),
                 );
           const rows = text(result)
             .split("\n")
@@ -783,7 +781,7 @@ test("mutation anchors retain a deletion successor but omit stable rows and dele
   }
 });
 
-test("mutation anchors retain deletion successor even when deleted line content matches the successor", async () => {
+test("mutation anchors retain deletion successor even when deleted line content matches the successor", async (t) => {
   const dir = await mkdtemp(join(tmpdir(), "hashline-anchor-matching-delete-"));
   try {
     const path = join(dir, "edit.txt");
@@ -799,7 +797,7 @@ test("mutation anchors retain deletion successor even when deleted line content 
       },
       undefined,
       undefined,
-      { cwd: dir } as Parameters<ReturnType<typeof makeEditOverride>["execute"]>[4],
+      await ctx(dir, t),
     );
     const rows = text(result)
       .split("\n")
@@ -810,7 +808,7 @@ test("mutation anchors retain deletion successor even when deleted line content 
   }
 });
 
-test("oversized deletion successors do not suppress later editable anchors", async () => {
+test("oversized deletion successors do not suppress later editable anchors", async (t) => {
   const dir = await mkdtemp(join(tmpdir(), "hashline-skip-long-anchor-"));
   try {
     const path = join(dir, "fixture.txt");
@@ -829,7 +827,7 @@ test("oversized deletion successors do not suppress later editable anchors", asy
       },
       undefined,
       undefined,
-      { cwd: dir } as Parameters<ReturnType<typeof makeEditOverride>["execute"]>[4],
+      await ctx(dir, t),
     );
     const output = text(result);
     assert.doesNotMatch(output, /^1#[0-9A-Z]+/m);
@@ -845,7 +843,7 @@ test("oversized deletion successors do not suppress later editable anchors", asy
       { path, edits: [{ op: "replace", anchor, body: ["verified"] }] },
       undefined,
       undefined,
-      { cwd: dir } as Parameters<ReturnType<typeof makeEditOverride>["execute"]>[4],
+      await ctx(dir, t),
     );
     assert.equal(await readFile(path, "utf8"), `${long}\nverified\n`);
   } finally {

@@ -19,6 +19,8 @@ import { scopeArgs, type SearchRequest } from "./grep-search.ts";
 import { makeEditOverride } from "./edit-tool.ts";
 import { callTool } from "./tool-call.testing.ts";
 import { DEFAULT_CONFIG } from "./config.ts";
+import { FORGET_MIN_BYTES } from "./budgets.ts";
+import { taggedResultId } from "./forget.testing.ts";
 
 type FakeOptions = {
   lines?: string[];
@@ -1218,5 +1220,29 @@ test("fatal format errors stop workers from starting new file reads after reject
     } finally {
       fs.createReadStream = original;
       syncBuiltinESMExports();
+    }
+  }));
+
+test("grep output exceeds the forget threshold → only content mode receives a tag", async () =>
+  withDir(async (dir) => {
+    const namePaddingChars = 96;
+    const fileCount = Math.ceil(FORGET_MIN_BYTES / namePaddingChars) + 1;
+    const paths = Array.from({ length: fileCount }, (_, index) =>
+      join(dir, `${index}-${"x".repeat(namePaddingChars)}.txt`),
+    );
+    await Promise.all(paths.map((path) => writeFile(path, "needle\n")));
+    const fake = fakeBackend({ paths, lines: paths.map((path) => rgMatch(path, 1, "needle\n")) });
+    const tool = makeGrepOverrideWithBackend(dir, DEFAULT_CONFIG, fake.backend);
+    for (const outputMode of ["content", "files", "count"] as const) {
+      const result: Awaited<ReturnType<typeof tool.execute>> = await callTool(tool, {
+        path: dir,
+        pattern: "needle",
+        literal: true,
+        outputMode,
+      });
+      const body = result.content[0];
+      assert.ok(body.type === "text");
+      assert.ok(Buffer.byteLength(body.text) >= FORGET_MIN_BYTES);
+      assert.equal(taggedResultId(result) !== undefined, outputMode === "content");
     }
   }));

@@ -10,7 +10,8 @@ import { makeReadOverride } from "./read-tool.ts";
 import { computeLineHash } from "../core/hash.ts";
 import { callTool } from "./tool-call.testing.ts";
 import { DEFAULT_CONFIG } from "./config.ts";
-import { formatKiB } from "./budgets.ts";
+import { FORGET_MIN_BYTES, formatKiB } from "./budgets.ts";
+import { taggedResultId } from "./forget.testing.ts";
 
 const DEFAULT_READ_MAX_BYTES = DEFAULT_CONFIG.read.maxKiB * 1024;
 
@@ -333,5 +334,28 @@ test("read accepts safe offsets and limits whose sum exceeds the safe integer ra
       assert.doesNotMatch(result.content[0].text, /to continue|│first/);
       if (offset <= 3) assert.match(result.content[0].text, /│third/);
       else assert.doesNotMatch(result.content[0].text, /│/);
+    }
+  }));
+
+test("read text reaches the forget byte threshold → only eligible results receive a tag", async () =>
+  withDir(async (dir) => {
+    const path = join(dir, "threshold.txt");
+    const read = makeReadOverride(dir, DEFAULT_CONFIG);
+    await writeFile(path, "界\n");
+    const initial: Awaited<ReturnType<typeof read.execute>> = await callTool(read, { path });
+    const initialBlock = initial.content[0];
+    assert.ok(initialBlock.type === "text");
+    const initialBytes = Buffer.byteLength(initialBlock.text);
+    for (const bytes of [FORGET_MIN_BYTES - 1, FORGET_MIN_BYTES, FORGET_MIN_BYTES + 1]) {
+      await writeFile(path, `界${"x".repeat(bytes - initialBytes)}\n`);
+      const result: Awaited<ReturnType<typeof read.execute>> = await callTool(
+        read,
+        { path },
+        { toolCallId: `read-${bytes}` },
+      );
+      const body = result.content[0];
+      assert.ok(body.type === "text");
+      assert.equal(Buffer.byteLength(body.text), bytes);
+      assert.equal(taggedResultId(result) !== undefined, bytes >= FORGET_MIN_BYTES);
     }
   }));

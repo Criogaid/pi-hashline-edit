@@ -3,8 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { callTool } from "./tool-call.testing.ts";
+import { callTool, createToolContext as ctx } from "./tool-call.testing.ts";
 import { makeEditOverride } from "./edit-tool.ts";
 import { makeReplaceTool } from "./replace-tool.ts";
 import { makeWriteOverride } from "./write-tool.ts";
@@ -27,13 +26,6 @@ import { publishedMutation } from "./mutation-outcome.testing.ts";
 async function tempDir(): Promise<string> {
   return mkdtemp(join(tmpdir(), "hashline-action-fusion-"));
 }
-
-// Only the context fields consumed by Fusion and Pi Bash are needed by these tests.
-const ctx = (cwd: string) =>
-  ({
-    cwd,
-    sessionManager: { getSessionId: () => "test", getSessionFile: () => undefined },
-  }) as ExtensionContext;
 
 type Fusion = Parameters<typeof makeWriteOverride>[1];
 const mutationFactories = [
@@ -63,7 +55,7 @@ test("mutation tools expose Fusion schemas and guidance when supplied an executo
   }
 });
 
-test("then_run schemas reject invalid commands, unknown keys, and excessive timeouts", async () => {
+test("then_run schemas reject invalid commands, unknown keys, and excessive timeouts", async (t) => {
   const dir = await tempDir();
   try {
     for (const makeTool of mutationFactories) {
@@ -83,7 +75,7 @@ test("then_run schemas reject invalid commands, unknown keys, and excessive time
         { command: "echo ok", timeout: 2_147_483.648 },
       ]) {
         await assert.rejects(
-          callTool(tool, { path, ...mutation, then_run }, { ctx: ctx(dir) }),
+          callTool(tool, { path, ...mutation, then_run }, { ctx: await ctx(dir, t) }),
           new RegExp(`Validation failed for tool "${tool.name}":[\\s\\S]*- then_run`),
         );
         assert.equal(await readFile(join(dir, path), "utf8"), "old\n");
@@ -94,7 +86,7 @@ test("then_run schemas reject invalid commands, unknown keys, and excessive time
   }
 });
 
-test("edit and replace share one embedded executor and preserve mutation results", async () => {
+test("edit and replace share one embedded executor and preserve mutation results", async (t) => {
   const dir = await tempDir();
   try {
     const calls: string[] = [];
@@ -115,7 +107,7 @@ test("edit and replace share one embedded executor and preserve mutation results
       },
       undefined,
       undefined,
-      ctx(dir),
+      await ctx(dir, t),
     );
     const replaceResult = await replace.execute(
       "replace-1",
@@ -126,7 +118,7 @@ test("edit and replace share one embedded executor and preserve mutation results
       },
       undefined,
       undefined,
-      ctx(dir),
+      await ctx(dir, t),
     );
     const editOutput = editResult.content.at(-1);
     assert.ok(editOutput?.type === "text");
@@ -146,7 +138,7 @@ test("edit and replace share one embedded executor and preserve mutation results
   }
 });
 
-test("mutation failure skips the command and command failure does not roll back", async () => {
+test("mutation failure skips the command and command failure does not roll back", async (t) => {
   const dir = await tempDir();
   try {
     let calls = 0;
@@ -164,7 +156,7 @@ test("mutation failure skips the command and command failure does not roll back"
           throw new Error("anchor mismatch: current 1#ABCD");
         },
         signal: undefined,
-        ctx: ctx(dir),
+        ctx: await ctx(dir, t),
       }),
       (error: Error) =>
         error.message.includes(THEN_RUN_SKIPPED) &&
@@ -183,7 +175,7 @@ test("mutation failure skips the command and command failure does not roll back"
           details: { ok: true },
         }),
       signal: undefined,
-      ctx: ctx(dir),
+      ctx: await ctx(dir, t),
     });
     assert.equal(result.content[0].type === "text" && result.content[0].text, "mutation");
     const diagnostic = result.content[1].type === "text" ? result.content[1].text : "";
@@ -195,7 +187,7 @@ test("mutation failure skips the command and command failure does not roll back"
   }
 });
 
-test("cancelled calls do not mutate or run the command", async () => {
+test("cancelled calls do not mutate or run the command", async (t) => {
   const dir = await tempDir();
   try {
     const controller = new AbortController();
@@ -216,7 +208,7 @@ test("cancelled calls do not mutate or run the command", async () => {
           throw new Error("Cancelled mutation must not run");
         },
         signal: controller.signal,
-        ctx: ctx(dir),
+        ctx: await ctx(dir, t),
       }),
     );
     assert.equal(mutated, false);
@@ -226,7 +218,7 @@ test("cancelled calls do not mutate or run the command", async () => {
   }
 });
 
-test("default runner executes a real local command", async () => {
+test("default runner executes a real local command", async (t) => {
   const dir = await tempDir();
   try {
     const target = join(dir, "real.txt");
@@ -244,7 +236,7 @@ test("default runner executes a real local command", async () => {
         });
       },
       signal: undefined,
-      ctx: ctx(dir),
+      ctx: await ctx(dir, t),
     });
     const output = result.content
       .filter((block) => block.type === "text")
@@ -256,7 +248,7 @@ test("default runner executes a real local command", async () => {
   }
 });
 
-test("marks anchors stale when then_run changes the target", async () => {
+test("marks anchors stale when then_run changes the target", async (t) => {
   const dir = await tempDir();
   try {
     const target = join(dir, "stale.txt");
@@ -281,7 +273,7 @@ test("marks anchors stale when then_run changes the target", async () => {
         );
       },
       signal: undefined,
-      ctx: ctx(dir),
+      ctx: await ctx(dir, t),
     });
     const output = result.content
       .filter((block) => block.type === "text")
@@ -295,7 +287,7 @@ test("marks anchors stale when then_run changes the target", async () => {
   }
 });
 
-test("Action Fusion omits structured anchors when target freshness is unknown", async () => {
+test("Action Fusion omits structured anchors when target freshness is unknown", async (t) => {
   const dir = await tempDir();
   try {
     const missing = join(dir, "unreadable.txt");
@@ -322,7 +314,7 @@ test("Action Fusion omits structured anchors when target freshness is unknown", 
         );
       },
       signal: undefined,
-      ctx: ctx(dir),
+      ctx: await ctx(dir, t),
     });
     const output = result.content
       .map((block) => (block.type === "text" ? block.text : ""))
@@ -336,7 +328,7 @@ test("Action Fusion omits structured anchors when target freshness is unknown", 
   }
 });
 
-test("edit omits Updated anchors when then_run changes the target", async () => {
+test("edit omits Updated anchors when then_run changes the target", async (t) => {
   const dir = await tempDir();
   try {
     const target = join(dir, "edit-stale.txt");
@@ -354,7 +346,7 @@ test("edit omits Updated anchors when then_run changes the target", async () => 
       },
       undefined,
       undefined,
-      ctx(dir),
+      await ctx(dir, t),
     );
     const output = result.content.map((block: any) => block.text ?? "").join("\n");
     assert.ok(result.details.actionFusion);
@@ -367,7 +359,7 @@ test("edit omits Updated anchors when then_run changes the target", async () => 
   }
 });
 
-test("all mutation tools forward command progress before completion in RPC mode", async () => {
+test("all mutation tools forward command progress before completion in RPC mode", async (t) => {
   const dir = await tempDir();
   try {
     const events: ActionFusionProgress[] = [];
@@ -382,6 +374,7 @@ test("all mutation tools forward command progress before completion in RPC mode"
       },
       (event) => events.push(event),
     );
+    const rpcContext = await ctx(dir, t, "rpc");
     const cases = [
       () =>
         makeEditOverride(dir, DEFAULT_CONFIG, fusion).execute(
@@ -393,7 +386,7 @@ test("all mutation tools forward command progress before completion in RPC mode"
           },
           undefined,
           (update) => updates.push(update),
-          { ...ctx(dir), mode: "rpc" },
+          rpcContext,
         ),
       () =>
         makeReplaceTool(dir, DEFAULT_CONFIG, fusion).execute(
@@ -405,7 +398,7 @@ test("all mutation tools forward command progress before completion in RPC mode"
           },
           undefined,
           (update) => updates.push(update),
-          { ...ctx(dir), mode: "rpc" },
+          rpcContext,
         ),
       () =>
         makeWriteOverride(dir, fusion).execute(
@@ -413,7 +406,7 @@ test("all mutation tools forward command progress before completion in RPC mode"
           { path: "progress.txt", content: "after\n", then_run: { command: "check" } },
           undefined,
           (update) => updates.push(update),
-          { ...ctx(dir), mode: "rpc" },
+          rpcContext,
         ),
     ];
     for (const run of cases) {
@@ -438,7 +431,7 @@ test("all mutation tools forward command progress before completion in RPC mode"
   }
 });
 
-test("progress reports skipped mutations and failed commands without rolling back", async () => {
+test("progress reports skipped mutations and failed commands without rolling back", async (t) => {
   const dir = await tempDir();
   try {
     const events: ActionFusionProgress[] = [];
@@ -460,7 +453,7 @@ test("progress reports skipped mutations and failed commands without rolling bac
         },
         undefined,
         undefined,
-        ctx(dir),
+        await ctx(dir, t),
       ),
     );
     assert.equal(commands, 0);
@@ -482,7 +475,7 @@ test("progress reports skipped mutations and failed commands without rolling bac
         },
         undefined,
         undefined,
-        ctx(dir),
+        await ctx(dir, t),
       ),
       /no matches/,
     );
@@ -498,7 +491,7 @@ test("progress reports skipped mutations and failed commands without rolling bac
       { path: "failed.txt", content: "published\n", then_run: { command: "check" } },
       undefined,
       undefined,
-      ctx(dir),
+      await ctx(dir, t),
     );
     assert.ok(failed.details.actionFusion);
     assert.equal(failed.details.actionFusion.command, "failed");
@@ -515,7 +508,7 @@ test("progress reports skipped mutations and failed commands without rolling bac
 
 test("concurrent mutations on case-differing paths serialize on Windows", {
   skip: process.platform !== "win32",
-}, async () => {
+}, async (t) => {
   const dir = await tempDir();
   try {
     const fusion = createActionFusionExecutor();
@@ -535,7 +528,7 @@ test("concurrent mutations on case-differing paths serialize on Windows", {
         return publishedMutation("first\n", { content: [], details: undefined });
       },
       signal: undefined,
-      ctx: ctx(dir),
+      ctx: await ctx(dir, t),
     });
     await new Promise((r) => setTimeout(r, 20));
     const p2 = fusion({
@@ -548,7 +541,7 @@ test("concurrent mutations on case-differing paths serialize on Windows", {
         return publishedMutation("second\n", { content: [], details: undefined });
       },
       signal: undefined,
-      ctx: ctx(dir),
+      ctx: await ctx(dir, t),
     });
     await new Promise((r) => setTimeout(r, 20));
     assert.deepEqual(order, ["start-1"]);
@@ -560,7 +553,7 @@ test("concurrent mutations on case-differing paths serialize on Windows", {
   }
 });
 
-test("ActionFusionError re-wrapping appends recovery guidance without duplicating outcome banners", async () => {
+test("ActionFusionError re-wrapping appends recovery guidance without duplicating outcome banners", async (t) => {
   const dir = await tempDir();
   try {
     const fusion = createActionFusionExecutor();
@@ -575,7 +568,7 @@ test("ActionFusionError re-wrapping appends recovery guidance without duplicatin
           throw mutationError;
         },
         signal: undefined,
-        ctx: ctx(dir),
+        ctx: await ctx(dir, t),
       });
     } catch (error) {
       caught = error;
@@ -603,7 +596,7 @@ test("ActionFusionError re-wrapping appends recovery guidance without duplicatin
   }
 });
 
-test("Fusion uses commit facts when details omit or contradict publication and revision", async () => {
+test("Fusion uses commit facts when details omit or contradict publication and revision", async (t) => {
   const dir = await tempDir();
   try {
     const target = join(dir, "unchanged.txt");
@@ -629,7 +622,7 @@ test("Fusion uses commit facts when details omit or contradict publication and r
           absolutePath: target,
           thenRun,
           signal: undefined,
-          ctx: ctx(dir),
+          ctx: await ctx(dir, t),
           mutate: async () => ({
             result: { content: [{ type: "text", text: "mutation" }], details },
             commit,
@@ -685,7 +678,7 @@ test("timed command progress ticks during silence, preserves output, and stops a
             return publishedMutation("saved\n", { content: [], details: undefined });
           },
           signal: controller.signal,
-          ctx: ctx(dir),
+          ctx: await ctx(dir, t),
           onUpdate: (update) => updates.push(update),
         });
         await started.promise;
@@ -742,7 +735,7 @@ test("commands without an explicit timeout do not start countdown updates", asyn
         return publishedMutation("saved\n", { content: [], details: undefined });
       },
       signal: undefined,
-      ctx: ctx(dir),
+      ctx: await ctx(dir, t),
     });
     await started.promise;
     const count = events.length;
@@ -757,7 +750,7 @@ test("commands without an explicit timeout do not start countdown updates", asyn
   }
 });
 
-test("Pi Bash timeout returns the cause to the model while keeping the published file", async () => {
+test("Pi Bash timeout returns the cause to the model while keeping the published file", async (t) => {
   const dir = await tempDir();
   try {
     await writeFile(join(dir, "slow.mjs"), "setTimeout(() => {}, 10_000);\n");
@@ -771,7 +764,7 @@ test("Pi Bash timeout returns the cause to the model while keeping the published
         content: "published\n",
         then_run: { command: "node slow.mjs", timeout: 0.2 },
       },
-      { ctx: ctx(dir) },
+      { ctx: await ctx(dir, t) },
     );
     assert.equal(await readFile(join(dir, "saved.txt"), "utf8"), "published\n");
     assert.equal(result.details.actionFusion.command, "timeout");
