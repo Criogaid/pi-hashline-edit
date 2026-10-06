@@ -31,6 +31,7 @@ import { POSITIVE_SAFE_INTEGER } from "./schema.ts";
 import { throwIfCancelled } from "./error-text.ts";
 import { formatKiB } from "./budgets.ts";
 import type { HashlineEditConfig } from "./config.ts";
+import { createArgumentPreparer } from "./argument-validation.ts";
 
 const DEFAULT_OFFSET = 1;
 
@@ -152,6 +153,7 @@ export function makeReadOverride(
       "For large files, pass read offset and limit to read only the relevant section.",
     ],
     parameters: parameters as typeof builtin.parameters,
+    prepareArguments: createArgumentPreparer("read", parameters),
     renderShell: "default" as const,
 
     renderCall: builtin.renderCall,

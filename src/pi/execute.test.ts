@@ -1149,9 +1149,9 @@ test("edit tool rejects non-array formats Pi cannot convert", async () =>
       { path: "f.txt", edits: JSON.stringify([{ op: "replace", anchor, body: ["SECOND"] }]) },
       { path: "f.txt", op: "replace", anchor, body: ["SECOND"] },
     ]) {
-      // prepareArguments only explains wrong hash lengths; it never rewrites arguments.
-      assert.equal(edit.prepareArguments(alternate), alternate);
+      const original = structuredClone(alternate);
       await assert.rejects(call(edit, alternate), /Validation failed/);
+      assert.deepEqual(alternate, original);
       assert.equal(await readFile(file, "utf8"), "first\nsecond\n");
     }
     await call(edit, { path: "f.txt", edits: [{ op: "replace", anchor, body: ["SECOND"] }] });
@@ -1171,7 +1171,8 @@ test("edit names anchors whose hash length differs from the registered hashLen",
 
     await assert.rejects(call(edit, args), (error: Error) => {
       assert.match(error.message, /Anchor hash length mismatch/);
-      assert.ok(error.message.includes(`edits[0].end ${short}`));
+      assert.match(error.message, /Invalid argument edits\[0\]\.end:/);
+      assert.ok(error.message.includes(short));
       assert.match(error.message, new RegExp(`${hashLen - 2} hash characters`));
       assert.match(error.message, new RegExp(`hashLen.*${hashLen}`));
       return true;

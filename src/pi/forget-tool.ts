@@ -32,6 +32,7 @@ import { Text } from "@earendil-works/pi-tui";
 import { Type, type Static } from "typebox";
 import { FORGET_MIN_BYTES, formatKiB } from "./budgets.ts";
 import { renderToolError } from "./render.ts";
+import { createArgumentPreparer } from "./argument-validation.ts";
 
 const RESULT_ID = "r[0-9a-f]{5}";
 const RESULT_TAG = new RegExp(`^\\[result ${RESULT_ID}\\]$`);
@@ -159,6 +160,7 @@ export function registerForgetTool(pi: ExtensionAPI): void {
       "Right after a read or grep result tagged [result rXXXXX], call forget with its id if you will not need any of its content again; put facts you still need in note. Results from earlier steps cannot be forgotten.",
     ],
     parameters: forgetSchema,
+    prepareArguments: createArgumentPreparer("forget", forgetSchema),
     renderShell: "default" as const,
     renderCall(args: ForgetParams, theme: Theme) {
       let text =

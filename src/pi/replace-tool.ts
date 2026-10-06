@@ -54,7 +54,12 @@ import {
 } from "./mutation-runner.ts";
 import { MUTATION_TOOL_GUIDELINE } from "./tool-prompts.ts";
 import { errorMessage } from "../core/errors.ts";
-import { invalidArgument, throwIfCancelled } from "./error-text.ts";
+import { throwIfCancelled } from "./error-text.ts";
+import {
+  argumentItems,
+  createArgumentPreparer,
+  type ReportArgumentIssue,
+} from "./argument-validation.ts";
 type ReplaceDetails = TextMutationDetails;
 type ReplaceRenderContext = Parameters<
   NonNullable<ToolDefinition<typeof replaceSchema>["renderCall"]>
@@ -166,19 +171,14 @@ function replaceHeader(args: ReplaceParams, theme: Theme, counts?: DiffCounts): 
   return t;
 }
 
-/**
- * Checks the schema cannot express, run before Pi's schema validation: replacement
- * text must be writable as UTF-8, and regex rules must compile. Rules with malformed
- * fields are left to the schema. Arguments are never changed.
- */
-function checkReplaceArguments(args: unknown): void {
-  const rules = (args as { replacements?: unknown } | null)?.replacements;
-  if (!Array.isArray(rules)) return;
+/** Report unwritable replacement text and regex compile errors; Pi checks field shapes. */
+function checkReplaceArguments(args: unknown, report: ReportArgumentIssue): void {
+  const rules = argumentItems((args as { replacements?: unknown } | null)?.replacements);
   const validFlags = new RegExp(REGEX_FLAGS_PATTERN);
   rules.forEach((rule, index) => {
     const { find, replace, regex, flags } = (rule ?? {}) as Record<string, unknown>;
     const reason = typeof replace === "string" ? unwritableTextReason(replace) : undefined;
-    if (reason) throw invalidArgument(`replacements[${index}].replace`, reason);
+    if (reason) report(`replacements[${index}].replace`, reason);
     if (
       regex === true &&
       typeof find === "string" &&
@@ -188,7 +188,7 @@ function checkReplaceArguments(args: unknown): void {
       try {
         buildRegex(find, true, flags);
       } catch (error) {
-        throw invalidArgument(`replacements[${index}].find`, errorMessage(error));
+        report(`replacements[${index}].find`, errorMessage(error));
       }
     }
   });
@@ -208,10 +208,7 @@ export function makeReplaceTool(
     promptSnippet: "Replace matching text across a file",
     promptGuidelines: [MUTATION_TOOL_GUIDELINE, ...(fusion ? ACTION_FUSION_GUIDELINES : [])],
     parameters,
-    prepareArguments(args: unknown): ReplaceParams {
-      checkReplaceArguments(args);
-      return args as ReplaceParams;
-    },
+    prepareArguments: createArgumentPreparer("replace", parameters, checkReplaceArguments),
     renderShell: "default" as const,
 
     renderCall(args: ReplaceParams, theme: Theme, context: ReplaceRenderContext) {

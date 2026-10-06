@@ -168,7 +168,12 @@ for (const invalid of ["old result", "unknown result"] as const) {
   });
 }
 
-for (const invalid of ["empty ids", "duplicate ids", "malformed id"] as const) {
+for (const invalid of [
+  "empty ids",
+  "duplicate ids",
+  "malformed id",
+  "multiple invalid fields",
+] as const) {
   test(`${invalid} from a model call → schema rejection leaves the result intact`, {
     timeout: SESSION_TIMEOUT_MS,
   }, async (t) => {
@@ -189,12 +194,21 @@ for (const invalid of ["empty ids", "duplicate ids", "malformed id"] as const) {
           type: "toolCall",
           id: "forget-call",
           name: "forget",
-          arguments: { ids },
+          arguments: invalid === "multiple invalid fields" ? { ids, note: "" } : { ids },
         });
       },
       finish,
     );
-    assert.equal(toolResult(f.requests[2], "forget-call").isError, true);
+    const rejection = toolResult(f.requests[2], "forget-call");
+    assert.equal(rejection.isError, true);
+    if (invalid === "multiple invalid fields") {
+      const text = rejection.content
+        .filter((block) => block.type === "text")
+        .map((block) => block.text)
+        .join("\n");
+      assert.match(text, /\n  - ids/);
+      assert.match(text, /\n  - note:/);
+    }
     assert.deepEqual(toolResult(f.requests[2], "read-log"), toolResult(f.requests[1], "read-log"));
   });
 }

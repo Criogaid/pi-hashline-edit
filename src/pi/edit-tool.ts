@@ -31,7 +31,6 @@ import { ACTION_FUSION_GUIDELINES, withThenRunSchema, type ThenRunInput } from "
 import { applyEdits } from "../core/apply.ts";
 import { splitLines } from "../core/lines.ts";
 import { unwritableTextReason } from "../core/text.ts";
-import { invalidArgument } from "./error-text.ts";
 import type { Anchor, Edit } from "../core/types.ts";
 import type { HashlineEditConfig } from "./config.ts";
 import {
@@ -56,6 +55,11 @@ import {
   type TextMutationDetails,
 } from "./mutation-runner.ts";
 import { MUTATION_TOOL_GUIDELINE } from "./tool-prompts.ts";
+import {
+  argumentItems,
+  createArgumentPreparer,
+  type ReportArgumentIssue,
+} from "./argument-validation.ts";
 type EditDetails = TextMutationDetails;
 type EditRenderContext = Parameters<NonNullable<ToolDefinition<EditSchema>["renderCall"]>>[2];
 
@@ -145,37 +149,24 @@ type EditParams = Static<EditSchema> & { then_run?: ThenRunInput };
 
 type EditOpInput = Static<EditSchema>["edits"][number];
 
-/**
- * Checks the schema cannot express, run before Pi's schema validation. Rejects body
- * lines that cannot be written as UTF-8, anchor line numbers beyond the safe-integer
- * range, and names anchors whose hash length differs from `hashLen` (the schema would
- * report only a bare pattern mismatch). Empty bodies are named here for the same reason:
- * the op union would report only that no variant matched. Every empty body and every
- * hash-length mismatch is reported in one error. A single edit object is checked as
- * `edits[0]`, the one-element array Pi's validation converts it to afterwards.
- * Malformed shapes are left to the schema. Arguments are never changed.
- */
-function checkEditArguments(args: unknown, hashLen: number): void {
+/** Report semantic argument issues; malformed shapes remain Pi's schema responsibility. */
+function checkEditArguments(args: unknown, hashLen: number, report: ReportArgumentIssue): void {
   const raw = (args as { edits?: unknown } | null)?.edits;
-  const edits = Array.isArray(raw) ? raw : raw !== null && typeof raw === "object" ? [raw] : [];
-  const emptyBodies: string[] = [];
-  const mismatches: string[] = [];
+  const edits = argumentItems(raw);
   edits.forEach((op, index) => {
     const body = (op as Record<string, unknown> | null)?.body;
     if (Array.isArray(body)) {
       if (body.length === 0) {
-        emptyBodies.push(
-          invalidArgument(
-            `edits[${index}].body`,
-            (op as Record<string, unknown>).op === "replace"
-              ? 'is empty; use {"op":"delete"} to remove lines, or supply the replacement lines.'
-              : 'is empty; remove this edit or supply at least one line ([""] for a blank line).',
-          ).message,
+        report(
+          `edits[${index}].body`,
+          (op as Record<string, unknown>).op === "replace"
+            ? 'is empty; use {"op":"delete"} to remove lines, or supply the replacement lines.'
+            : 'is empty; remove this edit or supply at least one line ([""] for a blank line).',
         );
       }
       body.forEach((line, lineIndex) => {
         const reason = typeof line === "string" ? unwritableTextReason(line) : undefined;
-        if (reason) throw invalidArgument(`edits[${index}].body[${lineIndex}]`, reason);
+        if (reason) report(`edits[${index}].body[${lineIndex}]`, reason);
       });
     }
     for (const field of ["anchor", "end"] as const) {
@@ -183,25 +174,19 @@ function checkEditArguments(args: unknown, hashLen: number): void {
       if (typeof value !== "string") continue;
       const token = parseAnchorToken(value);
       if (token && !Number.isSafeInteger(token.line)) {
-        throw invalidArgument(
+        report(
           `edits[${index}].${field}`,
           `line number in ${value} exceeds the safe integer range; copy a complete "LINE#HASH" token from the latest tool result.`,
         );
       }
       if (token && token.hash.length !== hashLen) {
-        mismatches.push(
-          `edits[${index}].${field} ${value} has ${token.hash.length} hash characters`,
+        report(
+          `edits[${index}].${field}`,
+          `Anchor hash length mismatch: ${value} has ${token.hash.length} hash characters, but hashLen is ${hashLen}. Read or grep the file for current anchors.`,
         );
       }
     }
   });
-  const problems = [...emptyBodies];
-  if (mismatches.length) {
-    problems.push(
-      `Anchor hash length mismatch: ${mismatches.join("; ")}, but hashLen is ${hashLen}. Anchors from a different hashLen setting cannot be verified; read or grep the file for current anchors.`,
-    );
-  }
-  if (problems.length) throw new Error(problems.join("\n"));
 }
 
 /** Translate validated public operations into core edits, parsing numeric anchor positions. */
@@ -304,10 +289,9 @@ export function makeEditOverride(
       ...(fusion ? ACTION_FUSION_GUIDELINES : []),
     ],
     parameters,
-    prepareArguments(args: unknown): EditParams {
-      checkEditArguments(args, hashLen);
-      return args as EditParams;
-    },
+    prepareArguments: createArgumentPreparer("edit", parameters, (args, report) =>
+      checkEditArguments(args, hashLen, report),
+    ),
     renderShell: "default" as const,
 
     renderCall(args: EditParams, theme: Theme, context: EditRenderContext) {

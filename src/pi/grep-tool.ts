@@ -35,6 +35,7 @@ import { runRgTextView } from "./rg-text-view.ts";
 import { GREP_CONTEXT_RANGE, POSITIVE_SAFE_INTEGER } from "./schema.ts";
 import { throwIfCancelled } from "./error-text.ts";
 import type { HashlineEditConfig } from "./config.ts";
+import { createArgumentPreparer } from "./argument-validation.ts";
 
 /** Grep parameters; descriptions state the configured defaults. */
 function createGrepSchema({ defaultLimit, defaultContext }: HashlineEditConfig["grep"]) {
@@ -148,6 +149,7 @@ export function makeGrepOverrideWithBackend(
       "Copy grep anchors directly into edit; read the full line before rewriting from a partial preview.",
     ],
     parameters: grepSchema,
+    prepareArguments: createArgumentPreparer("grep", grepSchema),
 
     renderShell: "default" as const,
 

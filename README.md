@@ -67,11 +67,17 @@ Successful `edit` and `replace` results omit candidate rows whose full content a
 | `write` | Create a file or replace its complete contents. |
 | `forget` | When enabled in configuration, drop read or grep result content from model context right after reading it. |
 
-All tools accept relative and absolute paths, `file://` URLs, a leading `@` prefix, and a leading `~` (including `~\` on Windows). As in Pi's built-in file tools, supported Unicode spaces in paths become regular spaces, and Windows shell drive paths using only forward slashes, such as `/c/file`, `/mnt/c/file`, and `/cygdrive/c/file`, resolve to native drive paths. Mixed-separator forms such as `/c/dir\file` do not undergo this drive conversion, matching Pi's built-in tools. Mutation tools share the file-mutation queue and commit layer.
+File tools accept relative and absolute paths, `file://` URLs, a leading `@` prefix, and a leading `~` (including `~\` on Windows). As in Pi's built-in file tools, supported Unicode spaces in paths become regular spaces, and Windows shell drive paths using only forward slashes, such as `/c/file`, `/mnt/c/file`, and `/cygdrive/c/file`, resolve to native drive paths. Mixed-separator forms such as `/c/dir\file` do not undergo this drive conversion, matching Pi's built-in tools. Mutation tools share the file-mutation queue and commit layer.
 
 Valid UTF-8 text inspection and matching uses one logical representation: CRLF boundaries become LF; standalone CR and source-code escape sequences such as the four characters `\r\n` remain content. `read` and `grep` hash the same logical lines that `edit` verifies; literal and regex `replace` both match this LF view. Mutation offsets map back to the original text. `edit` and `replace` share separator restoration: reuse internal separators positionally, repeat the last for extra gaps, or use the file style (CRLF if present, otherwise LF) when none exist. Boundaries outside the replacement stay unchanged. Invalid UTF-8 grep previews use raw-byte matching as described below.
 
 `write` is the full-content boundary: its supplied bytes are authoritative, so it preserves their explicit LF/CRLF choices. Use it for intentional whole-file line-ending conversion. To inspect actual line-ending bytes, use a raw byte reader; anchored line displays intentionally do not distinguish LF from CRLF.
+
+### Argument errors
+
+All six tools use one argument-validation entry point. Tool-specific checks collect independent issues instead of stopping at the first one; the response also includes Pi's schema diagnostics. For example, an edit batch can report empty bodies, unwritable text, invalid anchor lengths, and invalid `then_run` fields in one rejection. Schema failures are diagnosed per top-level field, so one field cannot consume another field's diagnostic allowance. Pi still limits schema errors within each field; the response states that more may remain.
+
+Argument diagnostics share the 16 KiB block budget in [`budgets.ts`](src/pi/budgets.ts), retain opening and closing text, and label omitted text. Invalid arguments prevent execution. Filesystem access, anchor verification, regex probing by ripgrep, and forget eligibility remain subsequent checks that require valid arguments.
 
 ### Edit operations
 
@@ -84,7 +90,7 @@ Valid UTF-8 text inspection and matching uses one logical representation: CRLF b
 | `insert_before` / `insert_after` | `anchor`, `body` | — | Insert beside the anchor; keep the anchor line. |
 | `prepend` / `append` | `body` | — | Insert at the start/end; no anchors. |
 
-Every `body` holds at least one line; `[""]` is a single blank line. Remove lines with `delete`. An empty `body: []` is rejected for every operation before the file is read; one error names every such edit.
+Every `body` holds at least one line; `[""]` is a single blank line. Remove lines with `delete`. An empty `body: []` is rejected for every operation before the file is read, together with other independently detectable argument errors.
 
 All operations in a batch use the same snapshot. Validation failure rejects the whole batch. Unknown fields, conflicting fields, and overlapping operations are rejected; some touching operations also conflict and need separate calls with fresh anchors. For insertion, **do not repeat the anchor line in `body`**. `edit` uses structured operations, not `oldText`/`newText` pairs.
 
@@ -361,6 +367,7 @@ These limits bound model context, not file size. Omission notices direct the cal
 | `grep` | Default 100 matching lines (`grep.defaultLimit`), overridable; up to 500 UTF-16 units per partial line preview, plus labels and Pi's total output limits. Match previews use rg byte offsets; hashes use full content. Search error notices have a separate 4 KiB budget. |
 | `forget` tag | With `forget` enabled: `read` and content-mode `grep` text results of 2 KiB or more, and image reads; smaller results are not tagged. |
 | `edit` / `replace` anchors | 16 KiB including heading/omission notice, with no fixed entry-count limit. Compact tokens for changed positions; selected deletion successors retain complete content. The omission notice consumes budget only when rows are omitted. Rows that do not fit are omitted in full; later rows that fit are still returned. |
+| Argument errors | 16 KiB for the combined tool-specific and Pi schema diagnostics; longer reports retain opening/closing text and label the omitted middle. Pi's schema error limit applies separately within each top-level field. |
 | Anchor failure details | 16 KiB, with no fixed failure-count limit; unique candidates include complete rows up to 4 KiB, and ambiguous failures list up to eight candidates each. Unresolved anchors show the current cited row when it fits; oversized or out-of-range rows require a fresh `read` or `grep`. |
 | Input-anchor checks | Independent 16 KiB block, with no fixed entry-count limit. Truncation is reported explicitly; omitted entries are not implied matched. |
 | Ambiguous-candidate neighborhoods | 16 KiB of complete anchored row text, lowest-line first, plus headings; no fixed row-count limit. Uses the same first eight candidates per failure as the detail lists. Each listed candidate row is limited to 4 KiB. Rows exceeding either limit are omitted in full; later rows that fit are still returned, with gaps reflected in the neighborhood headings. |
