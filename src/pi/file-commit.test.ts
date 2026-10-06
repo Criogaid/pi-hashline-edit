@@ -235,6 +235,7 @@ test("Windows shared access failure preserves the target, skips then_run, and re
           {
             path: target,
             content: "replacement\n",
+            mode: "overwrite",
             then_run: { command: "deterministic-command" },
           },
           { toolCallId: "shared-failure", ctx: { cwd: dir } },
@@ -270,7 +271,12 @@ test("Windows shared access failure preserves the target, skips then_run, and re
     assert.equal(await readFile(target, "utf8"), "original\n");
     const result = await callTool(
       tool,
-      { path: target, content: "replacement\n", then_run: { command: "deterministic-command" } },
+      {
+        path: target,
+        content: "replacement\n",
+        mode: "overwrite",
+        then_run: { command: "deterministic-command" },
+      },
       { toolCallId: "shared-retry", ctx: { cwd: dir } },
     );
     assert.match(
@@ -328,7 +334,7 @@ test("commit rejects lossy UTF-8 output before modifying or creating files", asy
     for (const content of ["\ud800", "\udfff", "before\ud800after"]) {
       for (const path of [existing, missing]) {
         await assert.rejects(
-          commitFile(path, content),
+          commitFile(path, content, { mode: path === existing ? "overwrite" : "create" }),
           (error: any) =>
             error.publication === "NOT_PUBLISHED" && /INVALID_UNICODE/.test(error.message),
         );
@@ -337,7 +343,7 @@ test("commit rejects lossy UTF-8 output before modifying or creating files", asy
     assert.equal(await readFile(existing, "utf8"), "original\n");
     await assert.rejects(readFile(missing), { code: "ENOENT" });
     const content = "\uFEFFvalid 😀\r\n";
-    const result = await commitFile(existing, content);
+    const result = await commitFile(existing, content, { mode: "overwrite" });
     assert.deepEqual(await readFile(existing), Buffer.from(content));
     assert.equal(result.publishedRevision, byteRevision(Buffer.from(content)));
   }));
@@ -349,16 +355,17 @@ test("identical commits preserve the file and still enforce mode, revision, and 
     await writeFile(target, content);
     const before = await stat(target);
     const revision = await fileRevision(target);
-    for (const mode of [undefined, "overwrite"] as const) {
-      const result = await commitFile(target, content, { mode, expectedRevision: revision });
-      assert.deepEqual(result, {
-        created: false,
-        baseRevision: revision,
-        publishedRevision: revision,
-        observedRevision: revision,
-        publication: "NOT_PUBLISHED",
-      });
-    }
+    const result = await commitFile(target, content, {
+      mode: "overwrite",
+      expectedRevision: revision,
+    });
+    assert.deepEqual(result, {
+      created: false,
+      baseRevision: revision,
+      publishedRevision: revision,
+      observedRevision: revision,
+      publication: "NOT_PUBLISHED",
+    });
     const after = await stat(target);
     assert.deepEqual(
       [after.ino, after.mtimeMs, after.ctimeMs],
@@ -366,11 +373,11 @@ test("identical commits preserve the file and still enforce mode, revision, and 
     );
     await assert.rejects(commitFile(target, content, { mode: "create" }), /already exists/);
     await assert.rejects(
-      commitFile(target, content, { expectedRevision: "stale" }),
+      commitFile(target, content, { mode: "overwrite", expectedRevision: "stale" }),
       /expectedRevision/,
     );
     await assert.rejects(
-      commitFile(target, content, { signal: AbortSignal.abort() }),
+      commitFile(target, content, { mode: "overwrite", signal: AbortSignal.abort() }),
       (error: unknown) =>
         error instanceof FileMutationError && error.publication === "NOT_PUBLISHED",
     );
@@ -378,7 +385,7 @@ test("identical commits preserve the file and still enforce mode, revision, and 
       commitFile(join(dir, "missing"), "", { mode: "overwrite" }),
       /does not exist/,
     );
-    const created = await commitFile(join(dir, "empty"), "");
+    const created = await commitFile(join(dir, "empty"), "", { mode: "create" });
     assert.equal(created.created, true);
     assert.equal(created.publication, "PUBLISHED");
   }));

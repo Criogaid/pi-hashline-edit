@@ -73,7 +73,7 @@ test("file tools share Pi-style URL and @ path resolution", async () => {
     const ctx = { cwd: dir } as Parameters<ReturnType<typeof makeReadOverride>["execute"]>[4];
     await callTool(
       makeWriteOverride(dir),
-      { path: `@${url}`, content: "before\n" },
+      { path: `@${url}`, content: "before\n", mode: "create" },
       {
         toolCallId: "write",
         ctx,
@@ -116,6 +116,7 @@ test("file tools share Pi-style URL and @ path resolution", async () => {
       {
         path: `@${url}`,
         content: "edited\n",
+        mode: "overwrite",
         then_run: { command: "check" },
       },
       { toolCallId: "fused", ctx },

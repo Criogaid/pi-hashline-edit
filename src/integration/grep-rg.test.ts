@@ -1002,14 +1002,18 @@ test("tools share physical lines and anchors across text representations", async
     result.content[0].text.split("\n").filter((line: string) => /^\d+#/.test(line));
   try {
     const file = join(directory, "fixture.txt");
-    for (const before of [
+    for (const [index, before] of [
       "a\nold\n",
       "a\r\nold\r\n",
       "\uFEFFa\r\nold\nkeep\r\n",
       "a\rb\nold\n",
       "a\rb\nold",
-    ]) {
-      await call(makeWriteOverride(directory), { path: file, content: before });
+    ].entries()) {
+      await call(makeWriteOverride(directory), {
+        path: file,
+        content: before,
+        mode: index === 0 ? "create" : "overwrite",
+      });
       assert.equal(await readFile(file, "utf8"), before);
       const read = await call(makeReadOverride(directory, DEFAULT_CONFIG), { path: file });
       const grep = await call(makeGrepOverrideWithBackend(directory, DEFAULT_CONFIG, {}), {
@@ -1091,7 +1095,7 @@ test("all text tools share logical CRLF matching, anchors, and mutation separato
     const write = makeWriteOverride(directory);
     const read = makeReadOverride(directory, DEFAULT_CONFIG);
     const grep = makeGrepOverrideWithBackend(directory, DEFAULT_CONFIG, {});
-    await invoke(write, "write", { path, content: before }, undefined, undefined, {
+    await invoke(write, "write", { path, content: before, mode: "create" }, undefined, undefined, {
       cwd: directory,
     } as ExtensionContext);
     assert.equal(await readFile(path, "utf8"), before);
@@ -1140,9 +1144,16 @@ test("all text tools share logical CRLF matching, anchors, and mutation separato
 
     const expected = "\uFEFFhead\r\nA\r\nB\r\nC\nstand\rCR\r\r\nlast";
     for (const mode of ["edit", "literal", "regex"]) {
-      await invoke(write, "reset", { path, content: before }, undefined, undefined, {
-        cwd: directory,
-      } as ExtensionContext);
+      await invoke(
+        write,
+        "reset",
+        { path, content: before, mode: "overwrite" },
+        undefined,
+        undefined,
+        {
+          cwd: directory,
+        } as ExtensionContext,
+      );
       if (mode === "edit") {
         await invoke(
           makeEditOverride(directory, DEFAULT_CONFIG),
@@ -1184,9 +1195,16 @@ test("all text tools share logical CRLF matching, anchors, and mutation separato
       assert.equal(await readFile(path, "utf8"), expected, mode);
     }
     // Whole-file write remains the explicit representation boundary, including EOL conversion.
-    await invoke(write, "convert", { path, content: "alpha\nbeta\n" }, undefined, undefined, {
-      cwd: directory,
-    } as ExtensionContext);
+    await invoke(
+      write,
+      "convert",
+      { path, content: "alpha\nbeta\n", mode: "overwrite" },
+      undefined,
+      undefined,
+      {
+        cwd: directory,
+      } as ExtensionContext,
+    );
     assert.equal(await readFile(path, "utf8"), "alpha\nbeta\n");
   } finally {
     await rm(directory, { recursive: true, force: true });
@@ -1201,7 +1219,7 @@ test("visible source escapes remain readable and searchable while real CRLF stay
     await invoke(
       makeWriteOverride(directory),
       "write",
-      { path, content: code },
+      { path, content: code, mode: "create" },
       undefined,
       undefined,
       { cwd: directory } as ExtensionContext,

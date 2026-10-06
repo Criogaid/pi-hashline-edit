@@ -21,7 +21,7 @@ export type PublicationStatus = "NOT_PUBLISHED" | "PUBLISHED" | "UNKNOWN";
 export type CommitMode = "create" | "overwrite";
 
 export interface CommitOptions {
-  mode?: CommitMode;
+  mode: CommitMode;
   expectedRevision?: string;
   signal?: AbortSignal;
   /** Caller-supplied revision of the current file, skipping the readFile + SHA-256 in inspectTarget. */
@@ -246,7 +246,7 @@ async function syncDirectory(path: string): Promise<void> {
 export async function commitFile(
   path: string,
   content: string,
-  options: CommitOptions = {},
+  options: CommitOptions,
 ): Promise<CommitResult> {
   // Tools reject such input in prepareArguments, but a transformation can still produce it
   // (a regex without `u` can split a surrogate pair), so publication keeps the final check.
@@ -254,11 +254,11 @@ export async function commitFile(
   if (unwritable) throw prepareError(unwritable);
   const bytes = Buffer.from(content, "utf8");
   const target = await inspectTarget(path, options.knownBeforeRevision);
-  const mode = options.mode ?? (target.existed ? "overwrite" : "create");
+  const { mode } = options;
   if (mode === "create" && target.existed)
     throw prepareError("target already exists; use mode=overwrite");
   if (mode === "overwrite" && !target.existed)
-    throw prepareError("target does not exist; use mode=create or omit mode");
+    throw prepareError("target does not exist; use mode=create");
   if (mode === "create" && options.expectedRevision !== undefined)
     throw prepareError("expectedRevision cannot be combined with mode=create");
   if (

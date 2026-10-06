@@ -49,83 +49,73 @@ test("write rejects unwritable content before accessing a missing target", async
   withTemp(async (dir) => {
     const file = join(dir, "missing.txt");
     const tool = makeWriteOverride(dir);
-    const valid = { path: file, content: "ready\n" };
+    const valid = { path: file, content: "ready\n", mode: "create" };
     assert.equal(tool.prepareArguments(valid), valid);
     for (const [content, expected] of [
       ["bad\0", /Invalid argument content: UNSUPPORTED_TEXT: NUL bytes are not editable\./],
       ["\ud800", /Invalid argument content: INVALID_UNICODE:/],
     ] as const) {
       await assert.rejects(
-        callTool(tool, { path: file, content }, { ctx: context(dir) }),
+        callTool(tool, { path: file, content, mode: "create" }, { ctx: context(dir) }),
         expected,
       );
       await assert.rejects(readFile(file, "utf8"), { code: "ENOENT" });
     }
   }));
 
-test("write preserves native default create/overwrite behavior", async () =>
+test("write omits mode → rejects before changing files or running commands", async () =>
   withTemp(async (dir) => {
-    const write = makeWriteOverride(dir) as any;
-    const target = join(dir, "file.txt");
-    const created = await write.execute(
-      "create",
-      { path: "file.txt", content: "one\n" },
-      undefined,
-      undefined,
-      context(dir),
-    );
-    assert.doesNotMatch(created.content[0].text, /Revision:|[0-9a-f]{64}/);
-    assert.equal(created.details.publishedRevision, await fileRevision(target));
-    assert.equal("revision" in created.details, false);
-    assert.equal(await readFile(target, "utf8"), "one\n");
-    await write.execute(
-      "overwrite",
-      { path: "file.txt", content: "two\n" },
-      undefined,
-      undefined,
-      context(dir),
-    );
-    assert.equal(await readFile(target, "utf8"), "two\n");
+    const existing = join(dir, "existing.txt");
+    const missingParent = join(dir, "missing");
+    const missing = join(missingParent, "new.txt");
+    await writeFile(existing, "original\n");
+    let commandRuns = 0;
+    const fusion = createActionFusionExecutor(async () => {
+      commandRuns++;
+      return "checked";
+    });
+    for (const executor of [undefined, fusion]) {
+      const tool = makeWriteOverride(dir, executor);
+      for (const path of [existing, missing]) {
+        await assert.rejects(
+          callTool(
+            tool,
+            { path, content: "changed\n", ...(executor ? { then_run: { command: "check" } } : {}) },
+            { ctx: context(dir) },
+          ),
+          /\n {2}- mode:/,
+        );
+      }
+    }
+    assert.equal(await readFile(existing, "utf8"), "original\n");
+    await assert.rejects(readFile(missingParent), { code: "ENOENT" });
+    assert.equal(commandRuns, 0);
   }));
 
 test("write supports create-only and overwrite-only modes", async () =>
   withTemp(async (dir) => {
-    const write = makeWriteOverride(dir) as any;
-    await write.execute(
-      "create",
+    const write = makeWriteOverride(dir);
+    const target = join(dir, "new.txt");
+    const options = { ctx: context(dir) };
+    const created = await callTool(
+      write,
       { path: "new.txt", content: "new\n", mode: "create" },
-      undefined,
-      undefined,
-      context(dir),
+      options,
     );
+    assert.doesNotMatch(created.content[0].text, /Revision:|[0-9a-f]{64}/);
+    assert.equal(created.details.publishedRevision, await fileRevision(target));
+    assert.equal("revision" in created.details, false);
     await assert.rejects(
-      write.execute(
-        "create-again",
-        { path: "new.txt", content: "bad\n", mode: "create" },
-        undefined,
-        undefined,
-        context(dir),
-      ),
+      callTool(write, { path: "new.txt", content: "bad\n", mode: "create" }, options),
       /already exists/,
     );
+    assert.equal(await readFile(target, "utf8"), "new\n");
     await assert.rejects(
-      write.execute(
-        "missing-overwrite",
-        { path: "missing.txt", content: "bad\n", mode: "overwrite" },
-        undefined,
-        undefined,
-        context(dir),
-      ),
+      callTool(write, { path: "missing.txt", content: "bad\n", mode: "overwrite" }, options),
       /does not exist/,
     );
-    await write.execute(
-      "overwrite",
-      { path: "new.txt", content: "updated\n", mode: "overwrite" },
-      undefined,
-      undefined,
-      context(dir),
-    );
-    assert.equal(await readFile(join(dir, "new.txt"), "utf8"), "updated\n");
+    await callTool(write, { path: "new.txt", content: "updated\n", mode: "overwrite" }, options);
+    assert.equal(await readFile(target, "utf8"), "updated\n");
   }));
 
 test("write rejects obsolete expectedRevision without overwriting", async () =>
@@ -135,6 +125,7 @@ test("write rejects obsolete expectedRevision without overwriting", async () =>
     const params = {
       path: target,
       content: "changed\n",
+      mode: "overwrite",
       expectedRevision: await fileRevision(target),
     };
     for (const fusion of [undefined, createActionFusionExecutor()]) {
@@ -158,7 +149,7 @@ test("write returns only a summary for empty, short, and long content", async ()
       const path = `file-${index}.txt`;
       const result = await makeWriteOverride(dir).execute(
         "write",
-        { path, content },
+        { path, content, mode: "create" },
         undefined,
         undefined,
         context(dir),
@@ -174,7 +165,12 @@ test("write returns its summary and command output after an unchanged then_run",
     const write = makeWriteOverride(dir, fusion) as any;
     const result = await write.execute(
       "unchanged",
-      { path: "unchanged.txt", content: "mutation\n", then_run: { command: "check" } },
+      {
+        path: "unchanged.txt",
+        content: "mutation\n",
+        mode: "create",
+        then_run: { command: "check" },
+      },
       undefined,
       undefined,
       context(dir),
@@ -196,7 +192,12 @@ test("write reports changed freshness when then_run changes the target", async (
     const write = makeWriteOverride(dir, fusion) as any;
     const result = await callTool(
       write,
-      { path: "changed.txt", content: "mutation\n", then_run: { command: "check" } },
+      {
+        path: "changed.txt",
+        content: "mutation\n",
+        mode: "create",
+        then_run: { command: "check" },
+      },
       { toolCallId: "changed", ctx: context(dir) },
     );
     const text = result.content.map((block: any) => block.text).join("\n");
@@ -223,7 +224,12 @@ test("write reports missing freshness when then_run removes the target", async (
     });
     const result = await makeWriteOverride(dir, fusion).execute(
       "missing",
-      { path: "missing.txt", content: "mutation\n", then_run: { command: "remove" } },
+      {
+        path: "missing.txt",
+        content: "mutation\n",
+        mode: "create",
+        then_run: { command: "remove" },
+      },
       undefined,
       undefined,
       context(dir),
@@ -244,7 +250,7 @@ test("write preserves command failure and changed freshness", async () =>
     });
     const result = await makeWriteOverride(dir, fusion).execute(
       "failed",
-      { path: "failed.txt", content: "mutation\n", then_run: { command: "fail" } },
+      { path: "failed.txt", content: "mutation\n", mode: "create", then_run: { command: "fail" } },
       undefined,
       undefined,
       context(dir),
@@ -263,7 +269,7 @@ test("write rejects NUL content", async () =>
     await assert.rejects(
       write.execute(
         "nul",
-        { path: "nul.txt", content: "a\0b" },
+        { path: "nul.txt", content: "a\0b", mode: "create" },
         undefined,
         undefined,
         context(dir),

@@ -221,7 +221,7 @@ Regex batches run in a worker and are terminated on cancellation or when `replac
 
 ### Write
 
-Required: `path`, `content`. By default, create missing files and overwrite existing ones. Content is used exactly as supplied; anchor-looking prefixes are not stripped. Unknown fields, including misspelled modes, are rejected before writing.
+Required: `path`, `content`, `mode`. Choose `"create"` for a missing target or `"overwrite"` for an existing target; omitting `mode` is rejected before file access or command execution. Content is used exactly as supplied, including an empty string; anchor-looking prefixes are not stripped. Unknown fields, including misspelled modes, are rejected before writing.
 
 - `mode: "create"`: refuse an existing target.
 - `mode: "overwrite"`: require an existing target.
@@ -238,7 +238,7 @@ All three mutation tools treat identical final content as a successful no-op: re
 
 Forget is disabled by default. Set `"forget": true` in `hashlineEdit` and reload Pi to enable it. While disabled, the extension registers neither the `forget` tool nor its context hooks, and read/grep results carry no result tags. Disabling it does not undo context edits already stored in the session.
 
-`read` results and content-mode `grep` results of at least 2 KiB of text, and image reads, end with a separate `[result rXXXXX]` block. Smaller results, errors, and `files`/`count` grep output carry no tag. `forget` takes `ids` (a non-empty array of distinct tags) and an optional non-empty `note` for facts to keep.
+`read` results and content-mode `grep` results of at least 2 KiB of text, and image reads, end with a separate `[result rXXXXX]` block. Smaller results, errors, and `files`/`count` grep output carry no tag. `forget` takes `ids` (a non-empty array of distinct tags) and an optional non-empty `note` for conclusions needed in subsequent work. Omit `note` when none are needed; do not restate the read or forget action.
 
 Only results from the step the model has just seen can be forgotten: the tagged results after its previous response. Any other id rejects the whole call and lists the ids that are available. After the response that called `forget` completes, Pi's context edits replace the entire content of each named result with `[Result rXXXXX: content forgotten; rerun the call to see it again.]`. This removes all text and images, including headers, pagination, truncation and search notices, without inspecting their contents. The tool call, the rest of the exchange, and the `forget` call with its `note` stay in context. Save facts you still need in `note` before forgetting. Files, the raw session, and the TUI are unchanged; navigating to a point before the edit restores the original result.
 

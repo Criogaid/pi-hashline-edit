@@ -139,6 +139,7 @@ test("progress callback failures preserve publication and do not prevent the com
         {
           path,
           content: "saved\n",
+          mode: "create",
           then_run: { command: "check" },
         },
         undefined,
@@ -353,7 +354,7 @@ test("unpaired surrogate arguments are rejected before Fusion", async (t) => {
       },
       {
         tool: makeWriteOverride(dir, fusion),
-        args: { path, content: "\ud800", then_run: { command: "check" } },
+        args: { path, content: "\ud800", mode: "overwrite", then_run: { command: "check" } },
         field: "content",
       },
     ];
@@ -440,7 +441,7 @@ test("NUL arguments are rejected before Fusion for all mutation tools", async (t
       },
       {
         tool: makeWriteOverride(dir, fusion),
-        args: { path, content: "\0", then_run: { command: "check" } },
+        args: { path, content: "\0", mode: "overwrite", then_run: { command: "check" } },
         field: "content",
       },
     ];
@@ -551,7 +552,7 @@ const noOpCases = [
     makeTool: (cwd: string, fusion?: Fusion) => makeReplaceTool(cwd, DEFAULT_CONFIG, fusion),
     params: { replacements: [{ find: "same", replace: "same" }] },
   },
-  { makeTool: makeWriteOverride, params: { content: "same\n" } },
+  { makeTool: makeWriteOverride, params: { content: "same\n", mode: "overwrite" } },
 ];
 
 test("all mutation tools succeed without rewriting on no-op, with and without Fusion", async (t) => {

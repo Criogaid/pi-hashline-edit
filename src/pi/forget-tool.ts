@@ -141,7 +141,8 @@ const forgetSchema = Type.Object(
     note: Type.Optional(
       Type.String({
         minLength: 1,
-        description: "Facts from these results you still need; stays in context with this call.",
+        description:
+          "Conclusions needed for subsequent work, kept in context. Omit when none; do not restate the read or forget action.",
       }),
     ),
   },

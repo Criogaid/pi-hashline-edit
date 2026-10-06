@@ -30,7 +30,7 @@ test("macOS attempts directory sync, tolerates unsupported operations, and prese
     syncBuiltinESMExports();
     for (failure of [undefined, "EINVAL", "ENOTSUP", "EIO"]) {
       const path = join(directory, failure ?? "success");
-      const commit = commitFile(path, "published\n");
+      const commit = commitFile(path, "published\n", { mode: "create" });
       if (failure === "EIO") {
         await assert.rejects(
           commit,

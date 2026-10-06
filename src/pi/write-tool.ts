@@ -12,7 +12,7 @@ import {
   type ThenRunInput,
   type ActionFusionDetails,
 } from "./action-fusion.ts";
-import { commitFile, type CommitMode, type CommitResult } from "./file-commit.ts";
+import { commitFile, type CommitResult } from "./file-commit.ts";
 import { postProcessMutation } from "./mutation-result.ts";
 import { executeMutation, type ActionFusionExecutor } from "./mutation-runner.ts";
 import { MUTATION_TOOL_GUIDELINE } from "./tool-prompts.ts";
@@ -27,12 +27,10 @@ const writeSchema = Type.Object(
     content: Type.String({
       description: "Complete file content, written exactly as supplied, including line endings.",
     }),
-    mode: Type.Optional(
-      Type.Union([
-        Type.Literal("create", { description: "Fail if the target already exists" }),
-        Type.Literal("overwrite", { description: "Fail if the target does not exist" }),
-      ]),
-    ),
+    mode: Type.Union([
+      Type.Literal("create", { description: "Fail if the target already exists" }),
+      Type.Literal("overwrite", { description: "Fail if the target does not exist" }),
+    ]),
   },
   { additionalProperties: false },
 );
@@ -53,7 +51,7 @@ export function makeWriteOverride(cwd: string, fusion?: ActionFusionExecutor) {
     name: "write" as const,
     label: "write",
     description:
-      "Write a whole file exactly as supplied, including its line endings. By default, creates missing files and parent directories and overwrites existing files.",
+      "Write a whole file exactly as supplied, including its line endings. Choose create for a new file or overwrite for an existing file. Creates missing parent directories.",
     promptSnippet: "Write complete file content to a path",
     promptGuidelines: [MUTATION_TOOL_GUIDELINE, ...(fusion ? ACTION_FUSION_GUIDELINES : [])],
     parameters,
@@ -89,7 +87,7 @@ export function makeWriteOverride(cwd: string, fusion?: ActionFusionExecutor) {
           async run(mutationParams, { absolutePath, displayPath, signal }) {
             throwIfCancelled(signal, `before write; ${displayPath} was not changed.`);
             const result = await commitFile(absolutePath, mutationParams.content, {
-              mode: mutationParams.mode as CommitMode | undefined,
+              mode: mutationParams.mode,
               signal,
             });
             return {

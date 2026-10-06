@@ -28,7 +28,7 @@ const scenarios: readonly {
   {
     label: `write (${writeBytes} bytes)`,
     tool: makeWriteOverride(cwd),
-    args: { path: "file.txt", content: "x".repeat(writeBytes) },
+    args: { path: "file.txt", content: "x".repeat(writeBytes), mode: "create" },
   },
 ];
 for (const { label, tool, args } of scenarios) {

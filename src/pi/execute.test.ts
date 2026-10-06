@@ -303,7 +303,7 @@ test("native read and write renderers preserve resource titles, previews, and fu
     assert.match(readCall.render(120).join("\n"), /\[skill\]/);
     const write = makeWriteOverride(dir);
     const writeCall = write.renderCall(
-      { path: "preview.txt", content: "native content preview\n" },
+      { path: "preview.txt", content: "native content preview\n", mode: "create" },
       stubTheme,
       context as Parameters<typeof write.renderCall>[2],
     );
@@ -638,7 +638,7 @@ test("failed commands preserve mutation results and stay out of all main card re
         path: "write.txt",
         run: async () => {
           const tool = makeWriteOverride(dir, fusion);
-          const args = { path: "write.txt", content: "after\n" };
+          const args = { path: "write.txt", content: "after\n", mode: "overwrite" as const };
           const result = await callTool(
             tool,
             { ...args, then_run: { command: "check" } },
@@ -650,14 +650,20 @@ test("failed commands preserve mutation results and stay out of all main card re
           return {
             result,
             rendered: tool
-              .renderResult(
-                result,
-                { expanded: true, isPartial: false },
-                stubTheme as Theme,
-                { args, state: {}, cwd: dir, isError: false } as Parameters<
-                  typeof tool.renderResult
-                >[3],
-              )
+              .renderResult(result, { expanded: true, isPartial: false }, stubTheme as Theme, {
+                args,
+                state: {},
+                cwd: dir,
+                toolCallId: args.path,
+                invalidate() {},
+                lastComponent: undefined,
+                executionStarted: true,
+                argsComplete: true,
+                isPartial: false,
+                expanded: true,
+                showImages: false,
+                isError: false,
+              })
               .render(120)
               .join("\n"),
           };

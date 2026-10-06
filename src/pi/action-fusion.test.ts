@@ -67,7 +67,7 @@ test("then_run schemas reject invalid commands, unknown keys, and excessive time
           ? { edits: [{ op: "append", body: ["new"] }] }
           : tool.name === "replace"
             ? { replacements: [{ find: "old", replace: "new" }] }
-            : { content: "new\n" };
+            : { content: "new\n", mode: "overwrite" };
       for (const then_run of [
         {},
         { command: "   " },
@@ -403,7 +403,12 @@ test("all mutation tools forward command progress before completion in RPC mode"
       () =>
         makeWriteOverride(dir, fusion).execute(
           "write",
-          { path: "progress.txt", content: "after\n", then_run: { command: "check" } },
+          {
+            path: "progress.txt",
+            content: "after\n",
+            mode: "overwrite",
+            then_run: { command: "check" },
+          },
           undefined,
           (update) => updates.push(update),
           rpcContext,
@@ -488,7 +493,12 @@ test("progress reports skipped mutations and failed commands without rolling bac
     events.length = 0;
     const failed = await makeWriteOverride(dir, fusion).execute(
       "fail",
-      { path: "failed.txt", content: "published\n", then_run: { command: "check" } },
+      {
+        path: "failed.txt",
+        content: "published\n",
+        mode: "create",
+        then_run: { command: "check" },
+      },
       undefined,
       undefined,
       await ctx(dir, t),
@@ -762,6 +772,7 @@ test("Pi Bash timeout returns the cause to the model while keeping the published
       {
         path: "saved.txt",
         content: "published\n",
+        mode: "create",
         then_run: { command: "node slow.mjs", timeout: 0.2 },
       },
       { ctx: await ctx(dir, t) },

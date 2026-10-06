@@ -189,7 +189,7 @@ test("mutation card omits status when then_run was not requested", () => {
 test("unfused write errors retain the native full diagnostic", () => {
   initTheme("dark");
   const tool = withMutationStatus(makeWriteOverride(process.cwd()));
-  const args = { path: "a.txt", content: "new" };
+  const args = { path: "a.txt", content: "new", mode: "overwrite" as const };
   const context: any = { args, state: {}, isPartial: false, isError: true, invalidate() {} };
   const card = tool.renderCall!(args, theme, context);
   tool.renderResult!(
@@ -342,6 +342,7 @@ test("all file tools expose validation causes in collapsed and expanded error ca
       const args = {
         path: "unused.txt",
         content: "unused",
+        mode: "create" as const,
         edits: [{ op: "append" as const, body: ["unused"] }],
         replacements: [{ find: "unused", replace: "unused" }],
         unexpected: true,

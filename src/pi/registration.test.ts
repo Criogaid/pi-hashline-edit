@@ -70,7 +70,7 @@ test("mutation cards use Fusion by default and explicit false removes command su
     }
     initTheme("dark");
     const cases = [
-      { name: "write", args: { content: "published\n" } },
+      { name: "write", args: { content: "published\n", mode: "create" } },
       { name: "edit", args: { edits: [{ op: "append", body: ["appended"] }] } },
       { name: "replace", args: { replacements: [{ find: "published", replace: "published" }] } },
     ];
