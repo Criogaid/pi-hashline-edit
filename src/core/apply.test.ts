@@ -305,6 +305,72 @@ test("appending to a file without a final newline keeps it absent", () => {
   if (r.ok) assert.equal(r.text, "a\nb");
 });
 
+test("edits retain empty final logical lines even without an original final newline", () => {
+  for (const text of ["old", "head\nold", "head\r\nold"]) {
+    const line = splitLines(text).length;
+    const ending = text.includes("\r\n") ? "\r\n" : "\n";
+    const prefix = text.slice(0, text.lastIndexOf("\n") + 1);
+    const cases: [Edit, string, number[]][] = [
+      [{ op: "replace", start: at(text, line), body: [""] }, prefix + ending, [line - 1]],
+      [
+        { op: "replace", start: at(text, line), body: ["new", ""] },
+        `${prefix}new${ending}${ending}`,
+        [line - 1, line],
+      ],
+      [{ op: "append", body: [""] }, text + ending + ending, [line]],
+      [{ op: "insert_after", anchor: at(text, line), body: [""] }, text + ending + ending, [line]],
+    ];
+    for (const [edit, expected, touched] of cases) {
+      const result = applyEdits(text, [edit], 4, 15);
+      assert.ok(result.ok);
+      assert.equal(result.text, expected, `${edit.op}: ${JSON.stringify(text)}`);
+      assert.deepEqual(result.touchedLines, touched);
+      const newLines = splitLines(result.text);
+      assert.ok(result.touchedLines.every((index) => index < newLines.length));
+    }
+  }
+  // Deleting an unterminated suffix must also retain an existing blank predecessor.
+  for (const text of ["\nlast", "head\r\n\r\nlast"]) {
+    const result = applyEdits(
+      text,
+      [{ op: "delete", start: at(text, splitLines(text).length) }],
+      4,
+      15,
+    );
+    assert.ok(result.ok);
+    assert.equal(result.text, text.slice(0, -"last".length));
+    assert.deepEqual(result.touchedLines, []);
+  }
+});
+
+test("a BOM represents an empty first line without a terminator, but not an empty later line", () => {
+  const cases: [string, Edit[], string, number[]][] = [
+    ["\uFEFFold", [{ op: "replace", start: at("\uFEFFold", 1), body: [""] }], "\uFEFF", [0]],
+    ["\uFEFF", [{ op: "replace", start: at("\uFEFF", 1), body: [""] }], "\uFEFF", []],
+    ["\uFEFF", [{ op: "append", body: [""] }], "\uFEFF\n\n", [1]],
+    ["\uFEFF", [{ op: "prepend", body: ["new"] }], "\uFEFFnew\n\n", [0]],
+    ["\uFEFF\nlast", [{ op: "delete", start: at("\uFEFF\nlast", 2) }], "\uFEFF", []],
+  ];
+  for (const [text, edits, expected, touched] of cases) {
+    const result = applyEdits(text, edits, 4, 15);
+    assert.ok(result.ok);
+    assert.equal(result.text, expected, JSON.stringify({ text, edits }));
+    assert.deepEqual(result.touchedLines, touched);
+  }
+});
+
+test("large replacement bodies retain snapshot boundaries without a function argument limit", () => {
+  const text = "head\r\nold\ntail";
+  const body = Array<string>(150_000).fill("x");
+  const result = applyEdits(text, [{ op: "replace", start: at(text, 2), body }], 4, 15);
+  assert.ok(result.ok);
+  assert.equal(result.text, `head\r\n${"x\r\n".repeat(body.length - 1)}x\ntail`);
+  assert.equal(result.touchedLines.length, body.length);
+  assert.equal(result.touchedLines[0], 1);
+  assert.equal(result.touchedLines.at(-1), body.length);
+  assert.deepEqual(result.contextLines, []);
+});
+
 test("noop is still detected when the file lacks a final newline", () => {
   const text = "a\nb";
   const r = applyEdits(text, [{ op: "replace", start: at(text, 1), body: ["a"] }], 4, 15);

@@ -268,27 +268,44 @@ export function applyEdits(
   const separator = ending === "crlf" ? "\r\n" : "\n";
   // LF-only files have uniform separators; skip the regex scan.
   const separators = ending === "lf" ? undefined : lineSeparators(text);
-  // Verify legacy anchors above before separating the file BOM from movable line content.
-  let result = lines.map((content, i) => ({
-    content: bom && i === 0 ? content.slice(1) : content,
-    separator: separators?.[i] ?? "",
-  }));
-  for (const op of [...sorted].sort((a, b) => b.lo - a.lo)) {
-    const removed = result.slice(op.lo, op.hi);
+  // Build from the verified snapshot in one pass: large bodies must not become
+  // function arguments, and later operations keep their original coordinates.
+  const result: { content: string; separator: string }[] = [];
+  let cursor = 0;
+  const appendOriginal = (end: number) => {
+    while (cursor < end) {
+      const content = lines[cursor];
+      // Anchors were checked before separating the BOM from movable line content.
+      result.push({
+        content: bom && cursor === 0 ? content.slice(1) : content,
+        separator: separators?.[cursor] ?? "",
+      });
+      cursor++;
+    }
+  };
+  for (const op of sorted) {
+    appendOriginal(op.lo);
     // The trailing gap is outside the logical replacement, just as in substring replacement.
-    const removedSeparators = removed.slice(0, -1).map((line) => line.separator);
-    const inserted = op.newLines.map((content, i) => ({
-      // A copied first-line BOM denotes the existing file header, not a second BOM.
-      content:
-        bom && op.lo === 0 && i === 0 && content.startsWith(bom) ? content.slice(1) : content,
-      separator:
-        i === op.newLines.length - 1 && removed.length > 0
-          ? removed[removed.length - 1].separator
-          : replacementSeparator(removedSeparators, i, separator),
-    }));
-    result.splice(op.lo, op.hi - op.lo, ...inserted);
+    const removedSeparators = separators?.slice(op.lo, Math.max(op.lo, op.hi - 1)) ?? [];
+    for (let i = 0; i < op.newLines.length; i++) {
+      const content = op.newLines[i];
+      result.push({
+        // A copied first-line BOM denotes the existing file header, not a second BOM.
+        content:
+          bom && op.lo === 0 && i === 0 && content.startsWith(bom) ? content.slice(1) : content,
+        separator:
+          i === op.newLines.length - 1 && op.hi > op.lo
+            ? (separators?.[op.hi - 1] ?? "")
+            : replacementSeparator(removedSeparators, i, separator),
+      });
+    }
+    cursor = op.hi;
   }
-  const finalNewline = hasFinalNewline(text);
+  appendOriginal(lines.length);
+  // An empty final logical line needs its own terminator to survive splitLines.
+  // A sole BOM-backed line already has a representation without a terminator.
+  const finalNewline =
+    hasFinalNewline(text) || (result.at(-1)?.content === "" && (result.length > 1 || !bom));
   const newText =
     bom +
     result

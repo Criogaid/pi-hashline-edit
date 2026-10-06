@@ -9,9 +9,9 @@
  *
  * Final newline: splitLines discards whether the input ended with a terminator
  * (a trailing newline terminates the last line, it does not create one).
- * hasFinalNewline recovers that state so a file that lacked a final newline
- * does not silently gain one — editing reassembles per-line separators and
- * must suppress the last line's terminator accordingly.
+ * hasFinalNewline recovers that state when editing reassembles per-line
+ * separators. A non-empty final line retains that state; a final blank line
+ * needs a terminator to remain representable, except for a BOM-only line.
  *
  * @module pi-hashline-edit/core
  */
