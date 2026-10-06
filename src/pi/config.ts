@@ -33,6 +33,10 @@ export const configSchema = Type.Object({
     default: true,
     description: "Expose optional then_run commands after edit/replace/write.",
   }),
+  forget: Type.Boolean({
+    default: false,
+    description: "Register forget and tag eligible read/grep results for context removal.",
+  }),
   hashLen: integerSetting(
     integerRange(HASH_LEN_MIN, HASH_LEN_MAX),
     4,

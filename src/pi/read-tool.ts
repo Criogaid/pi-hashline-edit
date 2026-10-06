@@ -183,10 +183,11 @@ export function makeReadOverride(
       const anchors = createAnchorFormatter(hashLen);
       const readNative = async () => {
         const result = await builtin.execute(toolCallId, params, signal, onUpdate, ctx);
-        return withResultTag(toolCallId, {
-          ...result,
-          details: { ...result.details, nativeRead: true as const },
-        });
+        return withResultTag(
+          toolCallId,
+          { ...result, details: { ...result.details, nativeRead: true as const } },
+          config.forget,
+        );
       };
 
       const absPath = canonicalPath(cwd, params.path as string);
@@ -270,10 +271,14 @@ export function makeReadOverride(
       const header = `${formatReadHeader(params.path, stats.totalLines, start, stats.finalNewline)}\n`;
       const body = truncation.content;
 
-      return withResultTag(toolCallId, {
-        content: [{ type: "text" as const, text: header + body + tail }],
-        details: truncation.truncated ? { truncation } : pagination ? { pagination } : undefined,
-      });
+      return withResultTag(
+        toolCallId,
+        {
+          content: [{ type: "text" as const, text: header + body + tail }],
+          details: truncation.truncated ? { truncation } : pagination ? { pagination } : undefined,
+        },
+        config.forget,
+      );
     },
   };
 }

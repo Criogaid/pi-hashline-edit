@@ -46,6 +46,6 @@ export default function (pi: ExtensionAPI) {
 
     pi.registerTool(makeReadOverride(cwd, config));
     pi.registerTool(makeGrepOverride(cwd, config));
-    registerForgetTool(pi);
+    if (config.forget) registerForgetTool(pi);
   }
 }

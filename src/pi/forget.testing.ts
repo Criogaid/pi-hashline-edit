@@ -104,8 +104,9 @@ export async function openForgetSession(t: TestContext) {
     noContextFiles: true,
     extensionFactories: [
       (pi) => {
-        pi.registerTool(makeReadOverride(cwd, DEFAULT_CONFIG));
-        pi.registerTool(makeGrepOverride(cwd, DEFAULT_CONFIG));
+        const config = { ...DEFAULT_CONFIG, forget: true };
+        pi.registerTool(makeReadOverride(cwd, config));
+        pi.registerTool(makeGrepOverride(cwd, config));
         registerForgetTool(pi);
       },
     ],

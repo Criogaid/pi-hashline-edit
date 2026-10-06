@@ -1232,7 +1232,11 @@ test("grep output exceeds the forget threshold → only content mode receives a 
     );
     await Promise.all(paths.map((path) => writeFile(path, "needle\n")));
     const fake = fakeBackend({ paths, lines: paths.map((path) => rgMatch(path, 1, "needle\n")) });
-    const tool = makeGrepOverrideWithBackend(dir, DEFAULT_CONFIG, fake.backend);
+    const tool = makeGrepOverrideWithBackend(
+      dir,
+      { ...DEFAULT_CONFIG, forget: true },
+      fake.backend,
+    );
     for (const outputMode of ["content", "files", "count"] as const) {
       const result: Awaited<ReturnType<typeof tool.execute>> = await callTool(tool, {
         path: dir,

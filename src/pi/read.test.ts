@@ -340,7 +340,7 @@ test("read accepts safe offsets and limits whose sum exceeds the safe integer ra
 test("read text reaches the forget byte threshold → only eligible results receive a tag", async () =>
   withDir(async (dir) => {
     const path = join(dir, "threshold.txt");
-    const read = makeReadOverride(dir, DEFAULT_CONFIG);
+    const read = makeReadOverride(dir, { ...DEFAULT_CONFIG, forget: true });
     await writeFile(path, "界\n");
     const initial: Awaited<ReturnType<typeof read.execute>> = await callTool(read, { path });
     const initialBlock = initial.content[0];

@@ -51,11 +51,13 @@ function isResultTag(block: ResultContent[number] | undefined, toolCallId: strin
   return block?.type === "text" && block.text === resultTag(toolCallId);
 }
 
-/** Tag a successful read/grep result as forgettable when it is worth forgetting. */
+/** Tag a successful read/grep result when forgetting is enabled and the result is eligible. */
 export function withResultTag<T extends { content: ResultContent }>(
   toolCallId: string,
   result: T,
+  enabled: boolean,
 ): T {
+  if (!enabled) return result;
   const bytes = result.content.reduce(
     (sum, block) => sum + (block.type === "text" ? Buffer.byteLength(block.text) : 0),
     0,

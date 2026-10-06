@@ -4,7 +4,7 @@
 
 Hash-anchored file editing for [Pi](https://github.com/earendil-works/pi-coding-agent). The model references lines it has read and supplies their new content; the tool checks each anchor against the current file before editing.
 
-Overrides `read`, `grep`, `edit`, and `write`, and adds `replace` for bulk transformations and `forget` for dropping the file content of read/grep results from model context.
+Overrides `read`, `grep`, `edit`, and `write`, and adds `replace` for bulk transformations. Optional `forget` drops read/grep result content from model context.
 
 - **Search → edit:** `read` and `grep` return the same `LINE#HASH` anchors, so search results can feed directly into edits.
 - **Batch and chain edits:** submit structured JSON operations together, then use the returned fresh anchors for the next change.
@@ -65,7 +65,7 @@ Successful `edit` and `replace` results omit candidate rows whose full content a
 | `edit` | Change specific lines or ranges using verified anchors. |
 | `replace` | Replace every occurrence of a literal string or JavaScript regex across one file. |
 | `write` | Create a file or replace its complete contents. |
-| `forget` | Drop the file content of read or grep results from model context right after reading them. |
+| `forget` | When enabled in configuration, drop read or grep result content from model context right after reading it. |
 
 All tools accept relative and absolute paths, `file://` URLs, a leading `@` prefix, and a leading `~` (including `~\` on Windows). As in Pi's built-in file tools, supported Unicode spaces in paths become regular spaces, and Windows shell drive paths using only forward slashes, such as `/c/file`, `/mnt/c/file`, and `/cygdrive/c/file`, resolve to native drive paths. Mixed-separator forms such as `/c/dir\file` do not undergo this drive conversion, matching Pi's built-in tools. Mutation tools share the file-mutation queue and commit layer.
 
@@ -230,6 +230,8 @@ All three mutation tools treat identical final content as a successful no-op: re
 
 ### Forget
 
+Forget is disabled by default. Set `"forget": true` in `hashlineEdit` and reload Pi to enable it. While disabled, the extension registers neither the `forget` tool nor its context hooks, and read/grep results carry no result tags. Disabling it does not undo context edits already stored in the session.
+
 `read` results and content-mode `grep` results of at least 2 KiB of text, and image reads, end with a separate `[result rXXXXX]` block. Smaller results, errors, and `files`/`count` grep output carry no tag. `forget` takes `ids` (a non-empty array of distinct tags) and an optional non-empty `note` for facts to keep.
 
 Only results from the step the model has just seen can be forgotten: the tagged results after its previous response. Any other id rejects the whole call and lists the ids that are available. After the response that called `forget` completes, Pi's context edits replace the entire content of each named result with `[Result rXXXXX: content forgotten; rerun the call to see it again.]`. This removes all text and images, including headers, pagination, truncation and search notices, without inspecting their contents. The tool call, the rest of the exchange, and the `forget` call with its `note` stay in context. Save facts you still need in `note` before forgetting. Files, the raw session, and the TUI are unchanged; navigating to a point before the edit restores the original result.
@@ -249,6 +251,7 @@ Add `hashlineEdit` to Pi's global settings (`~/.pi/agent/settings.json` by defau
   "hashlineEdit": {
     "enabled": true,
     "actionFusion": true,
+    "forget": false,
     "hashLen": 4,
     "shiftRadius": 15,
     "read": { "defaultLimit": 500, "maxKiB": 256 },
@@ -258,12 +261,13 @@ Add `hashlineEdit` to Pi's global settings (`~/.pi/agent/settings.json` by defau
 }
 ```
 
-Top-level settings apply to every tool; each group applies to one tool.
+Top-level settings control shared behavior; each group configures one tool.
 
 | Setting | Default | Meaning |
 | --- | --- | --- |
-| `enabled` | `true` | Enable all six tools as one unit. Set `false` to restore built-in tools. |
+| `enabled` | `true` | Enable the extension. Set `false` to register no tools or hooks and restore built-in tools. |
 | `actionFusion` | `true` | Expose `then_run` on mutation tools. Set `false` to disable command support. |
+| `forget` | `false` | Register `forget` and tag eligible read/grep results for context removal. |
 | `hashLen` | `4` | Integer checksum length, 2–8 characters. `edit` accepts only anchors of this length; anchors produced under another setting must be read again. |
 | `shiftRadius` | `15` | Integer first-pass recovery-search radius, 0–100 lines. With no local candidates, recovery searches the rest of the file; `0` disables both searches. |
 | `read.defaultLimit` | `500` | Lines returned when a call omits `limit`; positive safe integer. |
@@ -355,7 +359,7 @@ These limits bound model context, not file size. Omission notices direct the cal
 | --- | --- |
 | `read` | Default 500 rows (`read.defaultLimit`), overridable with `limit`; 256 KiB of anchored text (`read.maxKiB`). No partial anchor rows. An oversized single row directs the caller to inspect chunks with `bash` or make a known text change with `replace`; reducing `limit` cannot split a physical line. |
 | `grep` | Default 100 matching lines (`grep.defaultLimit`), overridable; up to 500 UTF-16 units per partial line preview, plus labels and Pi's total output limits. Match previews use rg byte offsets; hashes use full content. Search error notices have a separate 4 KiB budget. |
-| `forget` tag | `read` and content-mode `grep` text results of 2 KiB or more, and image reads; smaller results are not tagged. |
+| `forget` tag | With `forget` enabled: `read` and content-mode `grep` text results of 2 KiB or more, and image reads; smaller results are not tagged. |
 | `edit` / `replace` anchors | 16 KiB including heading/omission notice, with no fixed entry-count limit. Compact tokens for changed positions; selected deletion successors retain complete content. The omission notice consumes budget only when rows are omitted. Rows that do not fit are omitted in full; later rows that fit are still returned. |
 | Anchor failure details | 16 KiB, with no fixed failure-count limit; unique candidates include complete rows up to 4 KiB, and ambiguous failures list up to eight candidates each. Unresolved anchors show the current cited row when it fits; oversized or out-of-range rows require a fresh `read` or `grep`. |
 | Input-anchor checks | Independent 16 KiB block, with no fixed entry-count limit. Truncation is reported explicitly; omitted entries are not implied matched. |

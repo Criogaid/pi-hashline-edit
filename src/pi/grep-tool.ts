@@ -276,7 +276,7 @@ export function makeGrepOverrideWithBackend(
         linesTruncated,
       });
       // Only content mode returns file text; paths and counts have nothing to forget.
-      return outputMode === "content" ? withResultTag(toolCallId, output) : output;
+      return outputMode === "content" ? withResultTag(toolCallId, output, config.forget) : output;
     },
   } satisfies GrepTool;
 }
