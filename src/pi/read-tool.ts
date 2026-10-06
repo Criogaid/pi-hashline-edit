@@ -22,6 +22,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import type { AgentToolUpdateCallback } from "@earendil-works/pi-agent-core";
 import { Text } from "@earendil-works/pi-tui";
+import { Type } from "typebox";
 import { scanTextLines } from "./text-stream.ts";
 import { createAnchorFormatter, displayCarriageReturns, parseHashline } from "./anchor-format.ts";
 import { canonicalPath } from "./path.ts";
@@ -123,24 +124,26 @@ export function makeReadOverride(
   const { defaultLimit } = config.read;
   const maxBytes = config.read.maxKiB * 1024;
   const builtin = createReadToolDefinition(cwd);
-  const parameters = {
-    ...builtin.parameters,
-    additionalProperties: false,
-    properties: {
-      ...builtin.parameters.properties,
-      path: { ...builtin.parameters.properties.path, minLength: 1 },
-      offset: {
-        ...builtin.parameters.properties.offset,
-        ...POSITIVE_SAFE_INTEGER,
-        description: `1-based line to start from (default ${DEFAULT_OFFSET}).`,
-      },
-      limit: {
-        ...builtin.parameters.properties.limit,
-        ...POSITIVE_SAFE_INTEGER,
-        description: `Maximum lines to read (default ${defaultLimit}).`,
-      },
+  // A TypeBox object, not a spread of Pi's plain JSON schema: argument diagnostics pick
+  // single fields from it, which needs TypeBox's own schema kinds.
+  const parameters = Type.Object(
+    {
+      path: Type.String({ ...builtin.parameters.properties.path, minLength: 1 }),
+      offset: Type.Optional(
+        Type.Number({
+          ...POSITIVE_SAFE_INTEGER,
+          description: `1-based line to start from (default ${DEFAULT_OFFSET}).`,
+        }),
+      ),
+      limit: Type.Optional(
+        Type.Number({
+          ...POSITIVE_SAFE_INTEGER,
+          description: `Maximum lines to read (default ${defaultLimit}).`,
+        }),
+      ),
     },
-  };
+    { additionalProperties: false },
+  );
 
   return {
     name: "read" as const,
