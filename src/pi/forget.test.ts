@@ -40,8 +40,10 @@ for (const { name, filename, body } of [
   }, async (t) => {
     const f = await openForgetSession(t);
     await writeFile(join(f.cwd, filename), body);
-    await f.prompt(toolResponse(f.read("read-log", filename)), (messages) =>
-      toolResponse(forgetCall(messages, "read-log")),
+    await f.prompt(
+      toolResponse(f.read("read-log", filename)),
+      (messages) => toolResponse(forgetCall(messages, "read-log")),
+      finish,
     );
     const original = toolResult(f.requests[1], "read-log");
     const id = taggedResultId(original);
@@ -55,9 +57,7 @@ for (const { name, filename, body } of [
     } else {
       assert.ok(original.content.some((block) => block.type === "image"));
     }
-    // A standalone forget finishes without another model request.
-    assert.equal(f.requests.length, 2);
-    await f.prompt(finish);
+    assert.equal(f.requests.length, 3, "A standalone forget must allow the model to continue");
     const forgotten = toolResult(f.requests[2], "read-log");
     const remainingText = forgotten.content
       .filter((block) => block.type === "text")
@@ -108,11 +108,14 @@ test("forget with a note → calls, saved facts, source bytes and raw session re
   const note = "Build failed during dependency installation.";
   const read = f.read("read-log");
   await writeFile(path, LOG_BODY);
-  await f.prompt(toolResponse(read), (messages) => {
-    const call = forgetCall(messages, "read-log");
-    return toolResponse({ ...call, arguments: { ...call.arguments, note } });
-  });
-  await f.prompt(finish);
+  await f.prompt(
+    toolResponse(read),
+    (messages) => {
+      const call = forgetCall(messages, "read-log");
+      return toolResponse({ ...call, arguments: { ...call.arguments, note } });
+    },
+    finish,
+  );
   const calls = f.requests[2].flatMap((message) =>
     message.role === "assistant"
       ? message.content.filter((block) => block.type === "toolCall")

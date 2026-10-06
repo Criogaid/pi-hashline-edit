@@ -41,6 +41,7 @@ for (const encoding of ["UTF-8", "invalid UTF-8"] as const) {
         arguments: { path, pattern: "needle", literal: true },
       }),
       (messages) => toolResponse(forgetCall(messages, "search")),
+      finish,
     );
     const original = toolResult(f.requests[1], "search");
     assert.equal(original.isError, false);
@@ -52,7 +53,6 @@ for (const encoding of ["UTF-8", "invalid UTF-8"] as const) {
     if (encoding === "invalid UTF-8") assert.ok(text.includes("\uFFFD"));
     const id = taggedResultId(original);
     assert.ok(id);
-    await f.prompt(finish);
     const forgotten = toolResult(f.requests[2], "search");
     assertForgotten(forgotten, id);
     const receipt = forgotten.content[0];

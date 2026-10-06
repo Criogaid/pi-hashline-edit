@@ -151,7 +151,7 @@ export function registerForgetTool(pi: ExtensionAPI): void {
   pi.registerTool({
     name: "forget",
     label: "forget",
-    description: `Remove read or grep results from your context once you have taken what you need. Only results from the previous step tagged [result rXXXXX] (${formatKiB(FORGET_MIN_BYTES)} or larger, or images) can be forgotten. After this response each selected result's entire content, including headers and notices, is replaced with a forgotten receipt. Save facts you still need in note. Files and session history are unchanged. Calling forget alone ends your turn; call it together with your next tool calls to keep working.`,
+    description: `Remove read or grep results from your context once you have taken what you need. Only results from the previous step tagged [result rXXXXX] (${formatKiB(FORGET_MIN_BYTES)} or larger, or images) can be forgotten. After this response each selected result's entire content, including headers and notices, is replaced with a forgotten receipt. Save facts you still need in note. Files and session history are unchanged.`,
     promptSnippet: "Forget read or grep results you no longer need",
     promptGuidelines: [
       "Right after a read or grep result tagged [result rXXXXX], call forget with its id if you will not need any of its content again; put facts you still need in note. Results from earlier steps cannot be forgotten.",
@@ -181,7 +181,6 @@ export function registerForgetTool(pi: ExtensionAPI): void {
       return {
         content: [{ type: "text" as const, text: `Forgot ${params.ids.join(", ")}.` }],
         details: undefined,
-        terminate: true,
       };
     },
   } satisfies ToolDefinition<typeof forgetSchema, undefined>);

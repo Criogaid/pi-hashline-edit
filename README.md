@@ -236,7 +236,7 @@ Only results from the step the model has just seen can be forgotten: the tagged 
 
 The restriction bounds how much of the next request changes. Messages before the earliest forgotten result stay as they were; from that result on, the request differs, which covers any later results from the same batch (even ones not forgotten), the response that called `forget`, and its tool results. Forgetting an older result would change every later message. This describes request contents only; how a provider bills prompt caching for the changed part is not measured here.
 
-`forget` asks Pi to end the run after its batch. Called alone, it ends the turn without another model request; called with other tools, the run continues as usual.
+After `forget` completes, Pi continues with the next model request as it does for other tools. The selected results have already been replaced with receipts when that request is sent.
 
 </details>
 
