@@ -18,6 +18,7 @@ import { loadConfig } from "./pi/config.ts";
 import { makeEditOverride } from "./pi/edit-tool.ts";
 import { makeReadOverride } from "./pi/read-tool.ts";
 import { makeGrepOverride } from "./pi/grep-tool.ts";
+import { registerForgetTool } from "./pi/forget-tool.ts";
 import { makeReplaceTool } from "./pi/replace-tool.ts";
 import { makeWriteOverride } from "./pi/write-tool.ts";
 import { createActionFusionExecutor } from "./pi/action-fusion.ts";
@@ -45,5 +46,6 @@ export default function (pi: ExtensionAPI) {
 
     pi.registerTool(makeReadOverride(cwd, config));
     pi.registerTool(makeGrepOverride(cwd, config));
+    if (config.forget) registerForgetTool(pi);
   }
 }

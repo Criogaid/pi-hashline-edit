@@ -1149,16 +1149,16 @@ test("edit tool rejects non-array formats Pi cannot convert", async () =>
       { path: "f.txt", edits: JSON.stringify([{ op: "replace", anchor, body: ["SECOND"] }]) },
       { path: "f.txt", op: "replace", anchor, body: ["SECOND"] },
     ]) {
-      // prepareArguments only explains wrong hash lengths; it never rewrites arguments.
-      assert.equal(edit.prepareArguments(alternate), alternate);
+      const original = structuredClone(alternate);
       await assert.rejects(call(edit, alternate), /Validation failed/);
+      assert.deepEqual(alternate, original);
       assert.equal(await readFile(file, "utf8"), "first\nsecond\n");
     }
     await call(edit, { path: "f.txt", edits: [{ op: "replace", anchor, body: ["SECOND"] }] });
     assert.equal(await readFile(file, "utf8"), "first\nSECOND\n");
   }));
 
-test("edit names anchors whose hash length differs from the registered hashLen", async () =>
+test("edit receives multiple wrong-length anchors → reports each location with one recovery hint", async () =>
   withDir(async (dir) => {
     const text = "first\nsecond\n";
     const file = join(dir, "f.txt");
@@ -1167,11 +1167,20 @@ test("edit names anchors whose hash length differs from the registered hashLen",
     const edit = makeEditOverride(dir, DEFAULT_CONFIG);
     const anchor = h(text, 1);
     const short = h(text, 2).slice(0, -2);
-    const args = { path: "f.txt", edits: [{ op: "replace", anchor, end: short, body: ["x"] }] };
+    const args = {
+      path: "f.txt",
+      edits: [
+        { op: "replace", anchor, end: short, body: ["x"] },
+        { op: "delete", anchor: short },
+      ],
+    };
 
     await assert.rejects(call(edit, args), (error: Error) => {
       assert.match(error.message, /Anchor hash length mismatch/);
-      assert.ok(error.message.includes(`edits[0].end ${short}`));
+      assert.match(error.message, /Invalid argument edits\[0\]\.end:/);
+      assert.match(error.message, /Invalid argument edits\[1\]\.anchor:/);
+      assert.equal(error.message.match(/read or grep/gi)?.length, 1);
+      assert.ok(error.message.includes(short));
       assert.match(error.message, new RegExp(`${hashLen - 2} hash characters`));
       assert.match(error.message, new RegExp(`hashLen.*${hashLen}`));
       return true;

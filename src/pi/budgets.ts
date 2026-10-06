@@ -12,7 +12,7 @@
 /** grep line preview, in UTF-16 units, excluding its partial-line label. */
 export const GREP_MAX_LINE_LENGTH = 500;
 
-/** Each diagnostic or anchor block: failure details, input-anchor checks, candidate neighborhoods, mutation anchors. */
+/** Each diagnostic or anchor block: argument errors, failure details, input-anchor checks, candidate neighborhoods, mutation anchors. */
 export const MAX_BLOCK_BYTES = 16 * 1024;
 /** One recovery-candidate or cited row inside a failure diagnostic. */
 export const MAX_RECOVERY_CANDIDATE_BYTES = 4 * 1024;
@@ -23,3 +23,6 @@ export const MAX_SEARCH_DIAGNOSTIC_BYTES = 4 * 1024;
 export function formatKiB(bytes: number): string {
   return `${bytes / 1024} KiB`;
 }
+
+/** Smallest read or grep text result tagged for forget; smaller ones save too little to be worth forgetting. */
+export const FORGET_MIN_BYTES = 2 * 1024;

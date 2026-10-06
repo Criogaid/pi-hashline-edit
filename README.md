@@ -4,7 +4,7 @@
 
 Hash-anchored file editing for [Pi](https://github.com/earendil-works/pi-coding-agent). The model references lines it has read and supplies their new content; the tool checks each anchor against the current file before editing.
 
-Overrides `read`, `grep`, `edit`, and `write`, and adds `replace` for bulk transformations.
+Overrides `read`, `grep`, `edit`, and `write`, and adds `replace` for bulk transformations. Optional `forget` drops read/grep result content from model context.
 
 - **Search → edit:** `read` and `grep` return the same `LINE#HASH` anchors, so search results can feed directly into edits.
 - **Batch and chain edits:** submit structured JSON operations together, then use the returned fresh anchors for the next change.
@@ -65,16 +65,23 @@ Successful `edit` and `replace` results omit candidate rows whose full content a
 | `edit` | Change specific lines or ranges using verified anchors. |
 | `replace` | Replace every occurrence of a literal string or JavaScript regex across one file. |
 | `write` | Create a file or replace its complete contents. |
+| `forget` | When enabled in configuration, drop read or grep result content from model context right after reading it. |
 
-All tools accept relative and absolute paths, `file://` URLs, a leading `@` prefix, and a leading `~` (including `~\` on Windows). As in Pi's built-in file tools, supported Unicode spaces in paths become regular spaces, and Windows shell drive paths using only forward slashes, such as `/c/file`, `/mnt/c/file`, and `/cygdrive/c/file`, resolve to native drive paths. Mixed-separator forms such as `/c/dir\file` do not undergo this drive conversion, matching Pi's built-in tools. Mutation tools share the file-mutation queue and commit layer.
+File tools accept relative and absolute paths, `file://` URLs, a leading `@` prefix, and a leading `~` (including `~\` on Windows). As in Pi's built-in file tools, supported Unicode spaces in paths become regular spaces, and Windows shell drive paths using only forward slashes, such as `/c/file`, `/mnt/c/file`, and `/cygdrive/c/file`, resolve to native drive paths. Mixed-separator forms such as `/c/dir\file` do not undergo this drive conversion, matching Pi's built-in tools. Mutation tools share the file-mutation queue and commit layer.
 
 Valid UTF-8 text inspection and matching uses one logical representation: CRLF boundaries become LF; standalone CR and source-code escape sequences such as the four characters `\r\n` remain content. `read` and `grep` hash the same logical lines that `edit` verifies; literal and regex `replace` both match this LF view. Mutation offsets map back to the original text. `edit` and `replace` share separator restoration: reuse internal separators positionally, repeat the last for extra gaps, or use the file style (CRLF if present, otherwise LF) when none exist. Boundaries outside the replacement stay unchanged. Invalid UTF-8 grep previews use raw-byte matching as described below.
 
 `write` is the full-content boundary: its supplied bytes are authoritative, so it preserves their explicit LF/CRLF choices. Use it for intentional whole-file line-ending conversion. To inspect actual line-ending bytes, use a raw byte reader; anchored line displays intentionally do not distinguish LF from CRLF.
 
+### Argument errors
+
+All six tools use one argument-validation entry point. Tool-specific checks collect independent issues instead of stopping at the first one; the response also includes Pi's schema diagnostics. For example, an edit batch can report empty bodies, unwritable text, invalid anchor lengths, and invalid `then_run` fields in one rejection. Schema failures are diagnosed per top-level field, so one field cannot consume another field's diagnostic allowance. Received arguments use compact JSON in both model-facing errors and the TUI. Pi still limits schema errors within each field; the response states that more may remain.
+
+Argument diagnostics share the 16 KiB block budget in [`budgets.ts`](src/pi/budgets.ts), retain opening and closing text, and label omitted text. Invalid arguments prevent execution. Filesystem access, anchor verification, regex probing by ripgrep, and forget eligibility remain subsequent checks that require valid arguments.
+
 ### Edit operations
 
-`edit` declares a required `path` and a non-empty structured `edits` array. This extension does not normalize alternate formats: stringified JSON and top-level single-op fields are rejected. Pi's own argument validation may convert a single edit object to a one-element array before the extension sees it. Anchors are `"LINE#HASH"` strings whose hash has exactly `hashLen` characters from uppercase Crockford base32 (digits and A–Z except I, L, O, and U). Line numbers are positive safe integers without leading zeroes. Each `body` element is one logical line without CR or LF. An anchor of a different hash length, such as one copied before a `hashLen` change, is rejected before the file is read, and the error names each such anchor.
+`edit` declares a required `path` and a non-empty structured `edits` array. This extension does not normalize alternate formats: stringified JSON and top-level single-op fields are rejected. Pi's own argument validation may convert a single edit object to a one-element array before the extension sees it. Anchors are `"LINE#HASH"` strings whose hash has exactly `hashLen` characters from uppercase Crockford base32 (digits and A–Z except I, L, O, and U). Line numbers are positive safe integers without leading zeroes. Each `body` element is one logical line without CR or LF. An anchor of a different hash length, such as one copied before a `hashLen` change, is rejected before the file is read, and the error names each such anchor. When several anchors have the wrong hash length, the recovery hint appears only with the first one.
 
 | `op` | Required | Optional | Effect |
 | --- | --- | --- | --- |
@@ -83,7 +90,7 @@ Valid UTF-8 text inspection and matching uses one logical representation: CRLF b
 | `insert_before` / `insert_after` | `anchor`, `body` | — | Insert beside the anchor; keep the anchor line. |
 | `prepend` / `append` | `body` | — | Insert at the start/end; no anchors. |
 
-Every `body` holds at least one line; `[""]` is a single blank line. Remove lines with `delete`. An empty `body: []` is rejected for every operation before the file is read; one error names every such edit.
+Every `body` holds at least one line; `[""]` is a single blank line. Remove lines with `delete`. An empty `body: []` is rejected for every operation before the file is read, together with other independently detectable argument errors.
 
 All operations in a batch use the same snapshot. Validation failure rejects the whole batch. Unknown fields, conflicting fields, and overlapping operations are rejected; some touching operations also conflict and need separate calls with fresh anchors. For insertion, **do not repeat the anchor line in `body`**. `edit` uses structured operations, not `oldText`/`newText` pairs.
 
@@ -162,7 +169,7 @@ To apply several rules against the same original content:
 Original `foo bar` becomes `bar baz`; inserted text is not searched again. All rules must succeed before one file commit. `then_run`, when supplied, runs once after the entire batch succeeds.
 
 <details>
-<summary><strong>Full read, grep, replace, and write parameter reference</strong></summary>
+<summary><strong>Full read, grep, replace, write, and forget parameter reference</strong></summary>
 
 ### Read
 
@@ -227,6 +234,20 @@ With Action Fusion enabled, `edit`, `replace`, and `write` also accept `then_run
 
 All three mutation tools treat identical final content as a successful no-op: report `no net change`, leave the existing file untouched, and return `publication: "NOT_PUBLISHED"`. A requested `then_run` still runs after freshness checks. Input, anchor, match, target-type, mode, and cancellation checks still apply; edit/replace reject stale source revisions, while zero matches and an existing target in create mode remain errors. Creating a missing empty file is a publication, not a no-op.
 
+### Forget
+
+Forget is disabled by default. Set `"forget": true` in `hashlineEdit` and reload Pi to enable it. While disabled, the extension registers neither the `forget` tool nor its context hooks, and read/grep results carry no result tags. Disabling it does not undo context edits already stored in the session.
+
+`read` results and content-mode `grep` results of at least 2 KiB of text, and image reads, end with a separate `[result rXXXXX]` block. Smaller results, errors, and `files`/`count` grep output carry no tag. `forget` takes `ids` (a non-empty array of distinct tags) and an optional non-empty `note` for facts to keep.
+
+Only results from the step the model has just seen can be forgotten: the tagged results after its previous response. Any other id rejects the whole call and lists the ids that are available. After the response that called `forget` completes, Pi's context edits replace the entire content of each named result with `[Result rXXXXX: content forgotten; rerun the call to see it again.]`. This removes all text and images, including headers, pagination, truncation and search notices, without inspecting their contents. The tool call, the rest of the exchange, and the `forget` call with its `note` stay in context. Save facts you still need in `note` before forgetting. Files, the raw session, and the TUI are unchanged; navigating to a point before the edit restores the original result.
+
+The `forget` card in the TUI shows the result count in its header, for example `forget · 2 results`, followed by what was forgotten: `build.log · lines 100–200` (with `· truncated` when the read hit its byte limit), `photo.png · image`, or `grep /pattern/ · 12 matches in 3 files` (with `· limit reached` or `· incomplete`). Expanding the card shows each result id beside its receipt; results without a detailed receipt show their id in either view. An optional `note` appears below the header. read and grep keep receipts in result details, which Pi does not send to the model; the model sees only `Forgot rXXXXX.`.
+
+The restriction bounds how much of the next request changes. Messages before the earliest forgotten result stay as they were; from that result on, the request differs, which covers any later results from the same batch (even ones not forgotten), the response that called `forget`, and its tool results. Forgetting an older result would change every later message. This describes request contents only; how a provider bills prompt caching for the changed part is not measured here.
+
+After `forget` completes, Pi continues with the next model request as it does for other tools. The selected results have already been replaced with receipts when that request is sent.
+
 </details>
 
 ## Configuration
@@ -238,6 +259,7 @@ Add `hashlineEdit` to Pi's global settings (`~/.pi/agent/settings.json` by defau
   "hashlineEdit": {
     "enabled": true,
     "actionFusion": true,
+    "forget": false,
     "hashLen": 4,
     "shiftRadius": 15,
     "read": { "defaultLimit": 500, "maxKiB": 256 },
@@ -247,12 +269,13 @@ Add `hashlineEdit` to Pi's global settings (`~/.pi/agent/settings.json` by defau
 }
 ```
 
-Top-level settings apply to every tool; each group applies to one tool.
+Top-level settings control shared behavior; each group configures one tool.
 
 | Setting | Default | Meaning |
 | --- | --- | --- |
-| `enabled` | `true` | Enable all five tools as one unit. Set `false` to restore built-in tools. |
+| `enabled` | `true` | Enable the extension. Set `false` to register no tools or hooks and restore built-in tools. |
 | `actionFusion` | `true` | Expose `then_run` on mutation tools. Set `false` to disable command support. |
+| `forget` | `false` | Register `forget` and tag eligible read/grep results for context removal. |
 | `hashLen` | `4` | Integer checksum length, 2–8 characters. `edit` accepts only anchors of this length; anchors produced under another setting must be read again. |
 | `shiftRadius` | `15` | Integer first-pass recovery-search radius, 0–100 lines. With no local candidates, recovery searches the rest of the file; `0` disables both searches. |
 | `read.defaultLimit` | `500` | Lines returned when a call omits `limit`; positive safe integer. |
@@ -344,7 +367,9 @@ These limits bound model context, not file size. Omission notices direct the cal
 | --- | --- |
 | `read` | Default 500 rows (`read.defaultLimit`), overridable with `limit`; 256 KiB of anchored text (`read.maxKiB`). No partial anchor rows. An oversized single row directs the caller to inspect chunks with `bash` or make a known text change with `replace`; reducing `limit` cannot split a physical line. |
 | `grep` | Default 100 matching lines (`grep.defaultLimit`), overridable; up to 500 UTF-16 units per partial line preview, plus labels and Pi's total output limits. Match previews use rg byte offsets; hashes use full content. Search error notices have a separate 4 KiB budget. |
+| `forget` tag | With `forget` enabled: `read` and content-mode `grep` text results of 2 KiB or more, and image reads; smaller results are not tagged. |
 | `edit` / `replace` anchors | 16 KiB including heading/omission notice, with no fixed entry-count limit. Compact tokens for changed positions; selected deletion successors retain complete content. The omission notice consumes budget only when rows are omitted. Rows that do not fit are omitted in full; later rows that fit are still returned. |
+| Argument errors | 16 KiB for the combined tool-specific and Pi schema diagnostics; longer reports retain opening/closing text and label the omitted middle. Pi's schema error limit applies separately within each top-level field. |
 | Anchor failure details | 16 KiB, with no fixed failure-count limit; unique candidates include complete rows up to 4 KiB, and ambiguous failures list up to eight candidates each. Unresolved anchors show the current cited row when it fits; oversized or out-of-range rows require a fresh `read` or `grep`. |
 | Input-anchor checks | Independent 16 KiB block, with no fixed entry-count limit. Truncation is reported explicitly; omitted entries are not implied matched. |
 | Ambiguous-candidate neighborhoods | 16 KiB of complete anchored row text, lowest-line first, plus headings; no fixed row-count limit. Uses the same first eight candidates per failure as the detail lists. Each listed candidate row is limited to 4 KiB. Rows exceeding either limit are omitted in full; later rows that fit are still returned, with gaps reflected in the neighborhood headings. |

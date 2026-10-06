@@ -16,24 +16,32 @@ import {
   highlightCode,
   type ReadToolInput,
   type ReadToolDetails,
-  type ExtensionContext,
+  type ExtensionToolContext,
   type Theme,
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import type { AgentToolUpdateCallback } from "@earendil-works/pi-agent-core";
 import { Text } from "@earendil-works/pi-tui";
+import { Type } from "typebox";
 import { scanTextLines } from "./text-stream.ts";
 import { createAnchorFormatter, displayCarriageReturns, parseHashline } from "./anchor-format.ts";
 import { canonicalPath } from "./path.ts";
 import { renderToolError } from "./render.ts";
+import {
+  type ForgetReceiptDetails,
+  readReceipt,
+  withoutResultTag,
+  withResultTag,
+} from "./forget-tool.ts";
 import { POSITIVE_SAFE_INTEGER } from "./schema.ts";
 import { throwIfCancelled } from "./error-text.ts";
 import { formatKiB } from "./budgets.ts";
 import type { HashlineEditConfig } from "./config.ts";
+import { createArgumentPreparer } from "./argument-validation.ts";
 
 const DEFAULT_OFFSET = 1;
 
-type ReadDetails = ReadToolDetails & { nativeRead?: true };
+type ReadDetails = ReadToolDetails & { nativeRead?: true } & ForgetReceiptDetails;
 
 /**
  * First result line: `<path> · <N> lines`, optionally ` (from line <offset>)` and
@@ -121,24 +129,26 @@ export function makeReadOverride(
   const { defaultLimit } = config.read;
   const maxBytes = config.read.maxKiB * 1024;
   const builtin = createReadToolDefinition(cwd);
-  const parameters = {
-    ...builtin.parameters,
-    additionalProperties: false,
-    properties: {
-      ...builtin.parameters.properties,
-      path: { ...builtin.parameters.properties.path, minLength: 1 },
-      offset: {
-        ...builtin.parameters.properties.offset,
-        ...POSITIVE_SAFE_INTEGER,
-        description: `1-based line to start from (default ${DEFAULT_OFFSET}).`,
-      },
-      limit: {
-        ...builtin.parameters.properties.limit,
-        ...POSITIVE_SAFE_INTEGER,
-        description: `Maximum lines to read (default ${defaultLimit}).`,
-      },
+  // A TypeBox object, not a spread of Pi's plain JSON schema: argument diagnostics pick
+  // single fields from it, which needs TypeBox's own schema kinds.
+  const parameters = Type.Object(
+    {
+      path: Type.String({ ...builtin.parameters.properties.path, minLength: 1 }),
+      offset: Type.Optional(
+        Type.Number({
+          ...POSITIVE_SAFE_INTEGER,
+          description: `1-based line to start from (default ${DEFAULT_OFFSET}).`,
+        }),
+      ),
+      limit: Type.Optional(
+        Type.Number({
+          ...POSITIVE_SAFE_INTEGER,
+          description: `Maximum lines to read (default ${defaultLimit}).`,
+        }),
+      ),
     },
-  };
+    { additionalProperties: false },
+  );
 
   return {
     name: "read" as const,
@@ -151,6 +161,7 @@ export function makeReadOverride(
       "For large files, pass read offset and limit to read only the relevant section.",
     ],
     parameters: parameters as typeof builtin.parameters,
+    prepareArguments: createArgumentPreparer("read", parameters),
     renderShell: "default" as const,
 
     renderCall: builtin.renderCall,
@@ -160,7 +171,8 @@ export function makeReadOverride(
       if (isPartial) return new Text(theme.fg("warning", "Reading…"), 0, 0);
       const content = result.content?.[0];
       if (context?.isError) return renderToolError(result, theme, expanded);
-      if (result.details?.nativeRead) return builtin.renderResult!(result, options, theme, context);
+      if (result.details?.nativeRead)
+        return builtin.renderResult!(withoutResultTag(result), options, theme, context);
       // Collapsed (not expanded): show nothing — the call line carries the
       // title, matching the built-in read's fold behavior.
       if (!expanded) return new Text("", 0, 0);
@@ -173,7 +185,7 @@ export function makeReadOverride(
       params: ReadToolInput,
       signal: AbortSignal | undefined,
       onUpdate: AgentToolUpdateCallback<ReadToolDetails | undefined> | undefined,
-      ctx: ExtensionContext,
+      ctx: ExtensionToolContext,
     ) {
       throwIfCancelled(signal);
       const offset = params.offset ?? DEFAULT_OFFSET;
@@ -181,7 +193,16 @@ export function makeReadOverride(
       const anchors = createAnchorFormatter(hashLen);
       const readNative = async () => {
         const result = await builtin.execute(toolCallId, params, signal, onUpdate, ctx);
-        return { ...result, details: { ...result.details, nativeRead: true as const } };
+        return withResultTag(
+          toolCallId,
+          { ...result, details: { ...result.details, nativeRead: true as const } },
+          config.forget,
+          () =>
+            readReceipt(
+              params.path,
+              result.content.some((block) => block.type === "image") ? { image: true } : undefined,
+            ),
+        );
       };
 
       const absPath = canonicalPath(cwd, params.path as string);
@@ -265,10 +286,21 @@ export function makeReadOverride(
       const header = `${formatReadHeader(params.path, stats.totalLines, start, stats.finalNewline)}\n`;
       const body = truncation.content;
 
-      return {
-        content: [{ type: "text" as const, text: header + body + tail }],
-        details: truncation.truncated ? { truncation } : pagination ? { pagination } : undefined,
-      };
+      return withResultTag(
+        toolCallId,
+        {
+          content: [{ type: "text" as const, text: header + body + tail }],
+          details: truncation.truncated ? { truncation } : pagination ? { pagination } : undefined,
+        },
+        config.forget,
+        () =>
+          readReceipt(
+            params.path,
+            rows.length > 0
+              ? { start, end: start + rows.length - 1, truncated: truncation.truncated }
+              : undefined,
+          ),
+      );
     },
   };
 }

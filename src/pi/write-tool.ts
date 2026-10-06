@@ -2,7 +2,7 @@ import { Type, type Static } from "typebox";
 import type { AgentToolResult, AgentToolUpdateCallback } from "@earendil-works/pi-agent-core";
 import {
   createWriteToolDefinition,
-  type ExtensionContext,
+  type ExtensionToolContext,
   type Theme,
   type ToolRenderResultOptions,
 } from "@earendil-works/pi-coding-agent";
@@ -16,7 +16,8 @@ import { commitFile, type CommitMode, type CommitResult } from "./file-commit.ts
 import { postProcessMutation } from "./mutation-result.ts";
 import { executeMutation, type ActionFusionExecutor } from "./mutation-runner.ts";
 import { MUTATION_TOOL_GUIDELINE } from "./tool-prompts.ts";
-import { invalidArgument, throwIfCancelled } from "./error-text.ts";
+import { throwIfCancelled } from "./error-text.ts";
+import { createArgumentPreparer } from "./argument-validation.ts";
 import { unwritableTextReason } from "../core/text.ts";
 import { renderToolError } from "./render.ts";
 
@@ -56,13 +57,11 @@ export function makeWriteOverride(cwd: string, fusion?: ActionFusionExecutor) {
     promptSnippet: "Write complete file content to a path",
     promptGuidelines: [MUTATION_TOOL_GUIDELINE, ...(fusion ? ACTION_FUSION_GUIDELINES : [])],
     parameters,
-    /** Reject content that cannot be written as UTF-8 before Pi's schema validation; never rewrites. */
-    prepareArguments(args: unknown): WriteParams {
+    prepareArguments: createArgumentPreparer("write", parameters, (args, report) => {
       const content = (args as { content?: unknown } | null)?.content;
       const reason = typeof content === "string" ? unwritableTextReason(content) : undefined;
-      if (reason) throw invalidArgument("content", reason);
-      return args as WriteParams;
-    },
+      if (reason) report("content", reason);
+    }),
     renderShell: "default" as const,
     renderCall(args: WriteParams, theme: Theme, context: WriteRenderContext) {
       return builtin.renderCall!(args, theme, context);
@@ -81,7 +80,7 @@ export function makeWriteOverride(cwd: string, fusion?: ActionFusionExecutor) {
       params: WriteParams,
       signal: AbortSignal | undefined,
       onUpdate: AgentToolUpdateCallback<WriteDetails> | undefined,
-      ctx: ExtensionContext,
+      ctx: ExtensionToolContext,
     ) {
       return executeMutation<Omit<WriteParams, "then_run">, WriteDetails>(
         {

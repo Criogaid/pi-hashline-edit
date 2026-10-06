@@ -272,7 +272,10 @@ test("mutation cards use Fusion by default and explicit false removes command su
         disabledTools.push(tool);
       },
     } as any);
-    assert.equal(disabledTools.length, 5);
+    assert.deepEqual(
+      disabledTools.map((tool) => tool.name),
+      tools.map((tool) => tool.name),
+    );
     for (const tool of disabledTools.filter((tool) =>
       ["edit", "replace", "write"].includes(tool.name),
     )) {

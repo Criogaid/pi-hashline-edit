@@ -12,6 +12,7 @@ import { rgPath as bundledRgPath } from "@vscode/ripgrep";
 import { Type, type Static } from "typebox";
 import { Text } from "@earendil-works/pi-tui";
 import { renderOutputPreview, renderToolError } from "./render.ts";
+import { type ForgetReceiptDetails, grepReceipt, withResultTag } from "./forget-tool.ts";
 import { normalizeLineEndings } from "../core/lines.ts";
 import { createAnchorFormatter } from "./anchor-format.ts";
 import { assembleGrepOutput, formatMatches, formatSearchWarnings } from "./grep-output.ts";
@@ -34,6 +35,7 @@ import { runRgTextView } from "./rg-text-view.ts";
 import { GREP_CONTEXT_RANGE, POSITIVE_SAFE_INTEGER } from "./schema.ts";
 import { throwIfCancelled } from "./error-text.ts";
 import type { HashlineEditConfig } from "./config.ts";
+import { createArgumentPreparer } from "./argument-validation.ts";
 
 /** Grep parameters; descriptions state the configured defaults. */
 function createGrepSchema({ defaultLimit, defaultContext }: HashlineEditConfig["grep"]) {
@@ -109,7 +111,10 @@ function createGrepSchema({ defaultLimit, defaultContext }: HashlineEditConfig["
   );
 }
 type GrepSchema = ReturnType<typeof createGrepSchema>;
-type GrepTool = ToolDefinition<GrepSchema, { incomplete?: true } | undefined>;
+type GrepTool = ToolDefinition<
+  GrepSchema,
+  ({ incomplete?: true } & ForgetReceiptDetails) | undefined
+>;
 
 /** Build the production grep override (a ToolDefinition fragment for registerTool). */
 export function makeGrepOverride(cwd: string, config: HashlineEditConfig) {
@@ -147,6 +152,7 @@ export function makeGrepOverrideWithBackend(
       "Copy grep anchors directly into edit; read the full line before rewriting from a partial preview.",
     ],
     parameters: grepSchema,
+    prepareArguments: createArgumentPreparer("grep", grepSchema),
 
     renderShell: "default" as const,
 
@@ -184,7 +190,7 @@ export function makeGrepOverrideWithBackend(
     },
 
     async execute(
-      _toolCallId: string,
+      toolCallId: string,
       params: Static<GrepSchema>,
       signal: AbortSignal | undefined,
       _onUpdate: Parameters<GrepTool["execute"]>[3],
@@ -266,7 +272,7 @@ export function makeGrepOverrideWithBackend(
         warnings,
         searchSnapshots: result.snapshots,
       });
-      return assembleGrepOutput({
+      const output = assembleGrepOutput({
         blocks,
         warnings,
         outputMode,
@@ -274,6 +280,14 @@ export function makeGrepOverrideWithBackend(
         effectiveLimit,
         linesTruncated,
       });
+      // Only content mode returns file text; paths and counts have nothing to forget.
+      if (outputMode !== "content") return output;
+      return withResultTag(toolCallId, output, config.forget, () =>
+        grepReceipt(patterns, raw.length, new Set(raw.map((match) => match.filePath)).size, {
+          limitReached: matchLimitReached,
+          incomplete: warnings.length > 0,
+        }),
+      );
     },
   } satisfies GrepTool;
 }
