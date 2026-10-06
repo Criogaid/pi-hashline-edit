@@ -109,7 +109,7 @@ test("file tools share Pi-style URL and @ path resolution", async () => {
     let commands = 0;
     const fusion = createActionFusionExecutor(async () => {
       commands++;
-      return "checked";
+      return { status: "succeeded", output: "checked" };
     });
     const fused = await callTool(
       makeWriteOverride(dir, fusion),

@@ -80,7 +80,7 @@ test("replace withholds anchors in progress and after commands change or remove 
           }
           onUpdate?.({ content: [{ type: "text", text: "progress" }], details: undefined });
           if (fails) throw new Error("command failed");
-          return "done";
+          return { status: "succeeded", output: "done" };
         });
         const result = await invoke(
           makeReplaceTool(dir, DEFAULT_CONFIG, fusion),
@@ -128,7 +128,7 @@ test("progress callback failures preserve publication and do not prevent the com
       const fusion = createActionFusionExecutor(
         async () => {
           commands++;
-          return "done";
+          return { status: "succeeded", output: "done" };
         },
         callback === "reporter" ? fail : undefined,
       );
@@ -331,7 +331,7 @@ test("unpaired surrogate arguments are rejected before Fusion", async (t) => {
     const fusion = createActionFusionExecutor(
       async () => {
         commands++;
-        return "done";
+        return { status: "succeeded", output: "done" };
       },
       (event) => events.push(event.command),
     );
@@ -420,7 +420,7 @@ test("NUL arguments are rejected before Fusion for all mutation tools", async (t
     const fusion = createActionFusionExecutor(
       async () => {
         commands++;
-        return "unexpected";
+        return { status: "succeeded", output: "unexpected" };
       },
       (event) => events.push(event.command),
     );
@@ -473,7 +473,7 @@ test("Fusion skips the command when a replacement produces unencodable text", as
     const fusion = createActionFusionExecutor(
       async () => {
         commands++;
-        return "unexpected";
+        return { status: "succeeded", output: "unexpected" };
       },
       (event) => events.push(event.command),
     );
@@ -566,7 +566,7 @@ test("all mutation tools succeed without rewriting on no-op, with and without Fu
         let commands = 0;
         const fusion = createActionFusionExecutor(async () => {
           commands++;
-          return "checked";
+          return { status: "succeeded", output: "checked" };
         });
         const tool: any = makeTool(dir, mode === "standalone" ? undefined : fusion);
         const result = await invoke(
@@ -618,7 +618,7 @@ test("no-op Fusion still detects external changes and reports command failures",
             commands++;
             if (scenario === "failed") throw new Error("check failed");
             await writeFile(path, "external\n");
-            return "done";
+            return { status: "succeeded", output: "done" };
           },
           (progress) => {
             if (

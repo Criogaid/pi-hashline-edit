@@ -8,7 +8,7 @@ import { makeEditOverride } from "./edit-tool.ts";
 import { makeReplaceTool } from "./replace-tool.ts";
 import { makeWriteOverride } from "./write-tool.ts";
 import { computeLineHash } from "../core/hash.ts";
-import type { ActionFusionProgress } from "./action-fusion.ts";
+import type { ActionFusionProgress, CommandOutcome } from "./action-fusion.ts";
 import {
   ACTION_FUSION_GUIDELINES,
   ActionFusionError,
@@ -92,7 +92,7 @@ test("edit and replace share one embedded executor and preserve mutation results
     const calls: string[] = [];
     const fusion = createActionFusionExecutor(async (_id, input) => {
       calls.push(input.command);
-      return "checked";
+      return { status: "succeeded", output: "checked" };
     });
     const edit = makeEditOverride(dir, DEFAULT_CONFIG, fusion);
     const replace = makeReplaceTool(dir, DEFAULT_CONFIG, fusion);
@@ -196,7 +196,7 @@ test("cancelled calls do not mutate or run the command", async (t) => {
     let commanded = false;
     const fusion = createActionFusionExecutor(async () => {
       commanded = true;
-      return "";
+      return { status: "succeeded", output: "" };
     });
     await assert.rejects(
       fusion({
@@ -218,36 +218,6 @@ test("cancelled calls do not mutate or run the command", async (t) => {
   }
 });
 
-test("default runner executes a real local command", async (t) => {
-  const dir = await tempDir();
-  try {
-    const target = join(dir, "real.txt");
-    await writeFile(target, "before\n");
-    const fusion = createActionFusionExecutor();
-    const result = await fusion({
-      toolCallId: "real",
-      absolutePath: target,
-      thenRun: { command: "node -e \"process.stdout.write('real runner')\"" },
-      mutate: async () => {
-        await writeFile(target, "after\n");
-        return publishedMutation("after\n", {
-          content: [{ type: "text", text: "mutated" }],
-          details: { ok: true },
-        });
-      },
-      signal: undefined,
-      ctx: await ctx(dir, t),
-    });
-    const output = result.content
-      .filter((block) => block.type === "text")
-      .map((block) => (block.type === "text" ? block.text : ""))
-      .join("\n");
-    assert.match(output, /real runner/);
-  } finally {
-    await rm(dir, { recursive: true, force: true });
-  }
-});
-
 test("marks anchors stale when then_run changes the target", async (t) => {
   const dir = await tempDir();
   try {
@@ -255,7 +225,7 @@ test("marks anchors stale when then_run changes the target", async (t) => {
     await writeFile(target, "before\n");
     const fusion = createActionFusionExecutor(async () => {
       await writeFile(target, "changed by command\n");
-      return "changed";
+      return { status: "succeeded", output: "changed" };
     });
     const result = await fusion({
       toolCallId: "stale",
@@ -294,7 +264,7 @@ test("Action Fusion omits structured anchors when target freshness is unknown", 
     let commands = 0;
     const fusion = createActionFusionExecutor(async () => {
       commands++;
-      return "unexpected";
+      return { status: "succeeded", output: "unexpected" };
     });
     const result = await fusion({
       toolCallId: "unknown",
@@ -335,7 +305,7 @@ test("edit omits Updated anchors when then_run changes the target", async (t) =>
     await writeFile(target, "before\n");
     const fusion = createActionFusionExecutor(async () => {
       await writeFile(target, "command changed\n");
-      return "changed";
+      return { status: "succeeded", output: "changed" };
     });
     const result = await makeEditOverride(dir, DEFAULT_CONFIG, fusion).execute(
       "edit-stale",
@@ -370,7 +340,7 @@ test("all mutation tools forward command progress before completion in RPC mode"
         onUpdate?.({ content: [{ type: "text", text: "live output" }], details: undefined });
         assert.match(updates.at(-1).content.at(-1).text, /live output/);
         assert.equal(events.at(-1)?.output, "live output");
-        return "final output";
+        return { status: "succeeded", output: "final output" };
       },
       (event) => events.push(event),
     );
@@ -625,7 +595,7 @@ test("Fusion uses commit facts when details omit or contradict publication and r
         let commands = 0;
         const fusion = createActionFusionExecutor(async () => {
           commands++;
-          return "checked";
+          return { status: "succeeded", output: "checked" };
         });
         const result = await fusion({
           toolCallId: "commit-facts",
@@ -663,7 +633,7 @@ test("timed command progress ticks during silence, preserves output, and stops a
       const dir = await tempDir();
       t.mock.timers.enable({ apis: ["Date", "setInterval"], now: 0 });
       const started = Promise.withResolvers<void>();
-      const finished = Promise.withResolvers<string>();
+      const finished = Promise.withResolvers<CommandOutcome>();
       const controller = new AbortController();
       const events: ActionFusionProgress[] = [];
       const updates: unknown[] = [];
@@ -699,22 +669,23 @@ test("timed command progress ticks during silence, preserves output, and stops a
         assert.equal(updates.length, updateCount + 2);
         assert.equal(events.at(-1)?.timing?.remainingSeconds, 8);
         assert.equal(events.at(-1)?.output, "latest output");
-        if (outcome === "succeeded") finished.resolve("complete");
-        else {
-          if (outcome === "cancelled") controller.abort();
-          finished.reject(
-            new Error(
-              outcome === "timeout" ? "Command timed out" : "command stopped\nunderlying cause",
-            ),
-          );
-        }
+        if (outcome === "cancelled") controller.abort();
+        finished.resolve({
+          status: outcome,
+          output:
+            outcome === "succeeded"
+              ? "complete"
+              : outcome === "timeout"
+                ? "Command timed out"
+                : "command stopped\nunderlying cause",
+        });
         await execution;
         assert.equal(events.at(-1)?.command, outcome);
         const terminalCount = updates.length;
         t.mock.timers.tick(20_000);
         assert.equal(updates.length, terminalCount);
       } finally {
-        finished.resolve("");
+        finished.resolve({ status: "succeeded", output: "" });
         await rm(dir, { recursive: true, force: true });
       }
     });
@@ -725,7 +696,7 @@ test("commands without an explicit timeout do not start countdown updates", asyn
   const dir = await tempDir();
   t.mock.timers.enable({ apis: ["Date", "setInterval"], now: 0 });
   const started = Promise.withResolvers<void>();
-  const finished = Promise.withResolvers<string>();
+  const finished = Promise.withResolvers<CommandOutcome>();
   const events: ActionFusionProgress[] = [];
   try {
     const fusion = createActionFusionExecutor(
@@ -752,42 +723,10 @@ test("commands without an explicit timeout do not start countdown updates", asyn
     t.mock.timers.tick(20_000);
     assert.equal(events.length, count);
     assert.equal(events.at(-1)?.timing, undefined);
-    finished.resolve("complete");
+    finished.resolve({ status: "succeeded", output: "complete" });
     await execution;
   } finally {
-    finished.resolve("");
-    await rm(dir, { recursive: true, force: true });
-  }
-});
-
-test("Pi Bash timeout returns the cause to the model while keeping the published file", async (t) => {
-  const dir = await tempDir();
-  try {
-    await writeFile(join(dir, "slow.mjs"), "setTimeout(() => {}, 10_000);\n");
-    const events: ActionFusionProgress[] = [];
-    const fusion = createActionFusionExecutor(undefined, (event) => events.push(event));
-    const tool = makeWriteOverride(dir, fusion);
-    const result = await callTool(
-      tool,
-      {
-        path: "saved.txt",
-        content: "published\n",
-        mode: "create",
-        then_run: { command: "node slow.mjs", timeout: 0.2 },
-      },
-      { ctx: await ctx(dir, t) },
-    );
-    assert.equal(await readFile(join(dir, "saved.txt"), "utf8"), "published\n");
-    assert.equal(result.details.actionFusion.command, "timeout");
-    assert.equal(result.details.actionFusion.publication, "PUBLISHED");
-    const text = result.content
-      .filter((block: { type: string }) => block.type === "text")
-      .map((block: { text: string }) => block.text)
-      .join("\n");
-    assert.match(text, /timed out after 0\.2 seconds/);
-    assert.match(text, /File changes.*saved/);
-    assert.equal(events.at(-1)?.command, "timeout");
-  } finally {
+    finished.resolve({ status: "succeeded", output: "" });
     await rm(dir, { recursive: true, force: true });
   }
 });

@@ -37,7 +37,7 @@ test("published post-processing failure skips command and preserves publication 
     const updates: any[] = [];
     const fusion = createActionFusionExecutor(async () => {
       commanded = true;
-      return "never";
+      return { status: "succeeded", output: "never" };
     });
     await assert.rejects(
       fusion({
@@ -130,7 +130,7 @@ test("queue is released after a failed command", async () =>
     const fusion = createActionFusionExecutor(async () => {
       calls++;
       if (calls === 1) throw new Error("first command failed");
-      return "ok";
+      return { status: "succeeded", output: "ok" };
     });
     const first = fusion({
       toolCallId: "first",
@@ -168,7 +168,7 @@ test("successful command finalizes anchors and retains completed progress", asyn
     const target = join(dir, "finalize.txt");
     const progress: any[] = [];
     const fusion = createActionFusionExecutor(
-      async () => "command finished",
+      async () => ({ status: "succeeded", output: "command finished" }),
       (event) => progress.push(event),
     );
     const completed = await fusion({

@@ -22,10 +22,7 @@
 import { realpath } from "node:fs/promises";
 import { basename, dirname, resolve } from "node:path";
 import type { AgentToolResult, AgentToolUpdateCallback } from "@earendil-works/pi-agent-core";
-import {
-  createBashToolDefinition,
-  type ExtensionToolContext,
-} from "@earendil-works/pi-coding-agent";
+import type { ExtensionToolContext } from "@earendil-works/pi-coding-agent";
 import { Type, type Static, type TObject, type TProperties } from "typebox";
 import { fileRevision, FileMutationError, type PublicationStatus } from "./file-commit.ts";
 import { commitFreshness, finalizeMutation, type MutationOutcome } from "./mutation-result.ts";
@@ -119,13 +116,21 @@ export function withThenRunSchema<P extends TProperties>(
 }
 export type ThenRunInput = NonNullable<Static<ReturnType<typeof createThenRunSchema>>>;
 
+/** Keep command state independent of its diagnostic text and of file publication. */
+export interface CommandOutcome {
+  readonly status: Exclude<CommandStatus, "not_requested" | "skipped">;
+  readonly output: string;
+  /** Preserve the session tool's request to stop after this tool batch. */
+  readonly terminate?: boolean;
+}
+
 type CommandRunner = (
   toolCallId: string,
   input: ThenRunInput,
   signal: AbortSignal | undefined,
   ctx: ExtensionToolContext,
   onUpdate?: AgentToolUpdateCallback<unknown>,
-) => Promise<string>;
+) => Promise<CommandOutcome>;
 
 type MutationResult<TDetails> = AgentToolResult<TDetails>;
 /** Attach the fused outcome to a finalized mutation result, plus optional command text. */
@@ -213,24 +218,39 @@ export class ActionFusionError extends Error {
   }
 }
 
-function commandStatus(error: unknown, signal: AbortSignal | undefined): CommandStatus {
-  if (signal?.aborted) return "cancelled";
-  return /timeout|timed out/i.test(errorMessage(error)) ? "timeout" : "failed";
-}
-
 async function defaultCommandRunner(
-  toolCallId: string,
+  _toolCallId: string,
   input: ThenRunInput,
   signal: AbortSignal | undefined,
   ctx: ExtensionToolContext,
   onUpdate?: AgentToolUpdateCallback<unknown>,
-): Promise<string> {
-  const bash = createBashToolDefinition(ctx.cwd);
-  const result = await bash.execute(`${toolCallId}:then_run`, input, signal, onUpdate, ctx);
-  return result.content
+): Promise<CommandOutcome> {
+  // Use the session's callable Bash, including overrides, validation, permission
+  // hooks and tool_result hooks. Tool failures resolve with isError, not rejection.
+  const { result, isError } = await ctx.executeTool("bash", input, { signal, onUpdate });
+  const output = result.content
     .filter((block) => block.type === "text")
     .map((block) => block.text)
     .join("\n");
+  const command = { output, terminate: result.terminate };
+  if (!isError) return { status: "succeeded", ...command };
+  if (signal?.aborted) return { status: "cancelled", ...command };
+
+  const structured = result.structuredContent;
+  const hasExitCode =
+    structured !== null &&
+    typeof structured === "object" &&
+    "exit_code" in structured &&
+    typeof structured.exit_code === "number";
+  // Pi 0.99.1 supplies exit_code for ordinary exits, but serializes a thrown
+  // timeout as text. Only recognize its final diagnostic for the requested
+  // timeout; a failed command's output may itself mention or quote a timeout.
+  const timeoutDiagnostic = `Command timed out after ${input.timeout} seconds`;
+  const timedOut =
+    !hasExitCode &&
+    input.timeout !== undefined &&
+    (output === timeoutDiagnostic || output.endsWith(`\n${timeoutDiagnostic}`));
+  return { status: timedOut ? "timeout" : "failed", ...command };
 }
 
 async function canonicalQueueKey(path: string): Promise<string> {
@@ -302,6 +322,7 @@ export function createActionFusionExecutor(
     onUpdate?: AgentToolUpdateCallback<TDetails>;
   }): Promise<MutationResult<TDetails>> {
     let completedMutation: MutationOutcome<TDetails> | undefined;
+    let commandTermination: boolean | undefined;
     let progressFailure: string | undefined;
     let commandTiming: { readonly timeoutSeconds: number; readonly deadlineMs: number } | undefined;
     const report = (
@@ -425,44 +446,50 @@ export function createActionFusionExecutor(
         );
       }
 
-      if (thenRun.timeout !== undefined) {
-        commandTiming = {
-          timeoutSeconds: thenRun.timeout,
-          deadlineMs: Date.now() + thenRun.timeout * MILLISECONDS_PER_SECOND,
-        };
-      }
       report("running", publication, "unchanged");
       let output = "";
+      let command: CommandOutcome;
       let commandError: unknown;
       // The executor owns the heartbeat lifetime; Pi Bash owns timeout and process cleanup.
-      const heartbeat =
-        commandTiming && (onProgress || onUpdate)
-          ? setInterval(
-              () => report("running", publication, "unknown", output),
-              MILLISECONDS_PER_SECOND,
-            )
-          : undefined;
-      heartbeat?.unref();
+      let heartbeat: ReturnType<typeof setInterval> | undefined;
       try {
-        output = await commandRunner(toolCallId, thenRun, signal, ctx, (partial) => {
+        command = await commandRunner(toolCallId, thenRun, signal, ctx, (partial) => {
+          // Pi Bash emits an initial update even for silent commands. Start its
+          // countdown here, after session permission hooks have allowed execution.
+          if (!commandTiming && thenRun.timeout !== undefined) {
+            commandTiming = {
+              timeoutSeconds: thenRun.timeout,
+              deadlineMs: Date.now() + thenRun.timeout * MILLISECONDS_PER_SECOND,
+            };
+            if (onProgress || onUpdate) {
+              heartbeat = setInterval(
+                () => report("running", publication, "unknown", output),
+                MILLISECONDS_PER_SECOND,
+              );
+              heartbeat.unref();
+            }
+          }
           output = partial.content
             .filter((block) => block.type === "text")
             .map((block) => block.text)
             .join("\n");
           report("running", publication, "unknown", output);
         });
+        output = command.output;
       } catch (error) {
         commandError = error;
-        output = "";
+        output = errorMessage(error);
+        command = { status: signal?.aborted ? "cancelled" : "failed", output };
       } finally {
         if (heartbeat) clearInterval(heartbeat);
       }
+      commandTermination = command.terminate;
       const freshness = await readFreshness(absolutePath, baseline);
-      if (commandError !== undefined) {
+      if (command.status !== "succeeded") {
         throw new ActionFusionError(
           "mutation completed; then_run did not complete successfully",
-          { publication, command: commandStatus(commandError, signal), freshness },
-          { cause: commandError, commandOutput: errorMessage(commandError) },
+          { publication, command: command.status, freshness },
+          { cause: commandError ?? output, commandOutput: output },
         );
       }
 
@@ -523,16 +550,18 @@ export function createActionFusionExecutor(
           throw error;
         }
       })
-      .then((result) =>
-        progressFailure
+      .then((result) => {
+        const finalResult =
+          commandTermination === undefined ? result : { ...result, terminate: commandTermination };
+        return progressFailure
           ? {
-              ...result,
+              ...finalResult,
               content: [
-                ...result.content,
+                ...finalResult.content,
                 { type: "text" as const, text: `Progress reporting failed: ${progressFailure}` },
               ],
             }
-          : result,
-      );
+          : finalResult;
+      });
   };
 }

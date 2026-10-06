@@ -225,7 +225,7 @@ test("Windows shared access failure preserves the target, skips then_run, and re
       dir,
       createActionFusionExecutor(async () => {
         commandRuns++;
-        return "ok";
+        return { status: "succeeded", output: "ok" };
       }),
     );
     try {

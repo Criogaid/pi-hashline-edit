@@ -102,7 +102,7 @@ for (const scenario of cases) {
     let commandRuns = 0;
     const fusion = createActionFusionExecutor(async () => {
       commandRuns++;
-      return "ran";
+      return { status: "succeeded", output: "ran" };
     });
     const tool = scenario.make(cwd, fusion);
     // These values round-trip through JSON exactly as model tool arguments do.

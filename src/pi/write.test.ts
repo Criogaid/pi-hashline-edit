@@ -72,7 +72,7 @@ test("write omits mode → rejects before changing files or running commands", a
     let commandRuns = 0;
     const fusion = createActionFusionExecutor(async () => {
       commandRuns++;
-      return "checked";
+      return { status: "succeeded", output: "checked" };
     });
     for (const executor of [undefined, fusion]) {
       const tool = makeWriteOverride(dir, executor);
@@ -161,7 +161,10 @@ test("write returns only a summary for empty, short, and long content", async ()
 
 test("write returns its summary and command output after an unchanged then_run", async () =>
   withTemp(async (dir) => {
-    const fusion = createActionFusionExecutor(async () => "checked");
+    const fusion = createActionFusionExecutor(async () => ({
+      status: "succeeded",
+      output: "checked",
+    }));
     const write = makeWriteOverride(dir, fusion) as any;
     const result = await write.execute(
       "unchanged",
@@ -187,7 +190,7 @@ test("write reports changed freshness when then_run changes the target", async (
     const target = join(dir, "changed.txt");
     const fusion = createActionFusionExecutor(async () => {
       await writeFile(target, "command changed\n");
-      return "checked";
+      return { status: "succeeded", output: "checked" };
     });
     const write = makeWriteOverride(dir, fusion) as any;
     const result = await callTool(
@@ -220,7 +223,7 @@ test("write reports missing freshness when then_run removes the target", async (
     const target = join(dir, "missing.txt");
     const fusion = createActionFusionExecutor(async () => {
       await rm(target);
-      return "removed";
+      return { status: "succeeded", output: "removed" };
     });
     const result = await makeWriteOverride(dir, fusion).execute(
       "missing",

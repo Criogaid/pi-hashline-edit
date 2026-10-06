@@ -439,7 +439,7 @@ test("mixed empty-body batches name every rejected edit without publishing or ru
     let commandRuns = 0;
     const fusion = createActionFusionExecutor(async () => {
       commandRuns++;
-      return "ran";
+      return { status: "succeeded", output: "ran" };
     });
     const edit = makeEditOverride(dir, DEFAULT_CONFIG, fusion);
     await assert.rejects(
@@ -839,7 +839,7 @@ test("failed edits expose input status and candidate code for a verified fused r
     let commands = 0;
     const fusion = createActionFusionExecutor(async () => {
       commands++;
-      return "checked";
+      return { status: "succeeded", output: "checked" };
     });
     const edit = makeEditOverride(dir, DEFAULT_CONFIG, fusion);
     const stale = h(original.join("\n"), 5);
