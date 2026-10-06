@@ -10,9 +10,10 @@
  * context edits replace each named result's entire content with a forgotten receipt.
  * The tool call and any facts saved in forget's note remain in context.
  *
- * Restricting forget to the newest batch keeps prompt-cache cost bounded: the edit
- * sits right before the response that requested it, so the next request re-sends only
- * that response and its tool results. Editing an older result would re-send every
+ * Restricting forget to the newest batch bounds how much of the next request changes:
+ * it differs from the earliest replaced result on, which covers later results of the
+ * same batch, the response that requested the edit, and its tool results. Messages
+ * before that result are unchanged. Editing an older result would change every
  * later message. Raw session entries stay intact; navigating before the edit shows
  * the original result again.
  *

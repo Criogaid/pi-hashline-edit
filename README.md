@@ -234,7 +234,7 @@ All three mutation tools treat identical final content as a successful no-op: re
 
 Only results from the step the model has just seen can be forgotten: the tagged results after its previous response. Any other id rejects the whole call and lists the ids that are available. After the response that called `forget` completes, Pi's context edits replace the entire content of each named result with `[Result rXXXXX: content forgotten; rerun the call to see it again.]`. This removes all text and images, including headers, pagination, truncation and search notices, without inspecting their contents. The tool call, the rest of the exchange, and the `forget` call with its `note` stay in context. Save facts you still need in `note` before forgetting. Files, the raw session, and the TUI are unchanged; navigating to a point before the edit restores the original result.
 
-The restriction keeps prompt-cache cost bounded: the replaced result sits right before the response that asked for it, so the next request re-sends only that response and its tool results. Forgetting an older result would re-send every later message.
+The restriction bounds how much of the next request changes. Messages before the earliest forgotten result stay as they were; from that result on, the request differs, which covers any later results from the same batch (even ones not forgotten), the response that called `forget`, and its tool results. Forgetting an older result would change every later message. This describes request contents only; how a provider bills prompt caching for the changed part is not measured here.
 
 `forget` asks Pi to end the run after its batch. Called alone, it ends the turn without another model request; called with other tools, the run continues as usual.
 
