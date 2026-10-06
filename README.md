@@ -69,6 +69,8 @@ Successful `edit` and `replace` results omit candidate rows whose full content a
 
 File tools accept relative and absolute paths, `file://` URLs, a leading `@` prefix, and a leading `~` (including `~\` on Windows). As in Pi's built-in file tools, supported Unicode spaces in paths become regular spaces, and Windows shell drive paths using only forward slashes, such as `/c/file`, `/mnt/c/file`, and `/cygdrive/c/file`, resolve to native drive paths. Mixed-separator forms such as `/c/dir\file` do not undergo this drive conversion, matching Pi's built-in tools. Mutation tools share the file-mutation queue and commit layer.
 
+Grep returns paths that can be copied back into these tools unchanged. It preserves literal backslashes in POSIX filenames and adds `./` when a relative name would otherwise be interpreted as an input prefix. Names requiring escaping, including supported Unicode spaces or line breaks, use encoded `file://` URLs.
+
 Valid UTF-8 text inspection and matching uses one logical representation: CRLF boundaries become LF; standalone CR and source-code escape sequences such as the four characters `\r\n` remain content. `read` and `grep` hash the same logical lines that `edit` verifies; literal and regex `replace` both match this LF view. Mutation offsets map back to the original text. `edit` and `replace` share separator restoration: reuse internal separators positionally, repeat the last for extra gaps, or use the file style (CRLF if present, otherwise LF) when none exist. Boundaries outside the replacement stay unchanged. Invalid UTF-8 grep previews use raw-byte matching as described below.
 
 `write` is the full-content boundary: its supplied bytes are authoritative, so it preserves their explicit LF/CRLF choices. Use it for intentional whole-file line-ending conversion. To inspect actual line-ending bytes, use a raw byte reader; anchored line displays intentionally do not distinguish LF from CRLF.
@@ -91,6 +93,8 @@ Argument diagnostics share the 16 KiB block budget in [`budgets.ts`](src/pi/budg
 | `prepend` / `append` | `body` | — | Insert at the start/end; no anchors. |
 
 Every `body` holds at least one line; `[""]` is a single blank line. Remove lines with `delete`. An empty `body: []` is rejected for every operation before the file is read, together with other independently detectable argument errors.
+
+If an edit leaves a blank line at the end, it writes the terminator needed to preserve that logical line, even when the original file lacked a final newline. For example, appending `[""]` to `"a"` produces `"a\n\n"`; replacing its only line with `[""]` produces `"\n"`. A BOM-only file already represents one blank line and keeps its BOM without an extra terminator. A non-empty final line retains the original final-newline state.
 
 All operations in a batch use the same snapshot. Validation failure rejects the whole batch. Unknown fields, conflicting fields, and overlapping operations are rejected; some touching operations also conflict and need separate calls with fresh anchors. For insertion, **do not repeat the anchor line in `body`**. `edit` uses structured operations, not `oldText`/`newText` pairs.
 
@@ -199,7 +203,9 @@ Directory traversal respects ignore rules, does not follow symbolic links, and i
 
 Searches use bundled ripgrep, independent of system `rg` or `PATH`. The tool disables external ripgrep configuration with `--no-config` and clears `RIPGREP_CONFIG_PATH`, and uses `--no-crlf` and `--encoding=none` so standalone CR and BOM remain content. NUL-containing files are silently skipped in all output modes, including explicitly named files; they do not consume the match limit. Valid UTF-8 files use the shared LF view: files without CRLF are searched at their original paths, and CRLF text is normalized into temporary snapshots using bounded reads and writes. Batches contain up to 64 files or 8 MiB of source data (one large file can exceed that threshold); snapshots are removed after each batch and on failure/cancellation. Match paths refer to original files. Regexes use ripgrep's default Rust-style engine, not PCRE2.
 
-Files with invalid UTF-8 and no NUL remain searchable as raw bytes, without CRLF normalization or encoding conversion. Multiline queries for these files must match their actual separators, such as `\r\n`. Ripgrep's Unicode regex rules still apply; use a byte-mode group such as `(?-u:...)` when the pattern must span malformed bytes. Content-mode output uses replacement characters and plain `LINE│content` rows for the entire file, including context, followed by `Invalid UTF-8: replacement characters shown; plain line numbers cannot be used as edit anchors`. These previews are not editable anchors. Files/count modes include their confirmed matches. Unmatched invalid UTF-8 files produce no warning. Content output still verifies the file's byte revision before returning results.
+Files with invalid UTF-8 and no NUL remain searchable as raw bytes, without CRLF normalization or encoding conversion. Multiline queries for these files must match their actual separators, such as `\r\n`. Queries containing actual CRLF characters retain them for raw-byte files, while valid UTF-8 files receive the LF-normalized query. Ripgrep's Unicode regex rules still apply; use a byte-mode group such as `(?-u:...)` when the pattern must span malformed bytes. Content-mode output uses replacement characters and plain `LINE│content` rows for the entire file, including context, followed by `Invalid UTF-8: replacement characters shown; plain line numbers cannot be used as edit anchors`. These previews are not editable anchors. Unmatched invalid UTF-8 files produce no warning.
+
+All output modes verify invalid UTF-8 results against the source's pre-search byte revision and the complete raw-byte match spans reported by ripgrep, including the part of a multiline match omitted by `limit`. The tool keeps fixed-size byte digests and verifies them with a bounded scan; different malformed bytes cannot be accepted merely because both display as the same replacement character. Content output retains its complete-file byte revision check for valid UTF-8 as well. A detected mismatch reports `File changed during search`.
 
 Search diagnostics are preserved even when a result limit stops ripgrep. Readable, confirmed matches remain available with a `Search incomplete` notice and `details.incomplete: true`; counts then cover only confirmed matches. If no results can be returned, the tool reports an error rather than claiming there are no matches. Search diagnostics have a separate 4 KiB display budget. Ripgrep stderr and batch aggregation each retain up to 64 KiB. All three limits preserve opening context and the final cause where lines fit, and explicitly mark omitted middle text. The shared implementation is [`DiagnosticBuffer`](src/pi/diagnostic-buffer.ts); limits live in [`budgets.ts`](src/pi/budgets.ts) and [`rg-process.ts`](src/pi/rg-process.ts).
 
@@ -316,7 +322,7 @@ mutation completes? -- no, or cancelled first --> mutation error;
 file still at the published revision? -- no --> command skipped --+
   | yes                                                           |
   v                                                               |
-run the command with Pi's built-in Bash                           |
+run the session's callable Bash tool                             |
 (succeeded / failed / timeout / cancelled)                        |
   |                                                               |
   v                                                               |
@@ -333,18 +339,20 @@ Once the mutation completes, it stays successful whatever happens to the command
 
 In the TUI, the mutation card owns the mutation's result or error diagnostics, publication status, and freshness warnings. It turns successful when mutation execution and result generation finish. The command card owns command output and execution status; skipped or cancelled commands are neutral and show a short reason when execution never started. Mutation diagnostics never become command output, and command failure leaves a successful mutation card intact. RPC hosts receive the same progress and choose their own rendering.
 
-When `then_run.timeout` is supplied, the command card shows the remaining seconds and refreshes once per second even without command output. The countdown starts when the command starts, after mutation and queue waiting. It stops when execution ends; restored unfinished cards show an unknown final status without a countdown. Pi Bash enforces the timeout. Without `timeout`, there is no countdown or implicit time limit. RPC progress includes `timing.timeoutSeconds` and `timing.remainingSeconds` after a timed command starts.
+When `then_run.timeout` is supplied, the command card shows the remaining seconds and refreshes once per second even without further command output. The countdown starts with the Bash tool's first execution update, after mutation, queue waiting, and any approval wait. It stops when execution ends; restored unfinished cards show an unknown final status without a countdown. The selected Bash implementation enforces the timeout; an override that emits no progress has no live countdown. Without `timeout`, there is no countdown or implicit time limit. RPC progress includes `timing.timeoutSeconds` and `timing.remainingSeconds` after a timed command starts.
 
-Command failures return Pi Bash's diagnostic text to the LLM, including exit or timeout details and whether file changes were saved. Collapsing a TUI card does not shorten the model's result.
+Command failures return the Bash tool's diagnostic text to the LLM, including exit or timeout details and whether file changes were saved. The final session result determines success, including nonzero exits and errors supplied by result hooks. Collapsing a TUI card does not shorten the model's result.
 
-The Fusion queue holds a file from mutation until its command finishes, so another fused call on the same file cannot change it in between. Commands invoke Pi's built-in Bash definition directly, without a separate Bash tool call; Bash-only approval/sandbox extensions must explicitly cover these tools' `then_run` inputs.
+The Fusion queue holds a file from mutation until its command finishes, so another fused call on the same file cannot change it in between. Commands use the session's nested tool dispatcher (`ctx.executeTool("bash", ...)`), including its argument validation, Bash overrides, `tool_call` approval hooks, and `tool_result` hooks. Bash must be callable in that session. If it is unavailable or a hook blocks the command, Fusion reports command failure and retains the completed mutation.
+
+A nested Bash result's `terminate` hint is passed to the parent mutation result so Pi can apply its normal rule for stopping after the tool batch.
 
 ## Safety and design
 
 - **Anchors are checksums, not identities.** Each hash combines the 1-based line number and content. Short hashes can collide and do not prove the model observed a line.
 - **Validation is local to supplied anchors.** Unrelated in-place changes leave stable anchors usable. A range verifies its supplied start/end anchors, not every interior line.
 - **Line shifts change anchors.** Insertions/deletions can invalidate later references. Recovery searches within `shiftRadius`, then the rest of the file if no local candidates match. Unique candidates include bounded line content; ambiguous candidates include neighborhoods for comparison. Use `read` when no candidate is found or needed content is omitted. Retries verify again, without fuzzy matching or automatic relocation.
-- **Edits preserve text representation.** `edit` preserves existing line endings, untouched separators, and the absence of a final newline. `edit`/`replace` reject invalid UTF-8 source text; all mutations reject NUL and output that cannot be encoded losslessly as UTF-8. Supplied text (`write` content, `edit` body lines, `replace` replacement text) is checked before the file is read, naming the offending field; the final content is checked again before publication, because a transformation such as a regex without `u` can split a surrogate pair. UTF-16 and legacy code pages are not decoded or preserved; a BOM-free file whose bytes happen to be valid UTF-8 may still be misinterpreted.
+- **Edits preserve text representation.** `edit` preserves existing line endings, untouched separators, and final-newline state, adding a terminator when needed to represent a final blank line. `edit`/`replace` reject invalid UTF-8 source text; all mutations reject NUL and output that cannot be encoded losslessly as UTF-8. Supplied text (`write` content, `edit` body lines, `replace` replacement text) is checked before the file is read, naming the offending field; the final content is checked again before publication, because a transformation such as a regex without `u` can split a surrogate pair. UTF-16 and legacy code pages are not decoded or preserved; a BOM-free file whose bytes happen to be valid UTF-8 may still be misinterpreted.
 - **Fresh anchors depend on the final observation.** After `then_run`, anchors are shown only for `unchanged` freshness. Without a command, observed and published revisions must agree. Otherwise every mutation result, including `write`, ends with one notice to re-read before further edits, prefixed with `[then_run:stale]` when a command was requested. Later edits still verify anchors.
 - **Local queues are not cross-process transactions.** Revision checks bind mutations to the bytes read, but an external writer can still race a check and publication. There is no strict workspace jail or multi-file transaction.
 
@@ -412,6 +420,7 @@ PUBLISHED, even if a step after publication fails
 | Create | Same-filesystem `link(temp, target)` refuses a target created by another writer during publication. |
 | Overwrite | `rename(temp, target)` publishes the replacement; never delete the old target first. |
 | Symlinks | Resolve the regular-file target for overwrite and preserve the link; reject dangling/unresolvable links. |
+| Non-regular files | Check the opened file handle before reading mutation snapshots or revisions. POSIX FIFO targets, including symlink aliases, are rejected without waiting for a writer. |
 | Multiple hard links | Reject existing regular files with multiple links to avoid splitting the link set. |
 | Permissions | Copy existing mode bits; new files use `0600`. No separate public permission setting. |
 | Post-publication failure | Directory-sync, result-generation, revision observation, or cleanup errors retain `PUBLISHED`; unconfirmed publication is `UNKNOWN`. Read before retrying uncertain mutations. |
@@ -439,6 +448,6 @@ Streaming mutation summaries omit anchors. Result-generation failures preserve p
 - `npm run typecheck` checks source, test, and benchmark types in `src/` and `bench/`.
 - `npm run format:check` checks formatting in both directories.
 - `npm test` runs core and tool tests.
-- `npm run test:integration` exercises bundled ripgrep and files over 100 MiB, including LF and CRLF text.
+- `npm run test:integration` exercises bundled ripgrep, files over 100 MiB with LF and CRLF text, platform file types, and Action Fusion through real Pi sessions with command failures, cancellation, overrides, and approval/result hooks.
 - `npm run bench` measures core throughput and long-line match mapping.
 - `node --expose-gc bench/grep-memory.bench.ts` measures grep latency and sampled peak heap/RSS for 24 files totaling 192 MiB, each with one matching line. It creates and removes its fixtures in the system temporary directory.
