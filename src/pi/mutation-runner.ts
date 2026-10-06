@@ -116,7 +116,11 @@ export async function runTextMutation(
 ): Promise<MutationOutcome<TextMutationDetails>> {
   const { absolutePath, displayPath, signal } = target;
 
-  const { text: currentText, baseRevision } = await readEditableSnapshot(absolutePath, displayPath);
+  const { text: currentText, baseRevision } = await readEditableSnapshot(
+    absolutePath,
+    displayPath,
+    signal,
+  );
   // Cancelled after read: don't transform; the file stays untouched.
   throwIfCancelled(signal, `before apply; ${displayPath} was not changed.`);
 

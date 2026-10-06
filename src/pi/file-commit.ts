@@ -4,13 +4,13 @@ import {
   mkdir,
   mkdtemp,
   open,
-  readFile,
   realpath,
   rename,
   rm,
   stat,
   link,
 } from "node:fs/promises";
+import { constants, type Stats } from "node:fs";
 import { dirname, join } from "node:path";
 import { createHash } from "node:crypto";
 import { decodeEditableText, unwritableTextReason } from "../core/text.ts";
@@ -60,16 +60,43 @@ export function byteRevision(content: string | Uint8Array): string {
   return createHash("sha256").update(content).digest("hex");
 }
 
+function requireRegularFile(target: Stats): void {
+  if (!target.isFile()) throw prepareError("target is not a regular file");
+}
+
+/** Check the opened object before reading; a FIFO must not block even if the path changed. */
+async function readRegularFile(path: string, signal?: AbortSignal): Promise<Buffer> {
+  throwIfCancelled(signal);
+  const flags = constants.O_RDONLY | (process.platform === "win32" ? 0 : constants.O_NONBLOCK);
+  const handle = await open(path, flags);
+  try {
+    requireRegularFile(await handle.stat());
+    return await handle.readFile({ signal });
+  } finally {
+    await handle.close();
+  }
+}
+
 export async function fileRevision(path: string): Promise<string> {
-  return byteRevision(await readFile(path));
+  return byteRevision(await readRegularFile(path));
 }
 
 /** Decode and bind a mutation snapshot to the exact bytes read. */
-export async function readEditableSnapshot(path: string, displayPath: string) {
+export async function readEditableSnapshot(
+  path: string,
+  displayPath: string,
+  signal?: AbortSignal,
+) {
   try {
-    const bytes = await readFile(path);
+    const bytes = await readRegularFile(path, signal);
     return { text: decodeEditableText(bytes), baseRevision: byteRevision(bytes) };
   } catch (error) {
+    if (signal?.aborted)
+      throw prepareError(
+        `${OPERATION_ABORTED} before apply; ${displayPath} was not changed.`,
+        error,
+      );
+    if (error instanceof FileMutationError) throw error;
     throw new Error(`Error reading ${displayPath}: ${errorMessage(error)}`);
   }
 }
@@ -144,7 +171,7 @@ async function inspectTarget(path: string, knownBeforeRevision?: string): Promis
   } catch (error) {
     throw prepareError(`unable to inspect target: ${errorMessage(error)}`, error);
   }
-  if (!target.isFile()) throw prepareError("target is not a regular file");
+  requireRegularFile(target);
   if (target.nlink > 1)
     throw prepareError("target has multiple hard links; refusing to split the link set");
 
