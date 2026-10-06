@@ -58,5 +58,41 @@ for (const encoding of ["UTF-8", "invalid UTF-8"] as const) {
     const receipt = forgotten.content[0];
     assert.ok(receipt.type === "text" && !receipt.text.includes("needle"));
     assert.ok(receipt.type === "text" && !receipt.text.includes("search.log"));
+    const displayReceipt = `grep /needle/ · ${rows.length} matches in 1 file`;
+    assert.deepEqual(f.rawResult("forget-call").details, {
+      forgotten: [{ id, receipt: displayReceipt }],
+    });
+    assert.ok(f.renderForgetResult().includes(`Forgotten · ${displayReceipt}`));
   });
 }
+
+test("real grep reaches its limit across files → forget card reports the returned counts", {
+  timeout: SESSION_TIMEOUT_MS,
+}, async (t) => {
+  const f = await openForgetSession(t);
+  const rowPayloadChars = 256;
+  const rowsPerFile = Math.ceil(FORGET_MIN_BYTES / rowPayloadChars) + 1;
+  const limit = rowsPerFile + 1;
+  const paths = [join(f.cwd, "one.log"), join(f.cwd, "two.log")];
+  const rows = Array.from(
+    { length: rowsPerFile },
+    (_, index) => `${index % 2 === 0 ? "needle" : "backup"} ${"x".repeat(rowPayloadChars)}`,
+  );
+  await Promise.all(paths.map((path) => writeFile(path, `${rows.join("\n")}\n`)));
+  await f.prompt(
+    toolResponse({
+      type: "toolCall",
+      id: "search",
+      name: "grep",
+      arguments: { path: paths, pattern: ["needle", "backup"], literal: true, limit },
+    }),
+    (messages) => toolResponse(forgetCall(messages, "search")),
+    finish,
+  );
+  const id = taggedResultId(toolResult(f.requests[1], "search"));
+  assert.ok(id);
+  const receipt = `grep /needle | backup/ · ${limit} matches in ${paths.length} files · limit reached`;
+  assert.deepEqual(f.rawResult("forget-call").details, { forgotten: [{ id, receipt }] });
+  assert.ok(f.renderForgetResult().includes(`Forgotten · ${receipt}`));
+  assertForgotten(toolResult(f.requests[2], "search"), id);
+});

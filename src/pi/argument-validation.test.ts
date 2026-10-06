@@ -12,6 +12,7 @@ import { makeReplaceTool } from "./replace-tool.ts";
 import { makeWriteOverride } from "./write-tool.ts";
 import { callTool } from "./tool-call.testing.ts";
 import { MAX_BLOCK_BYTES } from "./budgets.ts";
+import { POSITIVE_SAFE_INTEGER } from "./schema.ts";
 
 const invalidCommand = { command: "", timeout: 0 };
 const anchorHash = "A".repeat(DEFAULT_CONFIG.hashLen);
@@ -21,7 +22,10 @@ const cases = [
     make: (cwd: string, _fusion: ReturnType<typeof createActionFusionExecutor>) =>
       makeReadOverride(cwd, DEFAULT_CONFIG),
     args: { offset: -1, limit: 0 },
-    diagnostics: [/\n  - offset:/, /\n  - limit:/],
+    diagnostics: [
+      new RegExp(`\\n  - offset:.*>= ${POSITIVE_SAFE_INTEGER.minimum}`),
+      new RegExp(`\\n  - limit:.*>= ${POSITIVE_SAFE_INTEGER.minimum}`),
+    ],
   },
   {
     name: "grep",
@@ -107,6 +111,7 @@ for (const scenario of cases) {
       for (const diagnostic of [...scenario.diagnostics, /\n  - unexpected:/]) {
         assert.match(error.message, diagnostic);
       }
+      assert.doesNotMatch(error.message, /\n  - path:/);
       return true;
     });
     assert.equal(await readFile(path, "utf8"), original);

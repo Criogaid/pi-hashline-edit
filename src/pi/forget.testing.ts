@@ -3,12 +3,16 @@ import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { stripVTControlCharacters } from "node:util";
 import type { TestContext } from "node:test";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import type { AssistantMessage, Message, ToolCall } from "@earendil-works/pi-ai";
 import { AssistantMessageEventStream } from "@earendil-works/pi-ai/utils/event-stream";
+import { normalizeContext } from "@earendil-works/pi-ai/utils/transcript";
+import { stream as streamCompletions } from "@earendil-works/pi-ai/api/openai-completions";
 import {
   createAgentSession,
+  initTheme,
   DefaultResourceLoader,
   ModelRuntime,
   SessionManager,
@@ -18,6 +22,7 @@ import { DEFAULT_CONFIG } from "./config.ts";
 import { registerForgetTool } from "./forget-tool.ts";
 import { makeGrepOverride } from "./grep-tool.ts";
 import { makeReadOverride } from "./read-tool.ts";
+import { theme } from "../../node_modules/@earendil-works/pi-coding-agent/dist/modes/interactive/theme/theme.js";
 
 export const SESSION_TIMEOUT_MS = 30_000;
 type Response = Pick<AssistantMessage, "content" | "stopReason">;
@@ -158,10 +163,85 @@ export async function openForgetSession(t: TestContext) {
     return stream;
   };
   await session.bindExtensions({});
+  const rawResult = (id: string) => {
+    const entry = sessionManager
+      .getEntries()
+      .find(
+        (entry) =>
+          entry.type === "message" &&
+          entry.message.role === "toolResult" &&
+          entry.message.toolCallId === id,
+      );
+    assert.ok(entry?.type === "message" && entry.message.role === "toolResult");
+    return entry.message;
+  };
   return {
     cwd,
     requests,
     sessionManager,
+    rawResult,
+    renderForgetResult(id = "forget-call") {
+      const tool = session.getToolDefinition("forget");
+      assert.ok(tool?.renderResult);
+      const call = session.agent.state.messages
+        .flatMap((message) =>
+          message.role === "assistant"
+            ? message.content.filter((block) => block.type === "toolCall")
+            : [],
+        )
+        .find((call) => call.id === id);
+      assert.ok(call);
+      const result = rawResult(id);
+      const context: Parameters<typeof tool.renderResult>[3] = {
+        args: call.arguments,
+        toolCallId: id,
+        cwd,
+        state: {},
+        invalidate() {},
+        lastComponent: undefined,
+        executionStarted: true,
+        argsComplete: true,
+        isPartial: false,
+        expanded: false,
+        showImages: false,
+        isError: result.isError,
+      };
+      initTheme("dark");
+      tool.renderCall?.(call.arguments, theme, context);
+      const component = tool.renderResult(
+        { ...result, details: result.details },
+        { expanded: false, isPartial: false },
+        theme,
+        context,
+      );
+      return stripVTControlCharacters(component.render(240).join("\n"));
+    },
+    async requestPayload(index: number) {
+      assert.equal(model.api, "openai-completions");
+      const messages = requests[index];
+      assert.ok(messages);
+      let payload: unknown;
+      let networkCalls = 0;
+      await streamCompletions(
+        { ...model, api: "openai-completions" },
+        normalizeContext({ messages }),
+        {
+          apiKey: "local-test-placeholder",
+          maxRetries: 0,
+          onPayload(value) {
+            payload = value;
+            throw new Error("Payload captured before sending.");
+          },
+          async fetch() {
+            networkCalls++;
+            throw new Error("Provider requests are forbidden in this fixture.");
+          },
+        },
+      ).result();
+      assert.ok(payload !== undefined, "Pi must construct the provider payload");
+      assert.equal(networkCalls, 0);
+      return payload;
+    },
     read(id: string, name = "build.log"): ToolCall {
       return { type: "toolCall", id, name: "read", arguments: { path: join(cwd, name) } };
     },

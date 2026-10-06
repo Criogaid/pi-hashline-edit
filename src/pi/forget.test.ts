@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { FORGET_MIN_BYTES } from "./budgets.ts";
 import { withResultTag } from "./forget-tool.ts";
+import { DEFAULT_CONFIG } from "./config.ts";
 import {
   assertForgotten,
   finish,
@@ -21,19 +22,21 @@ const PNG = Buffer.from(
   "base64",
 );
 
-for (const { name, filename, body } of [
-  { name: "ordinary log", filename: "build.log", body: LOG_BODY },
+for (const { name, filename, body, receiptSuffix } of [
+  { name: "ordinary log", filename: "build.log", body: LOG_BODY, receiptSuffix: " · lines 1–2" },
   {
     name: "NUL log containing a row-like source line",
     filename: "build.log",
     body: `${LOG_BODY}\0\n1│source text\n`,
+    receiptSuffix: "",
   },
   {
     name: "UTF-8 log containing a Unicode line separator",
     filename: "build.log",
     body: `before\u2028${LOG_BODY}`,
+    receiptSuffix: " · lines 1–2",
   },
-  { name: "PNG image", filename: "picture.png", body: PNG },
+  { name: "PNG image", filename: "picture.png", body: PNG, receiptSuffix: " · image" },
 ]) {
   test(`${name} read then forgotten → the next request contains only a receipt`, {
     timeout: SESSION_TIMEOUT_MS,
@@ -69,6 +72,9 @@ for (const { name, filename, body } of [
     );
     assert.ok(!remainingText.includes(filename), "File headers are forgotten with the body");
     assertForgotten(forgotten, id);
+    const receipt = `${join(f.cwd, filename)}${receiptSuffix}`;
+    assert.deepEqual(f.rawResult("forget-call").details, { forgotten: [{ id, receipt }] });
+    assert.ok(f.renderForgetResult().includes(`Forgotten · ${receipt}`));
   });
 }
 
@@ -98,7 +104,53 @@ test("forget in a mixed tool batch → work continues and unselected results sta
   }
   assert.deepEqual(toolResult(f.requests[2], "kept"), toolResult(f.requests[1], "kept"));
   assert.equal(toolResult(f.requests[2], "next").isError, false);
+  const expected = ["selected", "selected-too"].map((callId, index) => ({
+    id: taggedResultId(toolResult(f.requests[1], callId)),
+    receipt: `${join(f.cwd, index === 0 ? "build.log" : "test.log")} · lines 1–2`,
+  }));
+  assert.deepEqual(f.rawResult("forget-call").details, { forgotten: expected });
+  const displayed = f.renderForgetResult();
+  for (const { receipt } of expected) assert.ok(displayed.includes(`Forgotten · ${receipt}`));
+  assert.ok(!displayed.includes("keep.log"));
+  const payload = JSON.stringify(await f.requestPayload(2));
+  assert.doesNotMatch(payload, /"forgetReceipt"|"forgotten":/);
+  for (const { receipt } of expected) assert.ok(!payload.includes(receipt));
+  const response = toolResult(f.requests[2], "forget-call");
+  assert.deepEqual(response.content, f.rawResult("forget-call").content);
+  for (const block of response.content) {
+    if (block.type === "text") assert.ok(payload.includes(block.text));
+  }
 });
+
+for (const mode of ["pagination", "byte truncation"] as const) {
+  test(`read stops at ${mode} → forget receipt names only the returned lines`, {
+    timeout: SESSION_TIMEOUT_MS,
+  }, async (t) => {
+    const f = await openForgetSession(t);
+    const path = join(f.cwd, "build.log");
+    const maxReadBytes = DEFAULT_CONFIG.read.maxKiB * 1024;
+    const trailingLine = mode === "byte truncation" ? "y".repeat(maxReadBytes) : "next page";
+    await writeFile(path, `skip this line\n${LOG_BODY}${trailingLine}\n`);
+    const read = f.read("read-log");
+    await f.prompt(
+      toolResponse({
+        ...read,
+        arguments: { ...read.arguments, offset: 2, limit: mode === "pagination" ? 2 : 3 },
+      }),
+      (messages) => toolResponse(forgetCall(messages, "read-log")),
+      finish,
+    );
+    const id = taggedResultId(toolResult(f.requests[1], "read-log"));
+    assert.ok(id);
+    const receipt = `${path} · lines 2–3${mode === "byte truncation" ? " · truncated" : ""}`;
+    assert.deepEqual(f.rawResult("forget-call").details, { forgotten: [{ id, receipt }] });
+    assert.ok(f.renderForgetResult().includes(`Forgotten · ${receipt}`));
+    assertForgotten(toolResult(f.requests[2], "read-log"), id);
+    const details = f.rawResult("read-log").details;
+    assert.ok(details && typeof details === "object");
+    assert.ok(mode === "pagination" ? "pagination" in details : "truncation" in details);
+  });
+}
 
 test("forget with a note → calls, saved facts, source bytes and raw session remain", {
   timeout: SESSION_TIMEOUT_MS,
@@ -219,7 +271,7 @@ function collidingToolCallIds() {
   for (let index = 0; index < maxCandidateCalls; index++) {
     const callId = `call_collision_${index}`;
     const id = taggedResultId(
-      withResultTag(callId, { content: [{ type: "text", text: LOG_BODY }] }, true),
+      withResultTag(callId, { content: [{ type: "text", text: LOG_BODY }] }, true, "build.log"),
     );
     assert.ok(id);
     const earlier = seen.get(id);

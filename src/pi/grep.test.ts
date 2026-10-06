@@ -1043,24 +1043,38 @@ test("single-line files and count modes do not reread a matched file after it di
 test("partial searches retain matches and surface stderr across output modes", async () => {
   await withDir(async (dir) => {
     const file = join(dir, "found.txt");
-    await writeFile(file, "needle\n");
+    const rowPayloadChars = 256;
+    const rows = Array.from(
+      { length: Math.ceil(FORGET_MIN_BYTES / rowPayloadChars) + 1 },
+      () => `needle ${"x".repeat(rowPayloadChars)}\n`,
+    );
+    await writeFile(file, rows.join(""));
     for (const outputMode of ["content", "files", "count"]) {
       for (const limit of [1, 10]) {
         const fake = fakeBackend({
-          lines: [rgMatch(file, 1, "needle\n")],
+          lines: rows.map((row, index) => rgMatch(file, index + 1, row)),
           code: 2,
           stderr: "unreadable.txt: Permission denied",
         });
-        const result = await call(makeGrepOverrideWithBackend(dir, DEFAULT_CONFIG, fake.backend), {
-          literal: true,
-          pattern: "needle",
-          outputMode,
-          limit,
-        });
+        const result = await call(
+          makeGrepOverrideWithBackend(dir, { ...DEFAULT_CONFIG, forget: true }, fake.backend),
+          {
+            literal: true,
+            pattern: "needle",
+            outputMode,
+            limit,
+          },
+        );
         assert.match(text(result), /found\.txt/);
         assert.match(text(result), /Search incomplete/);
         assert.match(text(result), /unreadable\.txt: Permission denied/);
         assert.equal(result.details.incomplete, true);
+        assert.equal(
+          result.details.forgetReceipt,
+          outputMode === "content" && limit >= rows.length
+            ? `grep /needle/ · ${rows.length} matches in 1 file · incomplete`
+            : undefined,
+        );
       }
     }
     const fake = fakeBackend({ code: 2, stderr: "Permission denied" });
