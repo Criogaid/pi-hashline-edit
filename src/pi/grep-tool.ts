@@ -282,10 +282,7 @@ export function makeGrepOverrideWithBackend(
       });
       // Only content mode returns file text; paths and counts have nothing to forget.
       if (outputMode !== "content") return output;
-      return withResultTag(
-        toolCallId,
-        output,
-        config.forget,
+      return withResultTag(toolCallId, output, config.forget, () =>
         grepReceipt(patterns, raw.length, new Set(raw.map((match) => match.filePath)).size, {
           limitReached: matchLimitReached,
           incomplete: warnings.length > 0,

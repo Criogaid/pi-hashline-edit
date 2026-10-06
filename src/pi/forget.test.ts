@@ -279,7 +279,12 @@ function collidingToolCallIds() {
   for (let index = 0; index < maxCandidateCalls; index++) {
     const callId = `call_collision_${index}`;
     const id = taggedResultId(
-      withResultTag(callId, { content: [{ type: "text", text: LOG_BODY }] }, true, "build.log"),
+      withResultTag(
+        callId,
+        { content: [{ type: "text", text: LOG_BODY }] },
+        true,
+        () => "build.log",
+      ),
     );
     assert.ok(id);
     const earlier = seen.get(id);

@@ -63,14 +63,14 @@ export interface ForgetReceiptDetails {
   forgetReceipt?: string;
 }
 
-function plural(count: number, noun: string, plural = `${noun}s`): string {
-  return `${count} ${count === 1 ? noun : plural}`;
+function plural(count: number, noun: string, pluralForm = `${noun}s`): string {
+  return `${count} ${count === 1 ? noun : pluralForm}`;
 }
 
 /** `path · lines A–B` for anchored text, `path · image` for images, `path` otherwise. */
 export function readReceipt(
   path: string,
-  shown: { image: boolean } | { start: number; end: number; truncated: boolean } | undefined,
+  shown: { image: true } | { start: number; end: number; truncated: boolean } | undefined,
 ): string {
   if (!shown) return path;
   if ("image" in shown) return `${path} · image`;
@@ -97,13 +97,13 @@ export function grepReceipt(
 
 /**
  * Tag a successful read/grep result when forgetting is enabled and the result is
- * eligible, and keep its display receipt in details for the forget card.
+ * eligible. Only then evaluate createReceipt and keep its display text in details.
  */
 export function withResultTag<T extends { content: ResultContent; details?: unknown }>(
   toolCallId: string,
   result: T,
   enabled: boolean,
-  receipt: string,
+  createReceipt: () => string,
 ): T {
   if (!enabled) return result;
   const bytes = result.content.reduce(
@@ -115,7 +115,7 @@ export function withResultTag<T extends { content: ResultContent; details?: unkn
   return {
     ...result,
     content: [...result.content, { type: "text" as const, text: resultTag(toolCallId) }],
-    details: { ...(result.details as object | undefined), forgetReceipt: receipt },
+    details: { ...(result.details as object | undefined), forgetReceipt: createReceipt() },
   };
 }
 

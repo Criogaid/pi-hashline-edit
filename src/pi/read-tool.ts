@@ -197,10 +197,11 @@ export function makeReadOverride(
           toolCallId,
           { ...result, details: { ...result.details, nativeRead: true as const } },
           config.forget,
-          readReceipt(
-            params.path,
-            result.content.some((block) => block.type === "image") ? { image: true } : undefined,
-          ),
+          () =>
+            readReceipt(
+              params.path,
+              result.content.some((block) => block.type === "image") ? { image: true } : undefined,
+            ),
         );
       };
 
@@ -292,12 +293,13 @@ export function makeReadOverride(
           details: truncation.truncated ? { truncation } : pagination ? { pagination } : undefined,
         },
         config.forget,
-        readReceipt(
-          params.path,
-          rows.length > 0
-            ? { start, end: start + rows.length - 1, truncated: truncation.truncated }
-            : undefined,
-        ),
+        () =>
+          readReceipt(
+            params.path,
+            rows.length > 0
+              ? { start, end: start + rows.length - 1, truncated: truncation.truncated }
+              : undefined,
+          ),
       );
     },
   };
