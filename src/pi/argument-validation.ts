@@ -22,7 +22,10 @@ export function argumentItems(value: unknown): readonly unknown[] {
   return Array.isArray(value) ? value : value !== null && typeof value === "object" ? [value] : [];
 }
 
-/** Compact Pi's argument echo while preserving its diagnostic text and unknown error formats. */
+/**
+ * Compact the exact argument suffix emitted by Pi 0.99.1's validateToolArguments.
+ * If Pi changes that format, preserve its full error unchanged, including multiline JSON.
+ */
 function schemaDiagnostic(error: unknown, args: unknown): string {
   const message = errorMessage(error);
   const label = "Received arguments:";
