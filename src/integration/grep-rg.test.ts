@@ -15,7 +15,8 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { rgPath } from "@vscode/ripgrep";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { makeGrepOverrideWithBackend } from "../pi/grep-tool.ts";
@@ -35,6 +36,7 @@ import { runRgTextView } from "../pi/rg-text-view.ts";
 import { computeLineHash } from "../core/hash.ts";
 import { callTool } from "../pi/tool-call.testing.ts";
 import { DEFAULT_CONFIG } from "../pi/config.ts";
+import { canonicalPath } from "../pi/path.ts";
 
 const invoke = (
   tool: any,
@@ -1397,6 +1399,208 @@ test("invalid UTF-8 matches use plain previews while valid files retain edit anc
     );
     assert.match(rawBoundary.content[0].text, /2│needle �\n3│after/);
     assert.doesNotMatch(rawBoundary.content[0].text, /\d+#/);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("grep paths with input shorthand or literal separators still edit the searched file", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "hl-grep-path-roundtrip-"));
+  try {
+    const cases = [
+      { name: "@config.txt", other: "config.txt" },
+      { name: "space\u00a0file.txt", other: "space file.txt" },
+      ...(process.platform === "win32"
+        ? []
+        : [{ name: "dir\\target.txt", other: "dir/target.txt" }]),
+    ];
+    for (const { name, other } of cases) {
+      await t.test(name, async () => {
+        const file = join(directory, name);
+        const otherFile = join(directory, other);
+        await mkdir(dirname(otherFile), { recursive: true });
+        await writeFile(file, "needle\n");
+        await writeFile(otherFile, "needle\n");
+        const grep = makeGrepOverrideWithBackend(directory, DEFAULT_CONFIG, {});
+        let content = "";
+        let returnedPath = "";
+        for (const outputMode of ["content", "files", "count"] as const) {
+          const result = await invoke(grep, "path", {
+            path: pathToFileURL(file).href,
+            pattern: "needle",
+            literal: true,
+            outputMode,
+          });
+          const text = result.content[0].text;
+          const firstLine = text.split("\n")[0];
+          returnedPath =
+            outputMode === "content"
+              ? firstLine.slice(0, firstLine.lastIndexOf(" · "))
+              : outputMode === "count"
+                ? firstLine.slice(0, firstLine.lastIndexOf(": "))
+                : firstLine;
+          assert.equal(canonicalPath(directory, returnedPath), file, outputMode);
+          if (outputMode === "content") content = text;
+        }
+        const anchor = content.match(/(1#[0-9A-Z]+)│needle/)?.[1];
+        assert.ok(anchor);
+        await invoke(makeEditOverride(directory, DEFAULT_CONFIG), "edit", {
+          path: returnedPath,
+          edits: [{ op: "replace", anchor, body: ["updated"] }],
+        });
+        assert.equal(await readFile(file, "utf8"), "updated\n");
+        assert.equal(await readFile(otherFile, "utf8"), "needle\n");
+      });
+    }
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("literal CRLF queries use the corresponding UTF-8 and raw-byte search views", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "hl-grep-raw-crlf-"));
+  try {
+    await writeFile(join(directory, "valid.txt"), "alpha\r\nbeta\r\n");
+    await writeFile(
+      join(directory, "invalid.txt"),
+      Buffer.concat([Buffer.from("alpha\r\nbeta\r\n"), Buffer.from([0xff])]),
+    );
+    const grep = makeGrepOverrideWithBackend(directory, DEFAULT_CONFIG, {});
+    for (const outputMode of ["content", "files", "count"] as const) {
+      await t.test(outputMode, async () => {
+        const result = await invoke(grep, "crlf", {
+          path: directory,
+          pattern: "alpha\r\nbeta",
+          literal: true,
+          multiline: true,
+          outputMode,
+        });
+        assert.match(result.content[0].text, /(?:^|\n)valid\.txt/);
+        assert.match(result.content[0].text, /(?:^|\n)invalid\.txt/);
+        if (outputMode === "content") {
+          assert.match(result.content[0].text, /1│alpha\n2│beta/);
+          assert.match(result.content[0].text, /1#[0-9A-Z]+│alpha\n2#[0-9A-Z]+│beta/);
+        } else if (outputMode === "count") {
+          assert.match(result.content[0].text, /Total: 4 matches in 2 files/);
+        }
+        assert.equal(result.details?.incomplete, undefined);
+        const lf = await invoke(grep, "lf", {
+          path: directory,
+          pattern: "alpha\nbeta",
+          literal: true,
+          multiline: true,
+          outputMode,
+        });
+        assert.match(lf.content[0].text, /valid\.txt/);
+        assert.doesNotMatch(lf.content[0].text, /invalid\.txt/);
+      });
+    }
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("raw-byte matches changed before revision acquisition are never confirmed by lossy previews", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "hl-grep-raw-revision-"));
+  try {
+    const file = join(directory, "invalid.txt");
+    for (const separator of ["\n", "\r\n"]) {
+      for (const mode of [false, true, "limited", "eof"] as const) {
+        const multiline = mode !== false;
+        for (const outputMode of ["content", "files", "count"] as const) {
+          await t.test(`${JSON.stringify(separator)} ${mode} ${outputMode}`, async () => {
+            const source = (byte: number) =>
+              Buffer.concat([
+                Buffer.from(`before${separator}${"x".repeat(64 * 1024)}needle`),
+                Buffer.from([byte]),
+                Buffer.from(`${separator}after${separator}`),
+              ]);
+            await writeFile(file, source(0xff));
+            const changedSource =
+              mode === "eof"
+                ? Buffer.concat([source(0xff), Buffer.from(`tail${separator}`)])
+                : source(0xfe);
+            let changed = false;
+            const grep = makeGrepOverrideWithBackend(directory, DEFAULT_CONFIG, {
+              search(path, request, signal, onLine) {
+                return runRgTextView(path, request, signal, async (...event) => {
+                  if (!changed && JSON.parse(event[0]).type === "match") {
+                    changed = true;
+                    await writeFile(file, changedSource);
+                  }
+                  return onLine(...event);
+                });
+              },
+            });
+            const boundary = separator === "\r\n" ? "\\r\\n" : "\\n";
+            await assert.rejects(
+              invoke(grep, "changed", {
+                path: file,
+                pattern:
+                  mode === "limited"
+                    ? `before${boundary}(?-u:[^\\r\\n]*\\xFF)`
+                    : mode === "eof"
+                      ? `(?-u:\\xFF${boundary}after${boundary})\\z`
+                      : `(?-u:\\xFF${multiline ? `${boundary}after` : ""})`,
+                literal: false,
+                ignoreCase: false,
+                multiline,
+                ...(mode === "limited" || mode === "eof" ? { limit: 1 } : {}),
+                outputMode,
+              }),
+              /File changed during search/,
+            );
+            assert.equal(changed, true);
+            assert.deepEqual(await readFile(file), changedSource);
+          });
+        }
+      }
+    }
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("raw files lost before summary verification leave only confirmed counts and an incomplete notice", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "hl-grep-raw-summary-"));
+  try {
+    const invalid = join(directory, "invalid.txt");
+    const valid = join(directory, "valid.txt");
+    for (const outputMode of ["files", "count"] as const) {
+      for (const keepValid of [true, false]) {
+        await t.test(`${outputMode} ${keepValid}`, async () => {
+          await writeFile(invalid, Buffer.concat([Buffer.from("needle "), Buffer.from([0xff])]));
+          await writeFile(valid, "needle\n");
+          const grep = makeGrepOverrideWithBackend(directory, DEFAULT_CONFIG, {
+            async search(...args) {
+              const result = await runRgTextView(...args);
+              await rm(invalid);
+              return result;
+            },
+          });
+          const result = invoke(grep, "summary", {
+            path: keepValid ? [invalid, valid] : invalid,
+            pattern: "needle",
+            literal: true,
+            limit: keepValid ? 2 : 1,
+            outputMode,
+          });
+          if (!keepValid) {
+            await assert.rejects(result, /No matches could be displayed\.[\s\S]*Search incomplete/);
+            return;
+          }
+          const summary = await result;
+          assert.equal(summary.details?.incomplete, true);
+          const shown = summary.content[0].text.split("\n\n[")[0];
+          assert.equal(
+            shown,
+            outputMode === "files" ? "valid.txt" : "valid.txt: 1\nTotal: 1 match in 1 file",
+          );
+          assert.match(summary.content[0].text, /2 matches limit reached/);
+          assert.match(summary.content[0].text, /Could not read .*invalid\.txt/);
+        });
+      }
+    }
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

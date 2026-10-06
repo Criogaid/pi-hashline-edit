@@ -1,12 +1,13 @@
 import { truncateHead, formatSize, DEFAULT_MAX_BYTES } from "@earendil-works/pi-coding-agent";
 import { DiagnosticBuffer } from "./diagnostic-buffer.ts";
 import { createHash } from "node:crypto";
-import { isAbsolute, relative, resolve, sep } from "node:path";
 import { createAnchorFormatter, displayCarriageReturns, plainRow } from "./anchor-format.ts";
 import { fileReadWarning, type RgMatch, type SearchFileSnapshot } from "./grep-search.ts";
-import { scanTextLines } from "./text-stream.ts";
+import { scanTextFile, scanTextLines } from "./text-stream.ts";
 import { GREP_MAX_LINE_LENGTH, MAX_SEARCH_DIAGNOSTIC_BYTES } from "./budgets.ts";
 import { searchChangedError } from "./error-text.ts";
+import { serializePath } from "./path.ts";
+import { rawMatchVerifier } from "./rg-match-bytes.ts";
 
 /** UTF-16 units kept before the match column when a preview window is cut. */
 const GREP_PREVIEW_LEAD = 100;
@@ -70,17 +71,13 @@ export async function formatMatches(options: FormatMatchesOptions) {
     byFile.set(match.filePath, lines);
   }
   for (const lines of byFile.values()) lines.sort((a, b) => a.lineNumber - b.lineNumber);
-  const formatPath = (filePath: string): string => {
-    const absolute = resolve(cwd, filePath);
-    const rel = relative(cwd, absolute);
-    return rel && rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel)
-      ? rel.replace(/\\/g, "/")
-      : absolute;
-  };
+  const formatPath = (filePath: string): string => serializePath(cwd, filePath);
   const blocks: string[] = [];
   let linesTruncated = false;
-  if (outputMode === "content") {
-    const fileEntries = [...byFile.entries()];
+  const fileEntries = [...byFile.entries()].filter(
+    ([, matches]) => outputMode === "content" || matches.some((match) => match.rawMatch),
+  );
+  if (fileEntries.length) {
     const fileResults = new Array<{ block?: string; warning?: string }>(fileEntries.length);
     let nextIndex = 0;
     const workerAbort = new AbortController();
@@ -94,19 +91,40 @@ export async function formatMatches(options: FormatMatchesOptions) {
           while (!workerAbort.signal.aborted && nextIndex < fileEntries.length) {
             const current = nextIndex++;
             const [filePath, matchLines] = fileEntries[current];
-            const columns = new Map(matchLines.map((match) => [match.lineNumber, match.column]));
-            const matchedTexts = new Map(
-              matchLines.map((match) => [match.lineNumber, match.matchedText]),
+            const verifyRaw = rawMatchVerifier(
+              new Set(matchLines.flatMap((match) => (match.rawMatch ? [match.rawMatch] : []))),
             );
-            const windowSet = new Set<number>();
-            for (const { lineNumber } of matchLines) {
-              for (let n = Math.max(1, lineNumber - context); n <= lineNumber + context; n++)
-                windowSet.add(n);
-            }
-            const rows: string[] = [];
-            const matchedRows = new Set<number>();
-            const hash = createHash("sha256");
             try {
+              if (outputMode !== "content") {
+                const hash = createHash("sha256");
+                await scanTextFile(
+                  filePath,
+                  undefined,
+                  scanSignal,
+                  (bytes) => {
+                    hash.update(bytes);
+                    verifyRaw.write(bytes);
+                  },
+                  "lossy",
+                );
+                verifyRaw.end();
+                if (hash.digest("hex") !== searchSnapshots.get(filePath)!.revision)
+                  throw searchChangedError();
+                fileResults[current] = {};
+                continue;
+              }
+              const columns = new Map(matchLines.map((match) => [match.lineNumber, match.column]));
+              const matchedTexts = new Map(
+                matchLines.map((match) => [match.lineNumber, match.matchedText]),
+              );
+              const windowSet = new Set<number>();
+              for (const { lineNumber } of matchLines) {
+                for (let n = Math.max(1, lineNumber - context); n <= lineNumber + context; n++)
+                  windowSet.add(n);
+              }
+              const rows: string[] = [];
+              const matchedRows = new Set<number>();
+              const hash = createHash("sha256");
               // Content-mode search snapshots every file before recording its matches.
               const snapshot = searchSnapshots.get(filePath)!;
               const stats = await scanTextLines(
@@ -130,8 +148,16 @@ export async function formatMatches(options: FormatMatchesOptions) {
                       : plainRow(line.number, display),
                   );
                 },
-                { signal: scanSignal, onBytes: (bytes) => hash.update(bytes), decoding: "lossy" },
+                {
+                  signal: scanSignal,
+                  onBytes: (bytes) => {
+                    hash.update(bytes);
+                    verifyRaw.write(bytes);
+                  },
+                  decoding: "lossy",
+                },
               );
+              verifyRaw.end();
               if (stats.hasNul) throw searchChangedError();
               if (matchLines.some(({ lineNumber }) => !matchedRows.has(lineNumber))) {
                 throw searchChangedError();
@@ -159,13 +185,16 @@ export async function formatMatches(options: FormatMatchesOptions) {
     );
     await Promise.all(workers);
     if (failed) throw failure;
-    for (const result of fileResults) {
-      if (result.warning) warnings.push(result.warning);
-      else if (result.block) blocks.push(result.block);
+    for (const [index, result] of fileResults.entries()) {
+      if (result.warning) {
+        warnings.push(result.warning);
+        byFile.delete(fileEntries[index][0]);
+      } else if (result.block) blocks.push(result.block);
     }
-  } else if (outputMode === "files") {
+  }
+  if (outputMode === "files") {
     for (const filePath of byFile.keys()) blocks.push(formatPath(filePath));
-  } else {
+  } else if (outputMode === "count" && byFile.size) {
     let total = 0;
     for (const [filePath, matchLines] of byFile) {
       blocks.push(`${formatPath(filePath)}: ${matchLines.length}`);

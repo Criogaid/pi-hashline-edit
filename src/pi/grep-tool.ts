@@ -199,7 +199,7 @@ export function makeGrepOverrideWithBackend(
       const anchors = createAnchorFormatter(hashLen);
       const warnings: string[] = [];
 
-      const patterns = toArray(params.pattern).map(normalizeLineEndings);
+      const patterns = toArray(params.pattern);
       const effectiveLimit = params.limit ?? config.grep.defaultLimit;
       const context = params.context ?? config.grep.defaultContext;
       const rgPath = bundledRgPath;
@@ -207,7 +207,12 @@ export function makeGrepOverrideWithBackend(
       const multiline = params.multiline ?? false;
       const globs = toArray(params.glob);
       const { literal } = params;
-      if (!literal) await assertValidRegex(patterns, multiline, rgPath, backend, signal);
+      if (!literal) {
+        await assertValidRegex(patterns, multiline, rgPath, backend, signal);
+        const normalized = patterns.map(normalizeLineEndings);
+        if (patterns.some((pattern, index) => pattern !== normalized[index]))
+          await assertValidRegex(normalized, multiline, rgPath, backend, signal);
+      }
       const matcherIgnoreCase = await backend.resolveIgnoreCase(
         rgPath,
         patterns,

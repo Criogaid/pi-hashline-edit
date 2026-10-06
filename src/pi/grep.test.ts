@@ -4,6 +4,7 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import { syncBuiltinESMExports } from "node:module";
 import { setTimeout as delay } from "node:timers/promises";
@@ -15,7 +16,7 @@ import { initTheme } from "@earendil-works/pi-coding-agent";
 import { theme } from "../../node_modules/@earendil-works/pi-coding-agent/dist/modes/interactive/theme/theme.js";
 import { computeLineHash } from "../core/hash.ts";
 import { makeGrepOverrideWithBackend, type GrepBackend } from "./grep-tool.ts";
-import { scopeArgs, type SearchRequest } from "./grep-search.ts";
+import { scopeArgs, type SearchRequest, type SearchTextView } from "./grep-search.ts";
 import { makeEditOverride } from "./edit-tool.ts";
 import { callTool } from "./tool-call.testing.ts";
 import { DEFAULT_CONFIG } from "./config.ts";
@@ -31,6 +32,7 @@ type FakeOptions = {
   error?: Error;
   onRun?: () => void;
   paths?: string[];
+  view?: SearchTextView;
 };
 
 async function withDir<T>(fn: (dir: string) => Promise<T>): Promise<T> {
@@ -42,10 +44,15 @@ async function withDir<T>(fn: (dir: string) => Promise<T>): Promise<T> {
   }
 }
 
-function rgMatch(filePath: string, lineNumber: number, text: string): string {
+function rgMatch(filePath: string, lineNumber: number, text: string, byteOffset?: number): string {
   return JSON.stringify({
     type: "match",
-    data: { path: { text: filePath }, line_number: lineNumber, lines: { text } },
+    data: {
+      path: { text: filePath },
+      line_number: lineNumber,
+      lines: { text },
+      ...(byteOffset === undefined ? {} : { absolute_offset: byteOffset }),
+    },
   });
 }
 
@@ -59,7 +66,7 @@ function fakeBackend(options: FakeOptions = {}) {
       options.onRun?.();
       if (options.error) throw options.error;
       for (const line of options.lines ?? []) {
-        if (!(await onLine(line)))
+        if (!(await onLine(line, options.view ?? { kind: "lf" })))
           return { code: null, stderr: options.stderr ?? "", stopped: true };
       }
       return {
@@ -975,7 +982,18 @@ test("grep previews invalid UTF-8 without anchors and skips NUL hits that requir
     const invalid = join(dir, "invalid.txt");
     const source = Buffer.from([0x61, 0x0a, 0xc3, 0x28, 0x0a]);
     await writeFile(invalid, source);
-    const fake = fakeBackend({ lines: [rgMatch(invalid, 1, "a\n")], paths: [invalid] });
+    const fake = fakeBackend({
+      lines: [rgMatch(invalid, 1, "a\n", 0)],
+      paths: [invalid],
+      view: {
+        kind: "raw",
+        snapshot: {
+          revision: createHash("sha256").update(source).digest("hex"),
+          validUtf8: false,
+          totalLines: 2,
+        },
+      },
+    });
     const result = await call(makeGrepOverrideWithBackend(dir, DEFAULT_CONFIG, fake.backend), {
       literal: true,
       pattern: "a",

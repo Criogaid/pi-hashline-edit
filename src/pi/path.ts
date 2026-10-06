@@ -1,6 +1,6 @@
 import { homedir } from "node:os";
-import { isAbsolute, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const UNICODE_SPACES = /[\u00A0\u2000-\u200A\u202F\u205F\u3000]/g;
 const WINDOWS_SHELL_DRIVE = /^\/(?:mnt\/|cygdrive\/)?([a-z])(?:\/(.*))?$/i;
@@ -27,4 +27,18 @@ export function canonicalPath(cwd: string, path: string): string {
   }
   if (normalized.startsWith("file://")) normalized = fileURLToPath(normalized);
   return isAbsolute(normalized) ? resolve(normalized) : resolve(cwd, normalized);
+}
+
+/** Return a readable path that resolves back to the same file through the tools' input syntax. */
+export function serializePath(cwd: string, path: string): string {
+  const absolute = resolve(cwd, path);
+  const rel = relative(cwd, absolute);
+  const local = rel && rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel);
+  const candidate = local ? (sep === "\\" ? rel.replaceAll(sep, "/") : rel) : absolute;
+  // A file URL preserves names whose spaces are normalized on input, and keeps headers single-line.
+  if (!/[\r\n]/.test(candidate)) {
+    if (canonicalPath(cwd, candidate) === absolute) return candidate;
+    if (local && canonicalPath(cwd, `./${candidate}`) === absolute) return `./${candidate}`;
+  }
+  return pathToFileURL(absolute).href;
 }
