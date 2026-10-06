@@ -52,11 +52,58 @@ function isResultTag(block: ResultContent[number] | undefined, toolCallId: strin
   return block?.type === "text" && block.text === resultTag(toolCallId);
 }
 
-/** Tag a successful read/grep result when forgetting is enabled and the result is eligible. */
-export function withResultTag<T extends { content: ResultContent }>(
+/** Pattern text shown in a grep receipt before it is cut with an ellipsis. */
+const MAX_RECEIPT_PATTERN_CHARS = 60;
+
+/**
+ * Display-only receipt for a tagged result, kept in its details. Pi does not send details
+ * to the model, so the forget card can name what was forgotten without adding context.
+ */
+export interface ForgetReceiptDetails {
+  forgetReceipt?: string;
+}
+
+function plural(count: number, noun: string, plural = `${noun}s`): string {
+  return `${count} ${count === 1 ? noun : plural}`;
+}
+
+/** `path · lines A–B` for anchored text, `path · image` for images, `path` otherwise. */
+export function readReceipt(
+  path: string,
+  shown: { image: boolean } | { start: number; end: number; truncated: boolean } | undefined,
+): string {
+  if (!shown) return path;
+  if ("image" in shown) return `${path} · image`;
+  return `${path} · lines ${shown.start}–${shown.end}${shown.truncated ? " · truncated" : ""}`;
+}
+
+/** `grep /pattern/ · N matches in M files`, with limit and incomplete-search notes. */
+export function grepReceipt(
+  patterns: readonly string[],
+  matches: number,
+  files: number,
+  notes: { limitReached: boolean; incomplete: boolean },
+): string {
+  const joined = patterns.join(" | ");
+  const pattern =
+    joined.length > MAX_RECEIPT_PATTERN_CHARS
+      ? `${joined.slice(0, MAX_RECEIPT_PATTERN_CHARS)}…`
+      : joined;
+  let receipt = `grep /${pattern}/ · ${plural(matches, "match", "matches")} in ${plural(files, "file")}`;
+  if (notes.limitReached) receipt += " · limit reached";
+  if (notes.incomplete) receipt += " · incomplete";
+  return receipt;
+}
+
+/**
+ * Tag a successful read/grep result when forgetting is enabled and the result is
+ * eligible, and keep its display receipt in details for the forget card.
+ */
+export function withResultTag<T extends { content: ResultContent; details?: unknown }>(
   toolCallId: string,
   result: T,
   enabled: boolean,
+  receipt: string,
 ): T {
   if (!enabled) return result;
   const bytes = result.content.reduce(
@@ -68,7 +115,13 @@ export function withResultTag<T extends { content: ResultContent }>(
   return {
     ...result,
     content: [...result.content, { type: "text" as const, text: resultTag(toolCallId) }],
+    details: { ...(result.details as object | undefined), forgetReceipt: receipt },
   };
+}
+
+function receiptOf(details: unknown): string | undefined {
+  const receipt = (details as ForgetReceiptDetails | undefined)?.forgetReceipt;
+  return typeof receipt === "string" ? receipt : undefined;
 }
 
 /** Drop the tag block before handing a result to a renderer that shows every text block. */
@@ -95,11 +148,13 @@ const forgetSchema = Type.Object(
   { additionalProperties: false },
 );
 type ForgetParams = Static<typeof forgetSchema>;
+/** One line per forgotten result; receipt is absent for results tagged before receipts existed. */
+type ForgetDetails = { forgotten: { id: string; receipt?: string }[] };
 
 /** Register the forget tool and the context hooks that apply it. */
 export function registerForgetTool(pi: ExtensionAPI): void {
-  // Tagged results of the batch the current response is the first to see: id → toolCallId.
-  let forgettable = new Map<string, string>();
+  // Tagged results of the batch the current response is the first to see, by id.
+  let forgettable = new Map<string, { toolCallId: string; receipt?: string }>();
   // Results named by forget during the current response, applied at its turn_end.
   let pending = new Set<string>();
 
@@ -118,7 +173,11 @@ export function registerForgetTool(pi: ExtensionAPI): void {
         return;
       const id = resultId(message.toolCallId);
       visible.set(id, (visible.get(id) ?? 0) + 1);
-      if (index > lastAssistant) forgettable.set(id, message.toolCallId);
+      if (index > lastAssistant)
+        forgettable.set(id, {
+          toolCallId: message.toolCallId,
+          receipt: receiptOf(message.details),
+        });
     });
     for (const [id, count] of visible) if (count > 1) forgettable.delete(id);
   });
@@ -171,7 +230,17 @@ export function registerForgetTool(pi: ExtensionAPI): void {
     },
     renderResult(result, { expanded }, theme, context) {
       if (context?.isError) return renderToolError(result, theme, expanded);
-      return new Text("", 0, 0);
+      const forgotten = result.details?.forgotten ?? [];
+      return new Text(
+        forgotten
+          .map(
+            ({ id, receipt }) =>
+              theme.fg("dim", "Forgotten · ") + theme.fg("toolOutput", receipt ?? id),
+          )
+          .join("\n"),
+        0,
+        0,
+      );
     },
     async execute(_toolCallId: string, params: ForgetParams) {
       const unknown = params.ids.filter((id) => !forgettable.has(id));
@@ -181,11 +250,15 @@ export function registerForgetTool(pi: ExtensionAPI): void {
           `Cannot forget ${unknown.join(", ")}: only tagged read or grep results from the previous step can be forgotten.${available.length ? ` Available: ${available.join(", ")}.` : ""}`,
         );
       }
-      for (const id of params.ids) pending.add(forgettable.get(id)!);
+      const forgotten = params.ids.map((id) => {
+        const { toolCallId, receipt } = forgettable.get(id)!;
+        pending.add(toolCallId);
+        return { id, receipt };
+      });
       return {
         content: [{ type: "text" as const, text: `Forgot ${params.ids.join(", ")}.` }],
-        details: undefined,
+        details: { forgotten },
       };
     },
-  } satisfies ToolDefinition<typeof forgetSchema, undefined>);
+  } satisfies ToolDefinition<typeof forgetSchema, ForgetDetails>);
 }

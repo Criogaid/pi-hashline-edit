@@ -27,7 +27,12 @@ import { scanTextLines } from "./text-stream.ts";
 import { createAnchorFormatter, displayCarriageReturns, parseHashline } from "./anchor-format.ts";
 import { canonicalPath } from "./path.ts";
 import { renderToolError } from "./render.ts";
-import { withoutResultTag, withResultTag } from "./forget-tool.ts";
+import {
+  type ForgetReceiptDetails,
+  readReceipt,
+  withoutResultTag,
+  withResultTag,
+} from "./forget-tool.ts";
 import { POSITIVE_SAFE_INTEGER } from "./schema.ts";
 import { throwIfCancelled } from "./error-text.ts";
 import { formatKiB } from "./budgets.ts";
@@ -36,7 +41,7 @@ import { createArgumentPreparer } from "./argument-validation.ts";
 
 const DEFAULT_OFFSET = 1;
 
-type ReadDetails = ReadToolDetails & { nativeRead?: true };
+type ReadDetails = ReadToolDetails & { nativeRead?: true } & ForgetReceiptDetails;
 
 /**
  * First result line: `<path> · <N> lines`, optionally ` (from line <offset>)` and
@@ -192,6 +197,10 @@ export function makeReadOverride(
           toolCallId,
           { ...result, details: { ...result.details, nativeRead: true as const } },
           config.forget,
+          readReceipt(
+            params.path,
+            result.content.some((block) => block.type === "image") ? { image: true } : undefined,
+          ),
         );
       };
 
@@ -283,6 +292,12 @@ export function makeReadOverride(
           details: truncation.truncated ? { truncation } : pagination ? { pagination } : undefined,
         },
         config.forget,
+        readReceipt(
+          params.path,
+          rows.length > 0
+            ? { start, end: start + rows.length - 1, truncated: truncation.truncated }
+            : undefined,
+        ),
       );
     },
   };

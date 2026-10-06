@@ -12,7 +12,7 @@ import { rgPath as bundledRgPath } from "@vscode/ripgrep";
 import { Type, type Static } from "typebox";
 import { Text } from "@earendil-works/pi-tui";
 import { renderOutputPreview, renderToolError } from "./render.ts";
-import { withResultTag } from "./forget-tool.ts";
+import { type ForgetReceiptDetails, grepReceipt, withResultTag } from "./forget-tool.ts";
 import { normalizeLineEndings } from "../core/lines.ts";
 import { createAnchorFormatter } from "./anchor-format.ts";
 import { assembleGrepOutput, formatMatches, formatSearchWarnings } from "./grep-output.ts";
@@ -111,7 +111,10 @@ function createGrepSchema({ defaultLimit, defaultContext }: HashlineEditConfig["
   );
 }
 type GrepSchema = ReturnType<typeof createGrepSchema>;
-type GrepTool = ToolDefinition<GrepSchema, { incomplete?: true } | undefined>;
+type GrepTool = ToolDefinition<
+  GrepSchema,
+  ({ incomplete?: true } & ForgetReceiptDetails) | undefined
+>;
 
 /** Build the production grep override (a ToolDefinition fragment for registerTool). */
 export function makeGrepOverride(cwd: string, config: HashlineEditConfig) {
@@ -278,7 +281,16 @@ export function makeGrepOverrideWithBackend(
         linesTruncated,
       });
       // Only content mode returns file text; paths and counts have nothing to forget.
-      return outputMode === "content" ? withResultTag(toolCallId, output, config.forget) : output;
+      if (outputMode !== "content") return output;
+      return withResultTag(
+        toolCallId,
+        output,
+        config.forget,
+        grepReceipt(patterns, raw.length, new Set(raw.map((match) => match.filePath)).size, {
+          limitReached: matchLimitReached,
+          incomplete: warnings.length > 0,
+        }),
+      );
     },
   } satisfies GrepTool;
 }
