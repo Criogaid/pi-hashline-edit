@@ -47,4 +47,6 @@ The extension replaces Pi's built-in `read`, `grep`, `edit`, and `write` tools a
 
 **Tests:** `*.test.ts` files sit next to their sources. `registration.test.ts` covers configuration wiring; `read.test.ts` covers reads; `execute.test.ts` covers edits and shared mutation workflows. `failure-path.test.ts` and `result-safety.test.ts` cover publication failures and result safety. `argument-validation.test.ts` covers combined argument failures through tool entry points. `forget.test.ts` drives forgetting and argument rejection through real Pi sessions using the shared local-model fixture in `forget.testing.ts`; `src/integration/forget-grep.test.ts` uses the same fixture with real ripgrep. `tool-call.testing.ts` provides production-order tool calls and native Pi tool contexts with test-scoped cleanup. Tests requiring real ripgrep, large files, or platform-specific behavior belong in `src/integration/`.
 
+`src/testing/session.testing.ts` owns Pi session initialization, local model response streams, credential and resource isolation, and cleanup. Tool contexts, forget sessions, and Fusion sessions share it; their registration and business assertions stay with the feature.
+
 README.md is the user-facing contract: tool parameters, output budgets, recovery semantics, and publication states. Keep it in sync with behavior changes.

@@ -8,16 +8,9 @@
  */
 
 import { validateToolArguments } from "@earendil-works/pi-ai";
-import { join } from "node:path";
 import type { TestContext } from "node:test";
-import {
-  createAgentSession,
-  DefaultResourceLoader,
-  type ExtensionToolContext,
-  ModelRuntime,
-  SessionManager,
-  SettingsManager,
-} from "@earendil-works/pi-coding-agent";
+import type { ExtensionToolContext } from "@earendil-works/pi-coding-agent";
+import { openTestSession } from "../testing/session.testing.ts";
 
 interface CallableTool {
   readonly name: string;
@@ -52,36 +45,7 @@ export async function createToolContext(
   t: TestContext,
   mode: ExtensionToolContext["mode"] = "json",
 ) {
-  const runtime = await ModelRuntime.create({
-    authPath: join(cwd, "test-auth.json"),
-    modelsPath: null,
-    modelsStorePath: join(cwd, "test-models.json"),
-    refreshOnCreate: false,
-    allowModelNetwork: false,
-  });
-  const settingsManager = SettingsManager.inMemory();
-  const loader = new DefaultResourceLoader({
-    cwd,
-    agentDir: cwd,
-    settingsManager,
-    noExtensions: true,
-    noSkills: true,
-    noPromptTemplates: true,
-    noThemes: true,
-    noContextFiles: true,
-  });
-  await loader.reload();
-  const { session } = await createAgentSession({
-    cwd,
-    agentDir: cwd,
-    modelRuntime: runtime,
-    settingsManager,
-    resourceLoader: loader,
-    sessionManager: SessionManager.inMemory(cwd),
-    tools: [],
-  });
-  t.after(() => session.dispose());
-  await session.bindExtensions({});
+  const { session } = await openTestSession(t, { cwd, tools: [] });
   session.extensionRunner.setUIContext(undefined, mode);
   return session.extensionRunner.createToolContext("test", undefined);
 }

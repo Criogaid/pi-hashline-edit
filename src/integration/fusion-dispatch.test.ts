@@ -1,19 +1,10 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test, type TestContext } from "node:test";
 import { Type } from "typebox";
-import type { AssistantMessage } from "@earendil-works/pi-ai";
-import { AssistantMessageEventStream } from "@earendil-works/pi-ai/utils/event-stream";
-import {
-  createAgentSession,
-  DefaultResourceLoader,
-  type ExtensionAPI,
-  ModelRuntime,
-  SessionManager,
-  SettingsManager,
-} from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { openTestSession, responseStream } from "../testing/session.testing.ts";
 import {
   createActionFusionExecutor,
   type ActionFusionDetails,
@@ -28,84 +19,26 @@ async function openSession(
   configure?: (pi: ExtensionAPI) => void,
   onProgress?: (event: ActionFusionProgress) => void,
 ) {
-  const cwd = await mkdtemp(join(tmpdir(), "hashline-fusion-session-"));
-  let dispose: (() => void) | undefined;
-  t.after(async () => {
-    dispose?.();
-    await rm(cwd, { recursive: true, force: true });
-  });
-  const modelRuntime = await ModelRuntime.create({
-    authPath: join(cwd, "auth.json"),
-    modelsPath: null,
-    modelsStorePath: join(cwd, "models.json"),
-    refreshOnCreate: false,
-    allowModelNetwork: false,
-  });
-  modelRuntime.registerProvider("fusion-test", {
-    api: "openai-completions",
-    baseUrl: "https://unused.invalid",
-    apiKey: "local-test-placeholder",
-    models: [
-      {
-        id: "test",
-        name: "Test",
-        input: ["text"],
-        reasoning: false,
-        contextWindow: 100_000,
-        maxTokens: 1000,
-        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-      },
-    ],
-  });
-  const model = modelRuntime.getModel("fusion-test", "test");
-  assert.ok(model);
   const calls: { name: string; parent?: string }[] = [];
   const progress: ActionFusionProgress[] = [];
-  const settingsManager = SettingsManager.inMemory({
-    compaction: { enabled: false },
-    retry: { enabled: false },
-  });
-  const loader = new DefaultResourceLoader({
-    cwd,
-    agentDir: cwd,
-    settingsManager,
-    noExtensions: true,
-    noSkills: true,
-    noPromptTemplates: true,
-    noThemes: true,
-    noContextFiles: true,
-    extensionFactories: [
-      (pi) => {
-        pi.on("tool_call", (event) => {
-          calls.push({ name: event.toolName, parent: event.parentToolCallId });
-        });
-        configure?.(pi);
-        pi.registerTool(
-          makeWriteOverride(
-            cwd,
-            createActionFusionExecutor(undefined, (event) => {
-              progress.push(event);
-              onProgress?.(event);
-            }),
-          ),
-        );
-      },
-    ],
-  });
-  await loader.reload();
-  const { session, extensionsResult } = await createAgentSession({
-    cwd,
-    agentDir: cwd,
-    modelRuntime,
-    model,
-    settingsManager,
-    resourceLoader: loader,
-    sessionManager: SessionManager.inMemory(cwd),
+  const { cwd, session, model } = await openTestSession(t, {
     tools: ["write", "bash"],
+    configure(pi, cwd) {
+      pi.on("tool_call", (event) => {
+        calls.push({ name: event.toolName, parent: event.parentToolCallId });
+      });
+      configure?.(pi);
+      pi.registerTool(
+        makeWriteOverride(
+          cwd,
+          createActionFusionExecutor(undefined, (event) => {
+            progress.push(event);
+            onProgress?.(event);
+          }),
+        ),
+      );
+    },
   });
-  dispose = () => session.dispose();
-  assert.deepEqual(extensionsResult.errors, []);
-  await session.bindExtensions({});
   return {
     cwd,
     calls,
@@ -116,8 +49,7 @@ async function openSession(
       session.agent.streamFunction = () => {
         const first = responses++ === 0;
         assert.ok(responses <= 2, "Unexpected model request");
-        const message: AssistantMessage = {
-          role: "assistant",
+        return responseStream(model, {
           content: first
             ? [
                 {
@@ -134,23 +66,7 @@ async function openSession(
               ]
             : [{ type: "text", text: "Done." }],
           stopReason: first ? "toolUse" : "stop",
-          api: model.api,
-          provider: model.provider,
-          model: model.id,
-          timestamp: Date.now(),
-          usage: {
-            input: 0,
-            output: 0,
-            cacheRead: 0,
-            cacheWrite: 0,
-            totalTokens: 0,
-            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-          },
-        };
-        const stream = new AssistantMessageEventStream();
-        stream.push({ type: "start", partial: message });
-        stream.push({ type: "done", reason: first ? "toolUse" : "stop", message });
-        return stream;
+        });
       };
       await session.prompt("Run the requested local command after the mutation.");
       assert.equal(session.agent.state.errorMessage, undefined);

@@ -1,31 +1,22 @@
 /** Real Pi sessions with scripted model responses; no provider requests leave the process. */
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { stripVTControlCharacters } from "node:util";
 import type { TestContext } from "node:test";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
-import type { AssistantMessage, Message, ToolCall } from "@earendil-works/pi-ai";
-import { AssistantMessageEventStream } from "@earendil-works/pi-ai/utils/event-stream";
+import type { Message, ToolCall } from "@earendil-works/pi-ai";
 import { normalizeContext } from "@earendil-works/pi-ai/utils/transcript";
 import { stream as streamCompletions } from "@earendil-works/pi-ai/api/openai-completions";
-import {
-  createAgentSession,
-  initTheme,
-  DefaultResourceLoader,
-  ModelRuntime,
-  SessionManager,
-  SettingsManager,
-} from "@earendil-works/pi-coding-agent";
+import { initTheme } from "@earendil-works/pi-coding-agent";
+import { openTestSession, responseStream, type TestResponse } from "../testing/session.testing.ts";
 import { DEFAULT_CONFIG } from "./config.ts";
 import { registerForgetTool } from "./forget-tool.ts";
 import { makeGrepOverride } from "./grep-tool.ts";
 import { makeReadOverride } from "./read-tool.ts";
 import { theme } from "../../node_modules/@earendil-works/pi-coding-agent/dist/modes/interactive/theme/theme.js";
 
-export const SESSION_TIMEOUT_MS = 30_000;
-type Response = Pick<AssistantMessage, "content" | "stopReason">;
+export { SESSION_TIMEOUT_MS } from "../testing/session.testing.ts";
+type Response = TestResponse;
 type Script = Response | ((messages: readonly Message[]) => Response);
 export const finish: Response = {
   content: [{ type: "text", text: "Processed." }],
@@ -62,73 +53,15 @@ export function forgetCall(messages: readonly Message[], ...sourceIds: string[])
 }
 
 export async function openForgetSession(t: TestContext) {
-  const cwd = await mkdtemp(join(tmpdir(), "hashline-forget-"));
-  let disposeSession: (() => void) | undefined;
-  t.after(async () => {
-    disposeSession?.();
-    await rm(cwd, { recursive: true, force: true });
-  });
-  const modelRuntime = await ModelRuntime.create({
-    authPath: join(cwd, "auth.json"),
-    modelsPath: null,
-    modelsStorePath: join(cwd, "models.json"),
-    refreshOnCreate: false,
-    allowModelNetwork: false,
-  });
-  modelRuntime.registerProvider("forget-test", {
-    api: "openai-completions",
-    baseUrl: "https://unused.invalid",
-    apiKey: "local-test-placeholder",
-    models: [
-      {
-        id: "test",
-        name: "Test",
-        input: ["text", "image"],
-        reasoning: false,
-        contextWindow: 100_000,
-        maxTokens: 1000,
-        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-      },
-    ],
-  });
-  const model = modelRuntime.getModel("forget-test", "test");
-  assert.ok(model);
-  const sessionManager = SessionManager.inMemory(cwd);
-  const settingsManager = SettingsManager.inMemory({
-    compaction: { enabled: false },
-    retry: { enabled: false },
-  });
-  const loader = new DefaultResourceLoader({
-    cwd,
-    agentDir: cwd,
-    settingsManager,
-    noExtensions: true,
-    noSkills: true,
-    noPromptTemplates: true,
-    noThemes: true,
-    noContextFiles: true,
-    extensionFactories: [
-      (pi) => {
-        const config = { ...DEFAULT_CONFIG, forget: true };
-        pi.registerTool(makeReadOverride(cwd, config));
-        pi.registerTool(makeGrepOverride(cwd, config));
-        registerForgetTool(pi);
-      },
-    ],
-  });
-  await loader.reload();
-  const { session, extensionsResult } = await createAgentSession({
-    cwd,
-    agentDir: cwd,
-    modelRuntime,
-    model,
-    settingsManager,
-    resourceLoader: loader,
-    sessionManager,
+  const { cwd, session, model, sessionManager } = await openTestSession(t, {
     tools: ["read", "grep", "forget"],
+    configure(pi, cwd) {
+      const config = { ...DEFAULT_CONFIG, forget: true };
+      pi.registerTool(makeReadOverride(cwd, config));
+      pi.registerTool(makeGrepOverride(cwd, config));
+      registerForgetTool(pi);
+    },
   });
-  disposeSession = () => session.dispose();
-  assert.deepEqual(extensionsResult.errors, []);
   const requests: Message[][] = [];
   const scripts: Script[] = [];
   session.agent.streamFunction = (_model, context) => {
@@ -136,33 +69,8 @@ export async function openForgetSession(t: TestContext) {
     const script = scripts.shift();
     assert.ok(script, "Unexpected model request after the scripted responses");
     const response = typeof script === "function" ? script(context.messages) : script;
-    const message: AssistantMessage = {
-      role: "assistant",
-      ...response,
-      api: model.api,
-      provider: model.provider,
-      model: model.id,
-      timestamp: Date.now(),
-      usage: {
-        input: 0,
-        output: 0,
-        cacheRead: 0,
-        cacheWrite: 0,
-        totalTokens: 0,
-        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-      },
-    };
-    const stream = new AssistantMessageEventStream();
-    stream.push({ type: "start", partial: message });
-    assert.ok(message.stopReason !== "pending");
-    if (message.stopReason === "error" || message.stopReason === "aborted") {
-      stream.push({ type: "error", reason: message.stopReason, error: message });
-    } else {
-      stream.push({ type: "done", reason: message.stopReason, message });
-    }
-    return stream;
+    return responseStream(model, response);
   };
-  await session.bindExtensions({});
   const rawResult = (id: string) => {
     const entry = sessionManager
       .getEntries()

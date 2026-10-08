@@ -453,3 +453,5 @@ Streaming mutation summaries omit anchors. Result-generation failures preserve p
 - `node --expose-gc bench/grep-memory.bench.ts` measures grep latency and sampled peak heap/RSS for 24 files totaling 192 MiB, each with one matching line. It creates and removes its fixtures in the system temporary directory.
 
 Both test suites run in a child process without inherited `NODE_OPTIONS`, `NODE_PATH`, or `JITI_*` overrides, and use a temporary Pi agent directory. Extension and worker loading tests copy the locked production dependencies into an isolated installed-package layout; they cannot resolve development dependencies from the checkout.
+
+Real Pi session tests share temporary credentials and settings, disabled resource discovery, and local scripted model responses. They never send provider requests; each feature retains its own tool registration and behavior assertions.
