@@ -1,5 +1,5 @@
 import { createReadStream } from "node:fs";
-import { createUtf8Decoder, type Utf8Decoding } from "../core/text.ts";
+import { createUtf8Decoder, Utf8DecodingError, type Utf8Decoding } from "../core/text.ts";
 import { throwIfCancelled } from "./error-text.ts";
 
 /** Scan whole-file bytes; lossy decoding reports validity without rejecting malformed UTF-8. */
@@ -40,6 +40,7 @@ export async function scanTextFile(
         try {
           text = decode(bytes, true);
         } catch (error) {
+          if (!(error instanceof Utf8DecodingError)) throw error;
           decodingError = error;
         }
       }
@@ -58,6 +59,7 @@ export async function scanTextFile(
       try {
         tail = decode();
       } catch (error) {
+        if (!(error instanceof Utf8DecodingError)) throw error;
         decodingError = error;
       }
     }

@@ -11,6 +11,13 @@ export function unwritableTextReason(text: string): string | undefined {
 
 export type Utf8Decoding = "strict" | "lossy";
 
+/** Confirmed malformed UTF-8, distinct from decoder input or resource failures. */
+export class Utf8DecodingError extends Error {
+  constructor(cause: unknown) {
+    super(UNSUPPORTED_ENCODING, { cause });
+  }
+}
+
 /** Streaming UTF-8 decoding preserves BOM; lossy mode replaces malformed bytes with U+FFFD. */
 export function createUtf8Decoder(mode: Utf8Decoding = "strict") {
   const decoder = new TextDecoder("utf-8", { fatal: mode === "strict", ignoreBOM: true });
@@ -21,7 +28,14 @@ export function createUtf8Decoder(mode: Utf8Decoding = "strict") {
     try {
       return decoder.decode(bytes, { stream });
     } catch (error) {
-      throw new Error(UNSUPPORTED_ENCODING, { cause: error });
+      if (
+        error instanceof TypeError &&
+        "code" in error &&
+        error.code === "ERR_ENCODING_INVALID_ENCODED_DATA"
+      ) {
+        throw new Utf8DecodingError(error);
+      }
+      throw error;
     }
   };
 }

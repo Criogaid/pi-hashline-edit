@@ -97,7 +97,7 @@ export async function readEditableSnapshot(
         error,
       );
     if (error instanceof FileMutationError) throw error;
-    throw new Error(`Error reading ${displayPath}: ${errorMessage(error)}`);
+    throw new Error(`Error reading ${displayPath}: ${errorMessage(error)}`, { cause: error });
   }
 }
 
