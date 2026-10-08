@@ -7,8 +7,7 @@
  * no cross-field constraints. Arguments and TypeBox's process-wide settings are not changed.
  */
 import { validateToolArguments, type ToolCall } from "@earendil-works/pi-ai";
-import { Type, type Static, type TObject, type TSchema } from "typebox";
-import { ObjectOptions } from "typebox/type";
+import { ObjectOptions, Type, type Static, type TObject, type TSchema } from "typebox";
 import { errorMessage } from "../core/errors.ts";
 import { MAX_BLOCK_BYTES } from "./budgets.ts";
 import { DiagnosticBuffer } from "./diagnostic-buffer.ts";
