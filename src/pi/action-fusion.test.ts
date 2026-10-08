@@ -493,6 +493,7 @@ test("concurrent mutations on case-differing paths serialize on Windows", {
   try {
     const fusion = createActionFusionExecutor();
     const order: string[] = [];
+    const firstStarted = Promise.withResolvers<void>();
     let releaseFirst!: () => void;
     const firstRunning = new Promise<void>((resolve) => {
       releaseFirst = resolve;
@@ -503,6 +504,7 @@ test("concurrent mutations on case-differing paths serialize on Windows", {
       thenRun: undefined,
       mutate: async () => {
         order.push("start-1");
+        firstStarted.resolve();
         await firstRunning;
         order.push("end-1");
         return publishedMutation("first\n", { content: [], details: undefined });
@@ -510,7 +512,7 @@ test("concurrent mutations on case-differing paths serialize on Windows", {
       signal: undefined,
       ctx: await ctx(dir, t),
     });
-    await new Promise((r) => setTimeout(r, 20));
+    await firstStarted.promise;
     const p2 = fusion({
       toolCallId: "2",
       absolutePath: join(dir, "CASETEST.TXT"),
