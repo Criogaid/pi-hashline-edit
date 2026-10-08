@@ -457,3 +457,5 @@ Streaming mutation summaries omit anchors. Result-generation failures preserve p
 Both test suites run in a child process without inherited `NODE_OPTIONS`, `NODE_PATH`, or `JITI_*` overrides, and use a temporary Pi agent directory. Extension and worker loading tests copy the locked production dependencies into an isolated installed-package layout; they cannot resolve development dependencies from the checkout.
 
 Real Pi session tests share temporary credentials and settings, disabled resource discovery, and local scripted model responses. They never send provider requests; each feature retains its own tool registration and behavior assertions.
+
+The npm archive integration test runs `npm pack`, extracts the archive beside the locked production dependencies, and loads it with Pi's own jiti loader and virtual modules. It exercises write, read, grep, anchor-based edit, regex replacement in the packaged worker, `then_run`, and forgetting in one real session. It requires npm and tar but does not install packages or contact a model provider.

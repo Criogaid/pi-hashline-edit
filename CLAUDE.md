@@ -49,4 +49,6 @@ The extension replaces Pi's built-in `read`, `grep`, `edit`, and `write` tools a
 
 `src/testing/session.testing.ts` owns Pi session initialization, local model response streams, credential and resource isolation, and cleanup. Tool contexts, forget sessions, and Fusion sessions share it; their registration and business assertions stay with the feature.
 
+`src/testing/process.testing.ts` owns clean child-process environments; `installation.testing.ts` creates source or npm archive installations with only locked production dependencies; `extension-loader.testing.ts` loads them through Pi's jiti and virtual modules. `src/integration/npm-package.test.ts` covers the archived package's registered tools, worker, command dispatch, and context editing.
+
 README.md is the user-facing contract: tool parameters, output budgets, recovery semantics, and publication states. Keep it in sync with behavior changes.

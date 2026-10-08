@@ -1,15 +1,17 @@
 /** Isolated installed-package layouts with only npm's locked production dependency tree. */
-import { cp, mkdir, mkdtemp, rm, stat } from "node:fs/promises";
+import assert from "node:assert/strict";
+import { cp, mkdir, mkdtemp, readdir, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { TestContext } from "node:test";
 import manifest from "../../package.json" with { type: "json" };
 import lock from "../../package-lock.json" with { type: "json" };
+import { runTestProcess } from "./process.testing.ts";
 
 const repository = fileURLToPath(new URL("../../", import.meta.url));
 
-export async function installedExtension(t: TestContext) {
+export async function installedExtension(t: TestContext, source: "source" | "packed" = "source") {
   const root = await mkdtemp(join(tmpdir(), "hashline-install-"));
   t.after(() => rm(root, { recursive: true, force: true }));
   const packageDir = join(root, "node_modules", manifest.name);
@@ -44,7 +46,32 @@ export async function installedExtension(t: TestContext) {
       filter: (candidate) => candidate !== join(dependency, "node_modules"),
     });
   }
-  await cp(join(repository, "src"), join(packageDir, "src"), { recursive: true });
-  await cp(join(repository, "package.json"), join(packageDir, "package.json"));
+  if (source === "packed") {
+    const npmCli =
+      process.env.npm_execpath ??
+      join(
+        dirname(process.execPath),
+        process.platform === "win32"
+          ? "node_modules/npm/bin/npm-cli.js"
+          : "../lib/node_modules/npm/bin/npm-cli.js",
+      );
+    await runTestProcess(
+      process.execPath,
+      [npmCli, "pack", "--ignore-scripts", "--pack-destination", root],
+      repository,
+      agentDir,
+    );
+    const archives = (await readdir(root)).filter((name) => name.endsWith(".tgz"));
+    assert.equal(archives.length, 1, "npm pack must produce one archive");
+    await runTestProcess(
+      "tar",
+      ["-xzf", archives[0], "-C", relative(root, packageDir), "--strip-components=1"],
+      root,
+      agentDir,
+    );
+  } else {
+    await cp(join(repository, "src"), join(packageDir, "src"), { recursive: true });
+    await cp(join(repository, "package.json"), join(packageDir, "package.json"));
+  }
   return { root, packageDir, agentDir, entry: join(packageDir, manifest.pi.extensions[0]) };
 }
