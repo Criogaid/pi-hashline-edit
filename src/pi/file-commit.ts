@@ -10,12 +10,13 @@ import {
   stat,
   link,
 } from "node:fs/promises";
-import { constants, type Stats } from "node:fs";
+import type { BigIntStats, Stats } from "node:fs";
 import { dirname, join } from "node:path";
 import { createHash } from "node:crypto";
 import { decodeEditableText, unwritableTextReason } from "../core/text.ts";
 import { errorMessage } from "../core/errors.ts";
 import { OPERATION_ABORTED, throwIfCancelled } from "./error-text.ts";
+import { withFileRead } from "./file-read.ts";
 
 export type PublicationStatus = "NOT_PUBLISHED" | "PUBLISHED" | "UNKNOWN";
 export type CommitMode = "create" | "overwrite";
@@ -60,21 +61,16 @@ export function byteRevision(content: string | Uint8Array): string {
   return createHash("sha256").update(content).digest("hex");
 }
 
-function requireRegularFile(target: Stats): void {
+function requireRegularFile(target: Stats | BigIntStats): void {
   if (!target.isFile()) throw prepareError("target is not a regular file");
 }
 
 /** Check the opened object before reading; a FIFO must not block even if the path changed. */
 async function readRegularFile(path: string, signal?: AbortSignal): Promise<Buffer> {
-  throwIfCancelled(signal);
-  const flags = constants.O_RDONLY | (process.platform === "win32" ? 0 : constants.O_NONBLOCK);
-  const handle = await open(path, flags);
-  try {
-    requireRegularFile(await handle.stat());
-    return await handle.readFile({ signal });
-  } finally {
-    await handle.close();
-  }
+  return withFileRead(path, signal, async (handle, before) => {
+    requireRegularFile(before);
+    return handle.readFile({ signal });
+  });
 }
 
 export async function fileRevision(path: string): Promise<string> {

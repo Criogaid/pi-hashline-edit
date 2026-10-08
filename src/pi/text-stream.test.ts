@@ -7,6 +7,9 @@ import { byteRevision } from "./file-commit.ts";
 import { join } from "node:path";
 import { scanTextFile, scanTextLines } from "./text-stream.ts";
 import { splitLines } from "../core/lines.ts";
+import { isUtf8 } from "node:buffer";
+import { readFile } from "node:fs/promises";
+import { truncateSync } from "node:fs";
 
 async function withFile(run: (path: string) => Promise<void>) {
   const directory = await mkdtemp(join(tmpdir(), "hashline-stream-"));
@@ -267,5 +270,42 @@ test("NUL takes precedence over earlier malformed UTF-8 in strict and lossy scan
       assert.equal(stats.hasNul, true);
       assert.equal(stats.validUtf8, false);
       assert.equal(emitted.join(""), decoding === "strict" ? "" : invalid.toString("utf8"));
+    }
+  }));
+
+test("valid file truncated across a pending UTF-8 sequence → scans report a changed file", async () =>
+  withFile(async (path) => {
+    const chunkBytes = 64 * 1024;
+    const source = Buffer.from(
+      "x".repeat(chunkBytes - 1) +
+        "中" +
+        "x".repeat(chunkBytes - 3) +
+        "中" +
+        "tail".repeat(chunkBytes),
+    );
+    assert.equal(isUtf8(source), true);
+    for (const decoding of ["strict", "lossy"] as const) {
+      await writeFile(path, source);
+      let changed = false;
+      await assert.rejects(
+        scanTextFile(
+          path,
+          undefined,
+          undefined,
+          () => {
+            if (changed) return;
+            changed = true;
+            truncateSync(path, chunkBytes - 1);
+          },
+          decoding,
+        ),
+        (error: unknown) => {
+          assert.ok(error instanceof Error);
+          assert.match(error.message, /File changed/);
+          assert.doesNotMatch(error.message, /UNSUPPORTED_ENCODING/);
+          return true;
+        },
+      );
+      assert.equal(isUtf8(await readFile(path)), true);
     }
   }));

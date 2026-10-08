@@ -1,6 +1,9 @@
 import { createReadStream } from "node:fs";
 import { createUtf8Decoder, Utf8DecodingError, type Utf8Decoding } from "../core/text.ts";
 import { throwIfCancelled } from "./error-text.ts";
+import { withFileRead } from "./file-read.ts";
+
+const TEXT_READ_CHUNK_BYTES = 64 * 1024;
 
 /** Scan whole-file bytes; lossy decoding reports validity without rejecting malformed UTF-8. */
 export async function scanTextFile(
@@ -10,71 +13,78 @@ export async function scanTextFile(
   onBytes?: (bytes: Buffer) => void,
   decoding: Utf8Decoding = "strict",
 ) {
-  const decode = createUtf8Decoder();
-  // Strict decoding always decides validity; lossy text is decoded only for a chunk consumer.
-  const lossy = decoding === "lossy" && onChunk ? createUtf8Decoder("lossy") : undefined;
-  let byteLength = 0;
-  let lineFeeds = 0;
-  let lastByte = -1;
-  let hasNul = false;
-  let hasCrLf = false;
-  let decodingError: unknown;
-  const stream = createReadStream(path, { highWaterMark: 64 * 1024, signal });
-  try {
-    for await (const chunk of stream) {
-      const bytes = chunk as Buffer;
-      onBytes?.(bytes);
-      byteLength += bytes.length;
-      hasNul ||= bytes.includes(0);
-      hasCrLf ||= (lastByte === 13 && bytes[0] === 10) || bytes.includes("\r\n");
-      lastByte = bytes[bytes.length - 1];
-      let offset = 0;
-      while ((offset = bytes.indexOf(10, offset)) !== -1) {
-        lineFeeds++;
-        offset++;
+  return withFileRead(path, signal, async (handle) => {
+    const decode = createUtf8Decoder();
+    // Strict decoding always decides validity; lossy text is decoded only for a chunk consumer.
+    const lossy = decoding === "lossy" && onChunk ? createUtf8Decoder("lossy") : undefined;
+    let byteLength = 0;
+    let lineFeeds = 0;
+    let lastByte = -1;
+    let hasNul = false;
+    let hasCrLf = false;
+    let decodingError: unknown;
+    const stream = createReadStream(path, {
+      fd: handle,
+      autoClose: false,
+      highWaterMark: TEXT_READ_CHUNK_BYTES,
+      signal,
+    });
+    try {
+      for await (const chunk of stream) {
+        const bytes = chunk as Buffer;
+        onBytes?.(bytes);
+        byteLength += bytes.length;
+        hasNul ||= bytes.includes(0);
+        hasCrLf ||= (lastByte === 13 && bytes[0] === 10) || bytes.includes("\r\n");
+        lastByte = bytes[bytes.length - 1];
+        let offset = 0;
+        while ((offset = bytes.indexOf(10, offset)) !== -1) {
+          lineFeeds++;
+          offset++;
+        }
+        // NUL takes precedence even when an earlier chunk contained malformed UTF-8.
+        if (hasNul) continue;
+        let text: string | undefined;
+        if (!decodingError) {
+          try {
+            text = decode(bytes, true);
+          } catch (error) {
+            if (!(error instanceof Utf8DecodingError)) throw error;
+            decodingError = error;
+          }
+        }
+        if (lossy) text = lossy(bytes, true);
+        if (text !== undefined) await onChunk?.(text);
       }
-      // NUL takes precedence even when an earlier chunk contained malformed UTF-8.
-      if (hasNul) continue;
-      let text: string | undefined;
+    } catch (error) {
+      // Node's stream abort raises its own AbortError; report the shared cancellation text.
+      throwIfCancelled(signal);
+      throw error;
+    }
+    throwIfCancelled(signal);
+    if (!hasNul) {
+      let tail: string | undefined;
       if (!decodingError) {
         try {
-          text = decode(bytes, true);
+          tail = decode();
         } catch (error) {
           if (!(error instanceof Utf8DecodingError)) throw error;
           decodingError = error;
         }
       }
-      if (lossy) text = lossy(bytes, true);
-      if (text !== undefined) await onChunk?.(text);
+      if (lossy) tail = lossy();
+      else if (decodingError && decoding === "strict") throw decodingError;
+      if (tail) await onChunk?.(tail);
     }
-  } catch (error) {
-    // Node's stream abort raises its own AbortError; report the shared cancellation text.
-    throwIfCancelled(signal);
-    throw error;
-  }
-  throwIfCancelled(signal);
-  if (!hasNul) {
-    let tail: string | undefined;
-    if (!decodingError) {
-      try {
-        tail = decode();
-      } catch (error) {
-        if (!(error instanceof Utf8DecodingError)) throw error;
-        decodingError = error;
-      }
-    }
-    if (lossy) tail = lossy();
-    else if (decodingError && decoding === "strict") throw decodingError;
-    if (tail) await onChunk?.(tail);
-  }
-  return {
-    byteLength,
-    totalLines: lineFeeds + (lastByte !== -1 && lastByte !== 10 ? 1 : 0),
-    finalNewline: lastByte === -1 || lastByte === 10,
-    hasNul,
-    hasCrLf,
-    validUtf8: !decodingError,
-  };
+    return {
+      byteLength,
+      totalLines: lineFeeds + (lastByte !== -1 && lastByte !== 10 ? 1 : 0),
+      finalNewline: lastByte === -1 || lastByte === 10,
+      hasNul,
+      hasCrLf,
+      validUtf8: !decodingError,
+    };
+  });
 }
 
 interface ScannedLine {

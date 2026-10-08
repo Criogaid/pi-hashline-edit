@@ -10,6 +10,11 @@ export function throwIfCancelled(signal: AbortSignal | undefined, detail?: strin
   if (signal?.aborted) throw cancellationError(detail);
 }
 
+/** A read observed a concurrent file change; partial bytes must not be classified as source text. */
+export function fileChangedDuringReadError(cause?: unknown): Error {
+  return new Error("File changed during read; retry the tool.", { cause });
+}
+
 /**
  * A searched file no longer matches what ripgrep reported. grep binds matches to
  * one snapshot per file: rg-line-ranges checks line counts, the CRLF text view
