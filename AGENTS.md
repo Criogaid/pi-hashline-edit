@@ -7,6 +7,7 @@ pi 扩展 `@criogaid/pi-hashline-edit`，注册入口为 `src/index.ts`。
 - `src/core/`：内部纯函数层，无公开 API，不依赖 Pi：行拆分、checksum、文本解码、错误码，以及 edit（`apply.ts`）与 replace（`replace.ts`）的引擎。它信任工具层已筛过的输入。
 - `src/pi/`：工具注册、配置、渲染、grep 与 ripgrep 进程层、文件提交和 Action Fusion。
 - `src/integration/`：真实后端集成测试。
+- Use `src/testing/` for shared test environment and installed-package fixtures. Run suites through npm scripts to exclude inherited Node loaders and personal Pi settings.
 - 改工具参数、用户可见行为或配置时，核对 `README.md` 中对应契约。
 - 改 pi API、生命周期或 TUI 集成时，查看当前安装版本的 pi 文档和类型声明。
 - 涉及发布时，核对 `.github/workflows/publish.yml` 与 `package.json`。

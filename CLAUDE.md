@@ -19,9 +19,9 @@ TypeScript runs directly through Node's type stripping, so there is no build ste
 
 - `npm run format:check` / `npm run format` — Biome, formatting only, scoped to `src/` and `bench/`.
 - `npm run typecheck` — `tsc --noEmit` over source and tests.
-- `npm test` — `node --test src/core/*.test.ts src/pi/*.test.ts`.
-- Single file: `node --test src/pi/execute.test.ts`. Single case: add `--test-name-pattern "<regex>"`.
-- `npm run test:integration` — bundled ripgrep and files over 100 MiB (slow). `npm run test:all` runs both suites and matches CI and publish.
+- `npm test` — run core and tool tests through `src/testing/run-tests.ts` with an isolated Node environment and temporary Pi agent directory.
+- Single case: `npm test -- --test-name-pattern "<regex>"`; use the same option with `npm run test:integration`. Direct `node --test` commands bypass the environment isolation.
+- `npm run test:integration` — bundled ripgrep, installed-package workers, and files over 100 MiB. `npm run test:all` runs both isolated suites and matches CI and publish.
 - `npm run bench`, `node --expose-gc bench/grep-memory.bench.ts` — throughput and grep memory benchmarks.
 - `node bench/argument-validation.bench.ts` — argument preparation plus Pi validation, without executing tools.
 

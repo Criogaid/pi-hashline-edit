@@ -21,8 +21,8 @@
     "format": "biome format --write src/ bench/",
     "format:check": "biome format src/ bench/",
     "typecheck": "tsc --noEmit",
-    "test": "node --test src/core/*.test.ts src/pi/*.test.ts",
-    "test:integration": "node --test src/integration/*.test.ts",
+    "test": "node src/testing/run-tests.ts unit",
+    "test:integration": "node src/testing/run-tests.ts integration",
     "test:all": "npm test && npm run test:integration",
     "bench": "node bench/throughput.bench.ts"
   },

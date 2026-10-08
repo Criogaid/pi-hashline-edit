@@ -451,3 +451,5 @@ Streaming mutation summaries omit anchors. Result-generation failures preserve p
 - `npm run test:integration` exercises bundled ripgrep, files over 100 MiB with LF and CRLF text, platform file types, and Action Fusion through real Pi sessions with command failures, cancellation, overrides, and approval/result hooks.
 - `npm run bench` measures core throughput and long-line match mapping.
 - `node --expose-gc bench/grep-memory.bench.ts` measures grep latency and sampled peak heap/RSS for 24 files totaling 192 MiB, each with one matching line. It creates and removes its fixtures in the system temporary directory.
+
+Both test suites run in a child process without inherited `NODE_OPTIONS`, `NODE_PATH`, or `JITI_*` overrides, and use a temporary Pi agent directory. Extension and worker loading tests copy the locked production dependencies into an isolated installed-package layout; they cannot resolve development dependencies from the checkout.
