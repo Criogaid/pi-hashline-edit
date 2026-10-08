@@ -9,6 +9,7 @@ import fs from "node:fs";
 import { syncBuiltinESMExports } from "node:module";
 import { setTimeout as delay } from "node:timers/promises";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import fsPromises from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { rgPath } from "@vscode/ripgrep";
@@ -1280,5 +1281,36 @@ test("grep output exceeds the forget threshold → only content mode receives a 
       assert.ok(body.type === "text");
       assert.ok(Buffer.byteLength(body.text) >= FORGET_MIN_BYTES);
       assert.equal(taggedResultId(result) !== undefined, outputMode === "content");
+    }
+  }));
+
+test("scope inspection fails for access or traversal reasons → grep preserves the filesystem failure", async () =>
+  withDir(async (dir) => {
+    const path = join(dir, "source.txt");
+    await writeFile(path, "needle中文\n");
+    for (const code of ["EACCES", "ELOOP", "ENOTDIR"]) {
+      const failure = Object.assign(new Error(`${code}: cannot inspect ${path}`), { code });
+      const original = fsPromises.stat;
+      fsPromises.stat = async () => {
+        throw failure;
+      };
+      syncBuiltinESMExports();
+      try {
+        const fake = fakeBackend();
+        const tool = makeGrepOverrideWithBackend(dir, DEFAULT_CONFIG, fake.backend);
+        await assert.rejects(
+          callTool(tool, { path, pattern: "needle", literal: true }),
+          (error: unknown) => {
+            assert.ok(error instanceof Error && "code" in error);
+            assert.equal(error.code, code);
+            assert.doesNotMatch(error.message, /Path not found/);
+            return true;
+          },
+        );
+        assert.equal(fake.calls.length, 0);
+      } finally {
+        fsPromises.stat = original;
+        syncBuiltinESMExports();
+      }
     }
   }));

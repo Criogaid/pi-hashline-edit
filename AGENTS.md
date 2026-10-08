@@ -38,6 +38,7 @@ pi 扩展 `@criogaid/pi-hashline-edit`，注册入口为 `src/index.ts`。
 - 用户可见的限制和数值与 README 保持同源；提示文本中的数值由常量生成，不写死。
 - 同类工具共用同一条执行流程，工具只实现自己独有的部分。
 - 同一类失败（如取消、校验失败）使用一致的报错形式。
+- Keep grep scope error classification in `grep-scope.ts`: only `ENOENT` means `Path not found`; preserve other filesystem errors.
 - 依赖外部引擎语义的判断交给该引擎本身，不在本地重新实现或近似。
 
 ## 测试标准

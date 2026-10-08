@@ -65,11 +65,11 @@ export async function resolveSearchPaths(cwd: string, path: string | string[] | 
     } catch (error) {
       const missing =
         typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
-      const hint =
-        missing && /[*?]/.test(searchPath)
-          ? " Use an existing directory as path and a filename wildcard as glob."
-          : "";
-      throw new Error(`Path not found: ${searchPath}${hint}`);
+      if (!missing) throw error;
+      const hint = /[*?]/.test(searchPath)
+        ? " Use an existing directory as path and a filename wildcard as glob."
+        : "";
+      throw new Error(`Path not found: ${searchPath}${hint}`, { cause: error });
     }
   }
   return { searchPaths, pathInfo };
