@@ -16,6 +16,8 @@ import { ToolExecutionComponent } from "../../node_modules/@earendil-works/pi-co
 import { theme } from "../../node_modules/@earendil-works/pi-coding-agent/dist/modes/interactive/theme/theme.js";
 import { computeLineHash } from "../core/hash.ts";
 import { callTool } from "./tool-call.testing.ts";
+import type { AgentToolResult } from "@earendil-works/pi-agent-core";
+import type { ActionFusionProgress } from "./action-fusion.ts";
 
 test("mutation cards use Fusion by default and explicit false removes command support", async () => {
   const dir = await mkdtemp(join(tmpdir(), "hashline-registration-"));
@@ -95,44 +97,54 @@ test("mutation cards use Fusion by default and explicit false removes command su
         mutationCompleted: boolean;
         output: string;
         commandOutput: string;
+        expandedOutput: string;
       }[] = [];
-      const result = await tool.execute(
-        name,
-        params,
-        undefined,
-        (update: any) => {
+      const result = await callTool(tool, params, {
+        toolCallId: name,
+        onUpdate: (update: AgentToolResult<{ actionFusion: ActionFusionProgress }>) => {
           card.updateResult({ ...update, isError: false }, true);
           const entry = entries.find(
             (entry) => entry.customType === "hashline-then-run" && entry.data.toolCallId === name,
           );
           const commandCard = renderers.get(entry.customType)(entry, { expanded: false }, theme);
+          card.setExpanded(true);
+          const expandedOutput = card.render(100).join("\n");
+          card.setExpanded(false);
           frames.push({
             ...update.details.actionFusion,
             output: card.render(100).join("\n"),
             commandOutput: commandCard.render(100).join("\n"),
+            expandedOutput,
           });
         },
-        { cwd: dir },
-      );
+        ctx: { cwd: dir },
+      });
       assert.equal(result.details.actionFusion.command, "failed");
       assert.match(result.content[1].text, /File changes are saved|No file changes were published/);
       assert.ok(frames[0].output.includes(theme.getBgAnsi("toolPendingBg")));
       const running = frames.find((frame) => frame.command === "running")!;
       assert.ok(running, `${name} should emit running progress`);
       assert.ok(
-        running.output.includes(theme.getBgAnsi("toolPendingBg")),
-        `${name} should remain pending until then_run ends`,
+        running.output.includes(theme.getBgAnsi("toolSuccessBg")),
+        `${name} should finish its mutation card while then_run is running`,
       );
-      assert.ok(!running.output.includes(theme.getBgAnsi("toolSuccessBg")));
+      assert.ok(!running.output.includes(theme.getBgAnsi("toolPendingBg")));
       assert.ok(running.commandOutput.includes(theme.getBgAnsi("toolPendingBg")));
       assert.ok(frames.at(-1)!.commandOutput.includes(theme.getBgAnsi("toolErrorBg")));
       const completed = frames.find(
         (frame) => frame.command === "waiting" && frame.mutationCompleted,
       )!;
       assert.ok(
-        completed?.output.includes(theme.getBgAnsi("toolPendingBg")),
-        "mutation completion must not finish the tool card before command checks",
+        completed?.output.includes(theme.getBgAnsi("toolSuccessBg")),
+        "mutation completion must finish its card before command checks",
       );
+      for (const frame of frames) {
+        const expectedBackground = theme.getBgAnsi(
+          frame.mutationCompleted ? "toolSuccessBg" : "toolPendingBg",
+        );
+        assert.ok(frame.output.includes(expectedBackground));
+        assert.ok(frame.expandedOutput.includes(expectedBackground));
+      }
       if (name === "replace") {
         assert.equal(running.publication, "NOT_PUBLISHED");
         assert.match(running.output, /no net change/);

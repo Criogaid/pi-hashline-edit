@@ -2,6 +2,9 @@ import { argumentError } from "./argument-error.testing.ts";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { stripVTControlCharacters } from "node:util";
+import { readFile, unlink, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import { visibleWidth } from "@earendil-works/pi-tui";
 import {
   generateDiffString,
@@ -17,7 +20,11 @@ import { renderDiffPreview } from "./render.ts";
 import { withMutationStatus } from "./fusion-card.ts";
 import { makeWriteOverride } from "./write-tool.ts";
 import { generateMutationDetails } from "./mutation-result.ts";
-import type { ActionFusionDetails } from "./action-fusion.ts";
+import {
+  createActionFusionExecutor,
+  type ActionFusionDetails,
+  type ActionFusionProgress,
+} from "./action-fusion.ts";
 import { DEFAULT_CONFIG } from "./config.ts";
 import { toDisplayLines } from "./grep-render.ts";
 import { makeReadOverride } from "./read-tool.ts";
@@ -515,4 +522,68 @@ test("argument diagnostics wrap Unicode and multiline reasons at narrow terminal
     }
   }
   initTheme("dark");
+});
+
+test("command changes or removes the target → completed mutation stays successful with a freshness warning", async (t) => {
+  initTheme("dark");
+  const { cwd, session } = await openTestSession(t, { tools: [] });
+  for (const disturbance of ["changed", "missing"] as const) {
+    const path = `${disturbance}.txt`;
+    const target = join(cwd, path);
+    const fusion = createActionFusionExecutor(async () => {
+      assert.equal(await readFile(target, "utf8"), "saved\n");
+      if (disturbance === "changed") await writeFile(target, "command changed the file\n");
+      else await unlink(target);
+      return { status: "succeeded", output: "checked" };
+    });
+    const tool = withMutationStatus(makeWriteOverride(cwd, fusion));
+    const args = {
+      path,
+      mode: "create" as const,
+      content: "saved\n",
+      then_run: { command: "check target" },
+    };
+    const context: Parameters<NonNullable<typeof tool.renderCall>>[2] = {
+      args,
+      toolCallId: disturbance,
+      cwd,
+      state: {},
+      lastComponent: undefined,
+      invalidate() {},
+      executionStarted: true,
+      argsComplete: true,
+      isPartial: true,
+      expanded: false,
+      showImages: false,
+      isError: false,
+    };
+    const card = tool.renderCall!(args, theme, context);
+    // Pi erases result types for rendering; initial progress has no commit fields yet.
+    const renderResult = tool.renderResult as NonNullable<
+      ToolDefinition<TSchema, unknown>["renderResult"]
+    >;
+    const completedFrames: string[] = [];
+    const result = await callTool(tool, args, {
+      toolCallId: disturbance,
+      ctx: session.extensionRunner.createToolContext(disturbance, undefined),
+      onUpdate: (update: AgentToolResult<{ actionFusion: ActionFusionProgress }>) => {
+        tool.renderCall!(args, theme, context);
+        renderResult(update, { isPartial: true, expanded: false }, theme, context);
+        if (update.details.actionFusion.mutationCompleted)
+          completedFrames.push(card.render(160).join("\n"));
+      },
+    });
+    assert.ok(completedFrames.length > 0);
+    assert.ok(completedFrames.every((frame) => frame.includes(theme.getBgAnsi("toolSuccessBg"))));
+    assert.equal(result.details.actionFusion.freshness, disturbance);
+    context.isPartial = false;
+    tool.renderCall!(args, theme, context);
+    renderResult(result, { isPartial: false, expanded: false }, theme, context);
+    const output = card.render(160).join("\n");
+    assert.ok(output.includes(theme.getBgAnsi("toolSuccessBg")));
+    assert.match(output, new RegExp(`Anchors are stale: target ${disturbance}`));
+    if (disturbance === "changed")
+      assert.equal(await readFile(target, "utf8"), "command changed the file\n");
+    else await assert.rejects(readFile(target), { code: "ENOENT" });
+  }
 });

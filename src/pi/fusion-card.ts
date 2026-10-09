@@ -1,7 +1,6 @@
 /**
- * Action Fusion presentation: the mutation card follows the fused tool call's
- * lifetime and retains the file result; a separate transcript card shows each
- * then_run command's output and outcome.
+ * Action Fusion presentation: the mutation card follows file mutation completion;
+ * a separate transcript card follows each then_run command's output and outcome.
  *
  * @module pi-hashline-edit/pi
  */
@@ -165,17 +164,23 @@ export function registerFusionCards(pi: ExtensionAPI) {
   };
 }
 
+type MutationCardProgress = Partial<Pick<ActionFusionProgress, "freshness" | "mutationCompleted">>;
+
+function mutationPending(isPartial: boolean, progress?: MutationCardProgress): boolean {
+  return isPartial && progress?.mutationCompleted !== true;
+}
+
 /** Mutation render state plus the shell that keeps the card status independent of then_run. */
 interface FusedMutationRenderState extends MutationRenderState {
   mutationShell?: {
     box: Box;
     call?: Component;
     result?: Component;
-    fileState?: { freshness?: string };
+    fileState?: MutationCardProgress;
   };
 }
 
-/** Keep the mutation card pending until the complete fused tool call returns. */
+/** Finish the mutation card independently while the fused command remains active. */
 export function withMutationStatus<TParams extends TSchema, TDetails>(
   tool: ToolDefinition<TParams, TDetails, FusedMutationRenderState>,
 ): ToolDefinition<TParams, TDetails, FusedMutationRenderState> {
@@ -189,7 +194,11 @@ export function withMutationStatus<TParams extends TSchema, TDetails>(
       shell.box.addChild(shell.call);
       shell.box.setBgFn((line: string) =>
         theme.bg(
-          context.isPartial ? "toolPendingBg" : context.isError ? "toolErrorBg" : "toolSuccessBg",
+          mutationPending(context.isPartial, shell.fileState)
+            ? "toolPendingBg"
+            : context.isError
+              ? "toolErrorBg"
+              : "toolSuccessBg",
           line,
         ),
       );
@@ -197,8 +206,10 @@ export function withMutationStatus<TParams extends TSchema, TDetails>(
     },
     renderResult(result, options, theme, context) {
       const shell = (context.state.mutationShell ??= { box: new Box(1, 1) });
-      const details = result.details as { actionFusion?: { freshness?: string } } | undefined;
-      const isPartial = options.isPartial;
+      // Fusion updates carry progress alongside TDetails; final results carry only the outcome.
+      const details = result.details as { actionFusion?: MutationCardProgress } | undefined;
+      const file = details?.actionFusion ?? shell.fileState;
+      const isPartial = mutationPending(options.isPartial, file);
       // Pi serializes fused failures into one diagnostic; retain it when the card expands.
       const fusedError = context.isError && (context.args as { then_run?: unknown })?.then_run;
       shell.result = fusedError
@@ -210,9 +221,8 @@ export function withMutationStatus<TParams extends TSchema, TDetails>(
           });
       // Pi runs renderCall first; update its box in place without invalidating the tool row.
       shell.box.addChild(shell.result);
-      const file = details?.actionFusion ?? shell.fileState;
       if (file) {
-        shell.fileState = { freshness: file.freshness };
+        shell.fileState = { freshness: file.freshness, mutationCompleted: file.mutationCompleted };
         if (file.freshness === "changed" || file.freshness === "missing") {
           shell.box.addChild(
             new Text(theme.fg("warning", `Anchors are stale: target ${file.freshness}.`), 0, 0),
