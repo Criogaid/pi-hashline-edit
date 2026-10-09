@@ -116,7 +116,7 @@ for (const scenario of cases) {
       const echoedArgs = [...error.message.matchAll(/^Received arguments: (.+)$/gm)].map((match) =>
         JSON.parse(match[1]),
       );
-      assert.deepEqual(echoedArgs.at(-1), { unexpected: true });
+      assert.deepEqual(echoedArgs, [args]);
       return true;
     });
     assert.equal(await readFile(path, "utf8"), original);
@@ -189,15 +189,37 @@ test("known edit branch has independent errors → report them without unrelated
   );
 });
 
-test("unknown edit operation → retain schema rejection instead of guessing a branch", async () => {
+test("edit operation tag is missing or invalid → report its field once without guessing a branch", async () => {
   const tool = makeEditOverride(process.cwd(), DEFAULT_CONFIG);
-  await assert.rejects(
-    callTool(tool, {
-      path: "unused.txt",
-      edits: [{ op: "unknown", anchor: `1#${anchorHash}`, body: ["valid"] }],
-    }),
-    /Validation failed for tool "edit":[\s\S]*edits\.0\.op:/,
-  );
+  for (const tag of [undefined, "unknown", null, 42, {}]) {
+    await assert.rejects(
+      callTool(tool, {
+        path: "unused.txt",
+        edits: [
+          { ...(tag === undefined ? {} : { op: tag }), anchor: `1#${anchorHash}`, body: ["valid"] },
+        ],
+      }),
+      (error: Error) => {
+        const rows = error.message.split("\n").filter((line) => line.startsWith("  - "));
+        assert.equal(rows.length, 1, error.message);
+        assert.match(rows[0], /- edits\.0\.op:/);
+        assert.doesNotMatch(error.message, /schema is false|anyOf|must be equal to constant/);
+        if (tag !== undefined) {
+          for (const op of [
+            "replace",
+            "delete",
+            "insert_before",
+            "insert_after",
+            "append",
+            "prepend",
+          ]) {
+            assert.ok(rows[0].includes(op), error.message);
+          }
+        }
+        return true;
+      },
+    );
+  }
 });
 
 test("edit range end is null → preserve the original rejection and its field diagnostic", async () => {
@@ -219,4 +241,164 @@ test("edit range end is null → preserve the original rejection and its field d
       },
     );
   }
+});
+
+test("edit item is not an object → report the item type once", async () => {
+  const tool = makeEditOverride(process.cwd(), DEFAULT_CONFIG);
+  for (const item of [null, 42, "bad", [], true]) {
+    await assert.rejects(callTool(tool, { path: "unused.txt", edits: [item] }), (error: Error) => {
+      const rows = error.message.split("\n").filter((line) => line.startsWith("  - "));
+      assert.equal(rows.length, 1, error.message);
+      assert.match(rows[0], /- edits\.0:.*object/);
+      assert.doesNotMatch(error.message, /anyOf/);
+      return true;
+    });
+  }
+});
+
+test("grep union value has one applicable type → report only its constraint", async () => {
+  const tool = makeGrepOverride(process.cwd(), DEFAULT_CONFIG);
+  for (const pattern of ["", [], [""]]) {
+    await assert.rejects(callTool(tool, { pattern, literal: true }), (error: Error) => {
+      const rows = error.message.split("\n").filter((line) => line.startsWith("  - "));
+      assert.equal(rows.length, 1, error.message);
+      assert.match(rows[0], /- pattern(?:\.0)?:/);
+      assert.doesNotMatch(error.message, /anyOf/);
+      return true;
+    });
+  }
+});
+
+test("literal enum is invalid → report the permitted values once", async () => {
+  const tool = makeWriteOverride(process.cwd());
+  await assert.rejects(
+    callTool(tool, { path: "unused.txt", content: "ok", mode: "bad" }),
+    (error: Error) => {
+      const rows = error.message.split("\n").filter((line) => line.startsWith("  - "));
+      assert.equal(rows.length, 1, error.message);
+      assert.match(rows[0], /- mode:/);
+      assert.ok(rows[0].includes("create") && rows[0].includes("overwrite"), error.message);
+      assert.doesNotMatch(error.message, /anyOf|must be equal to constant/);
+      return true;
+    },
+  );
+});
+
+test("specific child errors exist → omit parent summaries and retain independent fields", async () => {
+  const tool = makeEditOverride(process.cwd(), DEFAULT_CONFIG, createActionFusionExecutor());
+  await assert.rejects(
+    callTool(tool, {
+      path: "unused.txt",
+      edits: [{ op: "insert_after", body: ["ok"], extra: true }, { op: "unknown" }],
+      then_run: { command: "echo ok", extra: true },
+      unexpected: true,
+    }),
+    (error: Error) => {
+      for (const field of [
+        "edits.0.anchor",
+        "edits.0.extra",
+        "edits.1.op",
+        "then_run.extra",
+        "unexpected",
+      ]) {
+        assert.ok(error.message.includes(`- ${field}:`), error.message);
+      }
+      assert.doesNotMatch(error.message, /anyOf|must not have additional properties/);
+      return true;
+    },
+  );
+});
+
+test("operation shape does not permit a field → omit inapplicable semantic advice", async () => {
+  const tool = makeEditOverride(process.cwd(), DEFAULT_CONFIG);
+  for (const edits of [
+    [{ op: "unknown", anchor: "1#A", body: [] }],
+    [{ op: "delete", anchor: `1#${anchorHash}`, body: [] }],
+    "bad",
+  ]) {
+    await assert.rejects(callTool(tool, { path: "unused.txt", edits }), (error: Error) => {
+      assert.doesNotMatch(error.message, /Invalid argument/);
+      assert.match(error.message, /- edits(?:\.0(?:\.(?:op|body))?)?:/);
+      return true;
+    });
+  }
+});
+
+test("Pi coerces valid fields while another field fails → do not diagnose the original value", async () => {
+  const tool = makeReadOverride(process.cwd(), DEFAULT_CONFIG);
+  await assert.rejects(
+    callTool(tool, { path: "unused.txt", offset: "1", limit: 0 }),
+    (error: Error) => {
+      assert.match(error.message, /- limit:/);
+      assert.doesNotMatch(error.message, /- offset:|additional errors may remain/);
+      return true;
+    },
+  );
+});
+
+test("multiple required fields are missing → report every missing field", async () => {
+  const tool = makeEditOverride(process.cwd(), DEFAULT_CONFIG);
+  await assert.rejects(
+    callTool(tool, { path: "unused.txt", edits: [{ op: "replace" }] }),
+    (error: Error) => {
+      assert.match(error.message, /- edits\.0\.anchor:.*required/);
+      assert.match(error.message, /- edits\.0\.body:.*required/);
+      assert.doesNotMatch(error.message, /additional errors may remain/);
+      return true;
+    },
+  );
+});
+
+test("unknown field name contains punctuation or a newline → quote the path on one diagnostic row", async () => {
+  const tool = makeReadOverride(process.cwd(), DEFAULT_CONFIG);
+  await assert.rejects(
+    callTool(tool, { path: "unused.txt", ["odd.\nfield/~"]: true }),
+    (error: Error) => {
+      const rows = error.message.split("\n").filter((line) => line.startsWith("  - "));
+      assert.equal(rows.length, 1, error.message);
+      assert.ok(rows[0].includes(JSON.stringify("odd.\nfield/~")), error.message);
+      return true;
+    },
+  );
+});
+
+test("one field exhausts native diagnostics → label the limit and retain another field", async () => {
+  const tool = makeEditOverride(process.cwd(), DEFAULT_CONFIG);
+  await assert.rejects(
+    callTool(tool, {
+      path: "",
+      edits: Array.from({ length: 30 }, () => ({ op: "unknown" })),
+    }),
+    (error: Error) => {
+      assert.match(error.message, /- path:/);
+      assert.match(error.message, /- edits\.0\.op:/);
+      assert.match(error.message, /additional errors may remain/);
+      return true;
+    },
+  );
+});
+
+test("one field violates independent constraints → combine its reasons without losing either", async () => {
+  const edit = makeEditOverride(process.cwd(), DEFAULT_CONFIG);
+  const read = makeReadOverride(process.cwd(), DEFAULT_CONFIG);
+  const badAnchor = `${Number.MAX_SAFE_INTEGER + 1}#A`;
+  await assert.rejects(
+    callTool(edit, { path: "unused.txt", edits: [{ op: "delete", anchor: badAnchor }] }),
+    (error: Error) => {
+      const rows = error.message
+        .split("\n")
+        .filter((line) => line.startsWith("Invalid argument edits[0].anchor:"));
+      assert.equal(rows.length, 1, error.message);
+      assert.match(rows[0], /safe integer/);
+      assert.match(rows[0], /hash length mismatch/);
+      return true;
+    },
+  );
+  await assert.rejects(callTool(read, { path: "unused.txt", offset: 0.5 }), (error: Error) => {
+    const rows = error.message.split("\n").filter((line) => line.startsWith("  - offset:"));
+    assert.equal(rows.length, 1, error.message);
+    assert.match(rows[0], new RegExp(`multiple of ${POSITIVE_SAFE_INTEGER.multipleOf}`));
+    assert.match(rows[0], new RegExp(`>= ${POSITIVE_SAFE_INTEGER.minimum}`));
+    return true;
+  });
 });

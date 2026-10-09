@@ -336,7 +336,7 @@ test("edit schema rejects misspelled range fields and invalid operation shapes",
       path: "range.txt",
       edits: [{ op: "replace", anchor, endd: h(original, 3), body: ["merged"] }],
     };
-    await assert.rejects(call(edit, callArgs), /edits\.0\.endd: schema is false/);
+    await assert.rejects(call(edit, callArgs), /edits\.0\.endd: is not allowed/);
     assert.equal(await readFile(join(dir, "range.txt"), "utf8"), original);
     for (const edits of [
       [],

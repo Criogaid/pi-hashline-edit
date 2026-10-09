@@ -60,7 +60,7 @@ test("mutation cards use Fusion by default and explicit false removes command su
     assert.equal(grep.parameters.additionalProperties, false);
     await assert.rejects(
       callTool(grep, { pattern: "needle", literal: true, noIgnore: false }),
-      /Validation failed for tool "grep":\n {2}- noIgnore: schema is false/,
+      /Validation failed for tool "grep":\n {2}- noIgnore: is not allowed/,
     );
     for (const tool of tools.filter((tool) => ["edit", "replace", "write"].includes(tool.name))) {
       assert.ok(
@@ -291,7 +291,7 @@ test("mutation cards use Fusion by default and explicit false removes command su
           { path: "published.txt", then_run: { command: "exit 0" } },
           { ctx: { cwd: dir } },
         ),
-        /Validation failed for tool "(edit|replace|write)":[\s\S]*- then_run: schema is false/,
+        /Validation failed for tool "(edit|replace|write)":[\s\S]*- then_run: is not allowed/,
       );
     }
   } finally {

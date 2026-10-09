@@ -179,15 +179,15 @@ test("grep exposes nine parameters and rejects only the six removed fields", asy
       for (const input of [value, false, null]) {
         await assert.rejects(
           call(tool, { literal: true, pattern: "needle", [key]: input }),
-          (error: Error) => error.message.includes(`- ${key}: schema is false`),
+          (error: Error) => error.message.includes(`- ${key}: is not allowed`),
         );
       }
     }
     await assert.rejects(
       call(tool, { literal: true, pattern: "needle", follow: false, noIgnore: null }),
       (error: Error) =>
-        error.message.includes("- follow: schema is false") &&
-        error.message.includes("- noIgnore: schema is false"),
+        error.message.includes("- follow: is not allowed") &&
+        error.message.includes("- noIgnore: is not allowed"),
     );
     assert.equal(fake.calls.length, 0);
   });

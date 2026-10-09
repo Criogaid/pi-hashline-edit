@@ -38,7 +38,7 @@ pi 扩展 `@criogaid/pi-hashline-edit`，注册入口为 `src/index.ts`。
 - 用户可见的限制和数值与 README 保持同源；提示文本中的数值由常量生成，不写死。
 - 同类工具共用同一条执行流程，工具只实现自己独有的部分。
 - 同一类失败（如取消、校验失败）使用一致的报错形式。
-- Keep failure-only argument diagnostic projections in `argument-validation.ts`; derive operation branches from the declared schema, preserve their union boundaries and Pi's preparation semantics, retain independent errors, and use the original schema for acceptance.
+- Keep Pi argument preparation and original-schema acceptance in `argument-validation.ts`; observe prepared failures without reimplementing coercion or optional-null rules. Keep failure-only schema projection and structured aggregation in `argument-diagnostics.ts`; derive branches and choices from the declared schema, suppress only inapplicable or already explained issues, and retain independent fields with bounded native diagnostics.
 - Keep grep scope error classification in `grep-scope.ts`: only `ENOENT` means `Path not found`; preserve other filesystem errors.
 - 依赖外部引擎语义的判断交给该引擎本身，不在本地重新实现或近似。
 

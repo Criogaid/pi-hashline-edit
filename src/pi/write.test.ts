@@ -39,7 +39,7 @@ test("write rejects unknown fields rather than ignoring a misspelled create mode
       const args = { path: "file.txt", content: "new\n", modee: "create" };
       await assert.rejects(
         callTool(tool, args, { ctx: context(dir) }),
-        /Validation failed for tool "write":\n {2}- modee: schema is false/,
+        /Validation failed for tool "write":[\s\S]*- modee: is not allowed/,
       );
       assert.equal(await readFile(file, "utf8"), "original\n");
     }
@@ -132,7 +132,7 @@ test("write rejects obsolete expectedRevision without overwriting", async () =>
       const write = makeWriteOverride(dir, fusion);
       await assert.rejects(
         callTool(write, params, { ctx: context(dir) }),
-        /Validation failed for tool "write":\n {2}- expectedRevision: schema is false/,
+        /Validation failed for tool "write":\n {2}- expectedRevision: is not allowed/,
       );
       assert.equal(await readFile(target, "utf8"), "original\n");
     }
