@@ -3,8 +3,10 @@ import type { ArgumentIssue } from "./argument-diagnostics.ts";
 import { MAX_ARGUMENT_REASON_BYTES, MAX_BLOCK_BYTES } from "./budgets.ts";
 import { DiagnosticBuffer } from "./diagnostic-buffer.ts";
 
+const INVALID_ARGUMENTS = "INVALID_ARGUMENTS";
+
 export interface ArgumentError {
-  readonly error: "INVALID_ARGUMENTS";
+  readonly error: typeof INVALID_ARGUMENTS;
   readonly tool: string;
   readonly executed: false;
   readonly issues: readonly ArgumentIssue[];
@@ -27,7 +29,7 @@ export function formatArgumentError(
     return { field, reason: buffer.toString() };
   });
   const base = {
-    error: "INVALID_ARGUMENTS",
+    error: INVALID_ARGUMENTS,
     tool,
     executed: false,
     ...(schemaLimited ? { schemaLimited: true as const } : {}),
@@ -86,4 +88,64 @@ export function formatArgumentError(
     else high = middle - 1;
   }
   return frame(low);
+}
+
+/** Recognize our diagnostic in serialized results; other errors retain their original text. */
+export function parseArgumentError(text: string): ArgumentError | undefined {
+  let value: unknown;
+  try {
+    value = JSON.parse(text);
+  } catch {
+    // Filesystem and runtime errors are ordinary text, not argument diagnostic records.
+    return undefined;
+  }
+  if (
+    typeof value !== "object" ||
+    value === null ||
+    !("error" in value) ||
+    value.error !== INVALID_ARGUMENTS ||
+    !("tool" in value) ||
+    typeof value.tool !== "string" ||
+    !("executed" in value) ||
+    value.executed !== false ||
+    !("issues" in value) ||
+    !Array.isArray(value.issues)
+  )
+    return undefined;
+  const issues: ArgumentIssue[] = [];
+  const rawIssues: readonly unknown[] = value.issues;
+  for (const issue of rawIssues) {
+    if (
+      typeof issue !== "object" ||
+      issue === null ||
+      !("field" in issue) ||
+      typeof issue.field !== "string" ||
+      !("reason" in issue) ||
+      typeof issue.reason !== "string"
+    )
+      return undefined;
+    issues.push({ field: issue.field, reason: issue.reason });
+  }
+  const argumentsOmitted = "argumentsOmitted" in value ? value.argumentsOmitted : undefined;
+  const schemaLimited = "schemaLimited" in value ? value.schemaLimited : undefined;
+  const omittedIssues = "omittedIssues" in value ? value.omittedIssues : undefined;
+  if (
+    (argumentsOmitted !== undefined && argumentsOmitted !== true) ||
+    (schemaLimited !== undefined && schemaLimited !== true) ||
+    (omittedIssues !== undefined &&
+      (typeof omittedIssues !== "number" ||
+        !Number.isSafeInteger(omittedIssues) ||
+        omittedIssues < 0))
+  )
+    return undefined;
+  return {
+    error: INVALID_ARGUMENTS,
+    tool: value.tool,
+    executed: false,
+    issues,
+    ...("arguments" in value ? { arguments: value.arguments } : {}),
+    ...(argumentsOmitted ? { argumentsOmitted } : {}),
+    ...(schemaLimited ? { schemaLimited } : {}),
+    ...(omittedIssues !== undefined ? { omittedIssues } : {}),
+  };
 }

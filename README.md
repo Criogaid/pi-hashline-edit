@@ -81,7 +81,7 @@ All six tools use one argument-validation entry point. Tool-specific checks coll
 
 Diagnostics combine distinct constraints on one field and omit duplicate parent summaries. A tool-specific explanation replaces schema messages for that value only when its field belongs to the selected shape; forbidden fields and unknown operations receive no inapplicable body or anchor advice. Missing required fields and other independent errors remain visible. Each top-level field has a separate native diagnostic allowance. The original schema and Pi pipeline still control acceptance, coercion, and optional null handling.
 
-Every argument rejection is one JSON object in both the model result and the TUI:
+Every argument rejection is one JSON object in the model result:
 
 ```json
 {
@@ -100,6 +100,15 @@ Every argument rejection is one JSON object in both the model result and the TUI
   }
 }
 ```
+
+The TUI renders that record as a diagnostic header and highlighted field/reason rows:
+
+```text
+Invalid arguments · edit not executed
+edits[0].body: is empty; remove this edit or supply at least one line ([""] for a blank line).
+```
+
+Collapsed cards use the shared bounded preview. Expanding shows all retained issues and the prepared arguments under a separate label. Source omission and schema-limit notices appear before the issues so they remain visible when collapsed. Ordinary runtime errors and unrecognized JSON diagnostics retain their original text. Rendering does not change the model result; RPC hosts choose their own presentation.
 
 `issues` combines schema and tool-specific failures. Field paths refer to Pi's prepared arguments: array indices use `[0]`, named properties use dots, and other property names use JSON-quoted brackets. `$` identifies a preparation failure without a field diagnostic. `arguments` contains the prepared value, including Pi coercion, when it fits and can be encoded.
 

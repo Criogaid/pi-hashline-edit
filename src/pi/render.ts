@@ -14,6 +14,7 @@ import {
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import { Text, type Component } from "@earendil-works/pi-tui";
 import type { ActionFusionProgress } from "./action-fusion.ts";
+import { parseArgumentError, type ArgumentError } from "./argument-error.ts";
 
 /** Max diff lines shown when a result is rendered collapsed. */
 const MAX_COLLAPSED_DIFF_LINES = 24;
@@ -122,21 +123,48 @@ export function renderOutputPreview(
   return new Text(shown.join("\n") + more, 0, 0);
 }
 
+/** Present the serialized model diagnostic without its transport fields or argument echo. */
+function argumentErrorLines(error: ArgumentError, theme: Theme, expanded: boolean): string[] {
+  const lines = [theme.fg("error", theme.bold(`Invalid arguments · ${error.tool} not executed`))];
+  // Keep source omission notices ahead of the bounded collapsed preview.
+  if (error.argumentsOmitted)
+    lines.push(theme.fg("warning", "Prepared arguments omitted from diagnostic."));
+  if (error.schemaLimited)
+    lines.push(
+      theme.fg("warning", "Schema diagnostic limit reached; additional issues may remain."),
+    );
+  if (error.omittedIssues)
+    lines.push(theme.fg("warning", `${error.omittedIssues} issues omitted from diagnostic.`));
+  for (const { field, reason } of error.issues) {
+    const [first, ...rest] = reason.split("\n");
+    lines.push(`${theme.fg("accent", theme.bold(field))}: ${theme.fg("error", first)}`);
+    lines.push(...rest.map((line) => `  ${theme.fg("error", line)}`));
+  }
+  if (expanded && Object.hasOwn(error, "arguments")) {
+    lines.push("", theme.fg("dim", "Prepared arguments:"));
+    lines.push(
+      ...JSON.stringify(error.arguments, null, 2)
+        .split("\n")
+        .map((line) => theme.fg("dim", line)),
+    );
+  }
+  return lines;
+}
+
 /** Preserve diagnostic causes and recovery hints from every text block. */
 export function renderToolError(
   result: Pick<AgentToolResult<unknown>, "content">,
   theme: Theme,
   expanded: boolean,
 ): Text {
-  const text = result.content
-    .filter((block) => block.type === "text")
-    .map((block) => block.text)
-    .join("\n");
-  return renderOutputPreview(
-    (text || "Error").split("\n").map((line) => theme.fg("error", line)),
-    expanded,
-    theme,
-  );
+  const lines = result.content.flatMap((block) => {
+    if (block.type !== "text" || !block.text) return [];
+    const diagnostic = parseArgumentError(block.text);
+    return diagnostic
+      ? argumentErrorLines(diagnostic, theme, expanded)
+      : block.text.split("\n").map((line) => theme.fg("error", line));
+  });
+  return renderOutputPreview(lines.length ? lines : [theme.fg("error", "Error")], expanded, theme);
 }
 
 /** Render mutation status or a diff, refreshing the call header's counts in place. */

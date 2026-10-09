@@ -1,6 +1,8 @@
 import { argumentError } from "./argument-error.testing.ts";
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { stripVTControlCharacters } from "node:util";
+import { visibleWidth } from "@earendil-works/pi-tui";
 import {
   generateDiffString,
   initTheme,
@@ -21,6 +23,10 @@ import { toDisplayLines } from "./grep-render.ts";
 import { makeReadOverride } from "./read-tool.ts";
 import { callTool } from "./tool-call.testing.ts";
 import { renderToolError } from "./render.ts";
+import { formatArgumentError } from "./argument-error.ts";
+import { makeGrepOverride } from "./grep-tool.ts";
+import { registerForgetTool } from "./forget-tool.ts";
+import { openTestSession } from "../testing/session.testing.ts";
 
 const versions = { publishedRevision: "r", observedRevision: "r" };
 const mutationDetails = (actionFusion?: ActionFusionDetails) => ({
@@ -333,14 +339,24 @@ test("grep renders plain and anchored rows in one group without exposing hashes"
   ]);
 });
 
-test("all file tools expose validation causes in collapsed and expanded error cards", async () => {
+test("all tools render argument issues as field diagnostics while preserving model JSON", async (t) => {
   initTheme("dark");
   const cwd = process.cwd();
+  const { session } = await openTestSession(t, {
+    tools: ["forget"],
+    configure(pi) {
+      registerForgetTool(pi);
+    },
+  });
+  const forget = session.getToolDefinition("forget");
+  assert.ok(forget);
   const tools = [
     makeReadOverride(cwd, DEFAULT_CONFIG),
     withMutationStatus(makeEditOverride(cwd, DEFAULT_CONFIG)),
     withMutationStatus(makeReplaceTool(cwd, DEFAULT_CONFIG)),
     withMutationStatus(makeWriteOverride(cwd)),
+    makeGrepOverride(cwd, DEFAULT_CONFIG),
+    forget,
   ];
   for (const tool of tools) {
     for (const fused of [false, true]) {
@@ -350,6 +366,9 @@ test("all file tools expose validation causes in collapsed and expanded error ca
         mode: "create" as const,
         edits: [{ op: "append" as const, body: ["unused"] }],
         replacements: [{ find: "unused", replace: "unused" }],
+        pattern: "unused",
+        literal: true,
+        ids: ["r00000"],
         unexpected: true,
         ...(fused ? { then_run: { command: "must-not-run" } } : {}),
       };
@@ -389,13 +408,17 @@ test("all file tools expose validation causes in collapsed and expanded error ca
         );
         const card = tool.renderShell === "self" ? call : result;
         assert.ok(card);
-        const displayed = card.render(200).join("\n");
+        const displayed = stripVTControlCharacters(card.render(200).join("\n"));
+        assert.match(displayed, /Invalid arguments/);
+        assert.ok(displayed.includes(`${tool.name} not executed`));
+        assert.doesNotMatch(displayed, /"error":|"issues":|"field":|"reason":/);
+        assert.deepEqual(argumentError(new Error(errorText)).issues, issues);
         for (const value of [issues[0].field, issues[0].reason]) {
           assert.ok(displayed.includes(value), `${tool.name} hid the first validation issue`);
         }
         if (expanded) {
-          assert.ok(displayed.includes('"field": "unexpected"'));
-          assert.ok(displayed.includes('"reason": "is not allowed"'));
+          assert.match(displayed, /unexpected: is not allowed/);
+          assert.match(displayed, /Prepared arguments/);
         }
       }
     }
@@ -417,4 +440,79 @@ test("expanded errors retain every text block while collapsed errors stay bounde
   assert.doesNotMatch(collapsed, /Final cause/);
   assert.match(expanded, /Final cause: permission denied/);
   assert.ok(collapsed.split("\n").length < expanded.split("\n").length);
+});
+
+test("argument cards preserve omission notices, all expanded issues and additional error blocks", () => {
+  initTheme("dark");
+  const issues = Array.from({ length: 200 }, (_, index) => ({
+    field: `edits[${index}].body`,
+    reason: `中文🙂 ${index}: supply a line.\n${"context ".repeat(50)}\nFinal cause: empty body.`,
+  }));
+  const diagnostic = formatArgumentError("edit", issues, "x".repeat(20000), true);
+  const parsed = argumentError(new Error(diagnostic));
+  assert.ok(parsed.argumentsOmitted && parsed.schemaLimited && parsed.omittedIssues);
+  const result = {
+    content: [
+      { type: "text" as const, text: diagnostic },
+      { type: "text" as const, text: "Additional cause: hook diagnostic" },
+    ],
+  };
+  const original = structuredClone(result);
+  const collapsed = stripVTControlCharacters(
+    renderToolError(result, theme, false).render(100).join("\n"),
+  );
+  const expanded = stripVTControlCharacters(
+    renderToolError(result, theme, true).render(100).join("\n"),
+  );
+  for (const displayed of [collapsed, expanded]) {
+    assert.match(displayed, /Prepared arguments omitted/);
+    assert.match(displayed, /Schema diagnostic limit/);
+    assert.ok(displayed.includes(`${parsed.omittedIssues} issues omitted`));
+    assert.doesNotMatch(displayed, /"error":|"issues":/);
+  }
+  for (const issue of parsed.issues) assert.ok(expanded.includes(issue.field));
+  assert.match(expanded, /Final cause: empty body/);
+  assert.match(expanded, /Additional cause: hook diagnostic/);
+  assert.ok(collapsed.split("\n").length < expanded.split("\n").length);
+  assert.deepEqual(result, original);
+});
+
+test("unrecognized or malformed JSON errors retain their original diagnostic", () => {
+  initTheme("dark");
+  for (const diagnostic of [
+    "",
+    '{"error":"OTHER_ERROR","cause":"permission denied"}',
+    '{"error":"INVALID_ARGUMENTS","executed":true,"issues":[]}',
+    '{"error":"INVALID_ARGUMENTS","tool":"edit","executed":false,"issues":[{"field":"path","reason":null}]}',
+    '{"error":"INVALID_ARGUMENTS",',
+    "Filesystem failure: permission denied",
+  ]) {
+    const result = { content: [{ type: "text" as const, text: diagnostic }] };
+    const displayed = stripVTControlCharacters(
+      renderToolError(result, theme, true).render(300).join("\n"),
+    );
+    assert.ok(displayed.includes(diagnostic || "Error"));
+  }
+});
+
+test("argument diagnostics wrap Unicode and multiline reasons at narrow terminal widths", () => {
+  const field = "edits[0].body";
+  const reason = '中文🙂: supply at least one line.\nUse ["空行"] for this example.';
+  const diagnostic = formatArgumentError("edit", [{ field, reason }], { path: "中文.txt" }, false);
+  const result = { content: [{ type: "text" as const, text: diagnostic }] };
+  for (const appearance of ["dark", "light"] as const) {
+    initTheme(appearance);
+    for (const width of [24, 80]) {
+      for (const expanded of [false, true]) {
+        const lines = renderToolError(result, theme, expanded).render(width);
+        assert.ok(lines.every((line) => visibleWidth(line) <= width));
+        const displayed = stripVTControlCharacters(lines.join("\n")).replace(/\s/g, "");
+        for (const value of [field, reason, "edit not executed"]) {
+          assert.ok(displayed.includes(value.replace(/\s/g, "")));
+        }
+        assert.equal(displayed.includes("中文.txt"), expanded);
+      }
+    }
+  }
+  initTheme("dark");
 });
