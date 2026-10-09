@@ -62,7 +62,7 @@ Successful `edit` and `replace` results omit candidate rows whose full content a
 | --- | --- |
 | `read` | Inspect UTF-8 text with line anchors; Pi-supported images and NUL-containing files use Pi's built-in read. Other invalid UTF-8 is rejected. |
 | `grep` | Search with bundled ripgrep and return anchored UTF-8 matches/context, plain previews for invalid UTF-8, file paths, or counts. NUL-containing files are skipped. |
-| `edit` | Change specific lines or ranges using verified anchors. |
+| `edit` | Change, copy, or move whole lines and ranges using verified anchors. |
 | `replace` | Replace every occurrence of a literal string or JavaScript regex across one file. |
 | `write` | Create a file or replace its complete contents. |
 | `forget` | When enabled in configuration, drop read or grep result content from model context right after reading it. |
@@ -115,6 +115,7 @@ Argument diagnostics share the 16 KiB block budget in [`budgets.ts`](src/pi/budg
 | --- | --- | --- | --- |
 | `replace` | `anchor`, `body` | `end` | Replace one line or an inclusive range. |
 | `delete` | `anchor` | `end` | Delete one line or an inclusive range; no `body`. |
+| `copy` / `move` | `anchor`, exactly one of `before` / `after` | `end` | Transfer original lines within the same file; `move` also removes the source. No `body`. |
 | `insert_before` / `insert_after` | `anchor`, `body` | — | Insert beside the anchor; keep the anchor line. |
 | `prepend` / `append` | `body` | — | Insert at the start/end; no anchors. |
 
@@ -124,9 +125,22 @@ If an edit leaves a blank line at the end, it writes the terminator needed to pr
 
 All operations in a batch use the same snapshot. Validation failure rejects the whole batch. Unknown fields, conflicting fields, and overlapping operations are rejected; some touching operations also conflict and need separate calls with fresh anchors. For insertion, **do not repeat the anchor line in `body`**. `edit` uses structured operations, not `oldText`/`newText` pairs.
 
+For `copy` and `move`, `anchor/end` selects the inclusive source range; omitting `end` selects one line. `before/after` identifies the destination in the original snapshot. All transfers read original source text, even when another operation replaces or deletes that source in the same batch. Source reads can overlap mutations; a move's deletion and every destination insertion follow the existing mutation-conflict rules. Multiple insertions at the same gap are rejected. A destination strictly inside a moved range is rejected; moving immediately before its first line or after its last line succeeds without changing bytes.
+
+```json
+{
+  "path": "src/foo.ts",
+  "edits": [
+    { "op": "copy", "anchor": "10#ABCD", "end": "12#EFGH", "before": "30#JKMN" }
+  ]
+}
+```
+
+Copy the actual tokens from inspection; the example tokens illustrate the shape. Use `move` instead of `copy` to remove the source in the same batch. Transfers retain source text and line separators, preserve the file BOM at byte zero, and do not adjust indentation. A source line without a terminator gains a connector when inserted before another line; new connectors use the file style, except that a line ending in standalone CR needs CRLF to keep that CR as content. A non-empty final line retains the file's original final-newline state. Use body edits when the transferred text or indentation must change.
+
 The TUI edit header shows the total operation count and counts by type, for example `4 ops: replace ×2, delete ×1, append ×1`. During argument streaming, incomplete or unrecognized operation types count as `unknown`; the counts refresh as arguments change.
 
-For multi-operation batches that reach snapshot verification, rejected edits report each supplied anchor's status: `matched` or `mismatched`. Schema-invalid inputs fail before reading the file and have no anchor-status table. Single-operation edits omit the summary table and report the failure directly. Entries identify the zero-based operation index, `anchor` or `end`, and the cited token. The bounded list reports omitted entries explicitly. These statuses do not establish range/overlap validity, semantic intent, publication, command success, or validity on a later retry.
+For multi-operation batches that reach snapshot verification, rejected edits report each supplied anchor's status: `matched` or `mismatched`. Schema-invalid inputs fail before reading the file and have no anchor-status table. Single-operation edits omit the summary table and report the failure directly. Entries identify the zero-based operation index, the supplied `anchor`, `end`, `before`, or `after` field, and the cited token. The bounded list reports omitted entries explicitly. These statuses do not establish range/overlap validity, semantic intent, publication, command success, or validity on a later retry.
 
 When an anchor no longer matches, `edit` looks for where the line went. Recovery only reports; it never edits or retries by itself:
 
@@ -397,7 +411,7 @@ File reads compare the opened file and current path's identity, size, and modifi
 
 Line boundaries are LF or CRLF; a standalone CR remains line content. Anchored rows display standalone CR as `␍` (U+240D), while hashes use the original content. Edit/replace `details.diff` marks raw CR as `␍`; `details.displayDiff` renders the shared LF view for the TUI, so CRLF boundary markers stay hidden even in mixed-ending files or beside an unterminated last line. Standalone CR and literal `␍` characters remain visible. Unified patches retain the original characters and line endings. The marker is a display aid, not replacement text.
 
-An existing UTF-8 BOM stays at byte zero through first-line replacement/deletion or insertion; deleting all content leaves the BOM. First-line hashes include it. A copied leading BOM in the first replacement/insertion line denotes the existing header; interior `U+FEFF` remains content. BOM-only files retain one anchored line. `replace` can explicitly match the BOM; `write` uses supplied content.
+An existing UTF-8 BOM stays at byte zero through first-line replacement/deletion, insertion, copy, or move; deleting all content leaves the BOM. First-line hashes include it. Capturing the first line for copy/move excludes the file-header BOM; interior `U+FEFF` remains content. A copied leading BOM in the first replacement/insertion body line denotes the existing header. BOM-only files retain one anchored line. `replace` can explicitly match the BOM; `write` uses supplied content.
 
 ### Output budgets
 

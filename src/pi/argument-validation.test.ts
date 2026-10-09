@@ -405,3 +405,54 @@ test("one field violates independent constraints → combine its reasons without
     },
   );
 });
+
+test("copy/move destination tokens → reject unsafe positions and wrong hash lengths before reading", async () => {
+  const tool = makeEditOverride(process.cwd(), DEFAULT_CONFIG);
+  for (const op of ["copy", "move"]) {
+    for (const side of ["before", "after"]) {
+      for (const [token, reason] of [
+        [`${Number.MAX_SAFE_INTEGER + 1}#${anchorHash}`, /safe integer/],
+        ["1#A", /hash length mismatch/],
+      ] as const) {
+        await assert.rejects(
+          callTool(tool, {
+            path: "missing-copy-move.txt",
+            edits: [{ op, anchor: `1#${anchorHash}`, [side]: token }],
+          }),
+          rejectsArgument(`edits[0].${side}`, reason),
+        );
+      }
+    }
+  }
+});
+
+test("copy/move illegal argument shapes → reject before any file access", async () => {
+  const tool = makeEditOverride(process.cwd(), DEFAULT_CONFIG);
+  const anchor = `1#${anchorHash}`;
+  for (const op of ["copy", "move"]) {
+    for (const fields of [
+      {},
+      { before: anchor, after: anchor },
+      { before: anchor, body: ["unused"] },
+      { after: anchor, end: null },
+      { before: 1 },
+      { before: anchor, end: "1#IXXX" },
+    ]) {
+      await assert.rejects(
+        callTool(tool, { path: "missing-copy-move.txt", edits: [{ op, anchor, ...fields }] }),
+        (error: unknown) => {
+          const result = argumentError(error);
+          assert.equal(result.tool, "edit");
+          assert(result.issues.length > 0);
+          if ("body" in fields)
+            assert(result.issues.some((issue) => issue.field === "edits[0].body"));
+          if ("end" in fields)
+            assert(result.issues.some((issue) => issue.field === "edits[0].end"));
+          if (fields.before === 1)
+            assert(result.issues.some((issue) => issue.field === "edits[0].before"));
+          return true;
+        },
+      );
+    }
+  }
+});

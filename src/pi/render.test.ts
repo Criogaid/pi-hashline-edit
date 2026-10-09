@@ -78,6 +78,8 @@ test("edit call titles count each operation type and refresh with partial input"
     { op: "insert_before", anchor: "7#GH", body: ["before"] },
     { op: "insert_after", anchor: "9#JK", body: ["after"] },
     { op: "prepend", body: ["first"] },
+    { op: "copy", anchor: "1#AB", before: "3#CD" },
+    { op: "move", anchor: "3#CD", after: "5#EF" },
   ];
   let header: ReturnType<typeof tool.renderCall> | undefined;
   const context = { state: {} } as Parameters<typeof tool.renderCall>[2];
@@ -92,10 +94,12 @@ test("edit call titles count each operation type and refresh with partial input"
   };
   assert.match(render([edits[0], {}]), /unknown ×1/);
   const mixed = render(edits);
-  assert.match(mixed, /7 ops:/);
+  assert.match(mixed, /9 ops:/);
   for (const [kind, count] of [
     ["replace", 2],
     ["delete", 1],
+    ["copy", 1],
+    ["move", 1],
     ["insert_before", 1],
     ["insert_after", 1],
     ["append", 1],
@@ -106,7 +110,7 @@ test("edit call titles count each operation type and refresh with partial input"
   assert.doesNotMatch(mixed, /unknown/);
   const single = render([edits[0]]);
   assert.match(single, /1 op: replace ×1/);
-  assert.doesNotMatch(single, /append|delete|insert_before|insert_after|prepend/);
+  assert.doesNotMatch(single, /append|copy|delete|insert_before|insert_after|move|prepend/);
   assert.match(
     render([null, { op: "rep" }, { op: "__proto__" }, { op: { toString: null } }]),
     /4 ops: unknown ×4/,

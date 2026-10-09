@@ -16,6 +16,7 @@ pi 扩展 `@criogaid/pi-hashline-edit`，注册入口为 `src/index.ts`。
 ## 行为契约
 
 - 保留结构化 JSON edits、纯函数 applicator 和批次校验；文件修改复用 `withFileMutationQueue` 与现有提交层。
+- Plan `copy/move` in `src/core/apply.ts` against original line ranges; capture text and separators without moving or duplicating the file-header BOM. Treat source reads separately from mutation conflicts, keep destinations in original coordinates, reject interior move destinations, and make adjacent moves no-ops. Reuse the shared commit and Fusion pipeline.
 - 文本编辑保留 BOM、行尾和未触及字节。无效 UTF-8、NUL 或非法单行正文应在写入前拒绝。`read` 用 Pi 的图片识别接口将受支持图片交给原生工具；含 NUL 文件也委托原生 read，其余无效 UTF-8 拒绝。
 - Classify only Node's confirmed malformed UTF-8 error as `UNSUPPORTED_ENCODING`; preserve other decoder failures and their causes. Streaming validity checks catch only `Utf8DecodingError`.
 - `edit` 的空正文行是实际逻辑行；末尾空行需要终止符才能保留时补上终止符，BOM-only 单行除外。非空末行保留原有最终换行状态。
@@ -46,6 +47,7 @@ pi 扩展 `@criogaid/pi-hashline-edit`，注册入口为 `src/index.ts`。
 ## 测试标准
 
 - 每条测试保护一条可对外说明的契约：README、本文件的行为契约，或一个已发生的 bug。说不出保护什么，就不写。
+- Do not use Claude for new model-backed experiments.
 - 在能暴露问题的最低层级写：`core/` 纯函数优先，其次是工具层，最后才是跨工具流程。能在 `apply.test.ts` 里测的边界，不经文件系统在 `execute.test.ts` 里测。
 - 工具层测试通过 `callTool` 按生产顺序驱动，不为测试开辟生产中不存在的调用路径。
 - 优先断言行为和状态：文件字节、`publishedRevision`、返回结构、错误码。提示语只断言关键部分，预算数值引用 `budgets.ts` 的常量，不写死。

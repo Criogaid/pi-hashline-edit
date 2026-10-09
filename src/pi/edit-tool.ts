@@ -3,7 +3,7 @@
  *
  * Each op in `edits` references line anchors copied from read / grep / replace output
  * (or from a prior edit's "Updated anchors"). The core verifies each anchor live against
- * the current file content — no snapshot, no global stale check: a cited line
+ * the current file content — no prior-read revision guard: a cited line
  * that changed (or was misremembered) fails its own anchor; unchanged lines
  * elsewhere never block the edit. The extension requires structured `edits` arrays
  * at execution; Pi may coerce a single object before validation. Legacy
@@ -31,7 +31,7 @@ import { ACTION_FUSION_GUIDELINES, withThenRunSchema, type ThenRunInput } from "
 import { applyEdits } from "../core/apply.ts";
 import { splitLines } from "../core/lines.ts";
 import { unwritableTextReason } from "../core/text.ts";
-import type { Anchor, Edit } from "../core/types.ts";
+import { EDIT_ANCHOR_FIELDS, type Anchor, type Edit } from "../core/types.ts";
 import type { HashlineEditConfig } from "./config.ts";
 import {
   anchorPattern,
@@ -87,6 +87,14 @@ function buildEditSchema(hashLen: number) {
     minItems: 1,
     description: 'New lines, one per element, without CR/LF. At least one; [""] is one blank line.',
   });
+  const transferFields = {
+    op: Type.Union([Type.Literal("copy"), Type.Literal("move")], {
+      description:
+        "Reuse original lines without changing text or indentation; move also removes the source.",
+    }),
+    anchor: requiredAnchor,
+    end: optionalEnd,
+  };
   const editOpSchema = Type.Union([
     Type.Object(
       {
@@ -113,6 +121,26 @@ function buildEditSchema(hashLen: number) {
         }),
         anchor: requiredAnchor,
         body: bodyLines,
+      },
+      { additionalProperties: false },
+    ),
+    Type.Object(
+      {
+        ...transferFields,
+        before: Type.String({
+          pattern,
+          description: "Insert captured lines before this original line.",
+        }),
+      },
+      { additionalProperties: false },
+    ),
+    Type.Object(
+      {
+        ...transferFields,
+        after: Type.String({
+          pattern,
+          description: "Insert captured lines after this original line.",
+        }),
       },
       { additionalProperties: false },
     ),
@@ -170,7 +198,7 @@ function checkEditArguments(args: unknown, hashLen: number, report: ReportArgume
         if (reason) report(`edits[${index}].body[${lineIndex}]`, reason);
       });
     }
-    for (const field of ["anchor", "end"] as const) {
+    for (const field of EDIT_ANCHOR_FIELDS) {
       const value = (op as Record<string, unknown> | null)?.[field];
       if (typeof value !== "string") continue;
       const token = parseAnchorToken(value);
@@ -204,6 +232,13 @@ function toCoreEdits(ops: readonly EditOpInput[]): Edit[] {
         };
       case "delete":
         return { op: "delete", start: parseAnchor(op.anchor), end: parseAnchor(op.end) };
+      case "copy":
+      case "move": {
+        const source = { op: op.op, start: parseAnchor(op.anchor), end: parseAnchor(op.end) };
+        return "before" in op
+          ? { ...source, before: parseAnchor(op.before) }
+          : { ...source, after: parseAnchor(op.after) };
+      }
       case "insert_after":
       case "insert_before":
         return { op: op.op, anchor: parseAnchor(op.anchor), body: op.body };
@@ -215,7 +250,7 @@ function toCoreEdits(ops: readonly EditOpInput[]): Edit[] {
 }
 
 /**
- * Return compact tokens for changed caller-supplied rows, retaining content for deletion successors.
+ * Return compact tokens for produced rows, retaining content for deletion successors.
  * Uses the applicator's final indices so mixed batches do not need a second position calculation.
  */
 function formatUpdatedAnchors(
@@ -246,6 +281,8 @@ function editHeader(args: EditParams, theme: Theme, counts?: DiffCounts): string
     const opCounts: Record<EditOpInput["op"] | "unknown", number> = {
       replace: 0,
       delete: 0,
+      copy: 0,
+      move: 0,
       insert_before: 0,
       insert_after: 0,
       append: 0,
@@ -286,6 +323,7 @@ export function makeEditOverride(
     promptGuidelines: [
       MUTATION_TOOL_GUIDELINE,
       "Batch all edits to one file in a single edit call; all its anchors are checked against one snapshot.",
+      "Use copy/move for unchanged whole-line transfers; use body edits when text or indentation must change.",
       "Reuse anchors while their line number and content are unchanged; inserts and deletes shift later lines, so use the edit's Updated anchors or re-read shifted lines.",
       "On edit anchor failure, inspect the recovery candidates before retrying or re-reading.",
       ...(fusion ? ACTION_FUSION_GUIDELINES : []),

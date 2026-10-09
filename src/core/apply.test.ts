@@ -637,3 +637,187 @@ test("matched anchor checks do not imply valid ranges", () => {
     assert.ok(result.failure.checks.every((check) => check.status === "matched"));
   }
 });
+
+test("copy/move original ranges → retain order and report final produced positions", () => {
+  const text = "A\nB\nC\nD\n";
+  const cases: { edit: Edit; expected: string; touched: number[]; context: number[] }[] = [
+    {
+      edit: { op: "copy", start: at(text, 2), end: at(text, 3), after: at(text, 4) },
+      expected: "A\nB\nC\nD\nB\nC\n",
+      touched: [4, 5],
+      context: [],
+    },
+    {
+      edit: { op: "move", start: at(text, 1), end: at(text, 2), after: at(text, 4) },
+      expected: "C\nD\nA\nB\n",
+      touched: [0, 2, 3],
+      context: [0],
+    },
+    {
+      edit: { op: "move", start: at(text, 3), end: at(text, 4), before: at(text, 1) },
+      expected: "C\nD\nA\nB\n",
+      touched: [0, 1],
+      context: [],
+    },
+    {
+      edit: { op: "copy", start: at(text, 1), end: at(text, 3), after: at(text, 1) },
+      expected: "A\nA\nB\nC\nB\nC\nD\n",
+      touched: [1, 2, 3],
+      context: [],
+    },
+  ];
+  for (const { edit, expected, touched, context } of cases) {
+    const result = applyEdits(text, [edit], 4, 0);
+    assert(result.ok);
+    assert.equal(result.text, expected);
+    assert.deepEqual(result.touchedLines, touched);
+    assert.deepEqual(result.contextLines, context);
+  }
+});
+
+test("copy source also replaced or deleted → capture original text regardless of batch order", () => {
+  const text = "A\nB\nC\nD\n";
+  const copy: Edit = { op: "copy", start: at(text, 1), end: at(text, 2), after: at(text, 4) };
+  for (const edit of [
+    { op: "replace", start: at(text, 1), end: at(text, 2), body: ["NEW"] },
+    { op: "delete", start: at(text, 1), end: at(text, 2) },
+  ] satisfies Edit[]) {
+    for (const edits of [
+      [copy, edit],
+      [edit, copy],
+    ]) {
+      const result = applyEdits(text, edits, 4, 0);
+      assert(result.ok);
+      assert.equal(result.text, edit.op === "replace" ? "NEW\nC\nD\nA\nB\n" : "C\nD\nA\nB\n");
+    }
+  }
+});
+
+test("copy/move first-line mixed-ending range → preserve source gaps and keep one file BOM", () => {
+  const text = "\uFEFFA\r\nB\nC\r\nD\n";
+  for (const op of ["copy", "move"] as const) {
+    const result = applyEdits(
+      text,
+      [{ op, start: at(text, 1), end: at(text, 3), after: at(text, 4) }],
+      4,
+      0,
+    );
+    assert(result.ok);
+    assert.equal(result.text, op === "copy" ? text + "A\r\nB\nC\r\n" : "\uFEFFD\nA\r\nB\nC\r\n");
+  }
+});
+
+test("copy/move unterminated final line → add interior connectors and preserve final-newline state", () => {
+  for (const ending of ["\n", "\r\n"]) {
+    const text = `A${ending}B`;
+    for (const op of ["copy", "move"] as const) {
+      const result = applyEdits(text, [{ op, start: at(text, 2), before: at(text, 1) }], 4, 0);
+      assert(result.ok);
+      assert.equal(result.text, op === "copy" ? `B${ending}A${ending}B` : `B${ending}A`);
+    }
+  }
+});
+
+test("copy/move line ending in standalone CR → connector retains the CR as line content", () => {
+  const text = "A\nB\r";
+  for (const op of ["copy", "move"] as const) {
+    const result = applyEdits(text, [{ op, start: at(text, 2), before: at(text, 1) }], 4, 0);
+    assert(result.ok);
+    assert.equal(result.text, op === "copy" ? "B\r\r\nA\nB\r" : "B\r\r\nA");
+    assert.equal(splitLines(result.text)[0], "B\r");
+  }
+});
+
+test("copy Unicode and standalone-CR content → preserve every source code unit", () => {
+  const text = "🙂中文 e\u0301\nkeep\rcontent\n";
+  const result = applyEdits(
+    text,
+    [{ op: "copy", start: at(text, 1), end: at(text, 2), after: at(text, 2) }],
+    4,
+    0,
+  );
+  assert(result.ok);
+  assert.equal(result.text, text + text);
+});
+
+test("copy blank or BOM-only line → retain the added logical blank line", () => {
+  for (const [text, line, expected] of [
+    ["A\n\n", 2, "A\n\n\n"],
+    ["\uFEFF", 1, "\uFEFF\n\n"],
+  ] as const) {
+    const result = applyEdits(
+      text,
+      [{ op: "copy", start: at(text, line), after: at(text, line) }],
+      4,
+      0,
+    );
+    assert(result.ok);
+    assert.equal(result.text, expected);
+    assert.equal(splitLines(result.text).length, splitLines(text).length + 1);
+  }
+});
+
+test("move to either adjacent gap → byte-identical no-op with no updated anchors", () => {
+  const text = "A\r\nB\nC\r\nD";
+  for (const destination of [{ before: at(text, 2) }, { after: at(text, 3) }]) {
+    const result = applyEdits(
+      text,
+      [{ op: "move", start: at(text, 2), end: at(text, 3), ...destination }],
+      4,
+      0,
+    );
+    assert(result.ok);
+    assert.equal(result.text, text);
+    assert.equal(result.changed, false);
+    assert.deepEqual(result.touchedLines, []);
+  }
+});
+
+test("copy/move bad source and destination anchors → aggregate every supplied field", () => {
+  const text = "A\nB\nC\nD\n";
+  for (const destination of [
+    { before: { line: 4, hash: "XXXX" } },
+    { after: { line: 4, hash: "XXXX" } },
+  ]) {
+    const result = applyEdits(
+      text,
+      [
+        {
+          op: "copy",
+          start: { line: 1, hash: "XXXX" },
+          end: { line: 2, hash: "XXXX" },
+          ...destination,
+        },
+      ],
+      4,
+      0,
+    );
+    assert(!result.ok && result.failure.kind === "anchor");
+    assert.deepEqual(
+      result.failure.failures.map((failure) => failure.which),
+      ["anchor", "end", Object.keys(destination)[0]],
+    );
+    assert(result.failure.checks.every((check) => check.status === "mismatched"));
+  }
+});
+
+test("move interior destination, overlapping moves, or duplicate copy gaps → reject the complete batch", () => {
+  const text = "A\nB\nC\nD\nE\n";
+  const cases: Edit[][] = [
+    [{ op: "move", start: at(text, 1), end: at(text, 3), after: at(text, 2) }],
+    [
+      { op: "move", start: at(text, 1), end: at(text, 2), after: at(text, 5) },
+      { op: "move", start: at(text, 2), end: at(text, 3), before: at(text, 1) },
+    ],
+    [
+      { op: "copy", start: at(text, 1), after: at(text, 5) },
+      { op: "copy", start: at(text, 2), after: at(text, 5) },
+    ],
+    [{ op: "copy", start: at(text, 3), end: at(text, 2), after: at(text, 5) }],
+  ];
+  for (const edits of cases) {
+    const result = applyEdits(text, edits, 4, 0);
+    assert(!result.ok && result.failure.kind === "range");
+    assert(result.failure.checks.every((check) => check.status === "matched"));
+  }
+});

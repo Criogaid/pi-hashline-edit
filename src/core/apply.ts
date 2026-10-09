@@ -3,7 +3,7 @@
  *
  * Verification is live and surgical: each anchor's hash is recomputed from the
  * CURRENT line content at the cited line number and compared to the cited hash.
- * No snapshot, no global stale check — a line that changed (or was
+ * No prior-read revision guard — a line that changed (or was
  * misremembered) fails its own anchor; unchanged lines elsewhere never block
  * the edit.
  *
@@ -45,11 +45,14 @@ import type {
 } from "./types.ts";
 import { findSortedRangeConflict } from "./ranges.ts";
 
-/** Line-level operation: replace the raw lines in the `[lo, hi)` range (0-based, hi exclusive) with newLines. */
-interface SpanOp {
-  lo: number;
-  hi: number;
-  newLines: string[];
+/** Replace `[lo, hi)` with caller text or a range captured from the verified original lines. */
+type SpanOp = { readonly lo: number; readonly hi: number } & (
+  | { readonly kind: "body"; readonly newLines: readonly string[] }
+  | { readonly kind: "capture"; readonly sourceLo: number; readonly sourceHi: number }
+);
+
+function producedLineCount(op: SpanOp): number {
+  return op.kind === "body" ? op.newLines.length : op.sourceHi - op.sourceLo;
 }
 
 /**
@@ -67,7 +70,7 @@ interface SpanOp {
 function verifyAnchor(
   lines: readonly string[],
   cited: Anchor,
-  which: "anchor" | "end",
+  which: AnchorCheck["which"],
   opIndex: number,
   op: Edit["op"],
   hashLen: number,
@@ -122,21 +125,21 @@ function verifyAnchor(
 }
 
 type TranslateResult =
-  | { readonly ok: true; readonly op: SpanOp; readonly checks: AnchorCheck[] }
+  | { readonly ok: true; readonly ops: readonly SpanOp[]; readonly checks: AnchorCheck[] }
   | { readonly ok: false; readonly anchorFailures: AnchorFailure[]; readonly checks: AnchorCheck[] }
   | { readonly ok: false; readonly rangeError: string; readonly checks: AnchorCheck[] };
 
 function checkedAnchor(
   edit: Edit,
   opIndex: number,
-  which: "anchor" | "end",
+  which: AnchorCheck["which"],
   cited: Anchor,
   failure: AnchorFailure | null,
 ): AnchorCheck {
   return { opIndex, which, op: edit.op, cited, status: failure ? "mismatched" : "matched" };
 }
 
-/** Translate an Edit into a SpanOp, verifying anchors and ranges against the current lines. */
+/** Verify an Edit against the snapshot and plan its mutation spans and captured source. */
 function translateEdit(
   edit: Edit,
   opIndex: number,
@@ -146,7 +149,9 @@ function translateEdit(
 ): TranslateResult {
   switch (edit.op) {
     case "replace":
-    case "delete": {
+    case "delete":
+    case "copy":
+    case "move": {
       const failures: AnchorFailure[] = [];
       const checks: AnchorCheck[] = [];
       const startF = verifyAnchor(lines, edit.start, "anchor", opIndex, edit.op, hashLen, radius);
@@ -159,6 +164,25 @@ function translateEdit(
         if (endF) failures.push(endF);
         endLine = edit.end.line;
       }
+      const destination =
+        edit.op === "copy" || edit.op === "move"
+          ? edit.before !== undefined
+            ? { which: "before" as const, cited: edit.before }
+            : { which: "after" as const, cited: edit.after }
+          : undefined;
+      if (destination) {
+        const failure = verifyAnchor(
+          lines,
+          destination.cited,
+          destination.which,
+          opIndex,
+          edit.op,
+          hashLen,
+          radius,
+        );
+        checks.push(checkedAnchor(edit, opIndex, destination.which, destination.cited, failure));
+        if (failure) failures.push(failure);
+      }
       if (failures.length > 0) return { ok: false, anchorFailures: failures, checks };
       if (endLine < edit.start.line)
         return {
@@ -166,14 +190,46 @@ function translateEdit(
           rangeError: `range ${edit.start.line}..${endLine} ends before it starts`,
           checks,
         };
+      if (destination) {
+        const sourceLo = edit.start.line - 1;
+        const gap = destination.cited.line - (destination.which === "before" ? 1 : 0);
+        if (edit.op === "move" && sourceLo < gap && gap < endLine) {
+          return {
+            ok: false,
+            rangeError: `destination ${destination.which} line ${destination.cited.line} lies inside moved range ${edit.start.line}..${endLine}`,
+            checks,
+          };
+        }
+        if (edit.op === "move" && (gap === sourceLo || gap === endLine)) {
+          return { ok: true, ops: [], checks };
+        }
+        const insertion: SpanOp = {
+          lo: gap,
+          hi: gap,
+          kind: "capture",
+          sourceLo,
+          sourceHi: endLine,
+        };
+        return {
+          ok: true,
+          checks,
+          ops:
+            edit.op === "move"
+              ? [insertion, { lo: sourceLo, hi: endLine, kind: "body", newLines: [] }]
+              : [insertion],
+        };
+      }
       return {
         ok: true,
         checks,
-        op: {
-          lo: edit.start.line - 1,
-          hi: endLine,
-          newLines: edit.op === "delete" ? [] : edit.body,
-        },
+        ops: [
+          {
+            lo: edit.start.line - 1,
+            hi: endLine,
+            kind: "body",
+            newLines: edit.op === "replace" ? edit.body : [],
+          },
+        ],
       };
     }
     case "insert_after":
@@ -182,16 +238,16 @@ function translateEdit(
       const checks = [checkedAnchor(edit, opIndex, "anchor", edit.anchor, failure)];
       if (failure) return { ok: false, anchorFailures: [failure], checks };
       const line = edit.anchor.line - (edit.op === "insert_before" ? 1 : 0);
-      return { ok: true, checks, op: { lo: line, hi: line, newLines: edit.body } };
+      return { ok: true, checks, ops: [{ lo: line, hi: line, kind: "body", newLines: edit.body }] };
     }
     case "append":
       return {
         ok: true,
         checks: [],
-        op: { lo: lines.length, hi: lines.length, newLines: edit.body },
+        ops: [{ lo: lines.length, hi: lines.length, kind: "body", newLines: edit.body }],
       };
     case "prepend":
-      return { ok: true, checks: [], op: { lo: 0, hi: 0, newLines: edit.body } };
+      return { ok: true, checks: [], ops: [{ lo: 0, hi: 0, kind: "body", newLines: edit.body }] };
   }
 }
 
@@ -226,7 +282,7 @@ export function applyEdits(
     const t = translateEdit(edits[i], i, lines, hashLen, shiftRadius);
     anchorChecks.push(...t.checks);
     if (t.ok) {
-      ops.push(t.op);
+      for (const op of t.ops) ops.push(op);
     } else if ("anchorFailures" in t) {
       anchorFailures.push(...t.anchorFailures);
     } else if (rangeError === null) {
@@ -272,19 +328,23 @@ export function applyEdits(
   // function arguments, and later operations keep their original coordinates.
   const result: { content: string; separator: string }[] = [];
   let cursor = 0;
-  const appendOriginal = (end: number) => {
-    while (cursor < end) {
-      const content = lines[cursor];
-      // Anchors were checked before separating the BOM from movable line content.
+  const appendSource = (start: number, end: number) => {
+    for (let index = start; index < end; index++) {
+      const content = lines[index];
+      // Keep the verified first-line BOM at byte zero, including for captured ranges.
       result.push({
-        content: bom && cursor === 0 ? content.slice(1) : content,
-        separator: separators?.[cursor] ?? "",
+        content: bom && index === 0 ? content.slice(1) : content,
+        separator: separators?.[index] ?? "",
       });
-      cursor++;
     }
   };
   for (const op of sorted) {
-    appendOriginal(op.lo);
+    appendSource(cursor, op.lo);
+    if (op.kind === "capture") {
+      appendSource(op.sourceLo, op.sourceHi);
+      cursor = op.hi;
+      continue;
+    }
     // The trailing gap is outside the logical replacement, just as in substring replacement.
     const removedSeparators = separators?.slice(op.lo, Math.max(op.lo, op.hi - 1)) ?? [];
     for (let i = 0; i < op.newLines.length; i++) {
@@ -301,7 +361,7 @@ export function applyEdits(
     }
     cursor = op.hi;
   }
-  appendOriginal(lines.length);
+  appendSource(cursor, lines.length);
   // An empty final logical line needs its own terminator to survive splitLines.
   // A sole BOM-backed line already has a representation without a terminator.
   const finalNewline =
@@ -311,7 +371,10 @@ export function applyEdits(
     result
       .map(
         ({ content, separator: current }, i) =>
-          content + (i < result.length - 1 || finalNewline ? current || separator : ""),
+          content +
+          (i < result.length - 1 || finalNewline
+            ? current || (content.endsWith("\r") ? "\r\n" : separator)
+            : ""),
       )
       .join("");
   if (newText === text) {
@@ -326,8 +389,9 @@ export function applyEdits(
   let delta = 0;
   for (const op of sorted) {
     const newLo = op.lo + delta;
-    if (op.newLines.length > 0) {
-      for (let i = 0; i < op.newLines.length; i++) {
+    const count = producedLineCount(op);
+    if (count > 0) {
+      for (let i = 0; i < count; i++) {
         touched.push(newLo + i);
         // An adjacent replacement may supply the deletion successor itself.
         contextLines.delete(newLo + i);
@@ -336,7 +400,7 @@ export function applyEdits(
       touched.push(newLo);
       contextLines.add(newLo);
     }
-    delta += op.newLines.length - (op.hi - op.lo);
+    delta += count - (op.hi - op.lo);
   }
 
   return {

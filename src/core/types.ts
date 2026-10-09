@@ -10,6 +10,10 @@ export interface Anchor {
   readonly hash: string;
 }
 
+/** Public anchor field names shared by preparation, verification, and recovery. */
+export const EDIT_ANCHOR_FIELDS = ["anchor", "end", "before", "after"] as const;
+type AnchorField = (typeof EDIT_ANCHOR_FIELDS)[number];
+
 /**
  * Edit operation. Every line-numbered op references a line via {@link Anchor} —
  * the line number is the address, the hash a checksum that the line at that
@@ -23,6 +27,10 @@ export type Edit =
       readonly body: string[];
     }
   | { readonly op: "delete"; readonly start: Anchor; readonly end?: Anchor }
+  | ({ readonly op: "copy" | "move"; readonly start: Anchor; readonly end?: Anchor } & (
+      | { readonly before: Anchor; readonly after?: never }
+      | { readonly after: Anchor; readonly before?: never }
+    ))
   | { readonly op: "insert_after"; readonly anchor: Anchor; readonly body: string[] }
   | { readonly op: "insert_before"; readonly anchor: Anchor; readonly body: string[] }
   | { readonly op: "append"; readonly body: string[] }
@@ -63,13 +71,13 @@ export type AnchorRecovery =
  * A single anchor that failed verification, with its recovery attempt.
  *
  * `opIndex` is the 0-based position in the input `edits[]`; `which` names the
- * op's anchor (`"anchor"` = start, `"end"` = range end); `op` is the op kind.
+ * op's source/insertion anchor, range end, or before/after destination; `op` is the op kind.
  * `current` is the cited line's live content + hash (null if the line number is
  * out of range) — surfaced when recovery is `none` so the model can self-diagnose.
  */
 export interface AnchorFailure {
   readonly opIndex: number;
-  readonly which: "anchor" | "end";
+  readonly which: AnchorField;
   readonly op: Edit["op"];
   readonly cited: Anchor;
   readonly recovery: AnchorRecovery;
@@ -79,7 +87,7 @@ export interface AnchorFailure {
 /** Record for one supplied anchor in the immutable apply snapshot. */
 export interface AnchorCheck {
   readonly opIndex: number;
-  readonly which: "anchor" | "end";
+  readonly which: AnchorField;
   readonly op: Edit["op"];
   readonly cited: Anchor;
   readonly status: "matched" | "mismatched";
@@ -101,7 +109,7 @@ export type ApplyFailure =
 /**
  * Apply result. On success, `touchedLines` lists 0-based NEW-file indices to
  * re-anchor. `contextLines` identifies deletion successors among those lines;
- * callers retain their content while compacting anchors for caller-supplied rows.
+ * callers retain their content while compacting anchors for produced rows.
  * Byte-identical output succeeds with changed=false and empty anchor lists.
  * On failure, `failure` is either the collected set of anchor failures
  * (each with recovery) or a range error, plus per-input anchor checks.

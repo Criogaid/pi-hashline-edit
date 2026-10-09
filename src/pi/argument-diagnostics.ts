@@ -87,7 +87,39 @@ function projectValueSchema(
         return projectSchema(matches[0], value, path, explained, applicable);
       if (matches.length === 0)
         return Type.Object({ [tag.field]: Type.Unknown({ enum: [...new Set(tag.choices)] }) });
-      return schema;
+      // Distinct property presence can disambiguate branches sharing a tag even
+      // when common fields are missing or field values are invalid. Only choose
+      // a branch here; its original constraints still supply the diagnostics.
+      const knownFields = new Set(matches.flatMap((branch) => Object.keys(branch.properties)));
+      const shapeValue = Object.fromEntries(
+        Object.entries(value).filter(([field]) => knownFields.has(field)),
+      );
+      const shapes = matches.filter((branch) =>
+        Value.Check(
+          Type.Object(
+            Object.fromEntries(
+              Object.entries(branch.properties).map(([field, child]) => [
+                field,
+                IsOptional(child) ||
+                matches.every((other) => Object.hasOwn(other.properties, field))
+                  ? Type.Optional(Type.Unknown())
+                  : Type.Unknown(),
+              ]),
+            ),
+            ObjectOptions(branch),
+          ),
+          shapeValue,
+        ),
+      );
+      if (shapes.length === 1) return projectSchema(shapes[0], value, path, explained, applicable);
+      // A shared tag can select several shapes (for example before/after destinations).
+      // Project every applicable branch so semantic checks are retained, then let the
+      // native engine select a shape after already-explained constraints are removed.
+      const projected = matches.map((branch) =>
+        projectSchema(branch, value, path, explained, applicable),
+      );
+      const accepted = projected.filter((branch) => Value.Check(branch, value));
+      return accepted.length === 1 ? accepted[0] : Type.Union(projected);
     }
     const typed = schema.anyOf.filter((branch) => "type" in branch);
     if (typed.length === schema.anyOf.length) {
