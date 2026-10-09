@@ -341,3 +341,120 @@ test("model output is truncated while requesting forget → Pi rejects the call 
   assert.equal(toolResult(f.requests[2], "forget-call").isError, true);
   assert.deepEqual(toolResult(f.requests[2], "read-log"), toolResult(f.requests[1], "read-log"));
 });
+
+for (const entry of ["direct", "codemode"] as const) {
+  test(`codemode forwards mixed text outputs → ${entry} forget removes the whole script result`, {
+    timeout: SESSION_TIMEOUT_MS,
+  }, async (t) => {
+    const f = await openForgetSession(t);
+    await writeFile(join(f.cwd, "build.log"), LOG_BODY);
+    await writeFile(join(f.cwd, "keep.log"), "keep this source\n");
+    const code = [
+      'const results = await Promise.all([tools.read({path:"build.log"}), tools.read({path:"keep.log"})]);',
+      "text({selected: results[0], another: results[1]});",
+      'text("Saved conclusion from the script.");',
+    ].join("\n");
+    const note = "Keep the saved conclusion.";
+    await f.prompt(
+      toolResponse({ type: "toolCall", id: "script-read", name: "codemode", arguments: { code } }),
+      (messages) => {
+        const result = toolResult(messages, "script-read");
+        const id = taggedResultId(result);
+        assert.ok(id, "The persisted codemode result must have a usable tag");
+        const text = result.content
+          .filter((block) => block.type === "text")
+          .map((block) => block.text)
+          .join("\n");
+        assert.equal(
+          [...text.matchAll(/\[result r[0-9a-f]{5}\]/g)].length,
+          1,
+          "Nested reads must not expose unusable tags",
+        );
+        assert.match(text, /entire codemode output/i);
+        const call = forgetCall(messages, "script-read");
+        return toolResponse(
+          entry === "direct"
+            ? { ...call, arguments: { ...call.arguments, note } }
+            : {
+                type: "toolCall",
+                id: "forget-script",
+                name: "codemode",
+                arguments: {
+                  code: `text(await tools.forget(${JSON.stringify({ ids: [id], note })}));`,
+                },
+              },
+        );
+      },
+      finish,
+    );
+    const original = toolResult(f.requests[1], "script-read");
+    const id = taggedResultId(original);
+    assert.ok(id);
+    assertForgotten(toolResult(f.requests[2], "script-read"), id);
+    assert.deepEqual(f.rawResult("script-read").content, original.content);
+    assert.equal(await readFile(join(f.cwd, "build.log"), "utf8"), LOG_BODY);
+    assert.equal(await readFile(join(f.cwd, "keep.log"), "utf8"), "keep this source\n");
+    assert.equal(
+      toolResult(f.requests[2], entry === "direct" ? "forget-call" : "forget-script").isError,
+      false,
+    );
+    const payload = JSON.stringify(await f.requestPayload(2));
+    assert.ok(!payload.includes("build payload"));
+    assert.ok(!payload.includes("keep this source"));
+    assert.ok(payload.includes(note));
+  });
+}
+
+for (const { name, code } of [
+  {
+    name: "filtered short read",
+    code: 'await tools.read({path:"build.log"}); text("only a conclusion");',
+  },
+  {
+    name: "script error",
+    code: 'text(await tools.read({path:"build.log"})); throw new Error("script failed");',
+  },
+  { name: "no read calls", code: `text(${JSON.stringify(LOG_BODY)});` },
+]) {
+  test(`codemode ${name} → output has no forget tags`, {
+    timeout: SESSION_TIMEOUT_MS,
+  }, async (t) => {
+    const f = await openForgetSession(t);
+    await writeFile(join(f.cwd, "build.log"), LOG_BODY);
+    await f.prompt(
+      toolResponse({ type: "toolCall", id: "script-read", name: "codemode", arguments: { code } }),
+      finish,
+    );
+    const output = toolResult(f.requests[1], "script-read")
+      .content.filter((block) => block.type === "text")
+      .map((block) => block.text)
+      .join("\n");
+    assert.doesNotMatch(output, /\[result r[0-9a-f]{5}\]/);
+  });
+}
+
+test("codemode prints inspection text and an image → forget removes every output block", {
+  timeout: SESSION_TIMEOUT_MS,
+}, async (t) => {
+  const f = await openForgetSession(t);
+  await writeFile(join(f.cwd, "build.log"), LOG_BODY);
+  await f.prompt(
+    toolResponse({
+      type: "toolCall",
+      id: "script-image",
+      name: "codemode",
+      arguments: {
+        code: `text(await tools.read({path:"build.log"})); image(${JSON.stringify({ type: "image", data: PNG.toString("base64"), mimeType: "image/png" })});`,
+      },
+    }),
+    (messages) => toolResponse(forgetCall(messages, "script-image")),
+    finish,
+  );
+  const original = toolResult(f.requests[1], "script-image");
+  assert.ok(original.content.some((block) => block.type === "image"));
+  const id = taggedResultId(original);
+  assert.ok(id);
+  assertForgotten(toolResult(f.requests[2], "script-image"), id);
+  assert.deepEqual(f.rawResult("script-image").content, original.content);
+  assert.equal(await readFile(join(f.cwd, "build.log"), "utf8"), LOG_BODY);
+});

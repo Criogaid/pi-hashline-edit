@@ -1,13 +1,13 @@
 /**
- * forget: the model drops read/grep results it no longer needs from model context.
+ * forget: the model drops tagged inspection output it no longer needs from context.
  *
- * The decision is made after the model has seen a result, and only in the response
- * that first sees it. read and grep tag results of at least FORGET_MIN_BYTES (and any
- * image) with a `[result rXXXXX]` block derived from the tool call id. Before each
- * request, the `context` handler records the tagged results that follow the last
- * assistant message: the batch the coming response is the first to see. forget may
- * name only those ids. At `turn_end` of a completed response, Pi's branch-local
- * context edits replace each named result's entire content with a forgotten receipt.
+ * Direct read/grep results and codemode outputs containing successful inspections
+ * are tagged when they meet the output budget. Nested read/grep results lose their
+ * tags before reaching the script: Pi persists only the script's final output,
+ * which is forgotten as one result even when the script transforms or mixes data.
+ * Before each request, the `context` handler records tagged results after the last
+ * assistant message. forget may name only those ids. At `turn_end` of a completed
+ * response, branch-local context edits replace each named result with a receipt.
  * The tool call and any facts saved in forget's note remain in context.
  *
  * Restricting forget to the newest batch bounds how much of the next request changes:
@@ -36,6 +36,9 @@ import { createArgumentPreparer } from "./argument-validation.ts";
 
 const RESULT_ID = "r[0-9a-f]{5}";
 const RESULT_TAG = new RegExp(`^\\[result ${RESULT_ID}\\]$`);
+const CODEMODE_FORGET_SCOPE =
+  "Forget scope: entire codemode output, including all text and images.";
+const CODEMODE_FORGET_RECEIPT = "codemode · entire output";
 
 /** Short id shown to the model; it only has to be unique within one tool batch. */
 function resultId(toolCallId: string): string {
@@ -159,6 +162,48 @@ export function registerForgetTool(pi: ExtensionAPI): void {
   // Results named by forget during the current response, applied at its turn_end.
   let pending = new Set<string>();
 
+  pi.on("tool_result", (event) => {
+    if (
+      !event.parentToolCallId ||
+      (event.toolName !== "read" && event.toolName !== "grep") ||
+      !isResultTag(event.content.at(-1), event.toolCallId)
+    )
+      return;
+    const result = withoutResultTag(event);
+    // Preserve structured results while removing tags that cannot identify a transcript entry.
+    return { content: result.content, structuredContent: event.structuredContent };
+  });
+
+  pi.on("message_end", (event) => {
+    const message = event.message;
+    if (
+      message.role !== "toolResult" ||
+      message.toolName !== "codemode" ||
+      message.isError ||
+      !message.nestedCalls?.calls.some(
+        (call) =>
+          call.status === "ok" &&
+          (call.name === "read" ||
+            (call.name === "grep" &&
+              call.arguments !== undefined &&
+              (call.arguments.outputMode == null || call.arguments.outputMode === "content"))),
+      )
+    )
+      return;
+    const tagged = withResultTag(message.toolCallId, message, true, () => CODEMODE_FORGET_RECEIPT);
+    if (tagged === message) return;
+    return {
+      message: {
+        ...tagged,
+        content: [
+          ...tagged.content.slice(0, -1),
+          { type: "text", text: CODEMODE_FORGET_SCOPE },
+          tagged.content[tagged.content.length - 1],
+        ],
+      },
+    };
+  });
+
   pi.on("context", (event) => {
     forgettable = new Map();
     const lastAssistant = event.messages.findLastIndex((message) => message.role === "assistant");
@@ -214,10 +259,10 @@ export function registerForgetTool(pi: ExtensionAPI): void {
   pi.registerTool({
     name: "forget",
     label: "forget",
-    description: `Remove read or grep results from your context once you have taken what you need. Only results from the previous step tagged [result rXXXXX] (${formatKiB(FORGET_MIN_BYTES)} or larger, or images) can be forgotten. After this response each selected result's entire content, including headers and notices, is replaced with a forgotten receipt. Save facts you still need in note. Files and session history are unchanged.`,
-    promptSnippet: "Forget read or grep results you no longer need",
+    description: `Remove tagged inspection output from your context once you have taken what you need. Only results from the previous step tagged [result rXXXXX] (${formatKiB(FORGET_MIN_BYTES)} or larger, or images) can be forgotten. After this response each selected result's entire content, including headers and notices, is replaced with a forgotten receipt. A codemode tag covers its entire output, including other results printed by the script. Save facts you still need in note. Files and session history are unchanged.`,
+    promptSnippet: "Forget tagged inspection output you no longer need",
     promptGuidelines: [
-      "Right after a read or grep result tagged [result rXXXXX], call forget with its id if you will not need any of its content again; put facts you still need in note. Results from earlier steps cannot be forgotten.",
+      "Right after tagged inspection output, call forget with its id if you will not need any of its content again; put facts you still need in note. A codemode tag forgets the entire script output. Results from earlier steps cannot be forgotten.",
     ],
     parameters: forgetSchema,
     prepareArguments: createArgumentPreparer("forget", forgetSchema),
@@ -251,7 +296,7 @@ export function registerForgetTool(pi: ExtensionAPI): void {
       if (unknown.length > 0) {
         const available = [...forgettable.keys()];
         throw new Error(
-          `Cannot forget ${unknown.join(", ")}: only tagged read or grep results from the previous step can be forgotten.${available.length ? ` Available: ${available.join(", ")}.` : ""}`,
+          `Cannot forget ${unknown.join(", ")}: only tagged inspection results from the previous step can be forgotten.${available.length ? ` Available: ${available.join(", ")}.` : ""}`,
         );
       }
       const forgotten = params.ids.map((id) => {

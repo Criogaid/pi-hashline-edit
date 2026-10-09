@@ -96,3 +96,48 @@ test("real grep reaches its limit across files → forget card reports the retur
   assert.ok(f.renderForgetCard().includes(receipt));
   assertForgotten(toolResult(f.requests[2], "search"), id);
 });
+
+for (const outputMode of [undefined, "content", null, "files", "count"] as const) {
+  test(`codemode grep outputMode=${String(outputMode)} → only content output can be forgotten`, {
+    timeout: SESSION_TIMEOUT_MS,
+  }, async (t) => {
+    const f = await openForgetSession(t);
+    const path = join(f.cwd, "search.log");
+    await writeFile(path, `needle ${"x".repeat(FORGET_MIN_BYTES)}\n`);
+    const args = { path, pattern: "needle", literal: true, outputMode };
+    const eligible = outputMode === undefined || outputMode === null || outputMode === "content";
+    await f.prompt(
+      toolResponse({
+        type: "toolCall",
+        id: "script-search",
+        name: "codemode",
+        arguments: {
+          code: `text(await tools.grep(${JSON.stringify(args)})); text("padding".repeat(${FORGET_MIN_BYTES}));`,
+        },
+      }),
+      (messages) => {
+        const result = toolResult(messages, "script-search");
+        assert.equal(result.isError, false);
+        const id = taggedResultId(result);
+        if (eligible) {
+          assert.ok(id, "Content-mode inspection output needs a parent tag");
+          return toolResponse(forgetCall(messages, "script-search"));
+        }
+        assert.equal(id, undefined, "Summary-only grep must not make a script forgettable");
+        return finish;
+      },
+      ...(eligible ? [finish] : []),
+    );
+    const original = toolResult(f.requests[1], "script-search");
+    const text = original.content
+      .filter((block) => block.type === "text")
+      .map((block) => block.text)
+      .join("\n");
+    assert.equal([...text.matchAll(/\[result r[0-9a-f]{5}\]/g)].length, eligible ? 1 : 0);
+    if (eligible) {
+      const id = taggedResultId(original);
+      assert.ok(id);
+      assertForgotten(toolResult(f.requests[2], "script-search"), id);
+    }
+  });
+}

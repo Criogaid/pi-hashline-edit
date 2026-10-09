@@ -14,6 +14,7 @@ import { registerForgetTool } from "./forget-tool.ts";
 import { makeGrepOverride } from "./grep-tool.ts";
 import { makeReadOverride } from "./read-tool.ts";
 import { theme } from "../../node_modules/@earendil-works/pi-coding-agent/dist/modes/interactive/theme/theme.js";
+import { createCodemodeToolDefinition } from "../../node_modules/@earendil-works/pi-coding-agent/dist/extensions/codemode/tool.js";
 
 export { SESSION_TIMEOUT_MS } from "../testing/session.testing.ts";
 type Response = TestResponse;
@@ -54,12 +55,13 @@ export function forgetCall(messages: readonly Message[], ...sourceIds: string[])
 
 export async function openForgetSession(t: TestContext) {
   const { cwd, session, model, sessionManager } = await openTestSession(t, {
-    tools: ["read", "grep", "forget"],
+    tools: ["read", "grep", "forget", "codemode"],
     configure(pi, cwd) {
       const config = { ...DEFAULT_CONFIG, forget: true };
       pi.registerTool(makeReadOverride(cwd, config));
       pi.registerTool(makeGrepOverride(cwd, config));
       registerForgetTool(pi);
+      pi.registerTool(createCodemodeToolDefinition());
     },
   });
   const requests: Message[][] = [];
