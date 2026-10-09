@@ -193,7 +193,7 @@ test("unresolved observations require target confirmation before retrying a move
       (error: Error) => {
         assert.match(error.message, /Anchor mismatch: 1 unresolved/);
         assert.match(error.message, /No changes written/);
-        assert.match(error.message, /Confirm.*target.*before.*anchor/);
+        assert.match(error.message, /Before reusing.*anchor, confirm.*intended target/);
         assert.match(error.message, /^5#[0-9A-Z]+│changed$/m);
         return true;
       },
@@ -519,7 +519,7 @@ test("local and full-file recovery return copyable anchors without changing the 
         (error: Error) => {
           replacement =
             new RegExp(`^(${prefixLines + 2}#[0-9A-Z]+)│b$`, "m").exec(error.message)?.[1] ?? "";
-          assert.match(error.message, /Check the intended target/);
+          assert.match(error.message, /confirm.*intended target/);
           assert.match(
             error.message,
             prefixLines === 1 ? /Search: local.*outside.*not checked/ : /Search: full file/,
@@ -976,7 +976,7 @@ test("schema-invalid bodies omit anchor checks; subsequent retries revalidate", 
       (error: Error) => {
         assert.ok(error.message.includes(`op 0 / anchor / ${stable} / matched`));
         assert.match(error.message, /op 1 \/ end \/ 3#ZZZZ \/ mismatched/);
-        assert.match(error.message, /Anchor checks.*retries revalidate/);
+        assert.match(error.message, /Retries verify every anchor again/);
         return true;
       },
     );

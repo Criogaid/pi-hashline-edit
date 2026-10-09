@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { computeLineHash } from "../core/hash.ts";
-import type { AnchorFailure } from "../core/types.ts";
-import { MAX_BLOCK_BYTES } from "./budgets.ts";
+import { applyEdits } from "../core/apply.ts";
+import type { AnchorFailure, Edit } from "../core/types.ts";
+import { formatKiB, MAX_BLOCK_BYTES, MAX_RECOVERY_CANDIDATE_BYTES } from "./budgets.ts";
+import { DEFAULT_CONFIG } from "./config.ts";
 import { createAnchorFormatter } from "./anchor-format.ts";
-import { formatAmbiguousCandidateNeighborhoods } from "./failure-context.ts";
+import { formatAmbiguousCandidateNeighborhoods, formatFailure } from "./failure-context.ts";
 
 function failure(recovery: AnchorFailure["recovery"]): AnchorFailure {
   return {
@@ -150,4 +152,119 @@ test("neighborhoods keep shorter later rows when the remaining budget cannot fit
   assert.match(output.text, /Candidate-neighborhood rows: 3\/4; 1 omitted/);
   const rows = output.text.match(/^\d+#[0-9A-Z]+│.*$/gm) ?? [];
   assert.ok(Buffer.byteLength(rows.join("\n") + "\n") <= MAX_BLOCK_BYTES);
+});
+
+function rejectedEdit(text: string, edits: Edit[], shiftRadius = 0) {
+  const result = applyEdits(text, edits, DEFAULT_CONFIG.hashLen, shiftRadius);
+  assert.ok(!result.ok, "the fixture must reach failure formatting");
+  return {
+    failure: result.failure,
+    message: formatFailure(
+      result.failure,
+      { currentText: text, anchors: createAnchorFormatter(DEFAULT_CONFIG.hashLen) },
+      edits.length > 1,
+    ),
+  };
+}
+
+const oldAnchor = { line: 1, hash: computeLineHash(1, "old", DEFAULT_CONFIG.hashLen) };
+
+test("multiple unresolved anchors and candidate context → one closing recovery instruction survives truncation", () => {
+  const cases: {
+    readonly text: string;
+    readonly edits: Edit[];
+    readonly radius: number;
+    readonly truncated: boolean;
+  }[] = [
+    ...[2, MAX_BLOCK_BYTES].map((count) => ({
+      text: "current\n",
+      edits: Array.from({ length: count }, (): Edit => ({ op: "delete", start: oldAnchor })),
+      radius: 0,
+      truncated: count === MAX_BLOCK_BYTES,
+    })),
+    {
+      text: "current\nold\n",
+      edits: [{ op: "delete", start: oldAnchor }],
+      radius: 2,
+      truncated: false,
+    },
+    {
+      text: "current\nold\nold\n",
+      edits: [{ op: "delete", start: oldAnchor }],
+      radius: 2,
+      truncated: false,
+    },
+  ];
+  for (const fixture of cases) {
+    const { message } = rejectedEdit(fixture.text, fixture.edits, fixture.radius);
+    const instructions = message.match(/^Before reusing .+$/gm) ?? [];
+    assert.equal(instructions.length, 1);
+    assert.match(instructions[0], /candidate or observed anchor, confirm.*intended target/);
+    assert.match(instructions[0], /read or grep.*omitted rows.*out-of-range lines.*context/);
+    assert.match(instructions[0], /Retries verify every anchor again\.$/);
+    assert.ok(message.endsWith(instructions[0]), "guidance must follow every diagnostic block");
+    const facts = message.slice(0, message.lastIndexOf(instructions[0]));
+    assert.doesNotMatch(facts, /\b(?:confirm|read|grep|retries)\b/i);
+    if (fixture.radius === 0)
+      assert.match(facts, /Current cited line \(observation only\):\n1#[0-9A-Z]+│current/);
+    assert.equal(/Diagnostic output truncated/.test(message), fixture.truncated);
+  }
+});
+
+test("anchor-check rows exceed their byte budget → header qualification and omission warning survive", () => {
+  const { message } = rejectedEdit(
+    "current\n",
+    Array.from({ length: MAX_BLOCK_BYTES }, () => ({ op: "delete", start: oldAnchor })),
+  );
+  const header = /^Input-anchor checks \(checksum only; this snapshot\):$/m.exec(message);
+  assert.ok(header);
+  const notice = /Anchor-check output truncated.*omitted entries are not implied matched/.exec(
+    message,
+  );
+  assert.ok(notice);
+  assert.ok(header.index < notice.index);
+  const rows =
+    message.slice(header.index, notice.index).match(/^op \d+ \/ anchor \/ .* \/ mismatched$/gm) ??
+    [];
+  assert.ok(rows.length > 0 && rows.length < MAX_BLOCK_BYTES);
+});
+
+test("reversed ranges and overlapping edits → preserve the core reason and state that nothing was written", () => {
+  const text = "a\nb\nc\n";
+  const anchor = (line: number, content: string) => ({
+    line,
+    hash: computeLineHash(line, content, DEFAULT_CONFIG.hashLen),
+  });
+  const cases: Edit[][] = [
+    [{ op: "delete", start: anchor(3, "c"), end: anchor(1, "a") }],
+    [
+      { op: "delete", start: anchor(1, "a"), end: anchor(2, "b") },
+      { op: "replace", start: anchor(2, "b"), body: ["changed"] },
+    ],
+  ];
+  for (const edits of cases) {
+    const { failure, message } = rejectedEdit(text, edits);
+    assert.ok(failure.kind === "range");
+    assert.equal(message.split("\n")[0], failure.message);
+    assert.equal(message.split("\n")[1], "No changes written by this edit batch.");
+    assert.doesNotMatch(message, /Before reusing|confirm|read or grep|Retries verify/);
+  }
+});
+
+test("unresolved rows are out of range or oversized → failure entries contain omission facts without instructions", () => {
+  const text = "x".repeat(MAX_RECOVERY_CANDIDATE_BYTES) + "\n";
+  const cases = [
+    {
+      start: oldAnchor,
+      reason: new RegExp(`Current row exceeds ${formatKiB(MAX_RECOVERY_CANDIDATE_BYTES)}`),
+    },
+    { start: { ...oldAnchor, line: 2 }, reason: /Cited line is out of range/ },
+  ];
+  for (const { start, reason } of cases) {
+    const { message } = rejectedEdit(text, [{ op: "delete", start }]);
+    const facts = message.slice(0, message.lastIndexOf("\nBefore reusing "));
+    assert.match(facts, reason);
+    assert.doesNotMatch(facts, /\b(?:confirm|read|grep|retry|retries)\b/i);
+    assert.doesNotMatch(facts, /^\d+#[0-9A-Z]+│/m);
+  }
 });

@@ -735,3 +735,136 @@ test("commands without an explicit timeout do not start countdown updates", asyn
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test("Fusion fails at a mutation or command boundary → reports each command outcome and cause once", async (t) => {
+  const dir = await tempDir();
+  try {
+    const context = await ctx(dir, t);
+    for (const scenario of [
+      "not started",
+      "failed",
+      "prepare",
+      "commit",
+      "post_process",
+      "target changed",
+      "revision unreadable",
+      "command failed",
+      "command timeout",
+      "command cancelled",
+    ] as const) {
+      await t.test(`${scenario} → one phase, status, and cause`, async () => {
+        const target = join(dir, `${scenario}.txt`);
+        const controller = new AbortController();
+        if (scenario === "not started") controller.abort();
+        let commands = 0;
+        const fusion = createActionFusionExecutor(async () => {
+          commands++;
+          return {
+            status:
+              scenario === "command timeout"
+                ? "timeout"
+                : scenario === "command cancelled"
+                  ? "cancelled"
+                  : "failed",
+            output: "command diagnostic",
+          };
+        });
+        const stoppedDuringMutation = [
+          "not started",
+          "failed",
+          "prepare",
+          "commit",
+          "post_process",
+        ].includes(scenario);
+        const expectedCommand =
+          scenario === "not started" || scenario === "command cancelled"
+            ? "cancelled"
+            : scenario === "command timeout"
+              ? "timeout"
+              : scenario === "command failed"
+                ? "failed"
+                : "skipped";
+        const phase = stoppedDuringMutation ? `mutation ${scenario}` : "mutation completed";
+        const invocation = fusion({
+          toolCallId: scenario,
+          absolutePath: target,
+          thenRun: { command: "check" },
+          signal: controller.signal,
+          ctx: context,
+          mutate: async () => {
+            if (scenario === "failed") throw new Error("mutation diagnostic");
+            if (scenario === "prepare" || scenario === "commit" || scenario === "post_process")
+              throw new FileMutationError(
+                scenario,
+                scenario === "post_process" ? "PUBLISHED" : "NOT_PUBLISHED",
+                "mutation diagnostic",
+              );
+            await writeFile(target, "published\n");
+            const outcome = publishedMutation("published\n", { content: [], details: undefined });
+            if (scenario === "target changed") await writeFile(target, "external\n");
+            else if (scenario === "revision unreadable") await rm(target);
+            return outcome;
+          },
+        });
+        let diagnostic = "";
+        if (stoppedDuringMutation) {
+          await assert.rejects(invocation, (error: unknown) => {
+            assert.ok(error instanceof ActionFusionError);
+            diagnostic = error.message;
+            assert.equal(error.command, expectedCommand);
+            return true;
+          });
+        } else {
+          const result = await invocation;
+          diagnostic = result.content
+            .map((block) => (block.type === "text" ? block.text : ""))
+            .join("\n");
+          const details: unknown = result.details;
+          assert.ok(details !== null && typeof details === "object" && "actionFusion" in details);
+          const state = details.actionFusion;
+          assert.ok(
+            state !== null &&
+              typeof state === "object" &&
+              "command" in state &&
+              "publication" in state,
+          );
+          assert.equal(state.command, expectedCommand);
+          assert.equal(state.publication, "PUBLISHED");
+        }
+        assert.match(diagnostic, new RegExp(`(?:^|\\n)${phase} \\[then_run:`));
+        assert.equal(diagnostic.split(phase).length - 1, 1);
+        assert.equal((diagnostic.match(/\[then_run:(?:skipped|failed)\]/g) ?? []).length, 1);
+        assert.equal(
+          (diagnostic.match(/Command (?:skipped|failed|cancelled|timeout)\./g) ?? []).length,
+          1,
+        );
+        assert.ok(diagnostic.includes(`Command ${expectedCommand}.`));
+        assert.doesNotMatch(
+          diagnostic,
+          /the command was not run|then_run did not complete successfully/,
+        );
+        assert.equal(commands, scenario.startsWith("command ") ? 1 : 0);
+        if (stoppedDuringMutation && scenario !== "not started")
+          assert.equal((diagnostic.match(/mutation diagnostic/g) ?? []).length, 1);
+        if (scenario === "target changed") {
+          assert.match(
+            diagnostic,
+            /(?:^|\n)target content changed after the fused mutation(?:\n|$)/,
+          );
+          assert.equal(
+            (diagnostic.match(/target content changed after the fused mutation/g) ?? []).length,
+            1,
+          );
+          assert.equal(await readFile(target, "utf8"), "external\n");
+        } else if (scenario === "revision unreadable") {
+          assert.match(diagnostic, /(?:^|\n)unable to confirm the target revision: .*ENOENT/);
+        } else if (scenario.startsWith("command ")) {
+          assert.equal((diagnostic.match(/command diagnostic/g) ?? []).length, 1);
+          assert.equal(await readFile(target, "utf8"), "published\n");
+        }
+      });
+    }
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});

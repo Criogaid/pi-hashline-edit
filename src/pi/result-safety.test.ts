@@ -44,8 +44,8 @@ const invoke = (
 ) => callTool(tool, args, { toolCallId, signal, onUpdate, ctx: context });
 
 function assertFailureByteBudgets(message: string): void {
-  const checksAt = message.indexOf("\nInput-anchor checks (this snapshot):\n");
-  const guidanceAt = message.indexOf("\nCheck the intended target before retrying;", checksAt);
+  const checksAt = message.indexOf("\nInput-anchor checks (");
+  const guidanceAt = message.lastIndexOf("\nBefore reusing ");
   const neighborhoodsAt = message.indexOf("\nAmbiguous-candidate neighborhoods", checksAt);
   assert.ok(checksAt > 0 && guidanceAt > checksAt);
   assert.ok(Buffer.byteLength(message.slice(0, checksAt)) <= MAX_BLOCK_BYTES);

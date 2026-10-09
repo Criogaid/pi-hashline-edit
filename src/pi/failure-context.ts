@@ -2,6 +2,11 @@
  * Bounded anchor-failure diagnostics for edit: failure details with recovery
  * candidates, input-anchor checks, and ambiguous-candidate neighborhoods.
  *
+ * Each statement has one owner. Failure details state facts, including that
+ * nothing was written; the input-anchor table header qualifies its statuses;
+ * observation labels stay with the rows they qualify. The recovery instruction
+ * follows every bounded block once, so no truncation removes it.
+ *
  * @module pi-hashline-edit/pi
  */
 
@@ -14,6 +19,12 @@ import { formatKiB, MAX_BLOCK_BYTES, MAX_RECOVERY_CANDIDATE_BYTES } from "./budg
 
 const CONTEXT_RADIUS = 3;
 const MAX_AMBIGUOUS_CANDIDATES = 8;
+
+/** Publication fact for every rejected edit batch. */
+const NO_CHANGES_WRITTEN = "No changes written by this edit batch.";
+/** The single recovery instruction for anchor failures; details and checks state facts only. */
+const ANCHOR_RECOVERY_GUIDANCE =
+  "Before reusing a candidate or observed anchor, confirm it is the intended target; use read or grep for omitted rows, out-of-range lines, or more context. Retries verify every anchor again.";
 
 /** Select the shared candidate prefix for detail lists and observation neighborhoods. */
 export function selectAmbiguousCandidates(candidates: readonly Anchor[]): readonly Anchor[] {
@@ -128,21 +139,19 @@ function boundDiagnostic(message: string, notice: string): string {
   const bounded = truncateHead(message, { maxBytes: MAX_BLOCK_BYTES - Buffer.byteLength(notice) });
   return bounded.content + (bounded.truncated ? notice : "");
 }
-/** Format failure mappings and complete unique-candidate rows within the detail budget. */
-function formatFailureDetails(
-  failure: ApplyFailure,
+/** Describe anchor failures as facts: the outcome headline, then candidates or observed rows per failure. */
+function describeAnchorFailures(
+  failures: readonly AnchorFailure[],
   snapshot: Readonly<{ currentText: string; anchors: AnchorFormatter }>,
   candidateLines: ReadonlySet<number>,
-): string {
-  if (failure.kind !== "anchor") return failure.message;
-
+): string[] {
   const lines: string[] = [];
   const currentLines = splitLines(snapshot.currentText);
   const shownCandidates = new Set(candidateLines);
   let found = 0;
   let ambiguous = 0;
   let none = 0;
-  for (const f of failure.failures) {
+  for (const f of failures) {
     if (f.recovery.kind === "found") found++;
     else if (f.recovery.kind === "ambiguous") ambiguous++;
     else none++;
@@ -187,18 +196,13 @@ function formatFailureDetails(
       case "none": {
         const row =
           f.current === null ? null : snapshot.anchors.row(f.cited.line, f.current.content);
-        if (row !== null && Buffer.byteLength(row, "utf8") <= MAX_RECOVERY_CANDIDATE_BYTES) {
-          lines.push(
-            `• ${where}: no checksum-matching candidate found. Current cited line (validation snapshot; observation only):\n${row}\nConfirm this is the intended target before reusing its anchor directly; retries revalidate.`,
-          );
-        } else {
-          lines.push(
-            `• ${where}: no checksum-matching candidate found. Use read or grep to inspect the current file before retrying.` +
-              (f.current === null
-                ? " Cited line is out of range."
-                : ` Current row exceeds ${formatKiB(MAX_RECOVERY_CANDIDATE_BYTES)}.`),
-          );
-        }
+        const observation =
+          row === null
+            ? " Cited line is out of range."
+            : Buffer.byteLength(row, "utf8") <= MAX_RECOVERY_CANDIDATE_BYTES
+              ? ` Current cited line (observation only):\n${row}`
+              : ` Current row exceeds ${formatKiB(MAX_RECOVERY_CANDIDATE_BYTES)}.`;
+        lines.push(`• ${where}: no checksum-matching candidate found.${observation}`);
         break;
       }
     }
@@ -207,34 +211,41 @@ function formatFailureDetails(
   if (found) parts.push(`${found} shifted`);
   if (ambiguous) parts.push(`${ambiguous} ambiguous`);
   if (none) parts.push(`${none} unresolved`);
-  const message = [
-    `Anchor mismatch: ${parts.join(", ")}.`,
-    "No changes written by this edit batch.",
-    ...lines,
-  ].join("\n");
+  return [`Anchor mismatch: ${parts.join(", ")}.`, ...lines];
+}
+
+/** Format the failure headline, the publication fact, and per-failure facts within the detail budget. */
+function formatFailureDetails(
+  failure: ApplyFailure,
+  snapshot: Readonly<{ currentText: string; anchors: AnchorFormatter }>,
+  candidateLines: ReadonlySet<number>,
+): string {
+  const [headline, ...facts] =
+    failure.kind === "anchor"
+      ? describeAnchorFailures(failure.failures, snapshot, candidateLines)
+      : [failure.message];
   return boundDiagnostic(
-    message,
+    [headline, NO_CHANGES_WRITTEN, ...facts].join("\n"),
     `\nDiagnostic output truncated at ${formatKiB(MAX_BLOCK_BYTES)}.`,
   );
 }
 
+/** The header qualifies every status, so the qualification survives truncation of the rows. */
 function formatAnchorChecks(failure: ApplyFailure, anchors: AnchorFormatter): string {
   const rows = failure.checks.map(
     (check) =>
       `op ${check.opIndex} / ${check.which} / ${anchors.reference(check.cited.line, check.cited.hash)} / ${check.status}`,
   );
-  const message = [
-    "Input-anchor checks (this snapshot):",
-    ...rows,
-    "Anchor checks only; retries revalidate.",
-  ].join("\n");
   return boundDiagnostic(
-    message,
+    ["Input-anchor checks (checksum only; this snapshot):", ...rows].join("\n"),
     `\nAnchor-check output truncated at ${formatKiB(MAX_BLOCK_BYTES)}; omitted entries are not implied matched.`,
   );
 }
 
-/** Keep validation status and observation context visible even when failure details are truncated. */
+/**
+ * Join the independently bounded fact blocks, then state the recovery instruction once.
+ * Validation status and observation context stay visible even when failure details are truncated.
+ */
 export function formatFailure(
   failure: ApplyFailure,
   snapshot: Readonly<{ currentText: string; anchors: AnchorFormatter }>,
@@ -248,10 +259,7 @@ export function formatFailure(
           snapshot.anchors,
         )
       : { text: "", shownLines: new Set<number>() };
-  const guidance =
-    failure.kind === "anchor"
-      ? "\nCheck the intended target before retrying; use read or grep for omitted or additional context."
-      : "";
+  const guidance = failure.kind === "anchor" ? `\n${ANCHOR_RECOVERY_GUIDANCE}` : "";
   const anchorChecks =
     isBatch && failure.checks.length > 0
       ? `\n${formatAnchorChecks(failure, snapshot.anchors)}`

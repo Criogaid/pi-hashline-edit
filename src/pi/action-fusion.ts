@@ -27,7 +27,7 @@ import { Type, type Static, type TObject, type TProperties } from "typebox";
 import { fileRevision, FileMutationError, type PublicationStatus } from "./file-commit.ts";
 import { commitFreshness, finalizeMutation, type MutationOutcome } from "./mutation-result.ts";
 import { errorMessage } from "../core/errors.ts";
-import { FileChangedDuringReadError, OPERATION_ABORTED, throwIfCancelled } from "./error-text.ts";
+import { FileChangedDuringReadError, throwIfCancelled } from "./error-text.ts";
 
 const MILLISECONDS_PER_SECOND = 1_000;
 
@@ -170,13 +170,19 @@ async function assertUnchangedBeforeCommand(path: string, baseline: string): Pro
   } catch (error) {
     // The mutation is already published; a concurrent change must not suggest retrying it.
     if (!(error instanceof FileChangedDuringReadError))
-      throw new Error(`${THEN_RUN_SKIPPED} ${errorMessage(error)}; the command was not run.`);
+      throw new Error(`unable to confirm the target revision: ${errorMessage(error)}`, {
+        cause: error,
+      });
   }
-  throw new Error(
-    `${THEN_RUN_SKIPPED} target content changed after the fused mutation; the command was not run.`,
-  );
+  // Only the cause: ActionFusionError states the skipped command and the file state.
+  throw new Error("target content changed after the fused mutation");
 }
 
+/**
+ * Fused failure text with one owner per fact: `message` names only the mutation
+ * phase, the then_run tag and status line report the command outcome and file
+ * state, and the cause supplies the reason. Callers never restate the command outcome.
+ */
 export class ActionFusionError extends Error {
   readonly publication: PublicationStatus;
   readonly command: CommandStatus;
@@ -392,7 +398,7 @@ export function createActionFusionExecutor(
       } catch (error) {
         if (thenRun !== undefined)
           throw new ActionFusionError(
-            `${OPERATION_ABORTED} before the mutation started; the command was not run`,
+            "mutation not started",
             { publication: "NOT_PUBLISHED", command: "cancelled", freshness: "unknown" },
             {
               cause: error,
@@ -411,7 +417,7 @@ export function createActionFusionExecutor(
           error instanceof FileMutationError ? error.publication : "NOT_PUBLISHED";
         if (thenRun !== undefined) {
           throw new ActionFusionError(
-            `mutation ${error instanceof FileMutationError ? error.stage : "failed"}; the command was not run`,
+            `mutation ${error instanceof FileMutationError ? error.stage : "failed"}`,
             { publication, command: "skipped", freshness: "unknown" },
             {
               cause: error,
@@ -440,7 +446,7 @@ export function createActionFusionExecutor(
       } catch (error) {
         const freshness = await readFreshness(absolutePath, baseline);
         throw new ActionFusionError(
-          "mutation completed; the command was not run",
+          "mutation completed",
           { publication, command: signal?.aborted ? "cancelled" : "skipped", freshness },
           {
             cause: error,
@@ -492,7 +498,7 @@ export function createActionFusionExecutor(
       const freshness = await readFreshness(absolutePath, baseline);
       if (command.status !== "succeeded") {
         throw new ActionFusionError(
-          "mutation completed; then_run did not complete successfully",
+          "mutation completed",
           { publication, command: command.status, freshness },
           { cause: commandError ?? output, commandOutput: output },
         );

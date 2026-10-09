@@ -51,7 +51,8 @@ export type LineEnding = "lf" | "crlf";
  *   checks its content before resending with the provided anchor.
  * - `ambiguous` — several lines match; the caller inspects the candidates
  *   and chooses the intended target.
- * - `none` — no candidate found, or recovery disabled; re-read.
+ * - `none` — no candidate found, or recovery disabled; the caller checks the
+ *   current cited line, if any, or re-reads.
  */
 export type AnchorRecovery =
   | {

@@ -8,7 +8,7 @@ Overrides `read`, `grep`, `edit`, and `write`, and adds `replace` for bulk trans
 
 - **Search → edit:** `read` and `grep` return the same `LINE#HASH` anchors, so search results can feed directly into edits.
 - **Batch and chain edits:** submit structured JSON operations together, then use the returned fresh anchors for the next change.
-- **Recover from stale anchors:** rejected edits show a unique checksum-matching candidate's line, or neighborhoods around ambiguous candidates for comparison. With no candidate, they ask the model to re-read the file. Recovery never applies automatically.
+- **Recover from stale anchors:** rejected edits show a unique checksum-matching candidate's line, or neighborhoods around ambiguous candidates for comparison. With no candidate, they show the current cited row as an observation. One closing instruction asks the model to confirm the target or re-read. Recovery never applies automatically.
 - **Edit → test:** Action Fusion lets a mutation include an optional follow-up command, with separate file and command outcomes and separate TUI cards.
 
 [Quick start](#quick-start) · [Tools](#tools) · [Configuration](#configuration) · [Action Fusion](#action-fusion) · [Safety and design](#safety-and-design)
@@ -183,11 +183,11 @@ inspect the result and resubmit.
 ```
 
 - Candidates are found by hashing each line's current content with the **cited** line number; each returned anchor uses the candidate's actual line number, so the details show both the old and current positions. Diagnostics say `Search: local` or `Search: full file`. A unique local candidate does not establish uniqueness across the file, because matches outside the window were not checked.
-- A unique candidate shows its new anchor and complete row once, without a neighborhood. Rows over 4 KiB are omitted in full with a prompt to use `read` or `grep`.
+- A unique candidate shows its new anchor and complete row once, without a neighborhood. Rows over 4 KiB are omitted in full.
 - Ambiguous neighborhoods come from the same snapshot, are clipped to file boundaries, merged, and emitted in ascending line order within byte budgets. Their rows are observations, not suggested targets; candidate content already shown there is not repeated in the failure details.
-- With no candidate, the current cited row is shown as a complete `LINE#HASH│content` observation within the 4 KiB row limit. Confirm it is the intended target before reusing its anchor; use `read` or `grep` for more context, omitted rows, or out-of-range lines.
+- With no candidate, the current cited row is shown as a complete `LINE#HASH│content` observation within the 4 KiB row limit. Oversized and out-of-range rows are reported without content.
 
-Every submitted anchor is verified again on retry.
+Each part of a rejection states its facts once. Failure details start with the outcome and the statement that the batch wrote nothing; range and overlap rejections include the same statement. The input-anchor table header marks every status as a checksum check in this snapshot. After all diagnostic blocks, one instruction covers every anchor failure: confirm that a candidate or observed anchor is the intended target before reusing it, and use `read` or `grep` for omitted rows, out-of-range lines, or more context. Every submitted anchor is verified again on retry.
 
 ### Bulk replacement
 
@@ -437,7 +437,7 @@ These limits bound model context, not file size. Omission notices direct the cal
 | Input-anchor checks | Independent 16 KiB block, with no fixed entry-count limit. Truncation is reported explicitly; omitted entries are not implied matched. |
 | Ambiguous-candidate neighborhoods | 16 KiB of complete anchored row text, lowest-line first, plus headings; no fixed row-count limit. Uses the same first eight candidates per failure as the detail lists. Each listed candidate row is limited to 4 KiB. Rows exceeding either limit are omitted in full; later rows that fit are still returned, with gaps reflected in the neighborhood headings. |
 
-The diagnostic blocks have independent budgets; their combined output can exceed 16 KiB. Truncation notices identify exhausted budgets; context windows also report shown/omitted row counts. Limits apply to rendered diagnostics; core failure results retain all input-anchor checks.
+The diagnostic blocks have independent budgets; their combined output can exceed 16 KiB. Truncation notices identify exhausted budgets; context windows also report shown/omitted row counts. The closing recovery instruction is outside every budget. Limits apply to rendered diagnostics; core failure results retain all input-anchor checks.
 
 ### Publication
 
