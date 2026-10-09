@@ -79,6 +79,8 @@ Valid UTF-8 text inspection and matching uses one logical representation: CRLF b
 
 All six tools use one argument-validation entry point. Tool-specific checks collect independent issues instead of stopping at the first one. For example, an edit batch can report empty bodies, unwritable text, invalid anchor lengths, and invalid `then_run` fields in one rejection. Failure diagnostics select the schema branch identified by a recognised operation; unknown or ambiguous tags retain the original union diagnostics. A tool-specific explanation replaces schema messages for the same value, so an empty edit body receives one actionable message. Other schema failures are diagnosed per top-level field, so one field cannot consume another field's diagnostic allowance. Received arguments use compact JSON in both model-facing errors and the TUI. When schema diagnostics remain, the response states that Pi limits errors within each field. The original schema still controls whether arguments are accepted.
 
+Within an edit operation, omit an optional `end` when no range is needed. `end: null` remains a schema error, including when other arguments are invalid.
+
 Argument diagnostics share the 16 KiB block budget in [`budgets.ts`](src/pi/budgets.ts), retain opening and closing text, and label omitted text. Invalid arguments prevent execution. Filesystem access, anchor verification, regex probing by ripgrep, and forget eligibility remain subsequent checks that require valid arguments.
 
 ### Edit operations

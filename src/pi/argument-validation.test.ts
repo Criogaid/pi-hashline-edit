@@ -199,3 +199,24 @@ test("unknown edit operation → retain schema rejection instead of guessing a b
     /Validation failed for tool "edit":[\s\S]*edits\.0\.op:/,
   );
 });
+
+test("edit range end is null → preserve the original rejection and its field diagnostic", async () => {
+  const tool = makeEditOverride(process.cwd(), DEFAULT_CONFIG);
+  for (const operation of [
+    { op: "delete", anchor: `1#${anchorHash}`, end: null },
+    { op: "replace", anchor: `1#${anchorHash}`, end: null, body: ["ok"] },
+    { op: "replace", anchor: `1#${anchorHash}`, end: null, body: [] },
+  ]) {
+    await assert.rejects(
+      callTool(tool, { path: "unused.txt", edits: [operation] }),
+      (error: Error) => {
+        assert.match(error.message, /- edits\.0\.end:/);
+        assert.doesNotMatch(error.message, /- edits\.0\.op:/);
+        if (operation.body?.length === 0) {
+          assert.match(error.message, /Invalid argument edits\[0\]\.body:/);
+        }
+        return true;
+      },
+    );
+  }
+});

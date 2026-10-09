@@ -77,10 +77,11 @@ function diagnosticSchema(
           Value.Check(branch.properties[tag], Reflect.get(value, tag)),
         );
         if (matches.length === 1) {
-          return {
-            ...UnionOptions(schema),
-            ...diagnosticSchema(matches[0], value, path, explained),
-          };
+          // Keep the union boundary: Pi normalizes optional nulls only inside object schemas.
+          return Type.Union(
+            [diagnosticSchema(matches[0], value, path, explained)],
+            UnionOptions(schema),
+          );
         }
       }
     }
