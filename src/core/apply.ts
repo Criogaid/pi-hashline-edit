@@ -40,6 +40,7 @@ import type {
   AnchorCheck,
   AnchorFailure,
   AnchorRecovery,
+  ApplyFailure,
   ApplyResult,
   Edit,
 } from "./types.ts";
@@ -127,7 +128,9 @@ function verifyAnchor(
 type TranslateResult =
   | { readonly ok: true; readonly ops: readonly SpanOp[]; readonly checks: AnchorCheck[] }
   | { readonly ok: false; readonly anchorFailures: AnchorFailure[]; readonly checks: AnchorCheck[] }
-  | { readonly ok: false; readonly rangeError: string; readonly checks: AnchorCheck[] };
+  | { readonly ok: false; readonly rangeError: RangeError; readonly checks: AnchorCheck[] };
+
+type RangeError = Pick<Extract<ApplyFailure, { kind: "range" }>, "code" | "message">;
 
 function checkedAnchor(
   edit: Edit,
@@ -187,7 +190,10 @@ function translateEdit(
       if (endLine < edit.start.line)
         return {
           ok: false,
-          rangeError: `range ${edit.start.line}..${endLine} ends before it starts`,
+          rangeError: {
+            code: "INVALID_RANGE",
+            message: `Range ${edit.start.line}..${endLine} ends before it starts.`,
+          },
           checks,
         };
       if (destination) {
@@ -196,7 +202,10 @@ function translateEdit(
         if (edit.op === "move" && sourceLo < gap && gap < endLine) {
           return {
             ok: false,
-            rangeError: `destination ${destination.which} line ${destination.cited.line} lies inside moved range ${edit.start.line}..${endLine}`,
+            rangeError: {
+              code: "INVALID_RANGE",
+              message: `Destination ${destination.which} line ${destination.cited.line} lies inside moved range ${edit.start.line}..${endLine}.`,
+            },
             checks,
           };
         }
@@ -276,7 +285,7 @@ export function applyEdits(
   const ops: SpanOp[] = [];
   const anchorFailures: AnchorFailure[] = [];
   const anchorChecks: AnchorCheck[] = [];
-  let rangeError: string | null = null;
+  let rangeError: RangeError | null = null;
 
   for (let i = 0; i < edits.length; i++) {
     const t = translateEdit(edits[i], i, lines, hashLen, shiftRadius);
@@ -299,7 +308,7 @@ export function applyEdits(
     };
   }
   if (rangeError !== null) {
-    return { ok: false, failure: { kind: "range", message: rangeError, checks: anchorChecks } };
+    return { ok: false, failure: { kind: "range", ...rangeError, checks: anchorChecks } };
   }
 
   const sorted = [...ops].sort((a, b) => a.lo - b.lo || a.hi - b.hi);
@@ -309,7 +318,8 @@ export function applyEdits(
       ok: false,
       failure: {
         kind: "range",
-        message: `overlapping edits near line ${sorted[conflict].lo + 1}; issue one edit per range`,
+        code: "OVERLAPPING_EDITS",
+        message: `Edits overlap near line ${sorted[conflict].lo + 1}.`,
         checks: anchorChecks,
       },
     };

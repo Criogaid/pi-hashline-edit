@@ -18,7 +18,7 @@ import { executeMutation, type ActionFusionExecutor } from "./mutation-runner.ts
 import { MUTATION_TOOL_GUIDELINE } from "./tool-prompts.ts";
 import { throwIfCancelled } from "./error-text.ts";
 import { createArgumentPreparer } from "./argument-validation.ts";
-import { unwritableTextReason } from "../core/text.ts";
+import { unwritableTextError } from "../core/text.ts";
 import { renderToolError } from "./render.ts";
 
 const writeSchema = Type.Object(
@@ -57,8 +57,8 @@ export function makeWriteOverride(cwd: string, fusion?: ActionFusionExecutor) {
     parameters,
     prepareArguments: createArgumentPreparer("write", parameters, (args, report) => {
       const content = (args as { content?: unknown } | null)?.content;
-      const reason = typeof content === "string" ? unwritableTextReason(content) : undefined;
-      if (reason) report("content", reason);
+      const unwritable = typeof content === "string" ? unwritableTextError(content) : undefined;
+      if (unwritable) report("content", unwritable.message);
     }),
     renderShell: "default" as const,
     renderCall(args: WriteParams, theme: Theme, context: WriteRenderContext) {
@@ -82,17 +82,18 @@ export function makeWriteOverride(cwd: string, fusion?: ActionFusionExecutor) {
     ) {
       return executeMutation<Omit<WriteParams, "then_run">, WriteDetails>(
         {
+          tool: "write",
           cwd,
           fusion,
           async run(mutationParams, { absolutePath, displayPath, signal }) {
-            throwIfCancelled(signal, `before write; ${displayPath} was not changed.`);
+            throwIfCancelled(signal);
             const result = await commitFile(absolutePath, mutationParams.content, {
               mode: mutationParams.mode,
               signal,
             });
             return {
               commit: result,
-              result: postProcessMutation("write", result.publication, () => ({
+              result: postProcessMutation(result.publication, () => ({
                 content: [
                   {
                     type: "text" as const,

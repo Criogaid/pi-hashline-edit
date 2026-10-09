@@ -26,8 +26,9 @@ import type { ExtensionToolContext } from "@earendil-works/pi-coding-agent";
 import { Type, type Static, type TObject, type TProperties } from "typebox";
 import { fileRevision, FileMutationError, type PublicationStatus } from "./file-commit.ts";
 import { commitFreshness, finalizeMutation, type MutationOutcome } from "./mutation-result.ts";
-import { errorMessage } from "../core/errors.ts";
+import { errnoCode, errorMessage } from "../core/errors.ts";
 import { FileChangedDuringReadError, throwIfCancelled } from "./error-text.ts";
+import { AnnotatedError, unannotated } from "./tool-error.ts";
 
 const MILLISECONDS_PER_SECOND = 1_000;
 
@@ -149,84 +150,78 @@ function withFusionDetails<TDetails>(
   } as MutationResult<TDetails>;
 }
 
+/** A failed revision read: a concurrent write or a deletion is itself an observation. */
+function freshnessOfFailedRead(error: unknown): Freshness {
+  // A write observed during the read has already moved the target off the published revision.
+  if (error instanceof FileChangedDuringReadError) return "changed";
+  return errnoCode(error) === "ENOENT" ? "missing" : "unknown";
+}
+
 async function readFreshness(path: string, baseline: string): Promise<Freshness> {
   try {
     return (await fileRevision(path)) === baseline ? "unchanged" : "changed";
   } catch (error) {
-    // A write observed during the read has already moved the target off the published revision.
-    if (error instanceof FileChangedDuringReadError) return "changed";
-    if (typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT")
-      return "missing";
-    return "unknown";
+    return freshnessOfFailedRead(error);
   }
 }
 
-async function assertUnchangedBeforeCommand(path: string, baseline: string): Promise<void> {
+const COMMAND_CANCELLED = "Not run because the operation was cancelled.";
+/** Shown on the command card only: the result's stale notice already tells the model. */
+const TARGET_CHANGED = "Not run because the target changed after the mutation.";
+
+/**
+ * The target's freshness before the command starts and, unless it is still the
+ * published revision, why the command must not start. Two reads across a turn
+ * of the event loop catch a write in progress.
+ */
+async function observeBeforeCommand(
+  path: string,
+  baseline: string,
+): Promise<{ freshness: Freshness; blocker?: string }> {
   try {
     const before = await fileRevision(path);
     await new Promise<void>((resolve) => setImmediate(resolve));
     const after = await fileRevision(path);
-    if (before === baseline && after === baseline) return;
+    return before === baseline && after === baseline
+      ? { freshness: "unchanged" }
+      : { freshness: "changed", blocker: TARGET_CHANGED };
   } catch (error) {
     // The mutation is already published; a concurrent change must not suggest retrying it.
-    if (!(error instanceof FileChangedDuringReadError))
-      throw new Error(`unable to confirm the target revision: ${errorMessage(error)}`, {
-        cause: error,
-      });
+    const freshness = freshnessOfFailedRead(error);
+    return {
+      freshness,
+      blocker:
+        freshness === "changed"
+          ? TARGET_CHANGED
+          : `Target revision could not be read: ${errorMessage(error)}`,
+    };
   }
-  // Only the cause: ActionFusionError states the skipped command and the file state.
-  throw new Error("target content changed after the fused mutation");
 }
 
 /**
- * Fused failure text with one owner per fact: `message` names only the mutation
- * phase, the then_run tag and status line report the command outcome and file
- * state, and the cause supplies the reason. Callers never restate the command outcome.
+ * The command's own outcome block after a completed mutation: the then_run tag,
+ * the reason it did not run or finish, then its output. The mutation summary
+ * above it owns the file state.
  */
-export class ActionFusionError extends Error {
-  readonly publication: PublicationStatus;
-  readonly command: CommandStatus;
-  readonly freshness: Freshness;
-  readonly commandOutput: string;
-  readonly commandReason: string | undefined;
+function commandOutcomeText(
+  command: Exclude<CommandStatus, "not_requested">,
+  output: string,
+  reason?: string,
+): string {
+  const tag =
+    command === "succeeded"
+      ? THEN_RUN_SUCCEEDED
+      : command === "skipped" || command === "cancelled"
+        ? THEN_RUN_SKIPPED
+        : THEN_RUN_FAILED;
+  const why = reason ?? (command === "cancelled" ? "Cancelled while running." : undefined);
+  return [why ? `${tag} ${why}` : tag, output].filter(Boolean).join("\n");
+}
 
-  constructor(
-    message: string,
-    state: { publication: PublicationStatus; command: CommandStatus; freshness: Freshness },
-    options?: {
-      cause?: unknown;
-      mutationFailure?: boolean;
-      commandOutput?: string;
-      commandReason?: string;
-      rawMessage?: boolean;
-    },
-  ) {
-    if (options?.rawMessage) {
-      super(message, options);
-    } else {
-      const fileState =
-        state.publication === "PUBLISHED"
-          ? "File changes are saved."
-          : state.publication === "NOT_PUBLISHED"
-            ? "No file changes were published."
-            : "File state is uncertain.";
-      const outcome = `${message} ${state.command === "skipped" || state.command === "cancelled" ? THEN_RUN_SKIPPED : state.command === "succeeded" ? THEN_RUN_SUCCEEDED : THEN_RUN_FAILED}\n${fileState} Command ${state.command}.`;
-      const diagnostic = options?.cause === undefined ? "" : errorMessage(options.cause);
-      // Pi serializes only the message. Put the mutation's own error first for its card.
-      super(
-        (options?.mutationFailure ? [diagnostic, outcome] : [outcome, diagnostic])
-          .filter(Boolean)
-          .join("\n"),
-        options,
-      );
-    }
-    this.commandOutput = options?.commandOutput ?? "";
-    this.commandReason = options?.commandReason;
-    this.name = "ActionFusionError";
-    this.publication = state.publication;
-    this.command = state.command;
-    this.freshness = state.freshness;
-  }
+/** Publication of a mutation failure, for progress reports; the error record states it to the model. */
+function publicationOf(error: unknown): PublicationStatus {
+  const failure = unannotated(error);
+  return failure instanceof FileMutationError ? failure.publication : "NOT_PUBLISHED";
 }
 
 async function defaultCommandRunner(
@@ -391,21 +386,21 @@ export function createActionFusionExecutor(
         }
       }
     };
+    /** A mutation that did not complete keeps its own record; then_run states the command was not run. */
+    const notRun = (error: unknown, command: "skipped" | "cancelled", reason: string) => {
+      report(command, publicationOf(error), "unknown", "", reason);
+      return new AnnotatedError(error, {
+        then_run: command,
+        ...(progressFailure ? { progressReportingFailed: progressFailure } : {}),
+      });
+    };
     report("waiting", "NOT_PUBLISHED", "unknown");
     return withQueue(absolutePath, async () => {
       try {
         throwIfCancelled(signal);
       } catch (error) {
         if (thenRun !== undefined)
-          throw new ActionFusionError(
-            "mutation not started",
-            { publication: "NOT_PUBLISHED", command: "cancelled", freshness: "unknown" },
-            {
-              cause: error,
-              mutationFailure: true,
-              commandReason: "Not run because the mutation was cancelled.",
-            },
-          );
+          throw notRun(error, "cancelled", "Not run because the mutation was cancelled.");
         throw error;
       }
       let outcome: MutationOutcome<TDetails>;
@@ -413,19 +408,8 @@ export function createActionFusionExecutor(
         outcome = await mutate();
         completedMutation = outcome;
       } catch (error) {
-        const publication =
-          error instanceof FileMutationError ? error.publication : "NOT_PUBLISHED";
-        if (thenRun !== undefined) {
-          throw new ActionFusionError(
-            `mutation ${error instanceof FileMutationError ? error.stage : "failed"}`,
-            { publication, command: "skipped", freshness: "unknown" },
-            {
-              cause: error,
-              mutationFailure: true,
-              commandReason: "Not run because the mutation did not complete.",
-            },
-          );
-        }
+        if (thenRun !== undefined)
+          throw notRun(error, "skipped", "Not run because the mutation did not complete.");
         throw error;
       }
 
@@ -439,28 +423,29 @@ export function createActionFusionExecutor(
           freshness,
         });
       }
-      try {
-        throwIfCancelled(signal);
-        await assertUnchangedBeforeCommand(absolutePath, baseline);
-        throwIfCancelled(signal);
-      } catch (error) {
-        const freshness = await readFreshness(absolutePath, baseline);
-        throw new ActionFusionError(
-          "mutation completed",
-          { publication, command: signal?.aborted ? "cancelled" : "skipped", freshness },
-          {
-            cause: error,
-            commandReason: signal?.aborted
-              ? "Not run because the operation was cancelled."
-              : "Not run because the target revision could not be confirmed.",
-          },
+      // A completed mutation remains successful; the command outcome is its own block.
+      const settle = (
+        command: Exclude<CommandStatus, "not_requested">,
+        freshness: Freshness,
+        output: string,
+        reason?: string,
+      ) => {
+        report(command, publication, freshness, output, reason);
+        return withFusionDetails(
+          finalizeMutation(outcome, freshness === "unchanged", THEN_RUN_STALE),
+          { publication, command, freshness },
+          // The stale notice above the command block already states a changed target.
+          commandOutcomeText(command, output, reason === TARGET_CHANGED ? undefined : reason),
         );
-      }
+      };
+      const observed = await observeBeforeCommand(absolutePath, baseline);
+      if (signal?.aborted) return settle("cancelled", observed.freshness, "", COMMAND_CANCELLED);
+      if (observed.blocker !== undefined)
+        return settle("skipped", observed.freshness, "", observed.blocker);
 
       report("running", publication, "unchanged");
       let output = "";
       let command: CommandOutcome;
-      let commandError: unknown;
       // The executor owns the heartbeat lifetime; Pi Bash owns timeout and process cleanup.
       let heartbeat: ReturnType<typeof setInterval> | undefined;
       try {
@@ -488,78 +473,18 @@ export function createActionFusionExecutor(
         });
         output = command.output;
       } catch (error) {
-        commandError = error;
         output = errorMessage(error);
         command = { status: signal?.aborted ? "cancelled" : "failed", output };
       } finally {
         if (heartbeat) clearInterval(heartbeat);
       }
       commandTermination = command.terminate;
-      const freshness = await readFreshness(absolutePath, baseline);
-      if (command.status !== "succeeded") {
-        throw new ActionFusionError(
-          "mutation completed",
-          { publication, command: command.status, freshness },
-          { cause: commandError ?? output, commandOutput: output },
-        );
-      }
-
-      report("succeeded", publication, freshness, output);
-      return withFusionDetails(
-        finalizeMutation(outcome, freshness === "unchanged", THEN_RUN_STALE),
-        { publication, command: "succeeded", freshness },
-        `${THEN_RUN_SUCCEEDED}${output ? `\n${output}` : ""}`,
-      );
+      return settle(command.status, await readFreshness(absolutePath, baseline), output);
     })
       .catch((error: unknown) => {
-        report(
-          error instanceof ActionFusionError
-            ? (error.command as ActionFusionProgress["command"])
-            : "skipped",
-          error instanceof ActionFusionError || error instanceof FileMutationError
-            ? error.publication
-            : (completedMutation?.commit.publication ?? "NOT_PUBLISHED"),
-          error instanceof ActionFusionError ? error.freshness : "unknown",
-          error instanceof ActionFusionError ? error.commandOutput : "",
-          error instanceof ActionFusionError
-            ? error.commandReason
-            : "Not run because the mutation did not complete.",
-        );
-        // A completed mutation remains successful; command failure belongs to its own card.
-        if (completedMutation && error instanceof ActionFusionError) {
-          return withFusionDetails(
-            finalizeMutation(completedMutation, error.freshness === "unchanged", THEN_RUN_STALE),
-            { publication: error.publication, command: error.command, freshness: error.freshness },
-            error.message,
-          );
-        }
-        {
-          const parts: string[] = [errorMessage(error)];
-          if (error instanceof ActionFusionError && error.publication !== "NOT_PUBLISHED")
-            parts.push("Re-read before retrying.");
-          if (progressFailure) parts.push(`Progress reporting failed: ${progressFailure}`);
-          if (parts.length > 1 || !(error instanceof Error)) {
-            const wrapped =
-              error instanceof ActionFusionError
-                ? new ActionFusionError(
-                    parts.join("\n"),
-                    {
-                      publication: error.publication,
-                      command: error.command,
-                      freshness: error.freshness,
-                    },
-                    {
-                      cause: error,
-                      commandOutput: error.commandOutput,
-                      commandReason: error.commandReason,
-                      rawMessage: true,
-                    },
-                  )
-                : new Error(parts.join("\n"), { cause: error });
-            throw wrapped;
-          }
-          throw error;
-        }
+        // Failures before the mutation started (such as resolving the queue key) also skip the command.
+        if (thenRun === undefined || error instanceof AnnotatedError) throw error;
+        throw notRun(error, "skipped", "Not run because the mutation did not complete.");
       })
       .then((result) => {
         const finalResult =

@@ -1,7 +1,7 @@
 import { stat } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { canonicalPath } from "./path.ts";
-import { COMMON_RG_ARGS } from "./rg-process.ts";
+import { COMMON_RG_ARGS, ripgrepFailure } from "./rg-process.ts";
 import {
   recordSearchDiagnostics,
   scopeArgs,
@@ -9,6 +9,7 @@ import {
   type SearchScope,
 } from "./grep-search.ts";
 import { throwIfCancelled } from "./error-text.ts";
+import { errnoCode, HashlineError } from "../core/errors.ts";
 
 const REGEX_PARSE_ERROR = /^(?:rg: )?regex parse error:/m;
 /**
@@ -17,11 +18,11 @@ const REGEX_PARSE_ERROR = /^(?:rg: )?regex parse error:/m;
  */
 const NON_RUST_REGEX_SYNTAX = /(?:^|[^\\])(?:\\\\)*(?:\(\?<?[=!]|\\[1-9]|\\k<)/;
 
-/** Explain a parse failure caused by another regex dialect's syntax, if the query contains any. */
-function regexDialectHint(patterns: readonly string[]): string | undefined {
+/** Recovery for a parse failure: another dialect's syntax if the query contains any, else literal search. */
+function invalidRegexNext(patterns: readonly string[]): string {
   return patterns.some((pattern) => NON_RUST_REGEX_SYNTAX.test(pattern))
-    ? "ripgrep's Rust regex has no lookaround or backreferences; rewrite the pattern, or use replace for a JavaScript regex within one file"
-    : undefined;
+    ? "Rewrite the pattern without lookaround or backreferences, or use replace for a JavaScript regex within one file."
+    : "Set literal to true to search the text exactly.";
 }
 
 /** Reject a regex query ripgrep cannot parse before any file is searched. */
@@ -36,10 +37,11 @@ export async function assertValidRegex(
   throwIfCancelled(signal);
   if (result.code === 0 || result.code === 1) return;
   if (result.code === 2 && REGEX_PARSE_ERROR.test(result.stderr)) {
-    const hint = regexDialectHint(patterns) ?? "set literal:true to search the text exactly";
-    throw new Error(`${result.stderr.trim()}\n${hint}.`);
+    throw new HashlineError("INVALID_REGEX", result.stderr.trim(), {
+      next: invalidRegexNext(patterns),
+    });
   }
-  throw new Error(result.stderr.trim() || `ripgrep exited with code ${result.code}`);
+  throw ripgrepFailure(result.stderr.trim() || `ripgrep exited with code ${result.code}.`);
 }
 
 /** Normalize a `string | string[]` param to an array (`undefined` → `[]`). */
@@ -63,13 +65,14 @@ export async function resolveSearchPaths(cwd: string, path: string | string[] | 
     try {
       pathInfo.push({ path: searchPath, isFile: (await stat(searchPath)).isFile() });
     } catch (error) {
-      const missing =
-        typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
-      if (!missing) throw error;
-      const hint = /[*?]/.test(searchPath)
-        ? " Use an existing directory as path and a filename wildcard as glob."
-        : "";
-      throw new Error(`Path not found: ${searchPath}${hint}`, { cause: error });
+      // Only a missing path is PATH_NOT_FOUND; other filesystem errors keep their cause.
+      if (errnoCode(error) !== "ENOENT") throw error;
+      throw new HashlineError("PATH_NOT_FOUND", `Path not found: ${searchPath}.`, {
+        cause: error,
+        ...(/[*?]/.test(searchPath)
+          ? { next: "Use an existing directory as path and a filename wildcard as glob." }
+          : {}),
+      });
     }
   }
   return { searchPaths, pathInfo };

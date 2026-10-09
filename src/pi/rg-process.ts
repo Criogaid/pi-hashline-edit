@@ -11,11 +11,22 @@ import { DiagnosticBuffer } from "./diagnostic-buffer.ts";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import type { Readable } from "node:stream";
 import { escapeRegex } from "../core/text.ts";
+import { errorMessage, HashlineError } from "../core/errors.ts";
 import { throwIfCancelled } from "./error-text.ts";
 
 export const COMMON_RG_ARGS = ["--no-config", "--color=never", "--no-crlf"];
 export const MAX_RG_RECORD_BYTES = 16 * 1024 * 1024;
-const RG_RECORD_LIMIT_MESSAGE = `ripgrep output record exceeds ${MAX_RG_RECORD_BYTES / 1024 ** 2} MiB`;
+const RG_RECORD_LIMIT_MESSAGE = `ripgrep output record exceeds ${MAX_RG_RECORD_BYTES / 1024 ** 2} MiB.`;
+/** A ripgrep process or output-protocol failure. */
+export function ripgrepFailure(message: string, cause?: unknown): HashlineError {
+  return new HashlineError("RIPGREP_FAILED", message, { cause });
+}
+
+/** rg reported a path that is not valid UTF-8; tools cannot address it. */
+function unsupportedPath(): HashlineError {
+  return new HashlineError("UNSUPPORTED_PATH", "Non-UTF-8 search paths are not supported.");
+}
+
 /** Bounded ripgrep stderr retains the beginning and end with an omission notice. */
 export const MAX_RG_STDERR_BYTES = 64 * 1024;
 /** Probe runs read only a short stdout; more means an unexpected rg mode. */
@@ -103,11 +114,11 @@ async function* delimitedRecords(stream: Readable, delimiter: number): AsyncGene
     pending = Buffer.alloc(0);
     let at: number;
     while ((at = buf.indexOf(delimiter)) !== -1) {
-      if (at > MAX_RG_RECORD_BYTES) throw new Error(RG_RECORD_LIMIT_MESSAGE);
+      if (at > MAX_RG_RECORD_BYTES) throw ripgrepFailure(RG_RECORD_LIMIT_MESSAGE);
       yield buf.subarray(0, at);
       buf = buf.subarray(at + 1);
     }
-    if (buf.length > MAX_RG_RECORD_BYTES) throw new Error(RG_RECORD_LIMIT_MESSAGE);
+    if (buf.length > MAX_RG_RECORD_BYTES) throw ripgrepFailure(RG_RECORD_LIMIT_MESSAGE);
     pending = buf;
   }
   if (pending.length) yield pending;
@@ -135,7 +146,8 @@ async function runDelimited(
     }
     const result = await process.done;
     throwIfCancelled(signal);
-    if (result.error) throw new Error(`Failed to run ripgrep: ${result.error.message}`);
+    if (result.error)
+      throw ripgrepFailure(`Failed to run ripgrep: ${errorMessage(result.error)}`, result.error);
     return { code: result.code, stderr: result.stderr, stopped };
   } finally {
     process.kill();
@@ -164,8 +176,7 @@ export function runRgPaths(
 ): Promise<RgRunResult> {
   return runDelimited(rgPath, args, undefined, 0, signal, (record) => {
     const path = record.toString("utf8");
-    if (!Buffer.from(path, "utf8").equals(record))
-      throw new Error("Non-UTF-8 search paths are not supported");
+    if (!Buffer.from(path, "utf8").equals(record)) throw unsupportedPath();
     return onPath(path);
   });
 }
@@ -173,7 +184,7 @@ export function runRgPaths(
 /** Accept both matches and no matches; callers handle intentional early stops separately. */
 export function assertRgSucceeded(result: Pick<RgRunResult, "code" | "stderr">): void {
   if (result.code !== 0 && result.code !== 1) {
-    throw new Error(result.stderr.trim() || `ripgrep exited with code ${result.code}`);
+    throw ripgrepFailure(result.stderr.trim() || `ripgrep exited with code ${result.code}.`);
   }
 }
 
@@ -202,9 +213,10 @@ export const runText: RunText = async (rgPath, args, input, signal) => {
   process.child.stdin.end(input);
   const result = await process.done;
   throwIfCancelled(signal);
-  if (result.error) throw new Error(`Failed to run ripgrep: ${result.error.message}`);
+  if (result.error)
+    throw ripgrepFailure(`Failed to run ripgrep: ${errorMessage(result.error)}`, result.error);
   if (bytes > MAX_RG_PROBE_OUTPUT_BYTES)
-    throw new Error("Unexpected ripgrep probe output overflow");
+    throw ripgrepFailure("Unexpected ripgrep probe output overflow.");
   return {
     code: result.code,
     stderr: result.stderr,
@@ -285,7 +297,7 @@ export async function resolveIgnoreCase(
   assertRgSucceeded(result);
   const lines = result.stdout.replace(/\r\n/g, "\n").split("\n");
   if (lines.some((line) => line !== "" && line !== "a"))
-    throw new Error("Unexpected smart-case probe output");
+    throw ripgrepFailure("Unexpected smart-case probe output.");
   return lines.includes("a");
 }
 
@@ -297,10 +309,10 @@ interface RgString {
 export function rgBytes(value: RgString): Buffer {
   if (typeof value.text === "string") return Buffer.from(value.text, "utf8");
   if (typeof value.bytes === "string") return Buffer.from(value.bytes, "base64");
-  throw new Error("Invalid rg JSON string");
+  throw ripgrepFailure("Invalid rg JSON string.");
 }
 
 export function rgText(value: RgString): string {
   if (typeof value.text === "string") return value.text;
-  throw new Error("Non-UTF-8 search paths are not supported");
+  throw unsupportedPath();
 }

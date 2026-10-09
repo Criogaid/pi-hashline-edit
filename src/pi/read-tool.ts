@@ -35,6 +35,7 @@ import {
 } from "./forget-tool.ts";
 import { POSITIVE_SAFE_INTEGER } from "./schema.ts";
 import { throwIfCancelled } from "./error-text.ts";
+import { reportToolErrors } from "./tool-error.ts";
 import { formatKiB } from "./budgets.ts";
 import type { HashlineEditConfig } from "./config.ts";
 import { createArgumentPreparer } from "./argument-validation.ts";
@@ -187,120 +188,128 @@ export function makeReadOverride(
       onUpdate: AgentToolUpdateCallback<ReadToolDetails | undefined> | undefined,
       ctx: ExtensionToolContext,
     ) {
-      throwIfCancelled(signal);
-      const offset = params.offset ?? DEFAULT_OFFSET;
-      const limit = params.limit ?? defaultLimit;
-      const anchors = createAnchorFormatter(hashLen);
-      const readNative = async () => {
-        const result = await builtin.execute(toolCallId, params, signal, onUpdate, ctx);
+      return reportToolErrors("read", { path: params.path, signal }, async () => {
+        throwIfCancelled(signal);
+        const offset = params.offset ?? DEFAULT_OFFSET;
+        const limit = params.limit ?? defaultLimit;
+        const anchors = createAnchorFormatter(hashLen);
+        const readNative = async () => {
+          const result = await builtin.execute(toolCallId, params, signal, onUpdate, ctx);
+          return withResultTag(
+            toolCallId,
+            { ...result, details: { ...result.details, nativeRead: true as const } },
+            config.forget,
+            () =>
+              readReceipt(
+                params.path,
+                result.content.some((block) => block.type === "image")
+                  ? { image: true }
+                  : undefined,
+              ),
+          );
+        };
+
+        const absPath = canonicalPath(cwd, params.path as string);
+        try {
+          if (await detectSupportedImageMimeTypeFromFile(absPath)) {
+            return readNative();
+          }
+        } catch {
+          return readNative();
+        }
+
+        const start = offset;
+        const rows: string[] = [];
+        const crExpansion = Buffer.byteLength(displayCarriageReturns("\r")) - 1;
+        let totalRows = 0;
+        let totalBytes = 0;
+        let outputBytes = 0;
+        let truncated = false;
+        let firstLineExceedsLimit = false;
+        let stats: Awaited<ReturnType<typeof scanTextLines>>;
+        try {
+          stats = await scanTextLines(
+            absPath,
+            (number) => number >= start && number - start < limit,
+            (line) => {
+              const rowBytes =
+                line.byteLength +
+                line.carriageReturns * crExpansion +
+                Buffer.byteLength(anchors.row(line.number, ""));
+              totalBytes += rowBytes + (totalRows++ > 0 ? 1 : 0);
+              if (truncated) return;
+              const nextBytes = outputBytes + rowBytes + (rows.length > 0 ? 1 : 0);
+              if (nextBytes > maxBytes) {
+                truncated = true;
+                firstLineExceedsLimit = rows.length === 0;
+                return;
+              }
+              rows.push(anchors.row(line.number, line.text!));
+              outputBytes = nextBytes;
+            },
+            { signal, maxLineBytes: maxBytes },
+          );
+        } catch (error) {
+          // Keep native filesystem diagnostics without retrying decoding or cancellation failures.
+          if (!signal?.aborted && error instanceof Error && "code" in error) {
+            return readNative();
+          }
+          throw error;
+        }
+        if (stats.hasNul) return readNative();
+        const pagination =
+          !truncated && rows.length > 0 && stats.totalLines - start >= limit
+            ? {
+                start,
+                end: start + (rows.length - 1),
+                totalLines: stats.totalLines,
+                nextOffset: start + rows.length,
+              }
+            : undefined;
+        const truncation = {
+          content: rows.join("\n"),
+          truncated,
+          truncatedBy: truncated ? ("bytes" as const) : null,
+          totalLines: totalRows,
+          totalBytes,
+          outputLines: rows.length,
+          outputBytes,
+          lastLinePartial: false,
+          firstLineExceedsLimit,
+          maxLines: totalRows,
+          maxBytes,
+        };
+
+        const tail = truncation.firstLineExceedsLimit
+          ? `\n… (line ${start} exceeds ${formatKiB(maxBytes)}; cannot return a complete anchor row. Reducing limit cannot split a physical line; use bash to inspect it in chunks, or replace for a known literal/regex change)`
+          : truncation.truncated
+            ? `\n… (truncated at ${formatKiB(maxBytes)}; use offset/limit to read more)`
+            : pagination
+              ? `\n… (showing lines ${pagination.start}-${pagination.end} of ${pagination.totalLines}; use offset ${pagination.nextOffset} to continue)`
+              : "";
+        const header = `${formatReadHeader(params.path, stats.totalLines, start, stats.finalNewline)}\n`;
+        const body = truncation.content;
+
         return withResultTag(
           toolCallId,
-          { ...result, details: { ...result.details, nativeRead: true as const } },
+          {
+            content: [{ type: "text" as const, text: header + body + tail }],
+            details: truncation.truncated
+              ? { truncation }
+              : pagination
+                ? { pagination }
+                : undefined,
+          },
           config.forget,
           () =>
             readReceipt(
               params.path,
-              result.content.some((block) => block.type === "image") ? { image: true } : undefined,
+              rows.length > 0
+                ? { start, end: start + rows.length - 1, truncated: truncation.truncated }
+                : undefined,
             ),
         );
-      };
-
-      const absPath = canonicalPath(cwd, params.path as string);
-      try {
-        if (await detectSupportedImageMimeTypeFromFile(absPath)) {
-          return readNative();
-        }
-      } catch {
-        return readNative();
-      }
-
-      const start = offset;
-      const rows: string[] = [];
-      const crExpansion = Buffer.byteLength(displayCarriageReturns("\r")) - 1;
-      let totalRows = 0;
-      let totalBytes = 0;
-      let outputBytes = 0;
-      let truncated = false;
-      let firstLineExceedsLimit = false;
-      let stats: Awaited<ReturnType<typeof scanTextLines>>;
-      try {
-        stats = await scanTextLines(
-          absPath,
-          (number) => number >= start && number - start < limit,
-          (line) => {
-            const rowBytes =
-              line.byteLength +
-              line.carriageReturns * crExpansion +
-              Buffer.byteLength(anchors.row(line.number, ""));
-            totalBytes += rowBytes + (totalRows++ > 0 ? 1 : 0);
-            if (truncated) return;
-            const nextBytes = outputBytes + rowBytes + (rows.length > 0 ? 1 : 0);
-            if (nextBytes > maxBytes) {
-              truncated = true;
-              firstLineExceedsLimit = rows.length === 0;
-              return;
-            }
-            rows.push(anchors.row(line.number, line.text!));
-            outputBytes = nextBytes;
-          },
-          { signal, maxLineBytes: maxBytes },
-        );
-      } catch (error) {
-        // Keep native filesystem diagnostics without retrying decoding or cancellation failures.
-        if (!signal?.aborted && error instanceof Error && "code" in error) {
-          return readNative();
-        }
-        throw error;
-      }
-      if (stats.hasNul) return readNative();
-      const pagination =
-        !truncated && rows.length > 0 && stats.totalLines - start >= limit
-          ? {
-              start,
-              end: start + (rows.length - 1),
-              totalLines: stats.totalLines,
-              nextOffset: start + rows.length,
-            }
-          : undefined;
-      const truncation = {
-        content: rows.join("\n"),
-        truncated,
-        truncatedBy: truncated ? ("bytes" as const) : null,
-        totalLines: totalRows,
-        totalBytes,
-        outputLines: rows.length,
-        outputBytes,
-        lastLinePartial: false,
-        firstLineExceedsLimit,
-        maxLines: totalRows,
-        maxBytes,
-      };
-
-      const tail = truncation.firstLineExceedsLimit
-        ? `\n… (line ${start} exceeds ${formatKiB(maxBytes)}; cannot return a complete anchor row. Reducing limit cannot split a physical line; use bash to inspect it in chunks, or replace for a known literal/regex change)`
-        : truncation.truncated
-          ? `\n… (truncated at ${formatKiB(maxBytes)}; use offset/limit to read more)`
-          : pagination
-            ? `\n… (showing lines ${pagination.start}-${pagination.end} of ${pagination.totalLines}; use offset ${pagination.nextOffset} to continue)`
-            : "";
-      const header = `${formatReadHeader(params.path, stats.totalLines, start, stats.finalNewline)}\n`;
-      const body = truncation.content;
-
-      return withResultTag(
-        toolCallId,
-        {
-          content: [{ type: "text" as const, text: header + body + tail }],
-          details: truncation.truncated ? { truncation } : pagination ? { pagination } : undefined,
-        },
-        config.forget,
-        () =>
-          readReceipt(
-            params.path,
-            rows.length > 0
-              ? { start, end: start + rows.length - 1, truncated: truncation.truncated }
-              : undefined,
-          ),
-      );
+      });
     },
   };
 }

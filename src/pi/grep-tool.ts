@@ -15,7 +15,7 @@ import { renderOutputPreview, renderToolError } from "./render.ts";
 import { type ForgetReceiptDetails, grepReceipt, withResultTag } from "./forget-tool.ts";
 import { normalizeLineEndings } from "../core/lines.ts";
 import { createAnchorFormatter } from "./anchor-format.ts";
-import { assembleGrepOutput, formatMatches, formatSearchWarnings } from "./grep-output.ts";
+import { assembleGrepOutput, formatMatches, searchIncompleteError } from "./grep-output.ts";
 import {
   assertValidRegex,
   filterExplicitFilesByGlob,
@@ -34,6 +34,7 @@ import { probeRegex, resolveIgnoreCase, runRgPaths, type SearchModes } from "./r
 import { runRgTextView } from "./rg-text-view.ts";
 import { GREP_CONTEXT_RANGE, POSITIVE_SAFE_INTEGER } from "./schema.ts";
 import { throwIfCancelled } from "./error-text.ts";
+import { reportToolErrors } from "./tool-error.ts";
 import type { HashlineEditConfig } from "./config.ts";
 import { createArgumentPreparer } from "./argument-validation.ts";
 
@@ -195,104 +196,109 @@ export function makeGrepOverrideWithBackend(
       signal: AbortSignal | undefined,
       _onUpdate: Parameters<GrepTool["execute"]>[3],
     ) {
-      throwIfCancelled(signal);
-      const anchors = createAnchorFormatter(hashLen);
-      const warnings: string[] = [];
+      return reportToolErrors("grep", { path: params.path, signal }, async () => {
+        throwIfCancelled(signal);
+        const anchors = createAnchorFormatter(hashLen);
+        const warnings: string[] = [];
 
-      const patterns = toArray(params.pattern);
-      const effectiveLimit = params.limit ?? config.grep.defaultLimit;
-      const context = params.context ?? config.grep.defaultContext;
-      const rgPath = bundledRgPath;
-      const outputMode: "content" | "files" | "count" = params.outputMode ?? "content";
-      const multiline = params.multiline ?? false;
-      const globs = toArray(params.glob);
-      const { literal } = params;
-      if (!literal) {
-        await assertValidRegex(patterns, multiline, rgPath, backend, signal);
-        const normalized = patterns.map(normalizeLineEndings);
-        if (patterns.some((pattern, index) => pattern !== normalized[index]))
-          await assertValidRegex(normalized, multiline, rgPath, backend, signal);
-      }
-      const matcherIgnoreCase = await backend.resolveIgnoreCase(
-        rgPath,
-        patterns,
-        { literal, multiline },
-        params.ignoreCase,
-        signal,
-      );
-      const modes: SearchModes = { literal, ignoreCase: matcherIgnoreCase, multiline };
-      const ctx = context;
-      const { searchPaths, pathInfo } = await resolveSearchPaths(cwd, params.path);
-      let scope: SearchScope = {
-        globs,
-        noIgnore: false,
-        follow: false,
-        searchPaths,
-      };
-
-      scope = {
-        ...scope,
-        searchPaths: await filterExplicitFilesByGlob(
-          backend,
+        const patterns = toArray(params.pattern);
+        const effectiveLimit = params.limit ?? config.grep.defaultLimit;
+        const context = params.context ?? config.grep.defaultContext;
+        const rgPath = bundledRgPath;
+        const outputMode: "content" | "files" | "count" = params.outputMode ?? "content";
+        const multiline = params.multiline ?? false;
+        const globs = toArray(params.glob);
+        const { literal } = params;
+        if (!literal) {
+          await assertValidRegex(patterns, multiline, rgPath, backend, signal);
+          const normalized = patterns.map(normalizeLineEndings);
+          if (patterns.some((pattern, index) => pattern !== normalized[index]))
+            await assertValidRegex(normalized, multiline, rgPath, backend, signal);
+        }
+        const matcherIgnoreCase = await backend.resolveIgnoreCase(
           rgPath,
-          scope,
-          pathInfo,
+          patterns,
+          { literal, multiline },
+          params.ignoreCase,
+          signal,
+        );
+        const modes: SearchModes = { literal, ignoreCase: matcherIgnoreCase, multiline };
+        const ctx = context;
+        const { searchPaths, pathInfo } = await resolveSearchPaths(cwd, params.path);
+        let scope: SearchScope = {
+          globs,
+          noIgnore: false,
+          follow: false,
+          searchPaths,
+        };
+
+        scope = {
+          ...scope,
+          searchPaths: await filterExplicitFilesByGlob(
+            backend,
+            rgPath,
+            scope,
+            pathInfo,
+            signal,
+            warnings,
+          ),
+        };
+
+        const result =
+          scope.searchPaths.length === 0
+            ? {
+                raw: [],
+                matchLimitReached: false,
+                snapshots: new Map<string, SearchFileSnapshot>(),
+              }
+            : await searchMatches({
+                backend,
+                rgPath,
+                scope,
+                patterns,
+                modes,
+                limit: effectiveLimit,
+                outputMode,
+                signal,
+                warnings,
+              });
+        const { raw, matchLimitReached } = result;
+
+        if (raw.length === 0) {
+          if (warnings.length) throw searchIncompleteError("No matches confirmed.", warnings);
+          return {
+            content: [{ type: "text" as const, text: "No matches found" }],
+            details: undefined,
+          };
+        }
+
+        const { blocks, linesTruncated } = await formatMatches({
+          cwd,
+          raw,
+          outputMode,
+          context: ctx,
+          anchors,
           signal,
           warnings,
-        ),
-      };
-
-      const result =
-        scope.searchPaths.length === 0
-          ? { raw: [], matchLimitReached: false, snapshots: new Map<string, SearchFileSnapshot>() }
-          : await searchMatches({
-              backend,
-              rgPath,
-              scope,
-              patterns,
-              modes,
-              limit: effectiveLimit,
-              outputMode,
-              signal,
-              warnings,
-            });
-      const { raw, matchLimitReached } = result;
-
-      if (raw.length === 0) {
-        if (warnings.length)
-          throw new Error(`No matches confirmed.${formatSearchWarnings(warnings)}`);
-        return {
-          content: [{ type: "text" as const, text: "No matches found" }],
-          details: undefined,
-        };
-      }
-
-      const { blocks, linesTruncated } = await formatMatches({
-        cwd,
-        raw,
-        outputMode,
-        context: ctx,
-        anchors,
-        signal,
-        warnings,
-        searchSnapshots: result.snapshots,
+          searchSnapshots: result.snapshots,
+        });
+        const output = assembleGrepOutput({
+          blocks,
+          warnings,
+          outputMode,
+          matchLimitReached,
+          effectiveLimit,
+          linesTruncated,
+        });
+        // Only content mode returns file text; paths and counts have nothing to forget.
+        if (outputMode !== "content") return output;
+        return withResultTag(toolCallId, output, config.forget, () =>
+          grepReceipt(patterns, raw.length, new Set(raw.map((match) => match.filePath)).size, {
+            limitReached: matchLimitReached,
+            incomplete: warnings.length > 0,
+          }),
+        );
       });
-      const output = assembleGrepOutput({
-        blocks,
-        warnings,
-        outputMode,
-        matchLimitReached,
-        effectiveLimit,
-        linesTruncated,
-      });
-      // Only content mode returns file text; paths and counts have nothing to forget.
-      if (outputMode !== "content") return output;
-      return withResultTag(toolCallId, output, config.forget, () =>
-        grepReceipt(patterns, raw.length, new Set(raw.map((match) => match.filePath)).size, {
-          limitReached: matchLimitReached,
-          incomplete: warnings.length > 0,
-        }),
-      );
     },
   } satisfies GrepTool;
 }

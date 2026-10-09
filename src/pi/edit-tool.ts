@@ -30,7 +30,7 @@ import { Type, type Static } from "typebox";
 import { ACTION_FUSION_GUIDELINES, withThenRunSchema, type ThenRunInput } from "./action-fusion.ts";
 import { applyEdits } from "../core/apply.ts";
 import { splitLines } from "../core/lines.ts";
-import { unwritableTextReason } from "../core/text.ts";
+import { unwritableTextError } from "../core/text.ts";
 import { EDIT_ANCHOR_FIELDS, type Anchor, type Edit } from "../core/types.ts";
 import type { HashlineEditConfig } from "./config.ts";
 import {
@@ -45,7 +45,7 @@ import {
   renderMutationResult,
   type DiffCounts,
 } from "./render.ts";
-import { formatFailure } from "./failure-context.ts";
+import { describeEditFailure } from "./failure-context.ts";
 import { formatMutationAnchors } from "./mutation-result.ts";
 import {
   executeMutation,
@@ -194,8 +194,8 @@ function checkEditArguments(args: unknown, hashLen: number, report: ReportArgume
         );
       }
       body.forEach((line, lineIndex) => {
-        const reason = typeof line === "string" ? unwritableTextReason(line) : undefined;
-        if (reason) report(`edits[${index}].body[${lineIndex}]`, reason);
+        const unwritable = typeof line === "string" ? unwritableTextError(line) : undefined;
+        if (unwritable) report(`edits[${index}].body[${lineIndex}]`, unwritable.message);
       });
     }
     for (const field of EDIT_ANCHOR_FIELDS) {
@@ -364,6 +364,7 @@ export function makeEditOverride(
     ) {
       return executeMutation<Omit<EditParams, "then_run">, EditDetails>(
         {
+          tool: "edit",
           cwd,
           fusion,
           run: (mutationParams, target) =>
@@ -383,7 +384,7 @@ function runHashline(
 ) {
   const anchorFormatter = createAnchorFormatter(hashLen);
 
-  return runTextMutation("edit", target, (currentText) => {
+  return runTextMutation(target, (currentText) => {
     const translated = toCoreEdits(editOps);
 
     // Recovery reports checksum candidates from nearby lines, then the whole file
@@ -391,12 +392,10 @@ function runHashline(
     // candidates and resubmit with fresh anchors.
     const result = applyEdits(currentText, translated, hashLen, shiftRadius);
     if (!result.ok) {
-      throw new Error(
-        formatFailure(
-          result.failure,
-          { currentText, anchors: anchorFormatter },
-          translated.length > 1,
-        ),
+      throw describeEditFailure(
+        result.failure,
+        { currentText, anchors: anchorFormatter },
+        translated.length > 1,
       );
     }
 

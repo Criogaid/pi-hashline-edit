@@ -6,6 +6,7 @@ import { fileReadWarning, type RgMatch, type SearchFileSnapshot } from "./grep-s
 import { scanTextFile, scanTextLines } from "./text-stream.ts";
 import { GREP_MAX_LINE_LENGTH, MAX_SEARCH_DIAGNOSTIC_BYTES } from "./budgets.ts";
 import { searchChangedError } from "./error-text.ts";
+import { HashlineError } from "../core/errors.ts";
 import { serializePath } from "./path.ts";
 import { rawMatchVerifier } from "./rg-match-bytes.ts";
 
@@ -31,11 +32,23 @@ export function isNoticeLine(line: string): boolean {
   return line.startsWith("[");
 }
 
-export function formatSearchWarnings(warnings: readonly string[]): string {
-  if (!warnings.length) return "";
+/** Distinct search diagnostics within their budget, keeping opening context and the final cause. */
+function searchDiagnostics(warnings: readonly string[]): string {
   const diagnostics = new DiagnosticBuffer(MAX_SEARCH_DIAGNOSTIC_BYTES);
   for (const warning of new Set(warnings)) diagnostics.append(`${warning}\n`);
-  return `\n\n[Search incomplete; results and counts cover only confirmed matches.\n${diagnostics.toString().trimEnd()}]`;
+  return diagnostics.toString().trimEnd();
+}
+
+export function formatSearchWarnings(warnings: readonly string[]): string {
+  if (!warnings.length) return "";
+  return `\n\n[Search incomplete; results and counts cover only confirmed matches.\n${searchDiagnostics(warnings)}]`;
+}
+
+/** No result can be returned from an incomplete search: report it rather than "no matches". */
+export function searchIncompleteError(message: string, warnings: readonly string[]): HashlineError {
+  return new HashlineError("SEARCH_INCOMPLETE", message, {
+    facts: { diagnostics: searchDiagnostics(warnings) },
+  });
 }
 
 function previewLine(text: string, column = 0): { text: string; wasTruncated: boolean } {
@@ -224,7 +237,7 @@ export function assembleGrepOutput(options: AssembleGrepOutputOptions): {
     options;
 
   if (!blocks.length && warnings.length) {
-    throw new Error(`No matches could be displayed.${formatSearchWarnings(warnings)}`);
+    throw searchIncompleteError("No matches could be displayed.", warnings);
   }
   let output = blocks.join(outputMode === "content" ? "\n\n" : "\n");
   const truncation = truncateHead(output, { maxBytes: DEFAULT_MAX_BYTES });

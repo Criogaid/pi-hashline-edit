@@ -1,20 +1,22 @@
 import { TextDecoder } from "node:util";
 
-import { INVALID_UNICODE, UNSUPPORTED_ENCODING, UNSUPPORTED_TEXT_NUL } from "./errors.ts";
+import { HashlineError, TEXT_ERROR_MESSAGES } from "./errors.ts";
 
 /** Why text cannot be written as editable UTF-8 (NUL or unpaired surrogates); undefined when it can. */
-export function unwritableTextReason(text: string): string | undefined {
-  if (text.includes("\0")) return UNSUPPORTED_TEXT_NUL;
-  if (!text.isWellFormed()) return INVALID_UNICODE;
+export function unwritableTextError(text: string): HashlineError | undefined {
+  if (text.includes("\0"))
+    return new HashlineError("UNSUPPORTED_TEXT", TEXT_ERROR_MESSAGES.UNSUPPORTED_TEXT);
+  if (!text.isWellFormed())
+    return new HashlineError("INVALID_UNICODE", TEXT_ERROR_MESSAGES.INVALID_UNICODE);
   return undefined;
 }
 
 export type Utf8Decoding = "strict" | "lossy";
 
 /** Confirmed malformed UTF-8, distinct from decoder input or resource failures. */
-export class Utf8DecodingError extends Error {
+export class Utf8DecodingError extends HashlineError {
   constructor(cause: unknown) {
-    super(UNSUPPORTED_ENCODING, { cause });
+    super("UNSUPPORTED_ENCODING", TEXT_ERROR_MESSAGES.UNSUPPORTED_ENCODING, { cause });
   }
 }
 
@@ -49,7 +51,8 @@ export function decodeUtf8(bytes: Uint8Array): string {
 
 /** Reject byte-oriented/binary content before entering a text mutation pipeline. */
 export function decodeEditableText(bytes: Uint8Array): string {
-  if (bytes.includes(0)) throw new Error(UNSUPPORTED_TEXT_NUL);
+  if (bytes.includes(0))
+    throw new HashlineError("UNSUPPORTED_TEXT", TEXT_ERROR_MESSAGES.UNSUPPORTED_TEXT);
   return decodeUtf8(bytes);
 }
 

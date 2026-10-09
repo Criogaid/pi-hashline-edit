@@ -1,7 +1,12 @@
-/** Model-facing argument rejection format and byte budget; never truncate a JSON record. */
+/**
+ * Model-facing argument rejection: an error record (tool-error.ts) with the
+ * issues and argument copy in place of a message, within one byte budget.
+ * The JSON is never truncated; whole issues or the argument copy are omitted.
+ */
 import type { ArgumentIssue } from "./argument-diagnostics.ts";
-import { MAX_ARGUMENT_REASON_BYTES, MAX_BLOCK_BYTES } from "./budgets.ts";
+import { MAX_ERROR_TEXT_BYTES, MAX_BLOCK_BYTES } from "./budgets.ts";
 import { DiagnosticBuffer } from "./diagnostic-buffer.ts";
+import { encodeErrorRecord, parseErrorRecord } from "./tool-error.ts";
 
 const INVALID_ARGUMENTS = "INVALID_ARGUMENTS";
 
@@ -24,7 +29,7 @@ export function formatArgumentError(
   schemaLimited: boolean,
 ): string {
   const bounded = issues.map(({ field, reason }) => {
-    const buffer = new DiagnosticBuffer(MAX_ARGUMENT_REASON_BYTES);
+    const buffer = new DiagnosticBuffer(MAX_ERROR_TEXT_BYTES);
     buffer.append(reason);
     return { field, reason: buffer.toString() };
   });
@@ -34,7 +39,7 @@ export function formatArgumentError(
     executed: false,
     ...(schemaLimited ? { schemaLimited: true as const } : {}),
   } as const;
-  const encode = (value: ArgumentError) => JSON.stringify(value, null, 2);
+  const encode = (value: ArgumentError) => encodeErrorRecord(value);
   const fits = (text: string) => Buffer.byteLength(text) <= MAX_BLOCK_BYTES;
   let argumentsCopy: unknown;
   let argumentsAvailable = false;
@@ -92,20 +97,10 @@ export function formatArgumentError(
 
 /** Recognize our diagnostic in serialized results; other errors retain their original text. */
 export function parseArgumentError(text: string): ArgumentError | undefined {
-  let value: unknown;
-  try {
-    value = JSON.parse(text);
-  } catch {
-    // Filesystem and runtime errors are ordinary text, not argument diagnostic records.
-    return undefined;
-  }
+  const value = parseErrorRecord(text);
   if (
-    typeof value !== "object" ||
-    value === null ||
-    !("error" in value) ||
+    value === undefined ||
     value.error !== INVALID_ARGUMENTS ||
-    !("tool" in value) ||
-    typeof value.tool !== "string" ||
     !("executed" in value) ||
     value.executed !== false ||
     !("issues" in value) ||

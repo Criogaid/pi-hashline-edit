@@ -1,22 +1,24 @@
-/** Every cancellation starts with this text, matching Pi's built-in tools. */
-export const OPERATION_ABORTED = "Operation aborted";
+import { HashlineError } from "../core/errors.ts";
 
-/** Cancellation error; `detail` says where it stopped and what state remains. */
-export function cancellationError(detail?: string): Error {
-  return new Error(detail ? `${OPERATION_ABORTED} ${detail}` : OPERATION_ABORTED);
+/**
+ * Cancellation, worded like Pi's built-in tools. A mutation record's
+ * `publication` and `stage` say where it stopped, so the message does not.
+ */
+export function cancellationError(cause?: unknown): HashlineError {
+  return new HashlineError("OPERATION_ABORTED", "Operation aborted.", { cause });
 }
 
-export function throwIfCancelled(signal: AbortSignal | undefined, detail?: string): void {
-  if (signal?.aborted) throw cancellationError(detail);
+export function throwIfCancelled(signal: AbortSignal | undefined): void {
+  if (signal?.aborted) throw cancellationError();
 }
 
 /**
  * A read observed a concurrent file change; partial bytes must not be classified as source text.
- * Its retry advice holds only before publication; observers after publication report a changed target.
+ * Its retry advice holds only before publication; a published mutation's record replaces it.
  */
-export class FileChangedDuringReadError extends Error {
+export class FileChangedDuringReadError extends HashlineError {
   constructor(cause?: unknown) {
-    super("File changed during read; retry the tool.", { cause });
+    super("FILE_CHANGED", "File changed during read.", { cause });
   }
 }
 
@@ -26,6 +28,6 @@ export class FileChangedDuringReadError extends Error {
  * checks the snapshot copy, and grep-output checks matched text and the
  * revision recorded by grep-search. All of them report this one error.
  */
-export function searchChangedError(): Error {
-  return new Error("File changed during search; rerun the query.");
+export function searchChangedError(): HashlineError {
+  return new HashlineError("FILE_CHANGED", "File changed during search.");
 }

@@ -34,7 +34,7 @@ import { Type, type Static } from "typebox";
 import { splitLines } from "../core/lines.ts";
 import { applyReplacements, buildRegex } from "../core/replace.ts";
 import { runRegexReplacements } from "./replace-regex.ts";
-import { unwritableTextReason } from "../core/text.ts";
+import { unwritableTextError } from "../core/text.ts";
 import { ACTION_FUSION_GUIDELINES, withThenRunSchema, type ThenRunInput } from "./action-fusion.ts";
 import { createAnchorFormatter, type AnchorFormatter } from "./anchor-format.ts";
 import type { HashlineEditConfig } from "./config.ts";
@@ -54,7 +54,7 @@ import {
 } from "./mutation-runner.ts";
 import { MUTATION_TOOL_GUIDELINE } from "./tool-prompts.ts";
 import { errorMessage } from "../core/errors.ts";
-import { throwIfCancelled } from "./error-text.ts";
+import { cancellationError } from "./error-text.ts";
 import {
   argumentItems,
   createArgumentPreparer,
@@ -177,8 +177,8 @@ function checkReplaceArguments(args: unknown, report: ReportArgumentIssue): void
   const validFlags = new RegExp(REGEX_FLAGS_PATTERN);
   rules.forEach((rule, index) => {
     const { find, replace, regex, flags } = (rule ?? {}) as Record<string, unknown>;
-    const reason = typeof replace === "string" ? unwritableTextReason(replace) : undefined;
-    if (reason) report(`replacements[${index}].replace`, reason);
+    const unwritable = typeof replace === "string" ? unwritableTextError(replace) : undefined;
+    if (unwritable) report(`replacements[${index}].replace`, unwritable.message);
     if (
       regex === true &&
       typeof find === "string" &&
@@ -241,6 +241,7 @@ export function makeReplaceTool(
     ) {
       return executeMutation<Omit<ReplaceParams, "then_run">, ReplaceDetails>(
         {
+          tool: "replace",
           cwd,
           fusion,
           run: (mutationParams, target) => runReplace(target, mutationParams.replacements, config),
@@ -258,7 +259,7 @@ function runReplace(
 ) {
   const anchorFormatter = createAnchorFormatter(config.hashLen);
 
-  return runTextMutation("replace", target, async (currentText) => {
+  return runTextMutation(target, async (currentText) => {
     let newText: string;
     let count: number;
     try {
@@ -271,8 +272,8 @@ function runReplace(
           )
         : applyReplacements(currentText, rules));
     } catch (error) {
-      throwIfCancelled(target.signal, `before apply; ${target.displayPath} was not changed.`);
-      throw new Error(`Replace ${target.displayPath}: ${errorMessage(error)}`);
+      if (target.signal?.aborted) throw cancellationError(error);
+      throw error;
     }
     const changed = newText !== currentText;
 

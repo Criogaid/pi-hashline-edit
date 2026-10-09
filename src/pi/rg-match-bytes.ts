@@ -1,5 +1,6 @@
 import { createHash, type Hash } from "node:crypto";
 import { searchChangedError } from "./error-text.ts";
+import { ripgrepFailure } from "./rg-process.ts";
 
 export interface RawMatchRevision {
   byteOffset: number;
@@ -21,7 +22,7 @@ export function rawMatchRevision(
     byteOffset < 0 ||
     !Number.isSafeInteger(byteOffset + bytes.length)
   ) {
-    throw new Error("Invalid rg raw match byte offset");
+    throw ripgrepFailure("Invalid rg raw match byte offset.");
   }
   return {
     byteOffset,

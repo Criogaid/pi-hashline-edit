@@ -9,6 +9,7 @@ import {
   resolveIgnoreCase,
   rgBytes,
   rgText,
+  ripgrepFailure,
   runRgPaths,
   type SearchModes,
 } from "./rg-process.ts";
@@ -21,10 +22,10 @@ export function recordSearchDiagnostics(result: RgRunResult, warnings?: string[]
   const message =
     result.stderr.trim() ||
     (!result.stopped && result.code !== 0 && result.code !== 1
-      ? `ripgrep exited with code ${result.code}`
+      ? `ripgrep exited with code ${result.code}.`
       : "");
   if (!message) return;
-  if (!warnings) throw new Error(message);
+  if (!warnings) throw ripgrepFailure(message);
   warnings.push(message);
 }
 
@@ -231,7 +232,8 @@ export async function searchMatches(options: SearchMatchesOptions) {
           rawMatch,
         });
       }
-      if (!Array.isArray(data.submatches)) throw new Error("Invalid rg multiline match event");
+      if (!Array.isArray(data.submatches))
+        throw ripgrepFailure("Invalid rg multiline match event.");
       const columns = new Map<number, number>();
       const submatches = data.submatches.length ? data.submatches : [{ start: 0, end: 0 }];
       const ranges = submatchesToLineRanges(

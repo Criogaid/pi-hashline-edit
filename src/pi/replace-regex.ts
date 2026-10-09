@@ -9,9 +9,18 @@
 
 import { Worker } from "node:worker_threads";
 import type { applyReplacements, Replacement } from "../core/replace.ts";
+import { errorMessage, HashlineError, type ErrorCode } from "../core/errors.ts";
 import { cancellationError, throwIfCancelled } from "./error-text.ts";
 
 type ReplaceResult = ReturnType<typeof applyReplacements>;
+type WorkerMessage = {
+  result?: ReplaceResult;
+  error?: { readonly code: ErrorCode; readonly message: string };
+};
+
+function workerFailure(message: string, cause?: unknown): HashlineError {
+  return new HashlineError("REGEX_WORKER_FAILED", message, { cause });
+}
 
 export async function runRegexReplacements(
   source: string,
@@ -36,18 +45,21 @@ export async function runRegexReplacements(
     };
     const abort = () => finish(cancellationError(), true);
     const timer = setTimeout(
-      () => finish(new Error(`regex evaluation timed out after ${timeoutMs}ms`), true),
+      () =>
+        finish(
+          new HashlineError("REGEX_TIMEOUT", `Regex evaluation timed out after ${timeoutMs} ms.`),
+          true,
+        ),
       timeoutMs,
     );
-    worker.on("message", (message: { result?: ReplaceResult; error?: string }) => {
-      if (message.error !== undefined) finish(new Error(message.error));
+    worker.on("message", (message: WorkerMessage) => {
+      if (message.error !== undefined)
+        finish(new HashlineError(message.error.code, message.error.message));
       else if (message.result) finish(message.result);
-      else finish(new Error("Regex worker returned an invalid result"));
+      else finish(workerFailure("Regex worker returned an invalid result."));
     });
-    worker.on("error", (error) =>
-      finish(error instanceof Error ? error : new Error(String(error))),
-    );
-    worker.on("exit", (code) => finish(new Error(`Regex worker exited with code ${code}`)));
+    worker.on("error", (error) => finish(workerFailure(errorMessage(error), error)));
+    worker.on("exit", (code) => finish(workerFailure(`Regex worker exited with code ${code}.`)));
     signal?.addEventListener("abort", abort, { once: true });
     if (signal?.aborted) abort();
   });

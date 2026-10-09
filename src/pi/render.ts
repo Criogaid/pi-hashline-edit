@@ -15,6 +15,7 @@ import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import { Text, type Component } from "@earendil-works/pi-tui";
 import type { ActionFusionProgress } from "./action-fusion.ts";
 import { parseArgumentError, type ArgumentError } from "./argument-error.ts";
+import { parseErrorRecord, type ErrorRecord } from "./tool-error.ts";
 
 /** Max diff lines shown when a result is rendered collapsed. */
 const MAX_COLLAPSED_DIFF_LINES = 24;
@@ -151,7 +152,54 @@ function argumentErrorLines(error: ArgumentError, theme: Theme, expanded: boolea
   return lines;
 }
 
-/** Preserve diagnostic causes and recovery hints from every text block. */
+/** One fact as `key: value`; lists and objects continue on indented lines. */
+function factLines(key: string, value: unknown, theme: Theme, indent = ""): string[] {
+  const label = `${indent}${theme.fg("accent", key)}:`;
+  if (value === null || typeof value !== "object") {
+    const [first, ...rest] = String(value).split("\n");
+    return [`${label} ${first}`, ...rest.map((line) => `${indent}  ${line}`)];
+  }
+  if (!Array.isArray(value))
+    return [
+      label,
+      ...Object.entries(value).flatMap(([k, v]) => factLines(k, v, theme, `${indent}  `)),
+    ];
+  return [
+    label,
+    ...value.flatMap((item: unknown) => {
+      if (item === null || typeof item !== "object") return [`${indent}  - ${String(item)}`];
+      // Scalar fields share the item's line; nested lists follow it.
+      const entries = Object.entries(item);
+      const scalars = entries.filter(([, v]) => v === null || typeof v !== "object");
+      const nested = entries.filter(([, v]) => v !== null && typeof v === "object");
+      return [
+        `${indent}  - ${scalars.map(([k, v]) => `${k}: ${String(v)}`).join(" · ")}`,
+        ...nested.flatMap(([k, v]) => factLines(k, v, theme, `${indent}    `)),
+      ];
+    }),
+  ];
+}
+
+/** Present an error record: code and target, publication, message, facts, then the recovery step. */
+function errorRecordLines(record: ErrorRecord, theme: Theme): string[] {
+  const { error, tool, path, publication, stage, message, next, ...facts } = record;
+  const target = path === undefined ? "" : ` ${Array.isArray(path) ? path.join(", ") : path}`;
+  const lines = [theme.fg("error", theme.bold(`${error} · ${tool}${target}`))];
+  if (publication !== undefined)
+    lines.push(
+      theme.fg(
+        publication === "NOT_PUBLISHED" ? "dim" : "warning",
+        `${publication}${stage === undefined ? "" : ` · ${stage}`}`,
+      ),
+    );
+  if (message !== undefined)
+    lines.push(...message.split("\n").map((line) => theme.fg("error", line)));
+  for (const [key, value] of Object.entries(facts)) lines.push(...factLines(key, value, theme));
+  if (next !== undefined) lines.push(`${theme.fg("dim", "next:")} ${next}`);
+  return lines;
+}
+
+/** Render error records from every text block; other text keeps its original lines. */
 export function renderToolError(
   result: Pick<AgentToolResult<unknown>, "content">,
   theme: Theme,
@@ -159,9 +207,11 @@ export function renderToolError(
 ): Text {
   const lines = result.content.flatMap((block) => {
     if (block.type !== "text" || !block.text) return [];
-    const diagnostic = parseArgumentError(block.text);
-    return diagnostic
-      ? argumentErrorLines(diagnostic, theme, expanded)
+    const argumentError = parseArgumentError(block.text);
+    if (argumentError) return argumentErrorLines(argumentError, theme, expanded);
+    const record = parseErrorRecord(block.text);
+    return record
+      ? errorRecordLines(record, theme)
       : block.text.split("\n").map((line) => theme.fg("error", line));
   });
   return renderOutputPreview(lines.length ? lines : [theme.fg("error", "Error")], expanded, theme);

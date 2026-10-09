@@ -37,18 +37,15 @@ export function generateMutationDetails(
 }
 
 /** Keep result-building failures distinct from file publication failures. */
-export function postProcessMutation<T>(
-  tool: string,
-  publication: PublicationStatus,
-  build: () => T,
-): T {
+export function postProcessMutation<T>(publication: PublicationStatus, build: () => T): T {
   try {
     return build();
   } catch (error) {
     throw new FileMutationError(
+      "POST_PROCESS_FAILED",
       "post_process",
       publication,
-      `${tool} result generation failed; publication=${publication}: ${errorMessage(error)}`,
+      `Result generation failed: ${errorMessage(error)}`,
       { cause: error },
     );
   }

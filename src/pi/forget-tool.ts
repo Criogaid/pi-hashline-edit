@@ -30,8 +30,10 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { Type, type Static } from "typebox";
-import { FORGET_MIN_BYTES, formatKiB } from "./budgets.ts";
+import { FORGET_MIN_BYTES, formatKiB, MAX_BLOCK_BYTES } from "./budgets.ts";
 import { renderToolError } from "./render.ts";
+import { boundedFacts, reportToolErrors } from "./tool-error.ts";
+import { HashlineError } from "../core/errors.ts";
 import { createArgumentPreparer } from "./argument-validation.ts";
 
 const RESULT_ID = "r[0-9a-f]{5}";
@@ -292,22 +294,32 @@ export function registerForgetTool(pi: ExtensionAPI): void {
       );
     },
     async execute(_toolCallId: string, params: ForgetParams) {
-      const unknown = params.ids.filter((id) => !forgettable.has(id));
-      if (unknown.length > 0) {
-        const available = [...forgettable.keys()];
-        throw new Error(
-          `Cannot forget ${unknown.join(", ")}: only tagged inspection results from the previous step can be forgotten.${available.length ? ` Available: ${available.join(", ")}.` : ""}`,
-        );
-      }
-      const forgotten = params.ids.map((id) => {
-        const { toolCallId, receipt } = forgettable.get(id)!;
-        pending.add(toolCallId);
-        return { id, receipt };
+      return reportToolErrors("forget", {}, async () => {
+        const unknown = params.ids.filter((id) => !forgettable.has(id));
+        if (unknown.length > 0) {
+          const available = boundedFacts([...forgettable.keys()], MAX_BLOCK_BYTES);
+          throw new HashlineError(
+            "NOT_FORGETTABLE",
+            "Only tagged inspection results from the previous step can be forgotten.",
+            {
+              facts: {
+                ids: unknown,
+                available: available.kept,
+                ...(available.omitted ? { omittedAvailable: available.omitted } : {}),
+              },
+            },
+          );
+        }
+        const forgotten = params.ids.map((id) => {
+          const { toolCallId, receipt } = forgettable.get(id)!;
+          pending.add(toolCallId);
+          return { id, receipt };
+        });
+        return {
+          content: [{ type: "text" as const, text: `Forgot ${params.ids.join(", ")}.` }],
+          details: { forgotten },
+        };
       });
-      return {
-        content: [{ type: "text" as const, text: `Forgot ${params.ids.join(", ")}.` }],
-        details: { forgotten },
-      };
     },
   } satisfies ToolDefinition<typeof forgetSchema, ForgetDetails>);
 }

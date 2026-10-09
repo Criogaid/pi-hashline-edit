@@ -1,5 +1,6 @@
 import { mergeRanges, type HalfOpenRange } from "../core/ranges.ts";
 import { searchChangedError } from "./error-text.ts";
+import { ripgrepFailure } from "./rg-process.ts";
 
 interface RgSubmatch {
   start: number;
@@ -31,7 +32,7 @@ export function submatchesToLineRanges(
     !Number.isSafeInteger(fileLineCount) ||
     fileLineCount < 0
   ) {
-    throw new Error("Invalid rg physical line metadata");
+    throw ripgrepFailure("Invalid rg physical line metadata.");
   }
   const ranges: HalfOpenRange[] = [];
   const lineBreaks: number[] = [];
@@ -53,7 +54,7 @@ export function submatchesToLineRanges(
       end < start ||
       end > bytes.length
     ) {
-      throw new Error("Invalid rg submatch byte offsets");
+      throw ripgrepFailure("Invalid rg submatch byte offsets.");
     }
     if (start === end) {
       if (fileLineCount === 0) continue;

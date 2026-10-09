@@ -8,7 +8,7 @@ Overrides `read`, `grep`, `edit`, and `write`, and adds `replace` for bulk trans
 
 - **Search → edit:** `read` and `grep` return the same `LINE#HASH` anchors, so search results can feed directly into edits.
 - **Batch and chain edits:** submit structured JSON operations together, then use the returned fresh anchors for the next change.
-- **Recover from stale anchors:** rejected edits show a unique checksum-matching candidate's line, or neighborhoods around ambiguous candidates for comparison. With no candidate, they show the current cited row as an observation. One closing instruction asks the model to confirm the target or re-read. Recovery never applies automatically.
+- **Recover from stale anchors:** rejected edits show a unique checksum-matching candidate's line, or neighborhoods around ambiguous candidates for comparison. With no candidate, they show the current cited row as an observation. Like every tool error, the rejection is one JSON record whose single `next` instruction asks the model to confirm the target or re-read. Recovery never applies automatically.
 - **Edit → test:** Action Fusion lets a mutation include an optional follow-up command, with separate file and command outcomes and separate TUI cards.
 
 [Quick start](#quick-start) · [Tools](#tools) · [Configuration](#configuration) · [Action Fusion](#action-fusion) · [Safety and design](#safety-and-design)
@@ -75,13 +75,85 @@ Valid UTF-8 text inspection and matching uses one logical representation: CRLF b
 
 `write` is the full-content boundary: its supplied bytes are authoritative, so it preserves their explicit LF/CRLF choices. Use it for intentional whole-file line-ending conversion. To inspect actual line-ending bytes, use a raw byte reader; anchored line displays intentionally do not distinguish LF from CRLF.
 
-### Argument errors
+### Errors
+
+Every failure of every tool (`read`, `grep`, `edit`, `replace`, `write`, and `forget`), including argument rejection, filesystem errors, cancellation, and a mutation failure under Action Fusion, reaches the model as one JSON record. The record is the entire text of the error result:
+
+```json
+{
+  "error": "ANCHOR_MISMATCH",
+  "tool": "edit",
+  "path": "src/foo.ts",
+  "publication": "NOT_PUBLISHED",
+  "stage": "prepare",
+  "message": "Anchors did not match: 1 unresolved.",
+  "failures": [
+    {
+      "field": "edits[0].anchor",
+      "op": "replace",
+      "cited": "12#ABCD",
+      "result": "unresolved",
+      "observed": "12#EFGH│const value = 2;"
+    }
+  ],
+  "next": "Before reusing a candidate or observed anchor, confirm it is the intended target; use read or grep for omitted rows, out-of-range lines, or more context. Retries verify every anchor again."
+}
+```
+
+Fields appear in this order; optional fields are omitted when they do not apply:
+
+| Field | Meaning |
+| --- | --- |
+| `error` | The error code (see below). |
+| `tool` | The tool that failed. |
+| `path` | The call's `path` argument as supplied; a grep call may name several. |
+| `publication`, `stage` | Mutation tools only. `publication` is `NOT_PUBLISHED`, `PUBLISHED`, or `UNKNOWN`; `stage` is `prepare`, `commit`, or `post_process`. See [Publication](#publication). |
+| `message` | Facts only, never advice. A native cause keeps its own text, including Node's error code such as `EACCES`. Up to 4 KiB; longer text keeps its opening and final cause and marks the omission. |
+| Code facts | Structured facts of the code, for example `failures`, `matched`, and `candidateNeighborhoods` for anchor mismatches, `diagnostics` for incomplete searches, or `ids` and `available` for `forget`. |
+| `then_run` | `skipped` or `cancelled` when a mutation with `then_run` failed, so the command never ran. |
+| `next` | The single recovery instruction, always last. Absent when the code has no recovery beyond its facts. |
+
+Once a mutation reached or may have reached the file (`PUBLISHED` or `UNKNOWN`), `next` always says not to repeat the change and to read the file first, whatever the code. Facts appear once: `message` and the fact fields never repeat the recovery, and `next` never restates facts. Layers add fields, not sentences: the commit layer sets `publication` and `stage`, so `message` does not restate them, and Action Fusion adds `then_run` to the record of the mutation that failed.
+
+| Code | Raised when |
+| --- | --- |
+| `INVALID_ARGUMENTS` | Arguments fail the schema or a tool-specific check; nothing ran. See [Argument errors](#argument-errors). |
+| `OPERATION_ABORTED` | The call was cancelled. `message` is `Operation aborted.`, as in Pi's built-in tools; for mutation tools, `publication` and `stage` say where it stopped. |
+| `PATH_NOT_FOUND` | The path does not exist (only `ENOENT`), or `write` with `mode: "overwrite"` names a missing target. |
+| `FILESYSTEM_ERROR` | Any other filesystem failure; `message` keeps the native error text. |
+| `FILE_CHANGED` | The file changed during a read or a search, or after `edit`/`replace` read it. |
+| `UNSUPPORTED_ENCODING` | The file is not valid UTF-8. |
+| `UNSUPPORTED_TEXT` | Text to edit or publish contains NUL bytes. |
+| `INVALID_UNICODE` | The final content cannot be encoded losslessly as UTF-8. |
+| `ANCHOR_MISMATCH` | An edit anchor does not match the current file; see [recovery](#edit-operations). |
+| `INVALID_RANGE` | An edit range ends before it starts, or a move destination lies inside the moved range. |
+| `OVERLAPPING_EDITS` | Edits of one batch touch the same lines. |
+| `NO_MATCH` | A `replace` rule has no matches. |
+| `OVERLAPPING_MATCHES` | Two `replace` matches overlap. |
+| `REGEX_TIMEOUT` | `replace` regex evaluation exceeded `replace.regexTimeoutMs`. |
+| `REGEX_WORKER_FAILED` | The `replace` regex worker failed or returned an invalid result. |
+| `TARGET_EXISTS` | `write` with `mode: "create"` names an existing target, or one appeared during creation. |
+| `NOT_REGULAR_FILE` | The target is not a regular file. |
+| `MULTIPLE_HARD_LINKS` | The target has more than one hard link. |
+| `SYMLINK_UNRESOLVED` | A symbolic link target cannot be resolved. |
+| `PUBLISH_FAILED` | Publication itself failed; `publication` says whether the file may have changed. |
+| `POST_PROCESS_FAILED` | A step after publication failed; the change is saved. |
+| `INVALID_REGEX` | ripgrep cannot parse a `grep` regex. |
+| `SEARCH_INCOMPLETE` | `grep` could not confirm any result; `diagnostics` holds the search diagnostics. |
+| `RIPGREP_FAILED` | ripgrep failed or produced output the tool cannot use. |
+| `UNSUPPORTED_PATH` | A path reported by ripgrep is not valid UTF-8. |
+| `NOT_FORGETTABLE` | `forget` names an id that is not a tagged result of the previous step. |
+| `UNCLASSIFIED` | Any other failure, with its original message. |
+
+The TUI renders a record as a header with the code, tool, and path, a publication line for mutation tools, the message, one `key: value` row per fact (lists continue on indented lines), and `next` last. Short errors are shown in full when collapsed; longer errors use the same collapsed preview and expansion as grep results. Text that is not a record keeps its original lines. Rendering does not change the model result; RPC hosts choose their own presentation.
+
+#### Argument errors
 
 All six tools use one argument-validation entry point. Tool-specific checks collect independent issues instead of stopping at the first one. Failure diagnostics use Pi's prepared values and the declared schema. A recognised operation selects its branch; a missing or invalid operation reports only its `op` field. A non-object operation reports its type once. String/array unions select the applicable type, and literal unions report their permitted values once.
 
 Diagnostics combine distinct constraints on one field and omit duplicate parent summaries. A tool-specific explanation replaces schema messages for that value only when its field belongs to the selected shape; forbidden fields and unknown operations receive no inapplicable body or anchor advice. Missing required fields and other independent errors remain visible. Each top-level field has a separate native diagnostic allowance. The original schema and Pi pipeline still control acceptance, coercion, and optional null handling.
 
-Every argument rejection is one JSON object in the model result:
+An argument rejection is an `INVALID_ARGUMENTS` record. In place of `message`, it lists `issues` and a copy of the prepared `arguments`, and states `executed: false`:
 
 ```json
 {
@@ -108,7 +180,7 @@ Invalid arguments · edit not executed
 edits[0].body: is empty; remove this edit or supply at least one line ([""] for a blank line).
 ```
 
-Collapsed cards use the shared bounded preview. Expanding shows all retained issues and the prepared arguments under a separate label. Source omission and schema-limit notices appear before the issues so they remain visible when collapsed. Ordinary runtime errors and unrecognized JSON diagnostics retain their original text. Rendering does not change the model result; RPC hosts choose their own presentation.
+Collapsed cards use the shared bounded preview. Expanding shows all retained issues and the prepared arguments under a separate label. Source omission and schema-limit notices appear before the issues so they remain visible when collapsed.
 
 `issues` combines schema and tool-specific failures. Field paths refer to Pi's prepared arguments: array indices use `[0]`, named properties use dots, and other property names use JSON-quoted brackets. `$` identifies a preparation failure without a field diagnostic. `arguments` contains the prepared value, including Pi coercion, when it fits and can be encoded.
 
@@ -149,7 +221,7 @@ Copy the actual tokens from inspection; the example tokens illustrate the shape.
 
 The TUI edit header shows the total operation count and counts by type, for example `4 ops: replace ×2, delete ×1, append ×1`. During argument streaming, incomplete or unrecognized operation types count as `unknown`; the counts refresh as arguments change.
 
-For multi-operation batches that reach snapshot verification, rejected edits report each supplied anchor's status: `matched` or `mismatched`. Schema-invalid inputs fail before reading the file and have no anchor-status table. Single-operation edits omit the summary table and report the failure directly. Entries identify the zero-based operation index, the supplied `anchor`, `end`, `before`, or `after` field, and the cited token. The bounded list reports omitted entries explicitly. These statuses do not establish range/overlap validity, semantic intent, publication, command success, or validity on a later retry.
+For multi-operation batches that reach snapshot verification, the rejection lists the fields of the anchors whose checksum matched in `matched`, as zero-based operation and anchor field such as `edits[1].end`; every mismatched anchor appears once, in `failures`. Schema-invalid inputs fail before reading the file and have no `matched`. Single-operation edits omit `matched` and report the failure directly. The bounded list counts omitted entries in `omittedMatched`; an anchor absent from both lists is omitted, not implied matched. A match does not establish range/overlap validity, semantic intent, publication, command success, or validity on a later retry.
 
 When an anchor no longer matches, `edit` looks for where the line went. Recovery only reports; it never edits or retries by itself:
 
@@ -182,12 +254,12 @@ Every outcome rejects the whole batch and writes nothing;
 inspect the result and resubmit.
 ```
 
-- Candidates are found by hashing each line's current content with the **cited** line number; each returned anchor uses the candidate's actual line number, so the details show both the old and current positions. Diagnostics say `Search: local` or `Search: full file`. A unique local candidate does not establish uniqueness across the file, because matches outside the window were not checked.
-- A unique candidate shows its new anchor and complete row once, without a neighborhood. Rows over 4 KiB are omitted in full.
-- Ambiguous neighborhoods come from the same snapshot, are clipped to file boundaries, merged, and emitted in ascending line order within byte budgets. Their rows are observations, not suggested targets; candidate content already shown there is not repeated in the failure details.
-- With no candidate, the current cited row is shown as a complete `LINE#HASH│content` observation within the 4 KiB row limit. Oversized and out-of-range rows are reported without content.
+- Candidates are found by hashing each line's current content with the **cited** line number; each returned anchor uses the candidate's actual line number, so a failure shows both the `cited` and current positions. Its `result` is `shifted`, `ambiguous`, or `unresolved`, and its `search` is `local window` (lines outside it were not checked) or `full file`. A unique local candidate does not establish uniqueness across the file, because matches outside the window were not checked.
+- A unique candidate gives its new anchor in `candidate` and that line's complete `content` once, without a neighborhood. A row over 4 KiB omits the content in full, stated in `contentOmitted`.
+- An ambiguous failure lists `candidates` (and `omittedCandidates`). Their `candidateNeighborhoods` come from the same snapshot, are clipped to file boundaries, merged, and emitted in ascending line order within byte budgets, each with its `lines` range and `rows`. Their rows are observations, not suggested targets; a candidate row already shown there is not repeated in the failure.
+- With no candidate, `observed` holds the current cited row as a complete `LINE#HASH│content` observation within the 4 KiB row limit. Oversized and out-of-range rows are reported in `observedOmitted` without content.
 
-Each part of a rejection states its facts once. Failure details start with the outcome and the statement that the batch wrote nothing; range and overlap rejections include the same statement. The input-anchor table header marks every status as a checksum check in this snapshot. After all diagnostic blocks, one instruction covers every anchor failure: confirm that a candidate or observed anchor is the intended target before reusing it, and use `read` or `grep` for omitted rows, out-of-range lines, or more context. Every submitted anchor is verified again on retry.
+Each part of a rejection states its facts once. `message` counts the outcomes; `publication: "NOT_PUBLISHED"` states that the batch wrote nothing, for range and overlap rejections too. Every `matched` entry is a checksum check in this snapshot. The record's `next` covers every anchor failure: confirm that a candidate or observed anchor is the intended target before reusing it, and use `read` or `grep` for omitted rows, out-of-range lines, or more context. Every submitted anchor is verified again on retry.
 
 ### Bulk replacement
 
@@ -237,7 +309,7 @@ When the line limit leaves more content, the result reports the shown range and 
 | `pattern` | Required | Non-empty string (including whitespace-only text) or array of non-empty strings; arrays match any pattern (OR). When `ignoreCase` is omitted, smart-case is resolved for the entire query, not separately for each array item. |
 | `path` | Current directory | Omit `path` to search the working directory. If supplied, it must be one non-empty existing file or directory, or a non-empty array of search roots; `""` and `[]` are invalid. Wildcards are not expanded; use `glob` to filter filenames. |
 | `glob` | None | One non-empty glob or a non-empty ordered array; prefix exclusions with `!`. |
-| `literal` | Required | `true` matches every pattern as exact text, including regex punctuation such as `pi.on(`; use it for names, paths, and code snippets. It does not force case-sensitive matching. `false` treats every pattern as ripgrep Rust regex, not JavaScript regex: lookaround and backreferences are unsupported, `^`/`$` match at line boundaries, and a valid regex such as `foo(0)` matches `foo0`, not `foo(0)`. An invalid regex fails before any file is searched; when it contains lookaround or a backreference, the error says so and points to `replace` for JavaScript regex within one file, otherwise it suggests `literal: true`. |
+| `literal` | Required | `true` matches every pattern as exact text, including regex punctuation such as `pi.on(`; use it for names, paths, and code snippets. It does not force case-sensitive matching. `false` treats every pattern as ripgrep Rust regex, not JavaScript regex: lookaround and backreferences are unsupported, `^`/`$` match at line boundaries, and a valid regex such as `foo(0)` matches `foo0`, not `foo(0)`. An invalid regex fails with `INVALID_REGEX` before any file is searched; `message` is ripgrep's parse error. When the pattern contains lookaround or a backreference, `next` asks to rewrite it without them or use `replace` for JavaScript regex within one file; otherwise it suggests `literal: true`. |
 | `ignoreCase` | Smart-case | Query-level case override: `true` ignores case; `false` distinguishes case. Inline regex case flags may override either setting. |
 | `multiline` | `false` | Allow matches across physical lines. Valid UTF-8 CRLF is searched as LF; each distinct matched physical line counts toward `limit`. Content mode adds anchors only for valid UTF-8 files. `context` alone does not enable cross-line matching. The `.` wildcard still does not match newlines; use `\n` or `(?s)`. |
 | `context` | `0` | Integer from 0 to 20: include that many lines before and after each match (pass 3–5 to inspect code blocks without another read). Fractions are rejected, not rounded. Context lines do not count toward `limit`. |
@@ -250,17 +322,17 @@ Grep defaults to line-based code searches. With `multiline: true`, OR patterns a
 
 Directory traversal respects ignore rules, does not follow symbolic links, and includes hidden files. Explicitly named files can still be read through a link or from an ignored directory; ordered `glob` filters still apply to explicit file paths. These rules have different priorities for explicit paths and directory traversal and are not simply intersected.
 
-Scope inspection reports `Path not found` only for a filesystem `ENOENT` failure. Permission failures, symlink loops, and other traversal errors retain their native errno and cause.
+Scope inspection reports `PATH_NOT_FOUND` only for a filesystem `ENOENT` failure; for a path containing a wildcard, `next` points to `glob`. Permission failures, symlink loops, and other traversal errors are `FILESYSTEM_ERROR` with their native error text.
 
 Searches use bundled ripgrep, independent of system `rg` or `PATH`. The tool disables external ripgrep configuration with `--no-config` and clears `RIPGREP_CONFIG_PATH`, and uses `--no-crlf` and `--encoding=none` so standalone CR and BOM remain content. NUL-containing files are silently skipped in all output modes, including explicitly named files; they do not consume the match limit. Valid UTF-8 files use the shared LF view: files without CRLF are searched at their original paths, and CRLF text is normalized into temporary snapshots using bounded reads and writes. Batches contain up to 64 files or 8 MiB of source data (one large file can exceed that threshold); snapshots are removed after each batch and on failure/cancellation. Match paths refer to original files. Regexes use ripgrep's default Rust-style engine, not PCRE2.
 
 Files with invalid UTF-8 and no NUL remain searchable as raw bytes, without CRLF normalization or encoding conversion. Multiline queries for these files must match their actual separators, such as `\r\n`. Queries containing actual CRLF characters retain them for raw-byte files, while valid UTF-8 files receive the LF-normalized query. Ripgrep's Unicode regex rules still apply; use a byte-mode group such as `(?-u:...)` when the pattern must span malformed bytes. Content-mode output uses replacement characters and plain `LINE│content` rows for the entire file, including context, followed by `Invalid UTF-8: replacement characters shown; plain line numbers cannot be used as edit anchors`. These previews are not editable anchors. Unmatched invalid UTF-8 files produce no warning.
 
-All output modes verify invalid UTF-8 results against the source's pre-search byte revision and the complete raw-byte match spans reported by ripgrep, including the part of a multiline match omitted by `limit`. The tool keeps fixed-size byte digests and verifies them with a bounded scan; different malformed bytes cannot be accepted merely because both display as the same replacement character. Content output retains its complete-file byte revision check for valid UTF-8 as well. A detected mismatch reports `File changed during search`.
+All output modes verify invalid UTF-8 results against the source's pre-search byte revision and the complete raw-byte match spans reported by ripgrep, including the part of a multiline match omitted by `limit`. The tool keeps fixed-size byte digests and verifies them with a bounded scan; different malformed bytes cannot be accepted merely because both display as the same replacement character. Content output retains its complete-file byte revision check for valid UTF-8 as well. A detected mismatch reports `FILE_CHANGED` (`File changed during search.`).
 
-Search diagnostics are preserved even when a result limit stops ripgrep. Readable, confirmed matches remain available with a `Search incomplete` notice and `details.incomplete: true`; counts then cover only confirmed matches. If no results can be returned, the tool reports an error rather than claiming there are no matches. Search diagnostics have a separate 4 KiB display budget. Ripgrep stderr and batch aggregation each retain up to 64 KiB. All three limits preserve opening context and the final cause where lines fit, and explicitly mark omitted middle text. The shared implementation is [`DiagnosticBuffer`](src/pi/diagnostic-buffer.ts); limits live in [`budgets.ts`](src/pi/budgets.ts) and [`rg-process.ts`](src/pi/rg-process.ts).
+Search diagnostics are preserved even when a result limit stops ripgrep. Readable, confirmed matches remain available with a `Search incomplete` notice and `details.incomplete: true`; counts then cover only confirmed matches. If no results can be returned, the tool reports `SEARCH_INCOMPLETE` with the diagnostics in `diagnostics`, rather than claiming there are no matches. Search diagnostics have a separate 4 KiB display budget. Ripgrep stderr and batch aggregation each retain up to 64 KiB. All three limits preserve opening context and the final cause where lines fit, and explicitly mark omitted middle text. The shared implementation is [`DiagnosticBuffer`](src/pi/diagnostic-buffer.ts); limits live in [`budgets.ts`](src/pi/budgets.ts) and [`rg-process.ts`](src/pi/rg-process.ts).
 
-All file-tool errors retain every text block in the TUI, including validation causes and recovery hints. Short errors are shown in full when collapsed; longer errors use the same collapsed preview and expansion as grep results. Expanding reveals all retained diagnostic text, including edit recovery context and combined Action Fusion failure details. These display limits do not shorten the tool result sent to the model.
+Error cards render the [error record](#errors); expanding reveals every retained fact. These display limits do not shorten the tool result sent to the model.
 
 Long lines show a labeled partial preview of up to 500 UTF-16 units near a reported match column when available; context-only lines and matches without a recorded column show their beginning. Labels report 1-based UTF-16 column ranges, and slicing preserves surrogate pairs. The anchor hashes the entire current line, not the preview; use `read` before reconstructing a line from its content.
 
@@ -271,17 +343,19 @@ Required: non-empty `path` and a non-empty `replacements` array. Use one item fo
 - `regex`: defaults to `false`; both modes match the shared LF view. Regex mode supports capture groups, the full match, and prefix/suffix substitutions.
 - `flags`: applies in both modes; `g` is always added. Only `g i m s u y d` characters are accepted; regex syntax errors are reported per rule before the file is read.
 
-Zero matches in any rule, an invalid rule, or overlapping match ranges rejects the whole call without writing. Adjacent ranges are allowed. Zero-length matches conflict at the same position or at the start/interior of another match; a zero-length match at another match's end is allowed unless it conflicts with a following match. Error rule indices and string offsets are zero-based (offsets count UTF-16 code units in the original text). Literal and regex rules share the same original ranges for conflict detection.
+Zero matches in any rule (`NO_MATCH`), an invalid rule (`INVALID_ARGUMENTS`), or overlapping match ranges (`OVERLAPPING_MATCHES`) rejects the whole call without writing. Adjacent ranges are allowed. Zero-length matches conflict at the same position or at the start/interior of another match; a zero-length match at another match's end is allowed unless it conflicts with a following match. Error rule indices and string offsets are zero-based (offsets count UTF-16 code units in the original text). Literal and regex rules share the same original ranges for conflict detection.
 
 Regex captures and prefix/suffix substitutions always refer to the original LF-normalized snapshot.
-Regex batches run in a worker and are terminated on cancellation or when `replace.regexTimeoutMs` (default 5000 ms) elapses. A cancelled or timed-out batch leaves the file unchanged; literal-only batches retain their existing execution path.
+Regex batches run in a worker and are terminated on cancellation (`OPERATION_ABORTED`) or when `replace.regexTimeoutMs` (default 5000 ms) elapses (`REGEX_TIMEOUT`). A cancelled or timed-out batch leaves the file unchanged; literal-only batches retain their existing execution path.
 
 ### Write
 
 Required: `path`, `content`, `mode`. Choose `"create"` for a missing target or `"overwrite"` for an existing target; omitting `mode` is rejected before file access or command execution. Content is used exactly as supplied, including an empty string; anchor-looking prefixes are not stripped. Unknown fields, including misspelled modes, are rejected before writing.
 
-- `mode: "create"`: refuse an existing target.
-- `mode: "overwrite"`: require an existing target.
+- `mode: "create"`: refuse an existing target with `TARGET_EXISTS`.
+- `mode: "overwrite"`: require an existing target, otherwise `PATH_NOT_FOUND`.
+
+In both cases `next` names the other mode.
 
 Write results report the write outcome without returning line anchors. Use `read` or content-mode `grep` to obtain anchors for a later `edit`.
 
@@ -297,7 +371,7 @@ Forget is disabled by default. Set `"forget": true` in `hashlineEdit` and reload
 
 `read` results and content-mode `grep` results of at least 2 KiB of text, and image reads, end with a separate `[result rXXXXX]` block. Nested read/grep calls do not return tags because Pi saves only their caller's output. A successful `codemode` result that made a successful read or content-mode grep call receives one tag when the script output meets the same text or image threshold. Its scope notice states that forgetting removes the entire codemode output, including transformed data, conclusions, and other tool results printed by that script. Separate scripts preserve independent forgetting choices. Smaller results, errors, and `files`/`count` grep output carry no tag. `forget` takes `ids` (a non-empty array of distinct tags) and an optional non-empty `note` for conclusions needed in subsequent work. Omit `note` when none are needed; do not restate the read or forget action.
 
-Only results from the step the model has just seen can be forgotten: the tagged results after its previous response. Any other id rejects the whole call and lists the ids that are available. After the response that called `forget` completes, Pi's context edits replace the entire content of each named result with `[Result rXXXXX: content forgotten; rerun the call to see it again.]`. This removes all text and images, including headers, pagination, truncation and search notices, without inspecting their contents. The tool call, the rest of the exchange, and the `forget` call with its `note` stay in context. Save facts you still need in `note` before forgetting. Files, the raw session, and the TUI are unchanged; navigating to a point before the edit restores the original result.
+Only results from the step the model has just seen can be forgotten: the tagged results after its previous response. Any other id rejects the whole call with `NOT_FORGETTABLE`, listing the rejected `ids` and the `available` ones. After the response that called `forget` completes, Pi's context edits replace the entire content of each named result with `[Result rXXXXX: content forgotten; rerun the call to see it again.]`. This removes all text and images, including headers, pagination, truncation and search notices, without inspecting their contents. The tool call, the rest of the exchange, and the `forget` call with its `note` stay in context. Save facts you still need in `note` before forgetting. Files, the raw session, and the TUI are unchanged; navigating to a point before the edit restores the original result.
 
 The `forget` card in the TUI shows the result count in its header, for example `forget · 2 results`, followed by what was forgotten: `build.log · lines 100–200` (with `· truncated` when the read hit its byte limit), `photo.png · image`, or `grep /pattern/ · 12 matches in 3 files` (with `· limit reached` or `· incomplete`). Expanding the card shows each result id beside its receipt; results without a detailed receipt show their id in either view. An optional `note` appears below the header. read and grep keep receipts in result details, which Pi does not send to the model; the model sees only `Forgot rXXXXX.`.
 
@@ -392,7 +466,7 @@ In the TUI, the mutation card owns the mutation's result or error diagnostics, p
 
 When `then_run.timeout` is supplied, the command card shows the remaining seconds and refreshes once per second even without further command output. The countdown starts with the Bash tool's first execution update, after mutation, queue waiting, and any approval wait. It stops when execution ends; restored unfinished cards show an unknown final status without a countdown. The selected Bash implementation enforces the timeout; an override that emits no progress has no live countdown. Without `timeout`, there is no countdown or implicit time limit. RPC progress includes `timing.timeoutSeconds` and `timing.remainingSeconds` after a timed command starts.
 
-Command failures return the Bash tool's diagnostic text to the LLM, including exit or timeout details and whether file changes were saved. The final session result determines success, including nonzero exits and errors supplied by result hooks. Collapsing a TUI card does not shorten the model's result.
+After a completed mutation, the command outcome is its own block after the mutation result: `[then_run:succeeded]`, `[then_run:failed]`, or `[then_run:skipped]`, followed on the same line by the reason when the command did not run or was cancelled, then the Bash tool's output, including exit or timeout details. The mutation result above it states the file state, so a command skipped because the target changed carries no reason of its own: the `[then_run:stale]` notice above it already says so. A target whose revision could not be read adds the read failure as the reason. When the mutation itself fails, the result is the mutation's [error record](#errors) with `then_run: "skipped"` or `"cancelled"`, and no command block. The final session result determines success, including nonzero exits and errors supplied by result hooks. Collapsing a TUI card does not shorten the model's result.
 
 The Fusion queue holds a file from mutation until its command finishes, so another fused call on the same file cannot change it in between. Commands use the session's nested tool dispatcher (`ctx.executeTool("bash", ...)`), including its argument validation, Bash overrides, `tool_call` approval hooks, and `tool_result` hooks. Bash must be callable in that session. If it is unavailable or a hook blocks the command, Fusion reports command failure and retains the completed mutation.
 
@@ -416,7 +490,7 @@ A nested Bash result's `terminate` hint is passed to the parent mutation result 
 
 Only confirmed malformed UTF-8 produces `UNSUPPORTED_ENCODING`. Decoder resource failures, including the runtime string-length limit for whole-file `edit`/`replace`, retain their original error instead of being reported as an encoding problem.
 
-File reads compare the opened file and current path's identity, size, and modification/change timestamps before accepting content or reporting a decoding error. An observed concurrent write, truncation, deletion, or replacement reports `File changed during read; retry the tool.` After a mutation is published, observation reads treat such a change as a changed target instead of a failure and never ask to retry the published mutation. This metadata check does not create an atomic snapshot and cannot detect changes hidden by filesystem timestamp resolution; grep and mutations retain their byte revision checks.
+File reads compare the opened file and current path's identity, size, and modification/change timestamps before accepting content or reporting a decoding error. An observed concurrent write, truncation, deletion, or replacement reports `FILE_CHANGED` (`File changed during read.`), whose `next` is to retry the call. After a mutation is published, observation reads treat such a change as a changed target instead of a failure and never ask to retry the published mutation. This metadata check does not create an atomic snapshot and cannot detect changes hidden by filesystem timestamp resolution; grep and mutations retain their byte revision checks.
 
 Line boundaries are LF or CRLF; a standalone CR remains line content. Anchored rows display standalone CR as `␍` (U+240D), while hashes use the original content. Edit/replace `details.diff` marks raw CR as `␍`; `details.displayDiff` renders the shared LF view for the TUI, so CRLF boundary markers stay hidden even in mixed-ending files or beside an unterminated last line. Standalone CR and literal `␍` characters remain visible. Unified patches retain the original characters and line endings. The marker is a display aid, not replacement text.
 
@@ -432,12 +506,14 @@ These limits bound model context, not file size. Omission notices direct the cal
 | `grep` | Default 100 matching lines (`grep.defaultLimit`), overridable; up to 500 UTF-16 units per partial line preview, plus labels and Pi's total output limits. Match previews use rg byte offsets; hashes use full content. Search error notices have a separate 4 KiB budget. |
 | `forget` tag | With `forget` enabled: direct `read` and content-mode `grep` text results of 2 KiB or more, and image reads. Successful codemode outputs containing a successful read or content-mode grep call use the same threshold and are forgotten as one result; nested results are not tagged. |
 | `edit` / `replace` anchors | 16 KiB including heading/omission notice, with no fixed entry-count limit. Compact tokens for changed positions; selected deletion successors retain complete content. The omission notice consumes budget only when rows are omitted. Rows that do not fit are omitted in full; later rows that fit are still returned. |
+| Error `message` | 4 KiB, preserving the opening and the final cause with an omission notice. |
 | Argument errors | 16 KiB of valid JSON for combined tool-specific and schema issues; omit the argument copy before omitting whole issues and label both omissions. Each reason has a 4 KiB budget preserving opening/closing text. Pi's schema error allowance applies separately within each top-level field. |
-| Anchor failure details | 16 KiB, with no fixed failure-count limit; unique candidates include complete rows up to 4 KiB, and ambiguous failures list up to eight candidates each. Unresolved anchors show the current cited row when it fits; oversized or out-of-range rows require a fresh `read` or `grep`. |
-| Input-anchor checks | Independent 16 KiB block, with no fixed entry-count limit. Truncation is reported explicitly; omitted entries are not implied matched. |
-| Ambiguous-candidate neighborhoods | 16 KiB of complete anchored row text, lowest-line first, plus headings; no fixed row-count limit. Uses the same first eight candidates per failure as the detail lists. Each listed candidate row is limited to 4 KiB. Rows exceeding either limit are omitted in full; later rows that fit are still returned, with gaps reflected in the neighborhood headings. |
+| Anchor `failures` | 16 KiB of compact JSON, with no fixed failure-count limit; leading entries are kept whole and the rest counted in `omittedFailures`. Unique candidates include complete rows up to 4 KiB, and ambiguous failures list up to eight candidates each. Unresolved anchors show the current cited row when it fits; oversized or out-of-range rows require a fresh `read` or `grep`. |
+| Anchor `matched` | Independent 16 KiB, with no fixed entry-count limit. Omitted entries are counted in `omittedMatched` and are not implied matched. |
+| `candidateNeighborhoods` | 16 KiB of complete anchored row text, lowest-line first; no fixed row-count limit. Uses the same first eight candidates per failure as the failure lists. Each listed candidate row is limited to 4 KiB. Rows exceeding either limit are omitted in full and counted in `omittedNeighborhoodRows`; later rows that fit are still returned, with gaps reflected in the `lines` ranges. |
+| `forget` `available` ids | 16 KiB; omitted ids are counted in `omittedAvailable`. |
 
-The diagnostic blocks have independent budgets; their combined output can exceed 16 KiB. Truncation notices identify exhausted budgets; context windows also report shown/omitted row counts. The closing recovery instruction is outside every budget. Limits apply to rendered diagnostics; core failure results retain all input-anchor checks.
+The fact lists have independent budgets; a record can exceed 16 KiB in total. `next` is outside every budget. Limits apply to the reported record; core failure results retain every input-anchor check.
 
 ### Publication
 
@@ -478,9 +554,9 @@ PUBLISHED, even if a step after publication fails
 | Non-regular files | Check the opened file handle before reading mutation snapshots or revisions. POSIX FIFO targets, including symlink aliases, are rejected without waiting for a writer. |
 | Multiple hard links | Reject existing regular files with multiple links to avoid splitting the link set. |
 | Permissions | Copy existing mode bits; new files use `0600`. No separate public permission setting. |
-| Post-publication failure | Directory-sync, result-generation, revision observation, or cleanup errors retain `PUBLISHED`; unconfirmed publication is `UNKNOWN`. Read before retrying uncertain mutations. |
+| Post-publication failure | Directory-sync, result-generation, revision observation, or cleanup errors are `POST_PROCESS_FAILED` and retain `PUBLISHED`; unconfirmed publication is `UNKNOWN`. In both cases the record's `next` says not to repeat the change and to read the file first. |
 | Durability | Attempt directory synchronization on POSIX, including macOS; tolerate `EINVAL` / `ENOTSUP` from directory fsync and propagate other failures. Windows skips directory synchronization. |
-| Cancellation | Every tool reports cancellation as an error starting with `Operation aborted`, matching Pi's built-in tools. Mutation tools add where it stopped and whether the file changed, for example `Operation aborted before apply; src/foo.ts was not changed.` |
+| Cancellation | Every tool reports cancellation as `OPERATION_ABORTED` with the `message` `Operation aborted.`, matching Pi's built-in tools. Mutation records state where it stopped in `stage` and whether the file changed in `publication`. |
 
 ### Result and card states
 

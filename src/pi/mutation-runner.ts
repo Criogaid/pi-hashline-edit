@@ -6,7 +6,8 @@
  * the shared file mutation queue, and the hand-off to Action Fusion or plain
  * finalization. Each tool
  * returns a typed `MutationOutcome` (result, commit facts, anchors); nothing
- * downstream reads publication or revisions back from result details.
+ * downstream reads publication or revisions back from result details. Every
+ * failure leaves as one error record with the call's path, stage, and publication.
  *
  * `runTextMutation` adds the read-modify-write sequence shared by edit and
  * replace: snapshot bound to the bytes read, cancellation before apply and
@@ -34,6 +35,7 @@ import {
 } from "./mutation-result.ts";
 import { canonicalPath } from "./path.ts";
 import { throwIfCancelled } from "./error-text.ts";
+import { reportToolErrors } from "./tool-error.ts";
 
 export type ActionFusionExecutor = ReturnType<typeof createActionFusionExecutor>;
 
@@ -51,6 +53,7 @@ export interface MutationTarget {
 }
 
 export interface MutationToolSpec<TParams extends { path: string }, TDetails> {
+  readonly tool: MutationToolName;
   readonly cwd: string;
   readonly fusion: ActionFusionExecutor | undefined;
   /** Perform the mutation. Runs inside the file mutation queue. */
@@ -74,24 +77,27 @@ export async function executeMutation<TParams extends { path: string }, TDetails
   const { cwd, fusion } = spec;
   const { toolCallId, signal, onUpdate, ctx } = call;
   const { then_run, ...mutationParams } = call.params;
-  const absolutePath = canonicalPath(cwd, mutationParams.path);
-  const target: MutationTarget = { absolutePath, displayPath: mutationParams.path, signal };
-  const mutate = (): Promise<MutationOutcome<TDetails>> =>
-    withFileMutationQueue(absolutePath, () =>
-      spec.run(mutationParams as unknown as TParams, target),
-    );
-  if (!fusion) {
-    const outcome = await mutate();
-    return finalizeMutation(outcome, commitFreshness(outcome.commit) === "unchanged");
-  }
-  return fusion({
-    toolCallId,
-    absolutePath,
-    thenRun: then_run,
-    mutate,
-    signal,
-    ctx,
-    onUpdate,
+  const displayPath = mutationParams.path;
+  return reportToolErrors(spec.tool, { path: displayPath, mutation: true, signal }, async () => {
+    const absolutePath = canonicalPath(cwd, displayPath);
+    const target: MutationTarget = { absolutePath, displayPath, signal };
+    const mutate = (): Promise<MutationOutcome<TDetails>> =>
+      withFileMutationQueue(absolutePath, () =>
+        spec.run(mutationParams as unknown as TParams, target),
+      );
+    if (!fusion) {
+      const outcome = await mutate();
+      return finalizeMutation(outcome, commitFreshness(outcome.commit) === "unchanged");
+    }
+    return fusion({
+      toolCallId,
+      absolutePath,
+      thenRun: then_run,
+      mutate,
+      signal,
+      ctx,
+      onUpdate,
+    });
   });
 }
 
@@ -110,34 +116,23 @@ export interface TextChange {
  * changed since the snapshot, and result-generation failures keep publication.
  */
 export async function runTextMutation(
-  tool: Exclude<MutationToolName, "write">,
   target: MutationTarget,
   change: (currentText: string) => TextChange | Promise<TextChange>,
 ): Promise<MutationOutcome<TextMutationDetails>> {
   const { absolutePath, displayPath, signal } = target;
 
-  const { text: currentText, baseRevision } = await readEditableSnapshot(
-    absolutePath,
-    displayPath,
-    signal,
-  );
+  const { text: currentText, baseRevision } = await readEditableSnapshot(absolutePath, signal);
   // Cancelled after read: don't transform; the file stays untouched.
-  throwIfCancelled(signal, `before apply; ${displayPath} was not changed.`);
+  throwIfCancelled(signal);
 
   const next = await change(currentText);
 
   // Cancelled before write: don't touch the disk.
-  throwIfCancelled(signal, `before write; ${displayPath} was not changed.`);
+  throwIfCancelled(signal);
 
-  const versions = await commitReplacement(
-    absolutePath,
-    displayPath,
-    next.text,
-    baseRevision,
-    signal,
-  );
+  const versions = await commitReplacement(absolutePath, next.text, baseRevision, signal);
   let anchors = "";
-  const result = postProcessMutation(tool, versions.publication, () => {
+  const result = postProcessMutation(versions.publication, () => {
     const details = generateMutationDetails(
       displayPath,
       currentText,

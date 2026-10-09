@@ -1,48 +1,38 @@
 /**
- * Bounded anchor-failure diagnostics for edit: failure details with recovery
- * candidates, input-anchor checks, and ambiguous-candidate neighborhoods.
+ * Bounded edit failure facts for the error record: anchor failures with their
+ * recovery candidates or observed rows, the batch's matched anchors, and
+ * ambiguous-candidate neighborhoods.
  *
- * Each statement has one owner. Failure details state facts, including that
- * nothing was written; the input-anchor table header qualifies its statuses;
- * observation labels stay with the rows they qualify. The recovery instruction
- * follows every bounded block once, so no truncation removes it.
+ * Each fact has one owner. A failure entry states what was cited and what the
+ * search found; a shifted candidate's anchor is stated once, beside its
+ * `content`; `matched` lists only the anchors that passed, so a mismatch
+ * appears once, in `failures`; a row shown in a neighborhood is not repeated
+ * in a failure entry. The `observed` and neighborhood rows are observations,
+ * not verified targets. Every list has its own byte budget and an explicit
+ * omission count. The recovery instruction is the record's `next` (tool-error.ts).
  *
  * @module pi-hashline-edit/pi
  */
 
-import { truncateHead } from "@earendil-works/pi-coding-agent";
-import type { AnchorFormatter } from "./anchor-format.ts";
+import { type AnchorFormatter, displayCarriageReturns } from "./anchor-format.ts";
 import { splitLines } from "../core/lines.ts";
 import type { Anchor, AnchorFailure, ApplyFailure } from "../core/types.ts";
 import { mergeRanges } from "../core/ranges.ts";
+import { HashlineError, type ErrorFacts } from "../core/errors.ts";
 import { formatKiB, MAX_BLOCK_BYTES, MAX_RECOVERY_CANDIDATE_BYTES } from "./budgets.ts";
+import { boundedFacts } from "./tool-error.ts";
 
 const CONTEXT_RADIUS = 3;
 const MAX_AMBIGUOUS_CANDIDATES = 8;
 
-/** Publication fact for every rejected edit batch. */
-const NO_CHANGES_WRITTEN = "No changes written by this edit batch.";
-/** The single recovery instruction for anchor failures; details and checks state facts only. */
-const ANCHOR_RECOVERY_GUIDANCE =
-  "Before reusing a candidate or observed anchor, confirm it is the intended target; use read or grep for omitted rows, out-of-range lines, or more context. Retries verify every anchor again.";
+type Snapshot = Readonly<{ currentText: string; anchors: AnchorFormatter }>;
 
 /** Select the shared candidate prefix for detail lists and observation neighborhoods. */
 export function selectAmbiguousCandidates(candidates: readonly Anchor[]): readonly Anchor[] {
   return candidates.slice(0, MAX_AMBIGUOUS_CANDIDATES);
 }
 
-type Interval = { lo: number; hi: number };
 type ContextRow = { line: number; text: string };
-
-function shownIntervals(rows: readonly ContextRow[]): Interval[] {
-  const intervals: Interval[] = [];
-  for (const row of rows) {
-    const previous = intervals.at(-1);
-    if (previous && row.line === previous.hi + 1) previous.hi = row.line;
-    else intervals.push({ lo: row.line, hi: row.line });
-  }
-  return intervals;
-}
 
 function collectContextRows(
   lines: readonly string[],
@@ -62,207 +52,187 @@ function collectContextRows(
   const total = windows.reduce((sum, [start, end]) => sum + end - start, 0);
   const rows: ContextRow[] = [];
   let bytes = 0;
-  const omissions = new Set<"byte limit" | "candidate row limit">();
 
   for (const [start, end] of windows) {
     for (let line = start; line < end; line++) {
-      const content = lines[line - 1];
-      const text = anchors.row(line, content);
+      const text = anchors.row(line, lines[line - 1]);
       const rowBytes = Buffer.byteLength(text, "utf8");
       // Neighborhoods must not bypass the standalone candidate's complete-row limit.
-      if (candidateLines.has(line) && rowBytes > MAX_RECOVERY_CANDIDATE_BYTES) {
-        omissions.add("candidate row limit");
-        continue;
-      }
-      if (bytes + rowBytes + 1 > MAX_BLOCK_BYTES) {
-        omissions.add("byte limit");
-        continue;
-      }
+      if (candidateLines.has(line) && rowBytes > MAX_RECOVERY_CANDIDATE_BYTES) continue;
+      if (bytes + rowBytes + 1 > MAX_BLOCK_BYTES) continue;
       rows.push({ line, text });
       bytes += rowBytes + 1;
     }
   }
-  return { rows, total, truncatedBy: [...omissions].join(" and ") || undefined };
+  return { rows, omitted: total - rows.length };
 }
 
-function formatContextRows(rows: readonly ContextRow[]): string[] {
-  const body: string[] = [];
-  let index = 0;
-  for (const interval of shownIntervals(rows)) {
-    body.push(`@@ candidate-neighborhood lines ${interval.lo}-${interval.hi} @@`);
-    while (index < rows.length && rows[index].line <= interval.hi) body.push(rows[index++].text);
+/** Group shown rows into contiguous neighborhoods; gaps mark omitted rows. */
+function groupContextRows(rows: readonly ContextRow[]) {
+  const groups: { lines: string; rows: string[] }[] = [];
+  let previous: ContextRow | undefined;
+  let first = 0;
+  for (const row of rows) {
+    if (!previous || row.line !== previous.line + 1) {
+      groups.push({ lines: "", rows: [] });
+      first = row.line;
+    }
+    const group = groups[groups.length - 1];
+    group.rows.push(row.text);
+    group.lines = `${first}-${row.line}`;
+    previous = row;
   }
-  return body;
+  return groups;
 }
 
 /**
- * Format observation rows around listed ambiguous candidates and report rows actually shown.
- * @internal Performs no I/O; the edit diagnostic uses shownLines to avoid repeating content.
+ * Observation rows (±3) around listed ambiguous candidates, lowest lines first,
+ * and the lines actually shown so failure entries do not repeat them.
+ * @internal Performs no I/O.
  */
-export function formatAmbiguousCandidateNeighborhoods(
+export function ambiguousCandidateNeighborhoods(
   currentText: string,
   failures: readonly AnchorFailure[],
   anchors: AnchorFormatter,
-): { text: string; shownLines: ReadonlySet<number> } {
+): { facts: ErrorFacts; shownLines: ReadonlySet<number> } {
   const centers = failures.flatMap((failure) =>
     failure.recovery.kind === "ambiguous"
       ? selectAmbiguousCandidates(failure.recovery.candidates).map((candidate) => candidate.line)
       : [],
   );
-  if (centers.length === 0) return { text: "", shownLines: new Set() };
+  if (centers.length === 0) return { facts: {}, shownLines: new Set() };
 
-  const lines = splitLines(currentText);
   const candidateLines = new Set(centers);
   for (const failure of failures) {
     if (failure.recovery.kind === "found") candidateLines.add(failure.recovery.newLine);
   }
-  const { rows, total, truncatedBy } = collectContextRows(lines, centers, anchors, candidateLines);
-  const body = [`Ambiguous-candidate neighborhoods (+/-${CONTEXT_RADIUS}; observation only):`];
-  if (rows.length === 0) {
-    body.push("No complete neighborhood row fits the limits.");
-  } else {
-    body.push(...formatContextRows(rows));
-  }
-  if (truncatedBy) {
-    body.push(
-      `Candidate-neighborhood rows: ${rows.length}/${total}; ${total - rows.length} omitted.`,
-    );
-    body.push(
-      `Candidate neighborhoods truncated: ${truncatedBy} (${formatKiB(MAX_BLOCK_BYTES)}; candidate row ${formatKiB(MAX_RECOVERY_CANDIDATE_BYTES)}; lowest lines first).`,
-    );
-  }
-  return { text: `\n${body.join("\n")}`, shownLines: new Set(rows.map((row) => row.line)) };
+  const { rows, omitted } = collectContextRows(
+    splitLines(currentText),
+    centers,
+    anchors,
+    candidateLines,
+  );
+  return {
+    facts: {
+      candidateNeighborhoods: groupContextRows(rows),
+      ...(omitted ? { omittedNeighborhoodRows: omitted } : {}),
+    },
+    shownLines: new Set(rows.map((row) => row.line)),
+  };
 }
 
-/** Keep independent byte budgets for failure details and input-anchor checks. */
-function boundDiagnostic(message: string, notice: string): string {
-  const bounded = truncateHead(message, { maxBytes: MAX_BLOCK_BYTES - Buffer.byteLength(notice) });
-  return bounded.content + (bounded.truncated ? notice : "");
-}
-/** Describe anchor failures as facts: the outcome headline, then candidates or observed rows per failure. */
-function describeAnchorFailures(
-  failures: readonly AnchorFailure[],
-  snapshot: Readonly<{ currentText: string; anchors: AnchorFormatter }>,
-  candidateLines: ReadonlySet<number>,
-): string[] {
-  const lines: string[] = [];
-  const currentLines = splitLines(snapshot.currentText);
-  const shownCandidates = new Set(candidateLines);
-  let found = 0;
-  let ambiguous = 0;
-  let none = 0;
-  for (const f of failures) {
-    if (f.recovery.kind === "found") found++;
-    else if (f.recovery.kind === "ambiguous") ambiguous++;
-    else none++;
-    const where = `op #${f.opIndex} ${f.op} ${f.which} (line ${f.cited.line})`;
-    const search =
-      f.recovery.kind === "none"
-        ? ""
-        : f.recovery.scope === "local"
-          ? "Search: local; matches outside the window were not checked."
-          : "Search: full file.";
-    switch (f.recovery.kind) {
-      case "found": {
-        const content = currentLines[f.recovery.newLine - 1];
-        const candidate = snapshot.anchors.reference(f.recovery.newLine, f.recovery.newHash);
-        const row =
-          content === undefined ? candidate : snapshot.anchors.row(f.recovery.newLine, content);
-        let detail = `• ${where}: checksum-matching candidate ${candidate}. ${search}`;
-        if (!shownCandidates.has(f.recovery.newLine)) {
-          if (
-            content !== undefined &&
-            Buffer.byteLength(row, "utf8") <= MAX_RECOVERY_CANDIDATE_BYTES
-          ) {
-            detail += `\n${row}`;
-            shownCandidates.add(f.recovery.newLine);
-          } else {
-            detail += ` Candidate content exceeds ${formatKiB(MAX_RECOVERY_CANDIDATE_BYTES)}.`;
-          }
-        }
-        lines.push(detail);
-        break;
+const RESULT = { found: "shifted", ambiguous: "ambiguous", none: "unresolved" } as const;
+const ROW_TOO_LARGE = `row exceeds ${formatKiB(MAX_RECOVERY_CANDIDATE_BYTES)}`;
+
+/** One failure entry: what was cited, then what the search found or what the cited line holds. */
+function failureEntry(
+  f: AnchorFailure,
+  snapshot: Snapshot,
+  currentLines: readonly string[],
+  shownLines: Set<number>,
+): ErrorFacts {
+  const entry: Record<string, unknown> = {
+    field: `edits[${f.opIndex}].${f.which}`,
+    op: f.op,
+    cited: snapshot.anchors.reference(f.cited.line, f.cited.hash),
+    result: RESULT[f.recovery.kind],
+  };
+  if (f.recovery.kind !== "none")
+    entry.search = f.recovery.scope === "local" ? "local window" : "full file";
+  switch (f.recovery.kind) {
+    case "found": {
+      const { newLine, newHash } = f.recovery;
+      entry.candidate = snapshot.anchors.reference(newLine, newHash);
+      if (shownLines.has(newLine)) break;
+      const content = currentLines[newLine - 1];
+      // The row budget matches the neighborhoods'; the anchor itself is already `candidate`.
+      if (
+        content !== undefined &&
+        Buffer.byteLength(snapshot.anchors.row(newLine, content), "utf8") <=
+          MAX_RECOVERY_CANDIDATE_BYTES
+      ) {
+        entry.content = displayCarriageReturns(content);
+        shownLines.add(newLine);
+      } else {
+        entry.contentOmitted = ROW_TOO_LARGE;
       }
-      case "ambiguous": {
-        const candidates = selectAmbiguousCandidates(f.recovery.candidates);
-        const list = candidates
-          .map((candidate) => `"${snapshot.anchors.reference(candidate.line, candidate.hash)}"`)
-          .join(" / ");
-        const omitted = f.recovery.candidates.length - candidates.length;
-        const more = omitted ? ` (${omitted} more candidates omitted)` : "";
-        lines.push(`• ${where}: ambiguous checksum matches: ${list}${more}. ${search}`);
-        break;
-      }
-      case "none": {
-        const row =
-          f.current === null ? null : snapshot.anchors.row(f.cited.line, f.current.content);
-        const observation =
-          row === null
-            ? " Cited line is out of range."
-            : Buffer.byteLength(row, "utf8") <= MAX_RECOVERY_CANDIDATE_BYTES
-              ? ` Current cited line (observation only):\n${row}`
-              : ` Current row exceeds ${formatKiB(MAX_RECOVERY_CANDIDATE_BYTES)}.`;
-        lines.push(`• ${where}: no checksum-matching candidate found.${observation}`);
-        break;
-      }
+      break;
+    }
+    case "ambiguous": {
+      const candidates = selectAmbiguousCandidates(f.recovery.candidates);
+      entry.candidates = candidates.map((candidate) =>
+        snapshot.anchors.reference(candidate.line, candidate.hash),
+      );
+      const omitted = f.recovery.candidates.length - candidates.length;
+      if (omitted) entry.omittedCandidates = omitted;
+      break;
+    }
+    case "none": {
+      const row = f.current === null ? null : snapshot.anchors.row(f.cited.line, f.current.content);
+      if (row === null) entry.observedOmitted = "cited line is out of range";
+      else if (Buffer.byteLength(row, "utf8") <= MAX_RECOVERY_CANDIDATE_BYTES) entry.observed = row;
+      else entry.observedOmitted = ROW_TOO_LARGE;
+      break;
     }
   }
-  const parts: string[] = [];
-  if (found) parts.push(`${found} shifted`);
-  if (ambiguous) parts.push(`${ambiguous} ambiguous`);
-  if (none) parts.push(`${none} unresolved`);
-  return [`Anchor mismatch: ${parts.join(", ")}.`, ...lines];
+  return entry;
 }
 
-/** Format the failure headline, the publication fact, and per-failure facts within the detail budget. */
-function formatFailureDetails(
-  failure: ApplyFailure,
-  snapshot: Readonly<{ currentText: string; anchors: AnchorFormatter }>,
-  candidateLines: ReadonlySet<number>,
-): string {
-  const [headline, ...facts] =
-    failure.kind === "anchor"
-      ? describeAnchorFailures(failure.failures, snapshot, candidateLines)
-      : [failure.message];
-  return boundDiagnostic(
-    [headline, NO_CHANGES_WRITTEN, ...facts].join("\n"),
-    `\nDiagnostic output truncated at ${formatKiB(MAX_BLOCK_BYTES)}.`,
-  );
-}
-
-/** The header qualifies every status, so the qualification survives truncation of the rows. */
-function formatAnchorChecks(failure: ApplyFailure, anchors: AnchorFormatter): string {
-  const rows = failure.checks.map(
-    (check) =>
-      `op ${check.opIndex} / ${check.which} / ${anchors.reference(check.cited.line, check.cited.hash)} / ${check.status}`,
-  );
-  return boundDiagnostic(
-    ["Input-anchor checks (checksum only; this snapshot):", ...rows].join("\n"),
-    `\nAnchor-check output truncated at ${formatKiB(MAX_BLOCK_BYTES)}; omitted entries are not implied matched.`,
-  );
+function anchorMismatchMessage(failures: readonly AnchorFailure[]): string {
+  const counts = new Map<string, number>();
+  for (const f of failures) {
+    const result = RESULT[f.recovery.kind];
+    counts.set(result, (counts.get(result) ?? 0) + 1);
+  }
+  const parts = Object.values(RESULT)
+    .filter((result) => counts.has(result))
+    .map((result) => `${counts.get(result)} ${result}`);
+  return `Anchors did not match: ${parts.join(", ")}.`;
 }
 
 /**
- * Join the independently bounded fact blocks, then state the recovery instruction once.
- * Validation status and observation context stay visible even when failure details are truncated.
+ * The batch's anchors whose checksum matched, by field. An anchor absent from
+ * both `matched` and `failures` is counted as omitted, never implied matched.
  */
-export function formatFailure(
+function matchedAnchorFacts(failure: ApplyFailure): ErrorFacts {
+  const { kept, omitted } = boundedFacts(
+    failure.checks
+      .filter((check) => check.status === "matched")
+      .map((check) => `edits[${check.opIndex}].${check.which}`),
+    MAX_BLOCK_BYTES,
+  );
+  return kept.length || omitted
+    ? { matched: kept, ...(omitted ? { omittedMatched: omitted } : {}) }
+    : {};
+}
+
+/** Classify a rejected edit batch with its bounded facts. */
+export function describeEditFailure(
   failure: ApplyFailure,
-  snapshot: Readonly<{ currentText: string; anchors: AnchorFormatter }>,
+  snapshot: Snapshot,
   isBatch: boolean,
-): string {
-  const candidateNeighborhoods =
-    failure.kind === "anchor"
-      ? formatAmbiguousCandidateNeighborhoods(
-          snapshot.currentText,
-          failure.failures,
-          snapshot.anchors,
-        )
-      : { text: "", shownLines: new Set<number>() };
-  const guidance = failure.kind === "anchor" ? `\n${ANCHOR_RECOVERY_GUIDANCE}` : "";
-  const anchorChecks =
-    isBatch && failure.checks.length > 0
-      ? `\n${formatAnchorChecks(failure, snapshot.anchors)}`
-      : "";
-  return `${formatFailureDetails(failure, snapshot, candidateNeighborhoods.shownLines)}${anchorChecks}${candidateNeighborhoods.text}${guidance}`;
+): HashlineError {
+  const matched = isBatch ? matchedAnchorFacts(failure) : {};
+  if (failure.kind === "range")
+    return new HashlineError(failure.code, failure.message, { facts: matched });
+
+  const neighborhoods = ambiguousCandidateNeighborhoods(
+    snapshot.currentText,
+    failure.failures,
+    snapshot.anchors,
+  );
+  const currentLines = splitLines(snapshot.currentText);
+  const shownLines = new Set(neighborhoods.shownLines);
+  const { kept, omitted } = boundedFacts(
+    failure.failures.map((f) => failureEntry(f, snapshot, currentLines, shownLines)),
+    MAX_BLOCK_BYTES,
+  );
+  return new HashlineError("ANCHOR_MISMATCH", anchorMismatchMessage(failure.failures), {
+    facts: {
+      failures: kept,
+      ...(omitted ? { omittedFailures: omitted } : {}),
+      ...matched,
+      ...neighborhoods.facts,
+    },
+  });
 }
