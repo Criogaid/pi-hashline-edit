@@ -54,7 +54,8 @@ export type CommandStatus =
   | "failed"
   | "timeout"
   | "cancelled";
-export type Freshness = "unchanged" | "changed" | "missing" | "unknown";
+export const FRESHNESS_VALUES = ["unchanged", "changed", "missing", "unknown"] as const;
+export type Freshness = (typeof FRESHNESS_VALUES)[number];
 export interface ActionFusionDetails {
   publication: PublicationStatus;
   command: CommandStatus;
@@ -79,7 +80,8 @@ export interface ActionFusionProgress extends Omit<ActionFusionDetails, "command
 type ProgressReporter = (progress: ActionFusionProgress, ctx: ExtensionToolContext) => void;
 
 /** The tools that accept then_run. */
-export type MutationToolName = "edit" | "replace" | "write";
+export const MUTATION_TOOL_NAMES = ["edit", "replace", "write"] as const;
+export type MutationToolName = (typeof MUTATION_TOOL_NAMES)[number];
 
 export function createThenRunSchema(tool: MutationToolName) {
   return Type.Optional(

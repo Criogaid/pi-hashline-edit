@@ -123,6 +123,16 @@ export function renderOutputPreview(
   return new Text(shown.join("\n") + more, 0, 0);
 }
 
+/** Both direct and nested mutation cards retain the final stale-target warning. */
+export function renderFreshnessWarning(
+  freshness: ActionFusionProgress["freshness"] | undefined,
+  theme: Theme,
+): Text | undefined {
+  return freshness === "changed" || freshness === "missing"
+    ? new Text(theme.fg("warning", `Anchors are stale: target ${freshness}.`), 0, 0)
+    : undefined;
+}
+
 /** Present the serialized model diagnostic without its transport fields or argument echo. */
 function argumentErrorLines(error: ArgumentError, theme: Theme, expanded: boolean): string[] {
   const lines = [theme.fg("error", theme.bold(`Invalid arguments · ${error.tool} not executed`))];
