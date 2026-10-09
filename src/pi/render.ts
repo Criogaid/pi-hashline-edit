@@ -13,6 +13,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import { Text, type Component } from "@earendil-works/pi-tui";
+import type { ActionFusionProgress } from "./action-fusion.ts";
 
 /** Max diff lines shown when a result is rendered collapsed. */
 const MAX_COLLAPSED_DIFF_LINES = 24;
@@ -143,7 +144,7 @@ export function renderMutationResult<TArgs>(
   result: AgentToolResult<{
     displayDiff?: string;
     diff?: string;
-    actionFusion?: { publication?: string };
+    actionFusion?: Partial<Pick<ActionFusionProgress, "publication" | "mutationCompleted">>;
   }>,
   { isPartial, expanded }: ToolRenderResultOptions,
   theme: Theme,
@@ -152,7 +153,7 @@ export function renderMutationResult<TArgs>(
   fallback: string,
   header: (args: TArgs, theme: Theme, counts?: DiffCounts) => string,
 ): Text {
-  if (isPartial && result.details?.actionFusion?.publication !== "PUBLISHED")
+  if (isPartial && result.details?.actionFusion?.mutationCompleted !== true)
     return new Text(theme.fg("warning", pending), 0, 0);
   const content = result.content?.[0];
   if (context.isError) return renderToolError(result, theme, expanded);

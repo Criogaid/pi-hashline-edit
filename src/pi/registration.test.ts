@@ -119,20 +119,23 @@ test("mutation cards use Fusion by default and explicit false removes command su
       const running = frames.find((frame) => frame.command === "running")!;
       assert.ok(running, `${name} should emit running progress`);
       assert.ok(
-        running.output.includes(theme.getBgAnsi("toolSuccessBg")),
-        `${name} should turn green before then_run ends`,
+        running.output.includes(theme.getBgAnsi("toolPendingBg")),
+        `${name} should remain pending until then_run ends`,
       );
-      assert.ok(!running.output.includes(theme.getBgAnsi("toolPendingBg")));
+      assert.ok(!running.output.includes(theme.getBgAnsi("toolSuccessBg")));
       assert.ok(running.commandOutput.includes(theme.getBgAnsi("toolPendingBg")));
       assert.ok(frames.at(-1)!.commandOutput.includes(theme.getBgAnsi("toolErrorBg")));
       const completed = frames.find(
         (frame) => frame.command === "waiting" && frame.mutationCompleted,
       )!;
       assert.ok(
-        completed?.output.includes(theme.getBgAnsi("toolSuccessBg")),
-        "mutation completion must repaint before command checks",
+        completed?.output.includes(theme.getBgAnsi("toolPendingBg")),
+        "mutation completion must not finish the tool card before command checks",
       );
-      if (name === "replace") assert.equal(running.publication, "NOT_PUBLISHED");
+      if (name === "replace") {
+        assert.equal(running.publication, "NOT_PUBLISHED");
+        assert.match(running.output, /no net change/);
+      }
       card.updateResult({ ...result, isError: false });
       assert.ok(card.render(100).join("\n").includes(theme.getBgAnsi("toolSuccessBg")));
       card.setExpanded(true);

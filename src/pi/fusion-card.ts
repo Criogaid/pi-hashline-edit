@@ -1,7 +1,7 @@
 /**
- * Action Fusion presentation: the mutation card shell that keeps the file
- * result's status independent of the fused command, and the separate
- * transcript card for each then_run command.
+ * Action Fusion presentation: the mutation card follows the fused tool call's
+ * lifetime and retains the file result; a separate transcript card shows each
+ * then_run command's output and outcome.
  *
  * @module pi-hashline-edit/pi
  */
@@ -175,7 +175,7 @@ interface FusedMutationRenderState extends MutationRenderState {
   };
 }
 
-/** Keep the mutation card's background independent of the fused command's lifetime. */
+/** Keep the mutation card pending until the complete fused tool call returns. */
 export function withMutationStatus<TParams extends TSchema, TDetails>(
   tool: ToolDefinition<TParams, TDetails, FusedMutationRenderState>,
 ): ToolDefinition<TParams, TDetails, FusedMutationRenderState> {
@@ -197,10 +197,8 @@ export function withMutationStatus<TParams extends TSchema, TDetails>(
     },
     renderResult(result, options, theme, context) {
       const shell = (context.state.mutationShell ??= { box: new Box(1, 1) });
-      const details = result.details as
-        | { actionFusion?: { mutationCompleted?: boolean; freshness?: string } }
-        | undefined;
-      const isPartial = options.isPartial && details?.actionFusion?.mutationCompleted !== true;
+      const details = result.details as { actionFusion?: { freshness?: string } } | undefined;
+      const isPartial = options.isPartial;
       // Pi serializes fused failures into one diagnostic; retain it when the card expands.
       const fusedError = context.isError && (context.args as { then_run?: unknown })?.then_run;
       shell.result = fusedError
