@@ -16,16 +16,15 @@ import { createHash } from "node:crypto";
 import { decodeEditableText, unwritableTextError } from "../core/text.ts";
 import {
   errnoCode,
-  errorMessage,
   filesystemErrorCode,
   HashlineError,
   type ErrorCode,
+  type HashlineErrorOptions,
 } from "../core/errors.ts";
 import { cancellationError, FileChangedDuringReadError, throwIfCancelled } from "./error-text.ts";
 import { withFileRead } from "./file-read.ts";
+import type { Freshness, MutationStage, PublicationStatus } from "./report-schema.ts";
 
-export type PublicationStatus = "NOT_PUBLISHED" | "PUBLISHED" | "UNKNOWN";
-export type MutationStage = "prepare" | "commit" | "post_process";
 export type CommitMode = "create" | "overwrite";
 
 export interface CommitOptions {
@@ -52,27 +51,23 @@ export interface CommitResult extends MutationVersions {
  * A mutation failure with the stage it reached and what it published. Other
  * failures of a mutation tool happened while preparing and published nothing.
  */
-export class FileMutationError extends HashlineError {
+export class FileMutationError<C extends ErrorCode = ErrorCode> extends HashlineError<C> {
   readonly stage: MutationStage;
   readonly publication: PublicationStatus;
 
   constructor(
-    code: ErrorCode,
+    code: C,
     stage: MutationStage,
     publication: PublicationStatus,
     message: string,
-    options?: { cause?: unknown; next?: string },
+    options?: HashlineErrorOptions<C>,
   ) {
-    super(code, message, options);
+    super(code, message, ...([options] as [HashlineErrorOptions<C>]));
     this.name = "FileMutationError";
     this.stage = stage;
     this.publication = publication;
   }
 }
-
-/** Recovery for a write whose mode does not fit the target. */
-const USE_OVERWRITE = 'Use mode "overwrite" to replace the existing file.';
-const USE_CREATE = 'Use mode "create" to create a new file.';
 
 export function byteRevision(content: string | Uint8Array): string {
   return createHash("sha256").update(content).digest("hex");
@@ -100,7 +95,7 @@ export async function readEditableSnapshot(path: string, signal?: AbortSignal) {
     const bytes = await readRegularFile(path, signal);
     return { text: decodeEditableText(bytes), baseRevision: byteRevision(bytes) };
   } catch (error) {
-    if (signal?.aborted) throw asPrepareError(cancellationError(error));
+    if (signal?.aborted) throw asPrepareError(cancellationError());
     throw error;
   }
 }
@@ -120,17 +115,21 @@ export function commitReplacement(
   });
 }
 
-function prepareError(
-  code: ErrorCode,
+function prepareError<C extends ErrorCode>(
+  code: C,
   message: string,
-  options?: { cause?: unknown; next?: string },
-): FileMutationError {
+  options?: HashlineErrorOptions<C>,
+): FileMutationError<C> {
   return new FileMutationError(code, "prepare", "NOT_PUBLISHED", message, options);
 }
 
-/** A classified failure before any publication step keeps its code and recovery. */
-function asPrepareError(error: HashlineError): FileMutationError {
-  return prepareError(error.errorCode, error.message, { cause: error.cause, next: error.next });
+/** A classified failure before any publication step keeps its code, facts, cause, and recovery. */
+function asPrepareError<C extends ErrorCode>(error: HashlineError<C>): FileMutationError<C> {
+  return prepareError(error.errorCode, error.message, {
+    cause: error.cause,
+    next: error.next,
+    facts: error.facts,
+  } as HashlineErrorOptions<C>);
 }
 
 function throwIfCancelledBeforePublication(signal: AbortSignal | undefined): void {
@@ -144,11 +143,9 @@ function causeCode(error: unknown, fallback: ErrorCode): ErrorCode {
     : (filesystemErrorCode(error) ?? fallback);
 }
 
-/** A prepare-stage failure of a filesystem step, described as `<step>: <cause>`. */
+/** A prepare-stage failure of a filesystem step: the step is the message, the failure its cause. */
 function stepError(step: string, error: unknown): FileMutationError {
-  return prepareError(causeCode(error, "FILESYSTEM_ERROR"), `${step}: ${errorMessage(error)}`, {
-    cause: error,
-  });
+  return prepareError(causeCode(error, "FILESYSTEM_ERROR"), step, { cause: error });
 }
 
 interface TargetInfo {
@@ -164,7 +161,7 @@ async function inspectTarget(path: string, knownBeforeRevision?: string): Promis
     entry = await lstat(path);
   } catch (error) {
     if (errnoCode(error) === "ENOENT") return { existed: false, publishPath: path };
-    throw stepError("Unable to inspect target", error);
+    throw stepError("Unable to inspect target.", error);
   }
 
   let publishPath = path;
@@ -172,11 +169,9 @@ async function inspectTarget(path: string, knownBeforeRevision?: string): Promis
     try {
       publishPath = await realpath(path);
     } catch (error) {
-      throw prepareError(
-        "SYMLINK_UNRESOLVED",
-        `Target symlink cannot be resolved: ${errorMessage(error)}`,
-        { cause: error },
-      );
+      throw prepareError("SYMLINK_UNRESOLVED", "Target symlink cannot be resolved.", {
+        cause: error,
+      });
     }
   }
 
@@ -184,7 +179,7 @@ async function inspectTarget(path: string, knownBeforeRevision?: string): Promis
   try {
     target = await stat(publishPath);
   } catch (error) {
-    throw stepError("Unable to inspect target", error);
+    throw stepError("Unable to inspect target.", error);
   }
   requireRegularFile(target);
   if (target.nlink > 1)
@@ -200,7 +195,7 @@ async function inspectTarget(path: string, knownBeforeRevision?: string): Promis
     try {
       beforeRevision = await fileRevision(publishPath);
     } catch (error) {
-      throw stepError("Unable to read target revision", error);
+      throw stepError("Unable to read target revision.", error);
     }
   }
   return {
@@ -244,14 +239,14 @@ async function publishCreate(
         "commit",
         "NOT_PUBLISHED",
         "Target appeared during create.",
-        { cause: error, next: USE_OVERWRITE },
+        { cause: error },
       );
     }
     throw new FileMutationError(
       "PUBLISH_FAILED",
       "commit",
       "UNKNOWN",
-      `Unable to publish new target: ${errorMessage(error)}`,
+      "Unable to publish new target.",
       { cause: error },
     );
   }
@@ -271,7 +266,7 @@ async function publishReplace(
       "PUBLISH_FAILED",
       "commit",
       "UNKNOWN",
-      `Unable to publish replacement: ${errorMessage(error)}`,
+      "Unable to publish replacement.",
       { cause: error },
     );
   }
@@ -304,9 +299,9 @@ export async function commitFile(
   const target = await inspectTarget(path, options.knownBeforeRevision);
   const { mode } = options;
   if (mode === "create" && target.existed)
-    throw prepareError("TARGET_EXISTS", "Target already exists.", { next: USE_OVERWRITE });
+    throw prepareError("TARGET_EXISTS", "Target already exists.");
   if (mode === "overwrite" && !target.existed)
-    throw prepareError("PATH_NOT_FOUND", "Target does not exist.", { next: USE_CREATE });
+    throw prepareError("PATH_NOT_FOUND", "Target does not exist.", { next: "useCreate" });
   if (mode === "create" && options.expectedRevision !== undefined)
     throw prepareError("UNCLASSIFIED", "expectedRevision cannot be combined with mode=create.");
   if (
@@ -326,8 +321,8 @@ export async function commitFile(
         currentRevision = await fileRevision(target.publishPath);
         throwIfCancelledBeforePublication(options.signal);
       } catch (error) {
-        if (options.signal?.aborted) throw asPrepareError(cancellationError(error));
-        throw stepError("Unable to read target revision", error);
+        if (options.signal?.aborted) throw asPrepareError(cancellationError());
+        throw stepError("Unable to read target revision.", error);
       }
       if (options.expectedRevision !== undefined && currentRevision !== options.expectedRevision) {
         throw prepareError("FILE_CHANGED", "File changed after it was read.");
@@ -358,7 +353,7 @@ export async function commitFile(
       "PUBLISH_FAILED",
       "commit",
       "NOT_PUBLISHED",
-      `Unable to prepare temporary publication area: ${errorMessage(error)}`,
+      "Unable to prepare temporary publication area.",
       { cause: error },
     );
   }
@@ -372,7 +367,7 @@ export async function commitFile(
       try {
         currentRevision = await fileRevision(publishPath);
       } catch (error) {
-        throw stepError("Unable to recheck target revision", error);
+        throw stepError("Unable to recheck target revision.", error);
       }
       if (currentRevision !== options.expectedRevision)
         throw prepareError("FILE_CHANGED", "File changed before publication.");
@@ -397,7 +392,7 @@ export async function commitFile(
         "POST_PROCESS_FAILED",
         "post_process",
         "PUBLISHED",
-        `Final revision could not be read: ${errorMessage(error)}`,
+        "Final revision could not be read.",
         { cause: error },
       );
     }
@@ -409,19 +404,17 @@ export async function commitFile(
         "POST_PROCESS_FAILED",
         "post_process",
         "PUBLISHED",
-        `Post-publication processing failed: ${errorMessage(error)}`,
+        "Post-publication processing failed.",
         { cause: error },
       );
     // Cancellation keeps its own record; any other failure here stopped before publication.
     if (error instanceof HashlineError && error.errorCode === "OPERATION_ABORTED")
-      throw new FileMutationError("OPERATION_ABORTED", "commit", "NOT_PUBLISHED", error.message, {
-        cause: error,
-      });
+      throw new FileMutationError("OPERATION_ABORTED", "commit", "NOT_PUBLISHED", error.message);
     throw new FileMutationError(
       "PUBLISH_FAILED",
       "commit",
       "NOT_PUBLISHED",
-      `Unable to prepare or publish target: ${errorMessage(error)}`,
+      "Unable to prepare or publish target.",
       { cause: error },
     );
   } finally {
@@ -436,7 +429,7 @@ export async function commitFile(
         "POST_PROCESS_FAILED",
         "post_process",
         "PUBLISHED",
-        `Temporary cleanup failed: ${errorMessage(error)}`,
+        "Temporary cleanup failed.",
         {
           cause:
             failure === undefined
@@ -445,5 +438,45 @@ export async function commitFile(
         },
       );
     }
+  }
+}
+
+/** What the commit layer knows about the target relative to its published revision. */
+export interface FreshnessObservation {
+  readonly freshness: Freshness;
+  /** Why the revision could not be read, when freshness is unknown. */
+  readonly error?: unknown;
+}
+
+/** Freshness known from the commit result alone, before any later observation. */
+export function commitFreshness(commit: MutationVersions): FreshnessObservation {
+  return {
+    freshness: commit.publishedRevision === commit.observedRevision ? "unchanged" : "changed",
+  };
+}
+
+/**
+ * Read the target again and compare it with the published revision. With
+ * `settle`, two reads across a turn of the event loop catch a write in progress.
+ * A failed read is itself an observation: the mutation is already published, so
+ * a concurrent change or deletion must not suggest retrying it.
+ */
+export async function observeFreshness(
+  path: string,
+  publishedRevision: string,
+  settle = false,
+): Promise<FreshnessObservation> {
+  try {
+    const first = await fileRevision(path);
+    if (settle) {
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      if ((await fileRevision(path)) !== first) return { freshness: "changed" };
+    }
+    return { freshness: first === publishedRevision ? "unchanged" : "changed" };
+  } catch (error) {
+    // A write observed during the read has already moved the target off the published revision.
+    if (error instanceof FileChangedDuringReadError) return { freshness: "changed" };
+    if (errnoCode(error) === "ENOENT") return { freshness: "missing" };
+    return { freshness: "unknown", error };
   }
 }

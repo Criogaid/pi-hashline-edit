@@ -5,9 +5,10 @@
  * prepared and validated the arguments: separating then_run, path resolution,
  * the shared file mutation queue, and the hand-off to Action Fusion or plain
  * finalization. Each tool
- * returns a typed `MutationOutcome` (result, commit facts, anchors); nothing
+ * returns a typed `MutationOutcome` (commit facts, details, outcome facts,
+ * anchors); `finalizeMutation` alone turns it into the result, so nothing
  * downstream reads publication or revisions back from result details. Every
- * failure leaves as one error record with the call's path, stage, and publication.
+ * failure leaves as one report with the call's path, stage, and publication.
  *
  * `runTextMutation` adds the read-modify-write sequence shared by edit and
  * replace: snapshot bound to the bytes read, cancellation before apply and
@@ -25,17 +26,17 @@ import type {
   MutationToolName,
   ThenRunInput,
 } from "./action-fusion.ts";
-import { commitReplacement, readEditableSnapshot } from "./file-commit.ts";
+import { commitFreshness, commitReplacement, readEditableSnapshot } from "./file-commit.ts";
 import {
-  commitFreshness,
   finalizeMutation,
   generateMutationDetails,
   postProcessMutation,
+  type AnchorReport,
   type MutationOutcome,
 } from "./mutation-result.ts";
 import { canonicalPath } from "./path.ts";
 import { throwIfCancelled } from "./error-text.ts";
-import { reportToolErrors } from "./tool-error.ts";
+import { runTool, type ReportDetails } from "./report.ts";
 
 export type ActionFusionExecutor = ReturnType<typeof createActionFusionExecutor>;
 
@@ -47,7 +48,7 @@ export type TextMutationDetails = ReturnType<typeof generateMutationDetails> & {
 /** The file a mutation targets, resolved once per call. */
 export interface MutationTarget {
   readonly absolutePath: string;
-  /** The caller-supplied path, used in result text and diffs. */
+  /** The caller-supplied path, used in reports and diffs. */
   readonly displayPath: string;
   readonly signal: AbortSignal | undefined;
 }
@@ -70,15 +71,15 @@ export interface MutationCall<TParams, TDetails> {
 }
 
 /** Queue and publish one validated mutation call, then run its then_run command when fused. */
-export async function executeMutation<TParams extends { path: string }, TDetails>(
+export async function executeMutation<TParams extends { path: string }, TDetails extends object>(
   spec: MutationToolSpec<TParams, TDetails>,
   call: MutationCall<TParams, TDetails>,
-): Promise<AgentToolResult<TDetails>> {
-  const { cwd, fusion } = spec;
+): Promise<AgentToolResult<TDetails & Partial<ReportDetails>>> {
+  const { cwd, fusion, tool } = spec;
   const { toolCallId, signal, onUpdate, ctx } = call;
   const { then_run, ...mutationParams } = call.params;
   const displayPath = mutationParams.path;
-  return reportToolErrors(spec.tool, { path: displayPath, mutation: true, signal }, async () => {
+  const result = await runTool(tool, { path: displayPath, mutation: true, signal }, async () => {
     const absolutePath = canonicalPath(cwd, displayPath);
     const target: MutationTarget = { absolutePath, displayPath, signal };
     const mutate = (): Promise<MutationOutcome<TDetails>> =>
@@ -87,10 +88,12 @@ export async function executeMutation<TParams extends { path: string }, TDetails
       );
     if (!fusion) {
       const outcome = await mutate();
-      return finalizeMutation(outcome, commitFreshness(outcome.commit) === "unchanged");
+      return finalizeMutation(tool, displayPath, outcome, commitFreshness(outcome.commit));
     }
     return fusion({
       toolCallId,
+      tool,
+      displayPath,
       absolutePath,
       thenRun: then_run,
       mutate,
@@ -99,6 +102,7 @@ export async function executeMutation<TParams extends { path: string }, TDetails
       onUpdate,
     });
   });
+  return result as AgentToolResult<TDetails & Partial<ReportDetails>>;
 }
 
 /** A whole-file text transformation produced from one snapshot. */
@@ -106,9 +110,9 @@ export interface TextChange {
   /** Complete replacement text; equal to the snapshot for a no-op. */
   readonly text: string;
   /** Fresh anchor report for the committed text. Called during result generation. */
-  anchors(): string;
-  /** First result line. Called during result generation. */
-  summary(): string;
+  anchors(): AnchorReport;
+  /** The tool's own outcome facts, such as replace's match count. */
+  readonly facts?: MutationOutcome<unknown>["facts"];
 }
 
 /**
@@ -130,21 +134,17 @@ export async function runTextMutation(
   // Cancelled before write: don't touch the disk.
   throwIfCancelled(signal);
 
-  const versions = await commitReplacement(absolutePath, next.text, baseRevision, signal);
-  let anchors = "";
-  const result = postProcessMutation(versions.publication, () => {
-    const details = generateMutationDetails(
+  const commit = await commitReplacement(absolutePath, next.text, baseRevision, signal);
+  return postProcessMutation(commit.publication, () => ({
+    commit,
+    details: generateMutationDetails(
       displayPath,
       currentText,
       next.text,
-      versions,
-      versions.publication,
-    );
-    anchors = next.anchors();
-    return {
-      content: [{ type: "text" as const, text: next.summary() }],
-      details,
-    };
-  });
-  return { result, commit: versions, anchors };
+      commit,
+      commit.publication,
+    ),
+    facts: next.facts ?? {},
+    anchors: next.anchors(),
+  }));
 }

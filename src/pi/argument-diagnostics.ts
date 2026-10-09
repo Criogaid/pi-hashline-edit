@@ -15,11 +15,8 @@ import {
 } from "typebox";
 import type { TLocalizedValidationError } from "typebox/error";
 import { Value } from "typebox/value";
+import type { ArgumentIssue } from "./report-schema.ts";
 
-export interface ArgumentIssue {
-  readonly field: string;
-  readonly reason: string;
-}
 export interface ArgumentDiagnostics {
   readonly issues: readonly ArgumentIssue[];
   readonly limited: boolean;
@@ -188,14 +185,20 @@ function fieldPath(pointer: string, prepared: unknown, key?: string): string {
   return (key === undefined ? path : propertyPath(path, key)) || "$";
 }
 
+/** One issue per field: distinct reasons joined, and distinct fixes joined, each in report order. */
 function combineIssues(issues: readonly ArgumentIssue[]): readonly ArgumentIssue[] {
-  const reasons = new Map<string, Set<string>>();
-  for (const { field, reason } of issues) {
-    const existing = reasons.get(field) ?? new Set<string>();
-    existing.add(reason);
-    reasons.set(field, existing);
+  const fields = new Map<string, { reasons: Set<string>; fixes: Set<string> }>();
+  for (const { field, reason, fix } of issues) {
+    const existing = fields.get(field) ?? { reasons: new Set<string>(), fixes: new Set<string>() };
+    existing.reasons.add(reason);
+    if (fix !== undefined) existing.fixes.add(fix);
+    fields.set(field, existing);
   }
-  return [...reasons].map(([field, values]) => ({ field, reason: [...values].join("; ") }));
+  return [...fields].map(([field, { reasons, fixes }]) => ({
+    field,
+    reason: [...reasons].join("; "),
+    ...(fixes.size ? { fix: [...fixes].join(" ") } : {}),
+  }));
 }
 
 function aggregateErrors(

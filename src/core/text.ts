@@ -13,10 +13,13 @@ export function unwritableTextError(text: string): HashlineError | undefined {
 
 export type Utf8Decoding = "strict" | "lossy";
 
-/** Confirmed malformed UTF-8, distinct from decoder input or resource failures. */
-export class Utf8DecodingError extends HashlineError {
-  constructor(cause: unknown) {
-    super("UNSUPPORTED_ENCODING", TEXT_ERROR_MESSAGES.UNSUPPORTED_ENCODING, { cause });
+/**
+ * Confirmed malformed UTF-8, distinct from decoder input or resource failures.
+ * The decoder's own error states the same fact, so it is not reported as a cause.
+ */
+export class Utf8DecodingError extends HashlineError<"UNSUPPORTED_ENCODING"> {
+  constructor() {
+    super("UNSUPPORTED_ENCODING", TEXT_ERROR_MESSAGES.UNSUPPORTED_ENCODING);
   }
 }
 
@@ -35,7 +38,7 @@ export function createUtf8Decoder(mode: Utf8Decoding = "strict") {
         "code" in error &&
         error.code === "ERR_ENCODING_INVALID_ENCODED_DATA"
       ) {
-        throw new Utf8DecodingError(error);
+        throw new Utf8DecodingError();
       }
       throw error;
     }

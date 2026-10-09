@@ -9,7 +9,8 @@
  * appears once, in `failures`; a row shown in a neighborhood is not repeated
  * in a failure entry. The `observed` and neighborhood rows are observations,
  * not verified targets. Every list has its own byte budget and an explicit
- * omission count. The recovery instruction is the record's `next` (tool-error.ts).
+ * omission count. The recovery instruction is the report's `next`, derived
+ * from the code in report-schema.ts.
  *
  * @module pi-hashline-edit/pi
  */
@@ -18,9 +19,12 @@ import { type AnchorFormatter, displayCarriageReturns } from "./anchor-format.ts
 import { splitLines } from "../core/lines.ts";
 import type { Anchor, AnchorFailure, ApplyFailure } from "../core/types.ts";
 import { mergeRanges } from "../core/ranges.ts";
-import { HashlineError, type ErrorFacts } from "../core/errors.ts";
+import { HashlineError } from "../core/errors.ts";
 import { formatKiB, MAX_BLOCK_BYTES, MAX_RECOVERY_CANDIDATE_BYTES } from "./budgets.ts";
-import { boundedFacts } from "./tool-error.ts";
+import { boundedFacts } from "./report.ts";
+import type { AnchorFailureFact, ErrorFacts } from "./report-schema.ts";
+
+type MismatchFacts = ErrorFacts<"ANCHOR_MISMATCH">;
 
 const CONTEXT_RADIUS = 3;
 const MAX_AMBIGUOUS_CANDIDATES = 8;
@@ -94,7 +98,10 @@ export function ambiguousCandidateNeighborhoods(
   currentText: string,
   failures: readonly AnchorFailure[],
   anchors: AnchorFormatter,
-): { facts: ErrorFacts; shownLines: ReadonlySet<number> } {
+): {
+  facts: Pick<MismatchFacts, "candidateNeighborhoods" | "omittedNeighborhoodRows">;
+  shownLines: ReadonlySet<number>;
+} {
   const centers = failures.flatMap((failure) =>
     failure.recovery.kind === "ambiguous"
       ? selectAmbiguousCandidates(failure.recovery.candidates).map((candidate) => candidate.line)
@@ -130,8 +137,8 @@ function failureEntry(
   snapshot: Snapshot,
   currentLines: readonly string[],
   shownLines: Set<number>,
-): ErrorFacts {
-  const entry: Record<string, unknown> = {
+): AnchorFailureFact {
+  const entry: { -readonly [K in keyof AnchorFailureFact]: AnchorFailureFact[K] } = {
     field: `edits[${f.opIndex}].${f.which}`,
     op: f.op,
     cited: snapshot.anchors.reference(f.cited.line, f.cited.hash),
@@ -178,23 +185,13 @@ function failureEntry(
   return entry;
 }
 
-function anchorMismatchMessage(failures: readonly AnchorFailure[]): string {
-  const counts = new Map<string, number>();
-  for (const f of failures) {
-    const result = RESULT[f.recovery.kind];
-    counts.set(result, (counts.get(result) ?? 0) + 1);
-  }
-  const parts = Object.values(RESULT)
-    .filter((result) => counts.has(result))
-    .map((result) => `${counts.get(result)} ${result}`);
-  return `Anchors did not match: ${parts.join(", ")}.`;
-}
-
 /**
  * The batch's anchors whose checksum matched, by field. An anchor absent from
  * both `matched` and `failures` is counted as omitted, never implied matched.
  */
-function matchedAnchorFacts(failure: ApplyFailure): ErrorFacts {
+function matchedAnchorFacts(
+  failure: ApplyFailure,
+): Pick<MismatchFacts, "matched" | "omittedMatched"> {
   const { kept, omitted } = boundedFacts(
     failure.checks
       .filter((check) => check.status === "matched")
@@ -211,7 +208,7 @@ export function describeEditFailure(
   failure: ApplyFailure,
   snapshot: Snapshot,
   isBatch: boolean,
-): HashlineError {
+): HashlineError<"ANCHOR_MISMATCH" | "INVALID_RANGE" | "OVERLAPPING_EDITS"> {
   const matched = isBatch ? matchedAnchorFacts(failure) : {};
   if (failure.kind === "range")
     return new HashlineError(failure.code, failure.message, { facts: matched });
@@ -227,7 +224,7 @@ export function describeEditFailure(
     failure.failures.map((f) => failureEntry(f, snapshot, currentLines, shownLines)),
     MAX_BLOCK_BYTES,
   );
-  return new HashlineError("ANCHOR_MISMATCH", anchorMismatchMessage(failure.failures), {
+  return new HashlineError("ANCHOR_MISMATCH", "Anchors did not match the current file.", {
     facts: {
       failures: kept,
       ...(omitted ? { omittedFailures: omitted } : {}),

@@ -26,23 +26,24 @@ import { Type } from "typebox";
 import { scanTextLines } from "./text-stream.ts";
 import { createAnchorFormatter, displayCarriageReturns, parseHashline } from "./anchor-format.ts";
 import { canonicalPath } from "./path.ts";
-import { renderToolError } from "./render.ts";
-import {
-  type ForgetReceiptDetails,
-  readReceipt,
-  withoutResultTag,
-  withResultTag,
-} from "./forget-tool.ts";
+import { renderToolError, reportLines, withoutReport } from "./render.ts";
+import { type ForgetReceiptDetails, readReceipt, withResultTag } from "./forget-tool.ts";
 import { POSITIVE_SAFE_INTEGER } from "./schema.ts";
 import { throwIfCancelled } from "./error-text.ts";
-import { reportToolErrors } from "./tool-error.ts";
+import { runTool, type Report, type ReportDetails } from "./report.ts";
 import { formatKiB } from "./budgets.ts";
 import type { HashlineEditConfig } from "./config.ts";
 import { createArgumentPreparer } from "./argument-validation.ts";
 
 const DEFAULT_OFFSET = 1;
 
-type ReadDetails = ReadToolDetails & { nativeRead?: true } & ForgetReceiptDetails;
+type ReadDetails = ReadToolDetails & {
+  nativeRead?: true;
+  pagination?: NonNullable<Report["pagination"]>;
+} & ForgetReceiptDetails &
+  Partial<ReportDetails>;
+/** The read card shows the forget id only on the forget card. */
+const READ_CARD_SHOWN = new Set(["resultId"]);
 
 /**
  * First result line: `<path> · <N> lines`, optionally ` (from line <offset>)` and
@@ -66,8 +67,7 @@ const READ_HEADER = /^(.+?) · (\d+ lines(?: \(from line \d+\))?(?: · no traili
  * `LINE#HASH│` prefix from every anchor line to `   N: content`, and
  * syntax-highlight the code block by the file's language (falls back to a
  * single `toolOutput` color when the language is unknown or the highlight
- * line count diverges). Trailing notices (e.g. truncation) are shown in
- * `warning`.
+ * line count diverges). Notices are report facts, rendered from the report.
  */
 function renderReadBody(raw: string, path: string, theme: Theme): string {
   const lines = raw.split("\n");
@@ -83,16 +83,12 @@ function renderReadBody(raw: string, path: string, theme: Theme): string {
     bodyStart = 1;
   }
 
-  // Collect anchor rows (full content); the first non-anchor line begins the tail.
+  // Collect anchor rows (full content).
   const lineNos: string[] = [];
   const codeContents: string[] = [];
-  let tailStart = lines.length;
   for (let i = bodyStart; i < lines.length; i++) {
     const row = parseHashline(lines[i]);
-    if (!row) {
-      tailStart = i;
-      break;
-    }
+    if (!row) break;
     lineNos.push(row.lineNo);
     codeContents.push(row.content);
   }
@@ -112,9 +108,6 @@ function renderReadBody(raw: string, path: string, theme: Theme): string {
     out.push(theme.fg("dim", `   ${lineNos[i]}: `) + rendered[i]);
   }
 
-  for (let i = tailStart; i < lines.length; i++) {
-    out.push(theme.fg("warning", lines[i]));
-  }
   return out.join("\n");
 }
 
@@ -170,15 +163,23 @@ export function makeReadOverride(
     renderResult(result, options, theme, context) {
       const { isPartial, expanded } = options;
       if (isPartial) return new Text(theme.fg("warning", "Reading…"), 0, 0);
-      const content = result.content?.[0];
       if (context?.isError) return renderToolError(result, theme, expanded);
       if (result.details?.nativeRead)
-        return builtin.renderResult!(withoutResultTag(result), options, theme, context);
+        return builtin.renderResult!(withoutReport(result), options, theme, context);
       // Collapsed (not expanded): show nothing — the call line carries the
       // title, matching the built-in read's fold behavior.
       if (!expanded) return new Text("", 0, 0);
+      const content = withoutReport(result).content[0];
       const raw = content?.type === "text" ? content.text : "";
-      return new Text(renderReadBody(raw, String(context?.args?.path ?? ""), theme), 0, 0);
+      const report = result.details?.report;
+      return new Text(
+        [
+          renderReadBody(raw, String(context?.args?.path ?? ""), theme),
+          ...(report ? reportLines(report, theme, expanded, READ_CARD_SHOWN) : []),
+        ].join("\n"),
+        0,
+        0,
+      );
     },
 
     async execute(
@@ -188,16 +189,21 @@ export function makeReadOverride(
       onUpdate: AgentToolUpdateCallback<ReadToolDetails | undefined> | undefined,
       ctx: ExtensionToolContext,
     ) {
-      return reportToolErrors("read", { path: params.path, signal }, async () => {
+      return runTool("read", { path: params.path, signal }, async () => {
         throwIfCancelled(signal);
         const offset = params.offset ?? DEFAULT_OFFSET;
         const limit = params.limit ?? defaultLimit;
         const anchors = createAnchorFormatter(hashLen);
+        const report = { tool: "read", path: params.path };
         const readNative = async () => {
           const result = await builtin.execute(toolCallId, params, signal, onUpdate, ctx);
           return withResultTag(
             toolCallId,
-            { ...result, details: { ...result.details, nativeRead: true as const } },
+            {
+              report,
+              payload: result.content,
+              details: { ...result.details, nativeRead: true as const },
+            },
             config.forget,
             () =>
               readReceipt(
@@ -257,8 +263,9 @@ export function makeReadOverride(
           throw error;
         }
         if (stats.hasNul) return readNative();
+        // Rows were returned and more remain, whether the line limit or the byte budget stopped them.
         const pagination =
-          !truncated && rows.length > 0 && stats.totalLines - start >= limit
+          rows.length > 0 && start + rows.length <= stats.totalLines
             ? {
                 start,
                 end: start + (rows.length - 1),
@@ -280,25 +287,23 @@ export function makeReadOverride(
           maxBytes,
         };
 
-        const tail = truncation.firstLineExceedsLimit
-          ? `\n… (line ${start} exceeds ${formatKiB(maxBytes)}; cannot return a complete anchor row. Reducing limit cannot split a physical line; use bash to inspect it in chunks, or replace for a known literal/regex change)`
-          : truncation.truncated
-            ? `\n… (truncated at ${formatKiB(maxBytes)}; use offset/limit to read more)`
-            : pagination
-              ? `\n… (showing lines ${pagination.start}-${pagination.end} of ${pagination.totalLines}; use offset ${pagination.nextOffset} to continue)`
-              : "";
         const header = `${formatReadHeader(params.path, stats.totalLines, start, stats.finalNewline)}\n`;
-        const body = truncation.content;
+        const limitText = formatKiB(maxBytes);
 
         return withResultTag(
           toolCallId,
           {
-            content: [{ type: "text" as const, text: header + body + tail }],
-            details: truncation.truncated
-              ? { truncation }
-              : pagination
-                ? { pagination }
-                : undefined,
+            report: {
+              ...report,
+              pagination,
+              truncatedAt: truncated && !firstLineExceedsLimit ? limitText : undefined,
+              lineTooLong: firstLineExceedsLimit ? { line: start, limit: limitText } : undefined,
+            },
+            payload: [{ type: "text" as const, text: header + truncation.content }],
+            details: {
+              ...(truncated ? { truncation } : {}),
+              ...(pagination ? { pagination } : {}),
+            },
           },
           config.forget,
           () =>

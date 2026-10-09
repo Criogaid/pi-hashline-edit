@@ -19,10 +19,10 @@ const REGEX_PARSE_ERROR = /^(?:rg: )?regex parse error:/m;
 const NON_RUST_REGEX_SYNTAX = /(?:^|[^\\])(?:\\\\)*(?:\(\?<?[=!]|\\[1-9]|\\k<)/;
 
 /** Recovery for a parse failure: another dialect's syntax if the query contains any, else literal search. */
-function invalidRegexNext(patterns: readonly string[]): string {
+function invalidRegexNext(patterns: readonly string[]): "rewriteDialect" | undefined {
   return patterns.some((pattern) => NON_RUST_REGEX_SYNTAX.test(pattern))
-    ? "Rewrite the pattern without lookaround or backreferences, or use replace for a JavaScript regex within one file."
-    : "Set literal to true to search the text exactly.";
+    ? "rewriteDialect"
+    : undefined;
 }
 
 /** Reject a regex query ripgrep cannot parse before any file is searched. */
@@ -37,11 +37,13 @@ export async function assertValidRegex(
   throwIfCancelled(signal);
   if (result.code === 0 || result.code === 1) return;
   if (result.code === 2 && REGEX_PARSE_ERROR.test(result.stderr)) {
-    throw new HashlineError("INVALID_REGEX", result.stderr.trim(), {
+    // ripgrep's parse error is the cause; it names the pattern and position.
+    throw new HashlineError("INVALID_REGEX", "ripgrep cannot parse the regex.", {
+      cause: result.stderr.trim(),
       next: invalidRegexNext(patterns),
     });
   }
-  throw ripgrepFailure(result.stderr.trim() || `ripgrep exited with code ${result.code}.`);
+  throw ripgrepFailure("ripgrep could not check the regex.", result);
 }
 
 /** Normalize a `string | string[]` param to an array (`undefined` → `[]`). */
@@ -67,11 +69,9 @@ export async function resolveSearchPaths(cwd: string, path: string | string[] | 
     } catch (error) {
       // Only a missing path is PATH_NOT_FOUND; other filesystem errors keep their cause.
       if (errnoCode(error) !== "ENOENT") throw error;
-      throw new HashlineError("PATH_NOT_FOUND", `Path not found: ${searchPath}.`, {
-        cause: error,
-        ...(/[*?]/.test(searchPath)
-          ? { next: "Use an existing directory as path and a filename wildcard as glob." }
-          : {}),
+      throw new HashlineError("PATH_NOT_FOUND", "Search path not found.", {
+        facts: { missing: searchPath },
+        ...(/[*?]/.test(searchPath) ? { next: "useGlob" as const } : {}),
       });
     }
   }

@@ -9,18 +9,20 @@
 
 import { Worker } from "node:worker_threads";
 import type { applyReplacements, Replacement } from "../core/replace.ts";
-import { errorMessage, HashlineError, type ErrorCode } from "../core/errors.ts";
+import { HashlineError, type ErrorCode, type HashlineErrorOptions } from "../core/errors.ts";
 import { cancellationError, throwIfCancelled } from "./error-text.ts";
 
 type ReplaceResult = ReturnType<typeof applyReplacements>;
+/** A failure crosses the thread boundary as its code, message, facts, and cause text. */
 type WorkerMessage = {
   result?: ReplaceResult;
-  error?: { readonly code: ErrorCode; readonly message: string };
+  error?: {
+    readonly code: ErrorCode;
+    readonly message: string;
+    readonly facts?: object;
+    readonly cause?: string;
+  };
 };
-
-function workerFailure(message: string, cause?: unknown): HashlineError {
-  return new HashlineError("REGEX_WORKER_FAILED", message, { cause });
-}
 
 export async function runRegexReplacements(
   source: string,
@@ -47,19 +49,38 @@ export async function runRegexReplacements(
     const timer = setTimeout(
       () =>
         finish(
-          new HashlineError("REGEX_TIMEOUT", `Regex evaluation timed out after ${timeoutMs} ms.`),
+          new HashlineError("REGEX_TIMEOUT", "Regex evaluation timed out.", {
+            facts: { timeoutMs },
+          }),
           true,
         ),
       timeoutMs,
     );
     worker.on("message", (message: WorkerMessage) => {
-      if (message.error !== undefined)
-        finish(new HashlineError(message.error.code, message.error.message));
-      else if (message.result) finish(message.result);
-      else finish(workerFailure("Regex worker returned an invalid result."));
+      if (message.error !== undefined) {
+        const { code, message: text, facts, cause } = message.error;
+        finish(
+          new HashlineError(code, text, {
+            facts,
+            cause: cause === undefined ? undefined : new Error(cause),
+          } as HashlineErrorOptions<ErrorCode>),
+        );
+      } else if (message.result) finish(message.result);
+      else
+        finish(
+          new HashlineError("REGEX_WORKER_FAILED", "Regex worker returned an invalid result."),
+        );
     });
-    worker.on("error", (error) => finish(workerFailure(errorMessage(error), error)));
-    worker.on("exit", (code) => finish(workerFailure(`Regex worker exited with code ${code}.`)));
+    worker.on("error", (error) =>
+      finish(new HashlineError("REGEX_WORKER_FAILED", "Regex worker failed.", { cause: error })),
+    );
+    worker.on("exit", (exitCode) =>
+      finish(
+        new HashlineError("REGEX_WORKER_FAILED", "Regex worker exited before replying.", {
+          facts: { exitCode },
+        }),
+      ),
+    );
     signal?.addEventListener("abort", abort, { once: true });
     if (signal?.aborted) abort();
   });

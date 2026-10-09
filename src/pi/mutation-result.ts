@@ -2,14 +2,15 @@ import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import {
   FileMutationError,
   type CommitResult,
+  type FreshnessObservation,
   type MutationVersions,
-  type PublicationStatus,
 } from "./file-commit.ts";
 import { generateDiffString, generateUnifiedPatch } from "@earendil-works/pi-coding-agent";
 import { displayCarriageReturns, type AnchorFormatter } from "./anchor-format.ts";
 import { normalizeLineEndings } from "../core/lines.ts";
-import { errorMessage } from "../core/errors.ts";
-import { formatKiB, MAX_BLOCK_BYTES } from "./budgets.ts";
+import { MAX_BLOCK_BYTES } from "./budgets.ts";
+import type { CommandStatus, PublicationStatus, Report } from "./report-schema.ts";
+import { causeOf, reportResult, type ReportDetails } from "./report.ts";
 
 /** Keep byte-faithful diff/patch data and a separate preview of the shared logical text. */
 export function generateMutationDetails(
@@ -45,53 +46,69 @@ export function postProcessMutation<T>(publication: PublicationStatus, build: ()
       "POST_PROCESS_FAILED",
       "post_process",
       publication,
-      `Result generation failed: ${errorMessage(error)}`,
+      "Result generation failed.",
       { cause: error },
     );
   }
 }
 
-/** A published (or no-op) mutation with its commit facts, before anchors are released. */
+/** Updated anchor rows and how many changed positions did not fit their budget. */
+export interface AnchorReport {
+  /** The heading and rows; empty when no changed position remains. */
+  readonly text: string;
+  readonly omitted: number;
+}
+
+/** The facts a mutation tool states about its own outcome. */
+export type MutationFacts = Pick<Report, "matches" | "created">;
+
+/** A published (or no-op) mutation with its commit facts, before freshness is known. */
 export interface MutationOutcome<TDetails> {
-  readonly result: AgentToolResult<TDetails>;
   /** Publication and revisions from the commit layer; later steps never read them back from details. */
   readonly commit: CommitResult;
+  readonly details: TDetails;
+  readonly facts: MutationFacts;
   /** Fresh anchor report for the committed text; absent for tools that never report anchors. */
-  readonly anchors?: string;
+  readonly anchors?: AnchorReport;
 }
 
-/** Freshness known from the commit layer alone, before any later observation. */
-export function commitFreshness(commit: MutationVersions): "unchanged" | "changed" {
-  return commit.publishedRevision === commit.observedRevision ? "unchanged" : "changed";
-}
-
-/** The single notice for a target whose published revision was not confirmed unchanged. */
-export function staleTargetNotice(marker = ""): string {
-  return `${marker ? `${marker} ` : ""}Target not confirmed unchanged since publication; anchors are withheld and earlier anchors may no longer match. Re-read before further edits.`;
+/** What Action Fusion states about the command; it never restates file state. */
+export interface CommandFacts {
+  readonly status: CommandStatus;
+  readonly output?: string;
+  /** A progress observer failed; command and file outcomes are unaffected. */
+  readonly progressError?: unknown;
 }
 
 /**
- * Release the result: append anchors to the summary when the target is fresh,
- * otherwise add the stale notice (prefixed by `staleMarker`, e.g. then_run's).
+ * Build the mutation's result from its facts: the anchor rows are the payload
+ * only while the target is fresh; otherwise freshness states the target, and
+ * the report's `next` asks for a re-read. Command facts come from Fusion.
  */
-export function finalizeMutation<T>(
-  { result, anchors }: MutationOutcome<T>,
-  fresh: boolean,
-  staleMarker = "",
-): AgentToolResult<T> {
-  if (!fresh) {
-    return {
-      ...result,
-      content: [...result.content, { type: "text", text: staleTargetNotice(staleMarker) }],
-    };
-  }
-  if (!anchors) return result;
-  return {
-    ...result,
-    content: result.content.map((block, index) =>
-      index === 0 && block.type === "text" ? { ...block, text: block.text + anchors } : block,
-    ),
+export function finalizeMutation<TDetails extends object>(
+  tool: string,
+  path: string,
+  { commit, details, facts, anchors }: MutationOutcome<TDetails>,
+  observation: FreshnessObservation,
+  command?: CommandFacts,
+): AgentToolResult<TDetails & ReportDetails> {
+  const fresh = observation.freshness === "unchanged";
+  const report: Report = {
+    tool,
+    path,
+    publication: commit.publication,
+    ...facts,
+    omittedAnchors: fresh && anchors?.omitted ? anchors.omitted : undefined,
+    freshness: fresh ? undefined : observation.freshness,
+    freshnessError: causeOf(observation.error),
+    then_run: command
+      ? { status: command.status, ...(command.output ? { output: command.output } : {}) }
+      : undefined,
+    progressError: causeOf(command?.progressError),
   };
+  const payload =
+    fresh && anchors?.text ? [{ type: "text" as const, text: anchors.text }] : undefined;
+  return reportResult(report, payload, details);
 }
 
 /** Return compact changed-position anchors; selected context rows retain full content within the byte budget. */
@@ -102,19 +119,11 @@ export function formatMutationAnchors(
   anchors: AnchorFormatter,
   heading: string,
   contentIndices?: ReadonlySet<number>,
-): string {
-  const notice = `\n… (additional anchors omitted: ${formatKiB(MAX_BLOCK_BYTES)} limit; use read for omitted positions)`;
-  const prefix = `\n${heading}\n`;
-  let rows: string[] = [];
+): AnchorReport {
+  const prefix = `${heading}\n`;
+  const rows: string[] = [];
   let bytes = Buffer.byteLength(prefix);
-  let omitted = false;
-  const append = (row: string): boolean => {
-    const rowBytes = Buffer.byteLength(row) + (rows.length ? 1 : 0);
-    if (bytes + rowBytes > MAX_BLOCK_BYTES) return false;
-    rows.push(row);
-    bytes += rowBytes;
-    return true;
-  };
+  let omitted = 0;
   for (const index of indices) {
     const content = lines[index];
     // Compare source content, not short hashes: a collision must not suppress a changed row.
@@ -123,15 +132,14 @@ export function formatMutationAnchors(
     const row = contentIndices?.has(index)
       ? anchors.row(index + 1, content)
       : anchors.token(index + 1, content);
-    if (append(row) || omitted) continue;
-    // Only reserve a notice after overflow. Reconsider earlier rows in order so
-    // a newly oversized row does not prevent later, shorter rows from fitting.
-    omitted = true;
-    const previousRows = rows;
-    rows = [];
-    bytes = Buffer.byteLength(prefix) + Buffer.byteLength(notice);
-    for (const previous of previousRows) append(previous);
-    append(row);
+    // Rows that do not fit are omitted whole; later rows that fit are still returned.
+    const rowBytes = Buffer.byteLength(row) + (rows.length ? 1 : 0);
+    if (bytes + rowBytes > MAX_BLOCK_BYTES) {
+      omitted++;
+      continue;
+    }
+    rows.push(row);
+    bytes += rowBytes;
   }
-  return rows.length || omitted ? `${prefix}${rows.join("\n")}${omitted ? notice : ""}` : "";
+  return { text: rows.length ? `${prefix}${rows.join("\n")}` : "", omitted };
 }

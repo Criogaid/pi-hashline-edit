@@ -1,6 +1,6 @@
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import { parseDisplayRow } from "./anchor-format.ts";
-import { isNoticeLine, parseFileHeader } from "./grep-output.ts";
+import { parseFileHeader } from "./grep-output.ts";
 
 function countLeading(s: string): number {
   const m = s.match(/^[ \t]*/);
@@ -10,7 +10,7 @@ function countLeading(s: string): number {
 /**
  * Render grouped grep results for the TUI. Anchored and plain preview rows share
  * aligned line numbers and folded leading indentation; anchored rows lose their
- * hashes. The model receives the original content text, including preview notices.
+ * hashes. Notices are report facts, which the card renders from the report.
  */
 export function toDisplayLines(raw: string, theme: Theme): string[] {
   const out: string[] = [];
@@ -48,8 +48,7 @@ export function toDisplayLines(raw: string, theme: Theme): string[] {
       i = j;
       continue;
     }
-    if (isNoticeLine(line)) out.push(theme.fg("warning", line));
-    else out.push(theme.fg("toolOutput", line));
+    out.push(theme.fg("toolOutput", line));
     i++;
   }
   return out;

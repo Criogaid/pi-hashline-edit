@@ -8,10 +8,12 @@
 import { validateToolArguments, type ToolCall } from "@earendil-works/pi-ai";
 import { ObjectOptions, Type, type Static, type TObject, type TSchema } from "typebox";
 import { errorMessage } from "../core/errors.ts";
-import { diagnoseArguments, type ArgumentIssue } from "./argument-diagnostics.ts";
+import { diagnoseArguments } from "./argument-diagnostics.ts";
 import { formatArgumentError } from "./argument-error.ts";
+import type { ArgumentIssue } from "./report-schema.ts";
 
-export type ReportArgumentIssue = (field: string, reason: string) => void;
+/** Report one semantic issue: what is wrong (a fact), and how to correct it when the fact alone does not say. */
+export type ReportArgumentIssue = (field: string, reason: string, fix?: string) => void;
 type CheckArguments = (args: unknown, report: ReportArgumentIssue) => void;
 
 /** Inspect arrays and the singleton objects Pi may coerce, without changing input. */
@@ -76,7 +78,9 @@ export function createArgumentPreparer<T extends TObject>(
       checked = observation.value;
     }
     const issues: ArgumentIssue[] = [];
-    check?.(checked, (field, reason) => issues.push({ field, reason }));
+    check?.(checked, (field, reason, fix) =>
+      issues.push(fix === undefined ? { field, reason } : { field, reason, fix }),
+    );
     if (schemaFailure === undefined && issues.length === 0) return args as Static<T>;
     const result = diagnoseArguments(parameters, checked, issues, schemaFailure !== undefined);
     const reported =

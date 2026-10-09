@@ -1,66 +1,49 @@
 /**
- * Error codes and the classified error shared by core and the tool layer.
- * src/pi/tool-error.ts turns every failure into the one model-facing record.
+ * The classified error shared by core and the tool layer.
+ *
+ * Codes, their facts, and their recovery are defined once in
+ * src/pi/report-schema.ts; core imports only its types, which are erased at
+ * runtime. src/pi/report.ts turns every failure into the one model-facing report.
  */
 
-/** Every code of the plugin's error protocol; README "Errors" documents each one. */
-export const ERROR_CODES = [
-  "INVALID_ARGUMENTS",
-  "OPERATION_ABORTED",
-  "PATH_NOT_FOUND",
-  "FILESYSTEM_ERROR",
-  "FILE_CHANGED",
-  "UNSUPPORTED_ENCODING",
-  "UNSUPPORTED_TEXT",
-  "INVALID_UNICODE",
-  "ANCHOR_MISMATCH",
-  "INVALID_RANGE",
-  "OVERLAPPING_EDITS",
-  "NO_MATCH",
-  "OVERLAPPING_MATCHES",
-  "REGEX_TIMEOUT",
-  "REGEX_WORKER_FAILED",
-  "TARGET_EXISTS",
-  "NOT_REGULAR_FILE",
-  "MULTIPLE_HARD_LINKS",
-  "SYMLINK_UNRESOLVED",
-  "PUBLISH_FAILED",
-  "POST_PROCESS_FAILED",
-  "INVALID_REGEX",
-  "SEARCH_INCOMPLETE",
-  "RIPGREP_FAILED",
-  "UNSUPPORTED_PATH",
-  "NOT_FORGETTABLE",
-  "UNCLASSIFIED",
-] as const;
-export type ErrorCode = (typeof ERROR_CODES)[number];
+import type { ErrorCode, ErrorFacts, NextVariant } from "../pi/report-schema.ts";
 
-/** Structured facts a record carries beside its message, such as anchor failures or warnings. */
-export type ErrorFacts = Readonly<Record<string, unknown>>;
+export type { ErrorCode } from "../pi/report-schema.ts";
+
+/** Options of a failure of `C`: its facts are required exactly when the code has required facts. */
+export type HashlineErrorOptions<C extends ErrorCode> = {
+  /** The failure beneath this step; reported as structured `cause`, never folded into `message`. */
+  readonly cause?: unknown;
+  /** One of the code's recovery alternatives; otherwise its default applies. */
+  readonly next?: NextVariant<C>;
+} & ({} extends ErrorFacts<C>
+  ? { readonly facts?: ErrorFacts<C> }
+  : { readonly facts: ErrorFacts<C> });
+
+type OptionsArgument<C extends ErrorCode> =
+  {} extends HashlineErrorOptions<C>
+    ? [options?: HashlineErrorOptions<C>]
+    : [options: HashlineErrorOptions<C>];
 
 /**
- * A classified failure. `message` states facts only; `next` is the single recovery
- * instruction, when the throw site knows a more specific one than the code's default.
+ * A classified failure. `message` states what the throwing step found, in its
+ * own words; the code's schema fixes which facts it carries.
  */
-export class HashlineError extends Error {
-  readonly errorCode: ErrorCode;
-  readonly facts: ErrorFacts;
-  readonly next: string | undefined;
+export class HashlineError<C extends ErrorCode = ErrorCode> extends Error {
+  readonly errorCode: C;
+  readonly facts: ErrorFacts<C> | undefined;
+  readonly next: NextVariant<C> | undefined;
 
-  constructor(
-    code: ErrorCode,
-    message: string,
-    options?: { facts?: ErrorFacts; next?: string; cause?: unknown },
-  ) {
+  constructor(code: C, message: string, ...[options]: OptionsArgument<C>) {
     super(message, options?.cause === undefined ? undefined : { cause: options.cause });
     this.name = "HashlineError";
     this.errorCode = code;
-    this.facts = options?.facts ?? {};
+    this.facts = options?.facts;
     this.next = options?.next;
   }
 }
 
-/** Messages for text that cannot enter or leave a text mutation. */
+/** Messages for text that cannot enter or leave a text mutation; argument issues reuse them as reasons. */
 export const TEXT_ERROR_MESSAGES = {
   UNSUPPORTED_ENCODING: "Expected valid UTF-8.",
   UNSUPPORTED_TEXT: "NUL bytes are not editable.",

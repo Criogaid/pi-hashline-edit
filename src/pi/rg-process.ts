@@ -11,15 +11,27 @@ import { DiagnosticBuffer } from "./diagnostic-buffer.ts";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import type { Readable } from "node:stream";
 import { escapeRegex } from "../core/text.ts";
-import { errorMessage, HashlineError } from "../core/errors.ts";
+import { HashlineError } from "../core/errors.ts";
 import { throwIfCancelled } from "./error-text.ts";
 
 export const COMMON_RG_ARGS = ["--no-config", "--color=never", "--no-crlf"];
 export const MAX_RG_RECORD_BYTES = 16 * 1024 * 1024;
 const RG_RECORD_LIMIT_MESSAGE = `ripgrep output record exceeds ${MAX_RG_RECORD_BYTES / 1024 ** 2} MiB.`;
-/** A ripgrep process or output-protocol failure. */
-export function ripgrepFailure(message: string, cause?: unknown): HashlineError {
-  return new HashlineError("RIPGREP_FAILED", message, { cause });
+/**
+ * A ripgrep process or output-protocol failure. A finished run contributes its
+ * exit code and, as the cause, its stderr.
+ */
+export function ripgrepFailure(
+  message: string,
+  run?: { readonly code: number | null; readonly stderr: string } | { readonly error: unknown },
+): HashlineError<"RIPGREP_FAILED"> {
+  if (run === undefined) return new HashlineError("RIPGREP_FAILED", message);
+  if ("error" in run) return new HashlineError("RIPGREP_FAILED", message, { cause: run.error });
+  const stderr = run.stderr.trim();
+  return new HashlineError("RIPGREP_FAILED", message, {
+    facts: { exitCode: run.code },
+    ...(stderr ? { cause: stderr } : {}),
+  });
 }
 
 /** rg reported a path that is not valid UTF-8; tools cannot address it. */
@@ -146,8 +158,7 @@ async function runDelimited(
     }
     const result = await process.done;
     throwIfCancelled(signal);
-    if (result.error)
-      throw ripgrepFailure(`Failed to run ripgrep: ${errorMessage(result.error)}`, result.error);
+    if (result.error) throw ripgrepFailure("Failed to run ripgrep.", { error: result.error });
     return { code: result.code, stderr: result.stderr, stopped };
   } finally {
     process.kill();
@@ -183,9 +194,7 @@ export function runRgPaths(
 
 /** Accept both matches and no matches; callers handle intentional early stops separately. */
 export function assertRgSucceeded(result: Pick<RgRunResult, "code" | "stderr">): void {
-  if (result.code !== 0 && result.code !== 1) {
-    throw ripgrepFailure(result.stderr.trim() || `ripgrep exited with code ${result.code}.`);
-  }
+  if (result.code !== 0 && result.code !== 1) throw ripgrepFailure("ripgrep failed.", result);
 }
 
 interface TextRunResult {
@@ -213,8 +222,7 @@ export const runText: RunText = async (rgPath, args, input, signal) => {
   process.child.stdin.end(input);
   const result = await process.done;
   throwIfCancelled(signal);
-  if (result.error)
-    throw ripgrepFailure(`Failed to run ripgrep: ${errorMessage(result.error)}`, result.error);
+  if (result.error) throw ripgrepFailure("Failed to run ripgrep.", { error: result.error });
   if (bytes > MAX_RG_PROBE_OUTPUT_BYTES)
     throw ripgrepFailure("Unexpected ripgrep probe output overflow.");
   return {

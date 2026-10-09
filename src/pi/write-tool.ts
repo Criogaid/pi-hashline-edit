@@ -1,5 +1,6 @@
 import { Type, type Static } from "typebox";
 import type { AgentToolResult, AgentToolUpdateCallback } from "@earendil-works/pi-agent-core";
+import { Text } from "@earendil-works/pi-tui";
 import {
   createWriteToolDefinition,
   type ExtensionToolContext,
@@ -13,13 +14,13 @@ import {
   type ActionFusionDetails,
 } from "./action-fusion.ts";
 import { commitFile, type CommitResult } from "./file-commit.ts";
-import { postProcessMutation } from "./mutation-result.ts";
 import { executeMutation, type ActionFusionExecutor } from "./mutation-runner.ts";
 import { MUTATION_TOOL_GUIDELINE } from "./tool-prompts.ts";
 import { throwIfCancelled } from "./error-text.ts";
 import { createArgumentPreparer } from "./argument-validation.ts";
 import { unwritableTextError } from "../core/text.ts";
-import { renderToolError } from "./render.ts";
+import { reportLines, renderToolError } from "./render.ts";
+import type { ReportDetails } from "./report.ts";
 
 const writeSchema = Type.Object(
   {
@@ -39,7 +40,12 @@ function createWriteSchema(actionFusion: boolean) {
   return withThenRunSchema(writeSchema, "write", actionFusion);
 }
 type WriteParams = Static<typeof writeSchema> & { then_run?: ThenRunInput };
-type WriteDetails = CommitResult & { path: string; actionFusion?: ActionFusionDetails };
+type WriteDetails = CommitResult & {
+  path: string;
+  actionFusion?: ActionFusionDetails;
+} & Partial<ReportDetails>;
+/** The write card's call line shows the content; the command card owns then_run. */
+const WRITE_CARD_SHOWN = new Set(["publication", "created", "then_run", "progressError"]);
 type WriteRenderContext = Parameters<
   NonNullable<ReturnType<typeof createWriteToolDefinition>["renderCall"]>
 >[2];
@@ -71,6 +77,9 @@ export function makeWriteOverride(cwd: string, fusion?: ActionFusionExecutor) {
       context: WriteRenderContext,
     ) {
       if (context.isError) return renderToolError(result, theme, options.expanded);
+      const report = result.details?.report;
+      const facts = report ? reportLines(report, theme, options.expanded, WRITE_CARD_SHOWN) : [];
+      if (facts.length) return new Text(facts.join("\n"), 0, 0);
       return builtin.renderResult!({ ...result, details: undefined }, options, theme, context);
     },
     async execute(
@@ -87,24 +96,14 @@ export function makeWriteOverride(cwd: string, fusion?: ActionFusionExecutor) {
           fusion,
           async run(mutationParams, { absolutePath, displayPath, signal }) {
             throwIfCancelled(signal);
-            const result = await commitFile(absolutePath, mutationParams.content, {
+            const commit = await commitFile(absolutePath, mutationParams.content, {
               mode: mutationParams.mode,
               signal,
             });
             return {
-              commit: result,
-              result: postProcessMutation(result.publication, () => ({
-                content: [
-                  {
-                    type: "text" as const,
-                    text:
-                      result.publication === "NOT_PUBLISHED"
-                        ? `Wrote ${displayPath} (no net change).`
-                        : `${result.created ? "Created" : "Wrote"} ${displayPath}.`,
-                  },
-                ],
-                details: { path: displayPath, ...result },
-              })),
+              commit,
+              details: { path: displayPath, ...commit },
+              facts: commit.created ? { created: true } : {},
             };
           },
         },

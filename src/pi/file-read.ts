@@ -42,13 +42,13 @@ export async function withFileRead<T>(
         current = await stat(path, { bigint: true });
       } catch (error) {
         if (error instanceof Error && "code" in error && error.code === "ENOENT") {
-          throw new FileChangedDuringReadError(error);
+          throw new FileChangedDuringReadError();
         }
         throw error;
       }
       throwIfCancelled(signal);
       if (!sameObservation(before, after) || !sameObservation(before, current)) {
-        throw new FileChangedDuringReadError(outcome.ok ? undefined : outcome.error);
+        throw new FileChangedDuringReadError();
       }
     }
     if (!outcome.ok) throw outcome.error;

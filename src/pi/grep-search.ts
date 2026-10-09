@@ -18,15 +18,13 @@ import { rawMatchRevision, type RawMatchRevision } from "./rg-match-bytes.ts";
 import { searchChangedError, throwIfCancelled } from "./error-text.ts";
 
 /** Surface incomplete search diagnostics without discarding confirmed matches. */
-export function recordSearchDiagnostics(result: RgRunResult, warnings?: string[]): void {
+export function recordSearchDiagnostics(result: RgRunResult, warnings: string[]): void {
   const message =
     result.stderr.trim() ||
     (!result.stopped && result.code !== 0 && result.code !== 1
       ? `ripgrep exited with code ${result.code}.`
       : "");
-  if (!message) return;
-  if (!warnings) throw ripgrepFailure(message);
-  warnings.push(message);
+  if (message) warnings.push(message);
 }
 
 export interface RgMatch {

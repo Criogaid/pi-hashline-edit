@@ -46,7 +46,7 @@ import {
   type DiffCounts,
 } from "./render.ts";
 import { describeEditFailure } from "./failure-context.ts";
-import { formatMutationAnchors } from "./mutation-result.ts";
+import { formatMutationAnchors, type AnchorReport } from "./mutation-result.ts";
 import {
   executeMutation,
   runTextMutation,
@@ -177,20 +177,28 @@ type EditParams = Static<EditSchema> & { then_run?: ThenRunInput };
 
 type EditOpInput = Static<EditSchema>["edits"][number];
 
+/** How to correct edit argument issues; each reason states only what is wrong. */
+const EDIT_ISSUE_FIX = {
+  emptyReplace: 'Use {"op":"delete"} to remove lines, or supply the replacement lines.',
+  emptyBody: 'Remove this edit or supply at least one line ([""] for a blank line).',
+  unsafeLine: 'Copy a complete "LINE#HASH" token from the latest tool result.',
+  hashLength: "Read or grep the file for current anchors.",
+} as const;
+
 /** Report semantic argument issues; malformed shapes remain Pi's schema responsibility. */
 function checkEditArguments(args: unknown, hashLen: number, report: ReportArgumentIssue): void {
   const raw = (args as { edits?: unknown } | null)?.edits;
   const edits = argumentItems(raw);
-  let hashLengthRecoveryHint = " Read or grep the file for current anchors.";
   edits.forEach((op, index) => {
     const body = (op as Record<string, unknown> | null)?.body;
     if (Array.isArray(body)) {
       if (body.length === 0) {
         report(
           `edits[${index}].body`,
+          "is empty",
           (op as Record<string, unknown>).op === "replace"
-            ? 'is empty; use {"op":"delete"} to remove lines, or supply the replacement lines.'
-            : 'is empty; remove this edit or supply at least one line ([""] for a blank line).',
+            ? EDIT_ISSUE_FIX.emptyReplace
+            : EDIT_ISSUE_FIX.emptyBody,
         );
       }
       body.forEach((line, lineIndex) => {
@@ -205,15 +213,16 @@ function checkEditArguments(args: unknown, hashLen: number, report: ReportArgume
       if (token && !Number.isSafeInteger(token.line)) {
         report(
           `edits[${index}].${field}`,
-          `line number in ${value} exceeds the safe integer range; copy a complete "LINE#HASH" token from the latest tool result.`,
+          "line number exceeds the safe integer range",
+          EDIT_ISSUE_FIX.unsafeLine,
         );
       }
       if (token && token.hash.length !== hashLen) {
         report(
           `edits[${index}].${field}`,
-          `Anchor hash length mismatch: ${value} has ${token.hash.length} hash characters, but hashLen is ${hashLen}.${hashLengthRecoveryHint}`,
+          `has ${token.hash.length} hash characters; hashLen is ${hashLen}`,
+          EDIT_ISSUE_FIX.hashLength,
         );
-        hashLengthRecoveryHint = "";
       }
     }
   });
@@ -259,7 +268,7 @@ function formatUpdatedAnchors(
   touched: readonly number[],
   contextLines: readonly number[],
   anchors: AnchorFormatter,
-): string {
+): AnchorReport {
   const idxs = [...new Set(touched)].sort((a, b) => a - b);
   return formatMutationAnchors(
     splitLines(before),
@@ -344,15 +353,7 @@ export function makeEditOverride(
       theme: Theme,
       context: EditRenderContext,
     ) {
-      return renderMutationResult(
-        result,
-        options,
-        theme,
-        context,
-        "Editing…",
-        "Edited",
-        editHeader,
-      );
+      return renderMutationResult(result, options, theme, context, "Editing…", editHeader);
     },
 
     async execute(
@@ -409,8 +410,6 @@ function runHashline(
           result.contextLines,
           anchorFormatter,
         ),
-      summary: () =>
-        `Edited ${target.displayPath} (${translated.length} op(s)${result.changed ? "" : ", no net change"}).`,
     };
   });
 }

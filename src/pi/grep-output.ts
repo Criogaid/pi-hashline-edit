@@ -9,12 +9,11 @@ import { searchChangedError } from "./error-text.ts";
 import { HashlineError } from "../core/errors.ts";
 import { serializePath } from "./path.ts";
 import { rawMatchVerifier } from "./rg-match-bytes.ts";
+import type { Report } from "./report-schema.ts";
 
 /** UTF-16 units kept before the match column when a preview window is cut. */
 const GREP_PREVIEW_LEAD = 100;
 const MAX_CONCURRENT_FILE_READS = 16;
-const INVALID_UTF8_PREVIEW_NOTICE =
-  "Invalid UTF-8: replacement characters shown; plain line numbers cannot be used as edit anchors";
 
 /** Content-mode file header: `<path> · <N> match(es)`. parseFileHeader is its TUI parser. */
 function formatFileHeader(path: string, matches: number): string {
@@ -27,11 +26,6 @@ export function parseFileHeader(line: string): { path: string; summary: string }
   return match ? { path: match[1], summary: match[2] } : undefined;
 }
 
-/** Notices and search diagnostics open with `[` (see assembleGrepOutput and formatSearchWarnings). */
-export function isNoticeLine(line: string): boolean {
-  return line.startsWith("[");
-}
-
 /** Distinct search diagnostics within their budget, keeping opening context and the final cause. */
 function searchDiagnostics(warnings: readonly string[]): string {
   const diagnostics = new DiagnosticBuffer(MAX_SEARCH_DIAGNOSTIC_BYTES);
@@ -39,13 +33,11 @@ function searchDiagnostics(warnings: readonly string[]): string {
   return diagnostics.toString().trimEnd();
 }
 
-export function formatSearchWarnings(warnings: readonly string[]): string {
-  if (!warnings.length) return "";
-  return `\n\n[Search incomplete; results and counts cover only confirmed matches.\n${searchDiagnostics(warnings)}]`;
-}
-
 /** No result can be returned from an incomplete search: report it rather than "no matches". */
-export function searchIncompleteError(message: string, warnings: readonly string[]): HashlineError {
+export function searchIncompleteError(
+  message: string,
+  warnings: readonly string[],
+): HashlineError<"SEARCH_INCOMPLETE"> {
   return new HashlineError("SEARCH_INCOMPLETE", message, {
     facts: { diagnostics: searchDiagnostics(warnings) },
   });
@@ -86,12 +78,15 @@ export async function formatMatches(options: FormatMatchesOptions) {
   for (const lines of byFile.values()) lines.sort((a, b) => a.lineNumber - b.lineNumber);
   const formatPath = (filePath: string): string => serializePath(cwd, filePath);
   const blocks: string[] = [];
+  const invalidUtf8: string[] = [];
   let linesTruncated = false;
   const fileEntries = [...byFile.entries()].filter(
     ([, matches]) => outputMode === "content" || matches.some((match) => match.rawMatch),
   );
   if (fileEntries.length) {
-    const fileResults = new Array<{ block?: string; warning?: string }>(fileEntries.length);
+    const fileResults = new Array<{ block?: string; invalidUtf8?: boolean; warning?: string }>(
+      fileEntries.length,
+    );
     let nextIndex = 0;
     const workerAbort = new AbortController();
     const scanSignal = signal ? AbortSignal.any([signal, workerAbort.signal]) : workerAbort.signal;
@@ -179,8 +174,10 @@ export async function formatMatches(options: FormatMatchesOptions) {
                 throw searchChangedError();
               }
               const header = `${formatFileHeader(formatPath(filePath), matchLines.length)}\n`;
-              const notice = snapshot.validUtf8 ? "" : `\n[${INVALID_UTF8_PREVIEW_NOTICE}]`;
-              fileResults[current] = { block: header + rows.join("\n") + notice };
+              fileResults[current] = {
+                block: header + rows.join("\n"),
+                invalidUtf8: !snapshot.validUtf8,
+              };
             } catch (error) {
               const warning = fileReadWarning(filePath, error, scanSignal);
               if (!warning) throw error;
@@ -202,64 +199,67 @@ export async function formatMatches(options: FormatMatchesOptions) {
       if (result.warning) {
         warnings.push(result.warning);
         byFile.delete(fileEntries[index][0]);
-      } else if (result.block) blocks.push(result.block);
+      } else if (result.block) {
+        blocks.push(result.block);
+        if (result.invalidUtf8) invalidUtf8.push(formatPath(fileEntries[index][0]));
+      }
     }
   }
   if (outputMode === "files") {
     for (const filePath of byFile.keys()) blocks.push(formatPath(filePath));
-  } else if (outputMode === "count" && byFile.size) {
-    let total = 0;
-    for (const [filePath, matchLines] of byFile) {
+  } else if (outputMode === "count") {
+    for (const [filePath, matchLines] of byFile)
       blocks.push(`${formatPath(filePath)}: ${matchLines.length}`);
-      total += matchLines.length;
-    }
-    blocks.push(
-      `Total: ${total} match${total !== 1 ? "es" : ""} in ${byFile.size} file${byFile.size !== 1 ? "s" : ""}`,
-    );
   }
-  return { blocks, linesTruncated };
+  let matches = 0;
+  for (const matchLines of byFile.values()) matches += matchLines.length;
+  return { blocks, linesTruncated, invalidUtf8, matches, files: byFile.size };
 }
 
+/** What grep states about its outcome beside the payload rows. */
+export type GrepFacts = Pick<
+  Report,
+  | "matches"
+  | "files"
+  | "matchLimit"
+  | "outputLimit"
+  | "linePreviewLimit"
+  | "invalidUtf8"
+  | "diagnostics"
+>;
+
 interface AssembleGrepOutputOptions {
-  blocks: readonly string[];
+  formatted: Awaited<ReturnType<typeof formatMatches>>;
   warnings: readonly string[];
   outputMode: "content" | "files" | "count";
   matchLimitReached: boolean;
   effectiveLimit: number;
-  linesTruncated: boolean;
 }
 
+/** Join the payload within Pi's output limit and state each limit, omission, and diagnostic once. */
 export function assembleGrepOutput(options: AssembleGrepOutputOptions): {
-  content: [{ type: "text"; text: string }];
-  details: { incomplete: true } | undefined;
+  payload: string;
+  facts: GrepFacts;
 } {
-  const { blocks, warnings, outputMode, matchLimitReached, effectiveLimit, linesTruncated } =
-    options;
+  const { formatted, warnings, outputMode, matchLimitReached, effectiveLimit } = options;
+  const { blocks, linesTruncated, invalidUtf8, matches, files } = formatted;
 
   if (!blocks.length && warnings.length) {
     throw searchIncompleteError("No matches could be displayed.", warnings);
   }
-  let output = blocks.join(outputMode === "content" ? "\n\n" : "\n");
-  const truncation = truncateHead(output, { maxBytes: DEFAULT_MAX_BYTES });
-  output = truncation.content;
-
-  const notices: string[] = [];
-  if (matchLimitReached) {
-    notices.push(
-      `${effectiveLimit} matches limit reached. Use limit=${effectiveLimit * 2} for more, or refine pattern`,
-    );
-  }
-  if (truncation.truncated) notices.push(`${formatSize(DEFAULT_MAX_BYTES)} limit reached`);
-  if (linesTruncated) {
-    notices.push(
-      `Line previews capped at ${GREP_MAX_LINE_LENGTH} chars (anchors hash full lines); use read for full content`,
-    );
-  }
-  if (notices.length) output += `\n\n[${notices.join(". ")}]`;
-  output += formatSearchWarnings(warnings);
-
+  const truncation = truncateHead(blocks.join(outputMode === "content" ? "\n\n" : "\n"), {
+    maxBytes: DEFAULT_MAX_BYTES,
+  });
   return {
-    content: [{ type: "text" as const, text: output }],
-    details: warnings.length ? { incomplete: true } : undefined,
+    payload: truncation.content,
+    facts: {
+      matches,
+      files,
+      matchLimit: matchLimitReached ? effectiveLimit : undefined,
+      outputLimit: truncation.truncated ? formatSize(DEFAULT_MAX_BYTES) : undefined,
+      linePreviewLimit: linesTruncated ? GREP_MAX_LINE_LENGTH : undefined,
+      invalidUtf8: invalidUtf8.length ? invalidUtf8 : undefined,
+      diagnostics: warnings.length ? searchDiagnostics(warnings) : undefined,
+    },
   };
 }

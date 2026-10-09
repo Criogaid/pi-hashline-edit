@@ -14,14 +14,14 @@ import { createBashToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Box, Container, Text, type Component } from "@earendil-works/pi-tui";
 import type { TSchema } from "typebox";
 import type { ActionFusionProgress } from "./action-fusion.ts";
-import { renderToolError, type MutationRenderState } from "./render.ts";
+import type { MutationRenderState } from "./render.ts";
 
 const CARD_TYPE = "hashline-then-run";
 const RESULT_TYPE = "hashline-then-run-result";
 
 type CommandCardData = Pick<
   ActionFusionProgress,
-  "toolCallId" | "commandText" | "command" | "output" | "reason" | "timing"
+  "toolCallId" | "commandText" | "command" | "output" | "timing" | "mutationCompleted" | "freshness"
 >;
 
 function commandCardData({
@@ -29,17 +29,41 @@ function commandCardData({
   commandText,
   command,
   output,
-  reason,
   timing,
+  mutationCompleted,
+  freshness,
 }: ActionFusionProgress): CommandCardData {
   return {
     toolCallId,
     commandText,
     command,
     output,
-    ...(reason ? { reason } : {}),
+    mutationCompleted,
+    freshness,
     ...(timing ? { timing } : {}),
   };
+}
+
+const TARGET_STATE = {
+  changed: "the target changed after the mutation",
+  missing: "the target is missing after the mutation",
+  unknown: "the target revision could not be read",
+} as const;
+
+/**
+ * Why a command never started, derived from the same facts the mutation result
+ * states: whether the mutation completed and the target's freshness.
+ */
+function notRunReason(card: CommandCardData): string | undefined {
+  if (card.command === "cancelled" && !card.output) return "Not run: cancelled.";
+  if (card.command !== "skipped") return undefined;
+  // Cards saved before these facts were recorded carry neither and show no reason.
+  const { mutationCompleted, freshness } = card as Partial<CommandCardData>;
+  if (mutationCompleted === undefined) return undefined;
+  if (!mutationCompleted) return "Not run: the mutation did not complete.";
+  return freshness === undefined || freshness === "unchanged"
+    ? undefined
+    : `Not run: ${TARGET_STATE[freshness]}.`;
 }
 
 /** Render one durable transcript card per fused command without adding model context. */
@@ -135,7 +159,8 @@ export function registerFusionCards(pi: ExtensionAPI) {
         box.clear();
         box.addChild(statusText);
         box.addChild(call);
-        if (current.reason) box.addChild(new Text(theme.fg("dim", current.reason), 0, 0));
+        const reason = notRunReason(current);
+        if (reason) box.addChild(new Text(theme.fg("dim", reason), 0, 0));
         if (current.output || current.command === "succeeded" || failed) {
           result = bash.renderResult!(
             { content: [{ type: "text", text: current.output }], details: undefined },
@@ -164,7 +189,7 @@ export function registerFusionCards(pi: ExtensionAPI) {
   };
 }
 
-type MutationCardProgress = Partial<Pick<ActionFusionProgress, "freshness" | "mutationCompleted">>;
+type MutationCardProgress = Partial<Pick<ActionFusionProgress, "mutationCompleted">>;
 
 function mutationPending(isPartial: boolean, progress?: MutationCardProgress): boolean {
   return isPartial && progress?.mutationCompleted !== true;
@@ -210,25 +235,15 @@ export function withMutationStatus<TParams extends TSchema, TDetails>(
       const details = result.details as { actionFusion?: MutationCardProgress } | undefined;
       const file = details?.actionFusion ?? shell.fileState;
       const isPartial = mutationPending(options.isPartial, file);
-      // Pi serializes fused failures into one diagnostic; retain it when the card expands.
-      const fusedError = context.isError && (context.args as { then_run?: unknown })?.then_run;
-      shell.result = fusedError
-        ? renderToolError(result, theme, options.expanded)
-        : tool.renderResult!(result, { ...options, isPartial }, theme, {
-            ...context,
-            isPartial,
-            lastComponent: shell.result,
-          });
+      // The tool's renderer shows failures and the report's freshness facts.
+      shell.result = tool.renderResult!(result, { ...options, isPartial }, theme, {
+        ...context,
+        isPartial,
+        lastComponent: shell.result,
+      });
       // Pi runs renderCall first; update its box in place without invalidating the tool row.
       shell.box.addChild(shell.result);
-      if (file) {
-        shell.fileState = { freshness: file.freshness, mutationCompleted: file.mutationCompleted };
-        if (file.freshness === "changed" || file.freshness === "missing") {
-          shell.box.addChild(
-            new Text(theme.fg("warning", `Anchors are stale: target ${file.freshness}.`), 0, 0),
-          );
-        }
-      }
+      if (file) shell.fileState = { mutationCompleted: file.mutationCompleted };
       shell.box.setBgFn((line: string) =>
         theme.bg(
           isPartial ? "toolPendingBg" : context.isError ? "toolErrorBg" : "toolSuccessBg",

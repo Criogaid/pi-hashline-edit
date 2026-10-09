@@ -44,7 +44,7 @@ import {
   renderMutationResult,
   type DiffCounts,
 } from "./render.ts";
-import { formatMutationAnchors } from "./mutation-result.ts";
+import { formatMutationAnchors, type AnchorReport } from "./mutation-result.ts";
 import {
   executeMutation,
   runTextMutation,
@@ -147,7 +147,7 @@ function formatSpanAnchors(
   newLines: readonly string[],
   span: NonNullable<ReturnType<typeof anchorSpan>>,
   anchors: AnchorFormatter,
-): string {
+): AnchorReport {
   function* indices() {
     for (let i = span.start; i <= span.end; i++) yield i;
   }
@@ -221,15 +221,7 @@ export function makeReplaceTool(
       theme: Theme,
       context: ReplaceRenderContext,
     ) {
-      return renderMutationResult(
-        result,
-        options,
-        theme,
-        context,
-        "Replacing…",
-        "Replaced",
-        replaceHeader,
-      );
+      return renderMutationResult(result, options, theme, context, "Replacing…", replaceHeader);
     },
 
     async execute(
@@ -272,23 +264,21 @@ function runReplace(
           )
         : applyReplacements(currentText, rules));
     } catch (error) {
-      if (target.signal?.aborted) throw cancellationError(error);
+      if (target.signal?.aborted) throw cancellationError();
       throw error;
     }
     const changed = newText !== currentText;
 
     return {
       text: newText,
+      facts: { matches: count },
       anchors: () => {
         const oldLines = splitLines(currentText);
         const newLines = splitLines(newText);
         const span = changed ? anchorSpan(oldLines, newLines) : null;
-        return span ? formatSpanAnchors(oldLines, newLines, span, anchorFormatter) : "";
-      },
-      summary: () => {
-        const matchWord = `match${count !== 1 ? "es" : ""}`;
-        const note = changed ? `${count} ${matchWord}` : `${count} ${matchWord}, no net change`;
-        return `Replaced ${target.displayPath} (${note}).`;
+        return span
+          ? formatSpanAnchors(oldLines, newLines, span, anchorFormatter)
+          : { text: "", omitted: 0 };
       },
     };
   });
