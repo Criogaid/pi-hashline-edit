@@ -1,5 +1,5 @@
 /**
- * Fixed output budgets for model results and saved card previews.
+ * Fixed model-facing output budgets.
  *
  * README "Output budgets" documents each value; change both together. Result
  * and notice text derive their size wording from these constants. Budgets that
@@ -12,7 +12,7 @@
 /** grep line preview, in UTF-16 units, excluding its partial-line label. */
 export const GREP_MAX_LINE_LENGTH = 500;
 
-/** Each diagnostic, anchor, or nested mutation card preview block. */
+/** Each diagnostic or anchor block: argument errors, failure details, input-anchor checks, candidate neighborhoods, mutation anchors. */
 export const MAX_BLOCK_BYTES = 16 * 1024;
 /** One argument reason: leave room for the envelope and other fields. */
 export const MAX_ARGUMENT_REASON_BYTES = MAX_BLOCK_BYTES / 4;

@@ -390,10 +390,6 @@ Once the mutation completes, it stays successful whatever happens to the command
 
 In the TUI, the mutation card owns the mutation's result or error diagnostics, publication status, and freshness warnings. It switches from pending to success when mutation execution and result generation succeed, including a successful no-op. Publication alone does not mark the mutation complete. Its completed summary or diff remains visible while the separate command card shows waiting, running, or its final command status. Later freshness checks can add a stale-anchor warning without undoing mutation success. Skipped or cancelled commands are neutral and show a short reason when execution never started. Mutation diagnostics never become command output, and command failure leaves a successful mutation card intact. The fused tool call still waits for the command and final freshness check before returning or allowing model continuation. RPC hosts receive the same progress and choose their own rendering.
 
-Nested fused mutations inside `codemode` receive independent file cards bound to Pi's actual child call IDs. The file card completes when the mutation succeeds; the existing `then_run` card continues following the command. Pi's native codemode call list represents the whole fused invocation, so its row and the outer codemode card still wait for the command and script to finish. Concurrent calls with identical argument previews keep separate file cards. Direct calls retain their native file card.
-
-Nested file cards persist a versioned completion receipt and bounded display previews, without copying the full mutation arguments or adding model-context messages. Each path, summary, error, or diff block is limited to the shared 16 KiB budget. Oversized diagnostic text preserves its opening and final cause with an omission notice; oversized diffs are omitted with a label. A completed file remains successful if the session resumes while its command was unfinished. A file operation without a saved completion receipt displays an interrupted outcome with unknown final status.
-
 When `then_run.timeout` is supplied, the command card shows the remaining seconds and refreshes once per second even without further command output. The countdown starts with the Bash tool's first execution update, after mutation, queue waiting, and any approval wait. It stops when execution ends; restored unfinished cards show an unknown final status without a countdown. The selected Bash implementation enforces the timeout; an override that emits no progress has no live countdown. Without `timeout`, there is no countdown or implicit time limit. RPC progress includes `timing.timeoutSeconds` and `timing.remainingSeconds` after a timed command starts.
 
 Command failures return the Bash tool's diagnostic text to the LLM, including exit or timeout details and whether file changes were saved. The final session result determines success, including nonzero exits and errors supplied by result hooks. Collapsing a TUI card does not shorten the model's result.
@@ -428,7 +424,7 @@ An existing UTF-8 BOM stays at byte zero through first-line replacement/deletion
 
 ### Output budgets
 
-These limits bound model context and saved card previews, not file size. Omission notices identify what was left out.
+These limits bound model context, not file size. Omission notices direct the caller to read more.
 
 | Output | Limit |
 | --- | --- |
@@ -440,7 +436,6 @@ These limits bound model context and saved card previews, not file size. Omissio
 | Anchor failure details | 16 KiB, with no fixed failure-count limit; unique candidates include complete rows up to 4 KiB, and ambiguous failures list up to eight candidates each. Unresolved anchors show the current cited row when it fits; oversized or out-of-range rows require a fresh `read` or `grep`. |
 | Input-anchor checks | Independent 16 KiB block, with no fixed entry-count limit. Truncation is reported explicitly; omitted entries are not implied matched. |
 | Ambiguous-candidate neighborhoods | 16 KiB of complete anchored row text, lowest-line first, plus headings; no fixed row-count limit. Uses the same first eight candidates per failure as the detail lists. Each listed candidate row is limited to 4 KiB. Rows exceeding either limit are omitted in full; later rows that fit are still returned, with gaps reflected in the neighborhood headings. |
-| Nested mutation card previews | Independent 16 KiB budgets for the path, summary, error, and diff. Text truncation is labelled; a diff exceeding its budget is omitted in full. These previews stay outside model context. |
 
 The diagnostic blocks have independent budgets; their combined output can exceed 16 KiB. Truncation notices identify exhausted budgets; context windows also report shown/omitted row counts. Limits apply to rendered diagnostics; core failure results retain all input-anchor checks.
 

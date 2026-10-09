@@ -14,8 +14,7 @@ import { createBashToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Box, Container, Text, type Component } from "@earendil-works/pi-tui";
 import type { TSchema } from "typebox";
 import type { ActionFusionProgress } from "./action-fusion.ts";
-import { renderFreshnessWarning, renderToolError, type MutationRenderState } from "./render.ts";
-import { registerNestedMutationCards } from "./nested-mutation-card.ts";
+import { renderToolError, type MutationRenderState } from "./render.ts";
 
 const CARD_TYPE = "hashline-then-run";
 const RESULT_TYPE = "hashline-then-run-result";
@@ -45,7 +44,6 @@ function commandCardData({
 
 /** Render one durable transcript card per fused command without adding model context. */
 export function registerFusionCards(pi: ExtensionAPI) {
-  const reportNestedMutation = registerNestedMutationCards(pi);
   let currentCwd = process.cwd();
   const bash = createBashToolDefinition(process.cwd());
   const states = new Map<string, CommandCardData>();
@@ -153,7 +151,6 @@ export function registerFusionCards(pi: ExtensionAPI) {
   });
 
   return (progress: ActionFusionProgress, ctx?: ExtensionContext) => {
-    reportNestedMutation(progress);
     if (ctx?.cwd) currentCwd = ctx.cwd;
     const first = !states.has(progress.toolCallId);
     const data = commandCardData(progress);
@@ -226,8 +223,11 @@ export function withMutationStatus<TParams extends TSchema, TDetails>(
       shell.box.addChild(shell.result);
       if (file) {
         shell.fileState = { freshness: file.freshness, mutationCompleted: file.mutationCompleted };
-        const warning = renderFreshnessWarning(file.freshness, theme);
-        if (warning) shell.box.addChild(warning);
+        if (file.freshness === "changed" || file.freshness === "missing") {
+          shell.box.addChild(
+            new Text(theme.fg("warning", `Anchors are stale: target ${file.freshness}.`), 0, 0),
+          );
+        }
       }
       shell.box.setBgFn((line: string) =>
         theme.bg(
