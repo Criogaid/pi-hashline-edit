@@ -11,7 +11,7 @@ import { makeReadOverride } from "./read-tool.ts";
 import { makeReplaceTool } from "./replace-tool.ts";
 import { makeWriteOverride } from "./write-tool.ts";
 import { callTool } from "./tool-call.testing.ts";
-import { MAX_BLOCK_BYTES } from "./budgets.ts";
+import { argumentError, rejectsArgument } from "./argument-error.testing.ts";
 import { POSITIVE_SAFE_INTEGER } from "./schema.ts";
 
 const invalidCommand = { command: "", timeout: 0 };
@@ -22,17 +22,14 @@ const cases = [
     make: (cwd: string, _fusion: ReturnType<typeof createActionFusionExecutor>) =>
       makeReadOverride(cwd, DEFAULT_CONFIG),
     args: { offset: -1, limit: 0 },
-    diagnostics: [
-      new RegExp(`\\n  - offset:.*>= ${POSITIVE_SAFE_INTEGER.minimum}`),
-      new RegExp(`\\n  - limit:.*>= ${POSITIVE_SAFE_INTEGER.minimum}`),
-    ],
+    fields: ["offset", "limit"],
   },
   {
     name: "grep",
     make: (cwd: string, _fusion: ReturnType<typeof createActionFusionExecutor>) =>
       makeGrepOverride(cwd, DEFAULT_CONFIG),
     args: { pattern: [], literal: true, limit: 0, context: -1 },
-    diagnostics: [/\n  - pattern:/, /\n  - limit:/, /\n  - context:/],
+    fields: ["pattern", "limit", "context"],
   },
   {
     name: "edit",
@@ -47,15 +44,15 @@ const cases = [
       ],
       then_run: invalidCommand,
     },
-    diagnostics: [
-      /Invalid argument edits\[0\]\.body:.*delete/,
-      /Invalid argument edits\[1\]\.body\[0\]: UNSUPPORTED_TEXT:/,
-      /Invalid argument edits\[1\]\.body\[1\]: INVALID_UNICODE:/,
-      /Invalid argument edits\[2\]\.anchor:.*safe integer/,
-      /Invalid argument edits\[2\]\.end:.*hash/,
-      /Invalid argument edits\[3\]\.body:.*empty/,
-      /\n  - then_run.command:/,
-      /\n  - then_run.timeout:/,
+    fields: [
+      "edits[0].body",
+      "edits[1].body[0]",
+      "edits[1].body[1]",
+      "edits[2].anchor",
+      "edits[2].end",
+      "edits[3].body",
+      "then_run.command",
+      "then_run.timeout",
     ],
   },
   {
@@ -69,13 +66,13 @@ const cases = [
       ],
       then_run: invalidCommand,
     },
-    diagnostics: [
-      /Invalid argument replacements\[0\]\.replace: UNSUPPORTED_TEXT:/,
-      /Invalid argument replacements\[0\]\.find: invalid regex/,
-      /Invalid argument replacements\[1\]\.replace: INVALID_UNICODE:/,
-      /Invalid argument replacements\[1\]\.find: invalid regex/,
-      /\n  - then_run.command:/,
-      /\n  - then_run.timeout:/,
+    fields: [
+      "replacements[0].replace",
+      "replacements[0].find",
+      "replacements[1].replace",
+      "replacements[1].find",
+      "then_run.command",
+      "then_run.timeout",
     ],
   },
   {
@@ -83,12 +80,7 @@ const cases = [
     make: (cwd: string, fusion: ReturnType<typeof createActionFusionExecutor>) =>
       makeWriteOverride(cwd, fusion),
     args: { content: "bad\0", mode: "invalid", then_run: invalidCommand },
-    diagnostics: [
-      /Invalid argument content: UNSUPPORTED_TEXT:/,
-      /\n  - mode:/,
-      /\n  - then_run.command:/,
-      /\n  - then_run.timeout:/,
-    ],
+    fields: ["content", "mode", "then_run.command", "then_run.timeout"],
   },
 ] as const;
 
@@ -105,35 +97,20 @@ for (const scenario of cases) {
       return { status: "succeeded", output: "ran" };
     });
     const tool = scenario.make(cwd, fusion);
-    // These values round-trip through JSON exactly as model tool arguments do.
     const args: unknown = JSON.parse(JSON.stringify({ path, ...scenario.args, unexpected: true }));
-    await assert.rejects(callTool(tool, args), (error: Error) => {
-      for (const diagnostic of [...scenario.diagnostics, /\n  - unexpected:/]) {
-        assert.match(error.message, diagnostic);
-      }
-      assert.doesNotMatch(error.message, /\n  - path:/);
-      assert.doesNotMatch(error.message, /Received arguments:\n/);
-      const echoedArgs = [...error.message.matchAll(/^Received arguments: (.+)$/gm)].map((match) =>
-        JSON.parse(match[1]),
+    await assert.rejects(callTool(tool, args), (error: unknown) => {
+      const result = argumentError(error);
+      assert.deepEqual(
+        new Set(result.issues.map((issue) => issue.field)),
+        new Set([...scenario.fields, "unexpected"]),
       );
-      assert.deepEqual(echoedArgs, [args]);
+      assert.deepEqual(result.arguments, args);
       return true;
     });
     assert.equal(await readFile(path, "utf8"), original);
     assert.equal(commandRuns, 0);
   });
 }
-
-test("argument diagnostics exceed the shared budget → rejection labels omitted text", async () => {
-  const tool = makeEditOverride(process.cwd(), DEFAULT_CONFIG);
-  const edits = Array.from({ length: MAX_BLOCK_BYTES }, () => ({ op: "append", body: [] }));
-  await assert.rejects(callTool(tool, { path: "", edits }), (error: Error) => {
-    assert.ok(Buffer.byteLength(error.message) <= MAX_BLOCK_BYTES);
-    assert.match(error.message, /Invalid argument edits\[0\]\.body:/);
-    assert.match(error.message, /Diagnostics truncated/);
-    return true;
-  });
-});
 
 test("known edit operations with empty bodies → report the actionable issue once", async () => {
   const tool = makeEditOverride(process.cwd(), DEFAULT_CONFIG);
@@ -145,12 +122,16 @@ test("known edit operations with empty bodies → report the actionable issue on
     };
     await assert.rejects(
       callTool(tool, { path: "unused.txt", edits: [operation] }),
-      (error: Error) => {
-        assert.match(error.message, /Invalid argument edits\[0\]\.body:.*empty/);
-        assert.doesNotMatch(
-          error.message,
-          /Validation failed|schema is false|must be equal to constant|additional errors may remain/,
+      (error: unknown) => {
+        const result = argumentError(error);
+        assert.equal(result.issues.length, 1);
+        assert.equal(result.issues[0].field, "edits[0].body");
+        assert.match(result.issues[0].reason, /empty/);
+        assert.match(
+          result.issues[0].reason,
+          op === "replace" ? /delete/ : /supply at least one line/,
         );
+        assert.equal(result.schemaLimited, undefined);
         return true;
       },
     );
@@ -170,20 +151,21 @@ test("known edit branch has independent errors → report them without unrelated
       then_run: invalidCommand,
       unexpected: true,
     }),
-    (error: Error) => {
-      assert.match(error.message, /Invalid argument edits\[0\]\.body:/);
-      for (const field of [
-        "edits.0.anchor",
-        "edits.0.extra",
-        "edits.1.body",
-        "edits.2.anchor",
-        "then_run.command",
-        "then_run.timeout",
-        "unexpected",
-      ]) {
-        assert.ok(error.message.includes(`- ${field}:`), error.message);
-      }
-      assert.doesNotMatch(error.message, /- edits\.\d+\.op:|- edits\.0\.body:/);
+    (error: unknown) => {
+      const result = argumentError(error);
+      assert.deepEqual(
+        new Set(result.issues.map((issue) => issue.field)),
+        new Set([
+          "edits[0].body",
+          "edits[0].anchor",
+          "edits[0].extra",
+          "edits[1].body",
+          "edits[2].anchor",
+          "then_run.command",
+          "then_run.timeout",
+          "unexpected",
+        ]),
+      );
       return true;
     },
   );
@@ -199,12 +181,12 @@ test("edit operation tag is missing or invalid → report its field once without
           { ...(tag === undefined ? {} : { op: tag }), anchor: `1#${anchorHash}`, body: ["valid"] },
         ],
       }),
-      (error: Error) => {
-        const rows = error.message.split("\n").filter((line) => line.startsWith("  - "));
-        assert.equal(rows.length, 1, error.message);
-        assert.match(rows[0], /- edits\.0\.op:/);
-        assert.doesNotMatch(error.message, /schema is false|anyOf|must be equal to constant/);
-        if (tag !== undefined) {
+      (error: unknown) => {
+        const result = argumentError(error);
+        assert.equal(result.issues.length, 1);
+        assert.equal(result.issues[0].field, "edits[0].op");
+        if (tag === undefined) assert.match(result.issues[0].reason, /required/);
+        else
           for (const op of [
             "replace",
             "delete",
@@ -212,10 +194,8 @@ test("edit operation tag is missing or invalid → report its field once without
             "insert_after",
             "append",
             "prepend",
-          ]) {
-            assert.ok(rows[0].includes(op), error.message);
-          }
-        }
+          ])
+            assert.ok(result.issues[0].reason.includes(op));
         return true;
       },
     );
@@ -231,12 +211,12 @@ test("edit range end is null → preserve the original rejection and its field d
   ]) {
     await assert.rejects(
       callTool(tool, { path: "unused.txt", edits: [operation] }),
-      (error: Error) => {
-        assert.match(error.message, /- edits\.0\.end:/);
-        assert.doesNotMatch(error.message, /- edits\.0\.op:/);
-        if (operation.body?.length === 0) {
-          assert.match(error.message, /Invalid argument edits\[0\]\.body:/);
-        }
+      (error: unknown) => {
+        const result = argumentError(error);
+        assert.deepEqual(
+          result.issues.map((issue) => issue.field),
+          operation.body?.length === 0 ? ["edits[0].body", "edits[0].end"] : ["edits[0].end"],
+        );
         return true;
       },
     );
@@ -244,161 +224,184 @@ test("edit range end is null → preserve the original rejection and its field d
 });
 
 test("edit item is not an object → report the item type once", async () => {
-  const tool = makeEditOverride(process.cwd(), DEFAULT_CONFIG);
   for (const item of [null, 42, "bad", [], true]) {
-    await assert.rejects(callTool(tool, { path: "unused.txt", edits: [item] }), (error: Error) => {
-      const rows = error.message.split("\n").filter((line) => line.startsWith("  - "));
-      assert.equal(rows.length, 1, error.message);
-      assert.match(rows[0], /- edits\.0:.*object/);
-      assert.doesNotMatch(error.message, /anyOf/);
-      return true;
-    });
+    await assert.rejects(
+      callTool(makeEditOverride(process.cwd(), DEFAULT_CONFIG), {
+        path: "unused.txt",
+        edits: [item],
+      }),
+      (error: unknown) => {
+        const result = argumentError(error);
+        assert.equal(result.issues.length, 1);
+        return rejectsArgument("edits[0]", /object/)(error);
+      },
+    );
   }
 });
 
 test("grep union value has one applicable type → report only its constraint", async () => {
-  const tool = makeGrepOverride(process.cwd(), DEFAULT_CONFIG);
   for (const pattern of ["", [], [""]]) {
-    await assert.rejects(callTool(tool, { pattern, literal: true }), (error: Error) => {
-      const rows = error.message.split("\n").filter((line) => line.startsWith("  - "));
-      assert.equal(rows.length, 1, error.message);
-      assert.match(rows[0], /- pattern(?:\.0)?:/);
-      assert.doesNotMatch(error.message, /anyOf/);
-      return true;
-    });
+    await assert.rejects(
+      callTool(makeGrepOverride(process.cwd(), DEFAULT_CONFIG), { pattern, literal: true }),
+      (error: unknown) => {
+        const result = argumentError(error);
+        assert.equal(result.issues.length, 1);
+        assert.match(result.issues[0].field, /^pattern(?:\[0\])?$/);
+        assert.doesNotMatch(result.issues[0].reason, /anyOf/);
+        return true;
+      },
+    );
   }
 });
 
 test("literal enum is invalid → report the permitted values once", async () => {
-  const tool = makeWriteOverride(process.cwd());
   await assert.rejects(
-    callTool(tool, { path: "unused.txt", content: "ok", mode: "bad" }),
-    (error: Error) => {
-      const rows = error.message.split("\n").filter((line) => line.startsWith("  - "));
-      assert.equal(rows.length, 1, error.message);
-      assert.match(rows[0], /- mode:/);
-      assert.ok(rows[0].includes("create") && rows[0].includes("overwrite"), error.message);
-      assert.doesNotMatch(error.message, /anyOf|must be equal to constant/);
-      return true;
+    callTool(makeWriteOverride(process.cwd()), { path: "unused.txt", content: "ok", mode: "bad" }),
+    (error: unknown) => {
+      const result = argumentError(error);
+      assert.equal(result.issues.length, 1);
+      return rejectsArgument("mode", /create.*overwrite/)(error);
     },
   );
 });
 
 test("specific child errors exist → omit parent summaries and retain independent fields", async () => {
-  const tool = makeEditOverride(process.cwd(), DEFAULT_CONFIG, createActionFusionExecutor());
   await assert.rejects(
-    callTool(tool, {
+    callTool(makeEditOverride(process.cwd(), DEFAULT_CONFIG, createActionFusionExecutor()), {
       path: "unused.txt",
       edits: [{ op: "insert_after", body: ["ok"], extra: true }, { op: "unknown" }],
       then_run: { command: "echo ok", extra: true },
       unexpected: true,
     }),
-    (error: Error) => {
-      for (const field of [
-        "edits.0.anchor",
-        "edits.0.extra",
-        "edits.1.op",
-        "then_run.extra",
-        "unexpected",
-      ]) {
-        assert.ok(error.message.includes(`- ${field}:`), error.message);
-      }
-      assert.doesNotMatch(error.message, /anyOf|must not have additional properties/);
+    (error: unknown) => {
+      const result = argumentError(error);
+      assert.deepEqual(
+        new Set(result.issues.map((issue) => issue.field)),
+        new Set([
+          "edits[0].anchor",
+          "edits[0].extra",
+          "edits[1].op",
+          "then_run.extra",
+          "unexpected",
+        ]),
+      );
       return true;
     },
   );
 });
 
 test("operation shape does not permit a field → omit inapplicable semantic advice", async () => {
-  const tool = makeEditOverride(process.cwd(), DEFAULT_CONFIG);
   for (const edits of [
     [{ op: "unknown", anchor: "1#A", body: [] }],
     [{ op: "delete", anchor: `1#${anchorHash}`, body: [] }],
     "bad",
   ]) {
-    await assert.rejects(callTool(tool, { path: "unused.txt", edits }), (error: Error) => {
-      assert.doesNotMatch(error.message, /Invalid argument/);
-      assert.match(error.message, /- edits(?:\.0(?:\.(?:op|body))?)?:/);
-      return true;
-    });
+    await assert.rejects(
+      callTool(makeEditOverride(process.cwd(), DEFAULT_CONFIG), { path: "unused.txt", edits }),
+      (error: unknown) => {
+        const result = argumentError(error);
+        assert.equal(result.issues.length, 1);
+        assert.doesNotMatch(result.issues[0].reason, /empty|hash length mismatch/);
+        return true;
+      },
+    );
   }
 });
 
 test("Pi coerces valid fields while another field fails → do not diagnose the original value", async () => {
-  const tool = makeReadOverride(process.cwd(), DEFAULT_CONFIG);
   await assert.rejects(
-    callTool(tool, { path: "unused.txt", offset: "1", limit: 0 }),
-    (error: Error) => {
-      assert.match(error.message, /- limit:/);
-      assert.doesNotMatch(error.message, /- offset:|additional errors may remain/);
+    callTool(makeReadOverride(process.cwd(), DEFAULT_CONFIG), {
+      path: "unused.txt",
+      offset: "1",
+      limit: 0,
+    }),
+    (error: unknown) => {
+      const result = argumentError(error);
+      assert.deepEqual(
+        result.issues.map((issue) => issue.field),
+        ["limit"],
+      );
+      assert.equal(result.schemaLimited, undefined);
       return true;
     },
   );
 });
 
 test("multiple required fields are missing → report every missing field", async () => {
-  const tool = makeEditOverride(process.cwd(), DEFAULT_CONFIG);
   await assert.rejects(
-    callTool(tool, { path: "unused.txt", edits: [{ op: "replace" }] }),
-    (error: Error) => {
-      assert.match(error.message, /- edits\.0\.anchor:.*required/);
-      assert.match(error.message, /- edits\.0\.body:.*required/);
-      assert.doesNotMatch(error.message, /additional errors may remain/);
+    callTool(makeEditOverride(process.cwd(), DEFAULT_CONFIG), {
+      path: "unused.txt",
+      edits: [{ op: "replace" }],
+    }),
+    (error: unknown) => {
+      const result = argumentError(error);
+      assert.deepEqual(
+        new Set(result.issues.map((issue) => issue.field)),
+        new Set(["edits[0].anchor", "edits[0].body"]),
+      );
+      assert.ok(result.issues.every((issue) => /required/.test(issue.reason)));
+      assert.equal(result.schemaLimited, undefined);
       return true;
     },
   );
 });
 
-test("unknown field name contains punctuation or a newline → quote the path on one diagnostic row", async () => {
-  const tool = makeReadOverride(process.cwd(), DEFAULT_CONFIG);
-  await assert.rejects(
-    callTool(tool, { path: "unused.txt", ["odd.\nfield/~"]: true }),
-    (error: Error) => {
-      const rows = error.message.split("\n").filter((line) => line.startsWith("  - "));
-      assert.equal(rows.length, 1, error.message);
-      assert.ok(rows[0].includes(JSON.stringify("odd.\nfield/~")), error.message);
-      return true;
-    },
-  );
+test("unknown field names contain punctuation, numeric keys or newlines → quote property keys without treating them as array indices", async () => {
+  for (const key of ["odd.\nfield/~", "0", "01", "a/b", "a~b", 'quote"field']) {
+    await assert.rejects(
+      callTool(makeReadOverride(process.cwd(), DEFAULT_CONFIG), {
+        path: "unused.txt",
+        [key]: true,
+      }),
+      (error: unknown) => {
+        const result = argumentError(error);
+        assert.equal(result.issues.length, 1);
+        assert.equal(result.issues[0].field, `[${JSON.stringify(key)}]`);
+        return true;
+      },
+    );
+  }
 });
 
 test("one field exhausts native diagnostics → label the limit and retain another field", async () => {
-  const tool = makeEditOverride(process.cwd(), DEFAULT_CONFIG);
   await assert.rejects(
-    callTool(tool, {
+    callTool(makeEditOverride(process.cwd(), DEFAULT_CONFIG), {
       path: "",
       edits: Array.from({ length: 30 }, () => ({ op: "unknown" })),
     }),
-    (error: Error) => {
-      assert.match(error.message, /- path:/);
-      assert.match(error.message, /- edits\.0\.op:/);
-      assert.match(error.message, /additional errors may remain/);
+    (error: unknown) => {
+      const result = argumentError(error);
+      assert.ok(result.issues.some((issue) => issue.field === "path"));
+      assert.ok(result.issues.some((issue) => issue.field === "edits[0].op"));
+      assert.equal(result.schemaLimited, true);
       return true;
     },
   );
 });
 
 test("one field violates independent constraints → combine its reasons without losing either", async () => {
-  const edit = makeEditOverride(process.cwd(), DEFAULT_CONFIG);
-  const read = makeReadOverride(process.cwd(), DEFAULT_CONFIG);
-  const badAnchor = `${Number.MAX_SAFE_INTEGER + 1}#A`;
   await assert.rejects(
-    callTool(edit, { path: "unused.txt", edits: [{ op: "delete", anchor: badAnchor }] }),
-    (error: Error) => {
-      const rows = error.message
-        .split("\n")
-        .filter((line) => line.startsWith("Invalid argument edits[0].anchor:"));
-      assert.equal(rows.length, 1, error.message);
-      assert.match(rows[0], /safe integer/);
-      assert.match(rows[0], /hash length mismatch/);
+    callTool(makeEditOverride(process.cwd(), DEFAULT_CONFIG), {
+      path: "unused.txt",
+      edits: [{ op: "delete", anchor: `${Number.MAX_SAFE_INTEGER + 1}#A` }],
+    }),
+    (error: unknown) => {
+      const result = argumentError(error);
+      assert.equal(result.issues.length, 1);
+      return rejectsArgument("edits[0].anchor", /safe integer[\s\S]*hash length mismatch/)(error);
+    },
+  );
+  await assert.rejects(
+    callTool(makeReadOverride(process.cwd(), DEFAULT_CONFIG), { path: "unused.txt", offset: 0.5 }),
+    (error: unknown) => {
+      const result = argumentError(error);
+      assert.equal(result.issues.length, 1);
+      assert.match(
+        result.issues[0].reason,
+        new RegExp(`multiple of ${POSITIVE_SAFE_INTEGER.multipleOf}`),
+      );
+      assert.match(result.issues[0].reason, new RegExp(`>= ${POSITIVE_SAFE_INTEGER.minimum}`));
       return true;
     },
   );
-  await assert.rejects(callTool(read, { path: "unused.txt", offset: 0.5 }), (error: Error) => {
-    const rows = error.message.split("\n").filter((line) => line.startsWith("  - offset:"));
-    assert.equal(rows.length, 1, error.message);
-    assert.match(rows[0], new RegExp(`multiple of ${POSITIVE_SAFE_INTEGER.multipleOf}`));
-    assert.match(rows[0], new RegExp(`>= ${POSITIVE_SAFE_INTEGER.minimum}`));
-    return true;
-  });
 });

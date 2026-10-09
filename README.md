@@ -79,11 +79,33 @@ Valid UTF-8 text inspection and matching uses one logical representation: CRLF b
 
 All six tools use one argument-validation entry point. Tool-specific checks collect independent issues instead of stopping at the first one. Failure diagnostics use Pi's prepared values and the declared schema. A recognised operation selects its branch; a missing or invalid operation reports only its `op` field. A non-object operation reports its type once. String/array unions select the applicable type, and literal unions report their permitted values once.
 
-Diagnostics combine distinct constraints on one field and omit duplicate parent summaries. A tool-specific explanation replaces schema messages for that value only when its field belongs to the selected shape; forbidden fields and unknown operations receive no inapplicable body or anchor advice. Missing required fields and other independent errors remain visible. Each top-level field has a separate native diagnostic allowance. Schema errors share one header and one compact JSON copy of the received arguments, in both model-facing errors and the TUI. The response labels a reached native allowance or truncated output. The original schema and Pi pipeline still control acceptance, coercion, and optional null handling.
+Diagnostics combine distinct constraints on one field and omit duplicate parent summaries. A tool-specific explanation replaces schema messages for that value only when its field belongs to the selected shape; forbidden fields and unknown operations receive no inapplicable body or anchor advice. Missing required fields and other independent errors remain visible. Each top-level field has a separate native diagnostic allowance. The original schema and Pi pipeline still control acceptance, coercion, and optional null handling.
+
+Every argument rejection is one JSON object in both the model result and the TUI:
+
+```json
+{
+  "error": "INVALID_ARGUMENTS",
+  "tool": "edit",
+  "executed": false,
+  "issues": [
+    {
+      "field": "edits[0].body",
+      "reason": "is empty; remove this edit or supply at least one line ([\"\"] for a blank line)."
+    }
+  ],
+  "arguments": {
+    "path": "example.txt",
+    "edits": [{ "op": "insert_after", "anchor": "22#ABCD", "body": [] }]
+  }
+}
+```
+
+`issues` combines schema and tool-specific failures. Field paths refer to Pi's prepared arguments: array indices use `[0]`, named properties use dots, and other property names use JSON-quoted brackets. `$` identifies a preparation failure without a field diagnostic. `arguments` contains the prepared value, including Pi coercion, when it fits and can be encoded.
 
 Within an edit operation, omit an optional `end` when no range is needed. `end: null` remains a schema error, including when other arguments are invalid.
 
-Argument diagnostics share the 16 KiB block budget in [`budgets.ts`](src/pi/budgets.ts), retain opening and closing text, and label omitted text. Invalid arguments prevent execution. Filesystem access, anchor verification, regex probing by ripgrep, and forget eligibility remain subsequent checks that require valid arguments.
+Argument diagnostics share the 16 KiB block budget in [`budgets.ts`](src/pi/budgets.ts) and remain valid JSON at that limit. An oversized or unavailable argument copy is omitted with `argumentsOmitted: true`. Oversized reports keep whole opening and closing issues and report their omitted count in `omittedIssues`; an oversized field path is omitted whole. Each reason has a 4 KiB budget and retains its opening and final cause with an omission notice. `schemaLimited: true` means a native diagnostic allowance was reached, so additional issues may remain. Invalid arguments prevent execution. Filesystem access, anchor verification, regex probing by ripgrep, and forget eligibility remain subsequent checks that require valid arguments.
 
 ### Edit operations
 
@@ -387,7 +409,7 @@ These limits bound model context, not file size. Omission notices direct the cal
 | `grep` | Default 100 matching lines (`grep.defaultLimit`), overridable; up to 500 UTF-16 units per partial line preview, plus labels and Pi's total output limits. Match previews use rg byte offsets; hashes use full content. Search error notices have a separate 4 KiB budget. |
 | `forget` tag | With `forget` enabled: direct `read` and content-mode `grep` text results of 2 KiB or more, and image reads. Successful codemode outputs containing a successful read or content-mode grep call use the same threshold and are forgotten as one result; nested results are not tagged. |
 | `edit` / `replace` anchors | 16 KiB including heading/omission notice, with no fixed entry-count limit. Compact tokens for changed positions; selected deletion successors retain complete content. The omission notice consumes budget only when rows are omitted. Rows that do not fit are omitted in full; later rows that fit are still returned. |
-| Argument errors | 16 KiB for the combined tool-specific and Pi schema diagnostics; longer reports retain opening/closing text and label the omitted middle. Pi's schema error limit applies separately within each top-level field. |
+| Argument errors | 16 KiB of valid JSON for combined tool-specific and schema issues; omit the argument copy before omitting whole issues and label both omissions. Each reason has a 4 KiB budget preserving opening/closing text. Pi's schema error allowance applies separately within each top-level field. |
 | Anchor failure details | 16 KiB, with no fixed failure-count limit; unique candidates include complete rows up to 4 KiB, and ambiguous failures list up to eight candidates each. Unresolved anchors show the current cited row when it fits; oversized or out-of-range rows require a fresh `read` or `grep`. |
 | Input-anchor checks | Independent 16 KiB block, with no fixed entry-count limit. Truncation is reported explicitly; omitted entries are not implied matched. |
 | Ambiguous-candidate neighborhoods | 16 KiB of complete anchored row text, lowest-line first, plus headings; no fixed row-count limit. Uses the same first eight candidates per failure as the detail lists. Each listed candidate row is limited to 4 KiB. Rows exceeding either limit are omitted in full; later rows that fit are still returned, with gaps reflected in the neighborhood headings. |

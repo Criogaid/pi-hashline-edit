@@ -1,3 +1,4 @@
+import { rejectsArgument, rejectsArguments } from "./argument-error.testing.ts";
 /**
  * pi integration tests for the `replace` tool: literal replaceAll, regex with
  * capture groups, flags, 0-match / invalid-pattern
@@ -63,7 +64,7 @@ test("replace schema requires a non-empty replacements array", async () => {
       })),
     ];
     for (const args of invalidArgs) {
-      await assert.rejects(call(tool, args), /Validation failed for tool "replace"/);
+      await assert.rejects(call(tool, args), rejectsArguments("replace"));
     }
   }
 });
@@ -75,11 +76,7 @@ test("replace schema rejects empty paths, empty find, and unsupported flags", as
     { path: "f.txt", replacements: [{ find: "", replace: "new" }] },
     { path: "f.txt", replacements: [{ find: "old", replace: "new", flags: "x" }] },
   ]) {
-    await assert.rejects(
-      call(tool, args),
-      /Validation failed for tool "replace"/,
-      JSON.stringify(args),
-    );
+    await assert.rejects(call(tool, args), rejectsArguments("replace"), JSON.stringify(args));
   }
 });
 
@@ -93,7 +90,7 @@ test("replace rejects top-level rules without publishing", async () =>
         find: "old",
         replace: "new",
       }),
-      /Validation failed for tool "replace"[\s\S]*replacements/,
+      rejectsArgument("replacements"),
     );
     assert.equal(await readFile(file, "utf8"), "old\n");
   }));
@@ -107,7 +104,7 @@ test("replace rejects unsupported per-rule fields before publishing", async () =
     for (const maxMatches of [1, null, false]) {
       await assert.rejects(
         callTool(tool, { path: file, replacements: [{ find: "foo", replace: "bar", maxMatches }] }),
-        /Validation failed for tool "replace"[\s\S]*maxMatches/,
+        rejectsArgument("replacements[0].maxMatches", /not allowed/),
       );
       assert.equal(await readFile(file, "utf8"), before);
     }
@@ -122,15 +119,15 @@ test("replace rejects unwritable text and invalid regex before reading a missing
     for (const [rule, expected] of [
       [
         { find: "x", replace: "\0" },
-        /Invalid argument replacements\[0\]\.replace: UNSUPPORTED_TEXT:/,
+        rejectsArgument("replacements[0].replace", /UNSUPPORTED_TEXT:/),
       ],
       [
         { find: "x", replace: "\ud800" },
-        /Invalid argument replacements\[0\]\.replace: INVALID_UNICODE:/,
+        rejectsArgument("replacements[0].replace", /INVALID_UNICODE:/),
       ],
       [
         { find: "(", replace: "x", regex: true },
-        /Invalid argument replacements\[0\]\.find: invalid regex/,
+        rejectsArgument("replacements[0].find", /invalid regex/),
       ],
     ] as const) {
       await assert.rejects(callTool(tool, { path: file, replacements: [rule] }), expected);
@@ -141,7 +138,7 @@ test("replace rejects unwritable text and invalid regex before reading a missing
         path: file,
         replacements: [{ find: "(", replace: "x", regex: true, flags: "z" }],
       }),
-      /Validation failed for tool "replace":[\s\S]*replacements\.0\.flags: must match pattern/,
+      rejectsArgument("replacements[0].flags", /must match pattern/),
     );
     await assert.rejects(readFile(file, "utf8"), { code: "ENOENT" });
   }));
@@ -379,7 +376,7 @@ test("replace: empty find throws", async () => {
         path: "f.txt",
         replacements: [{ find: "", replace: "x" }],
       }),
-      /Validation failed for tool "replace"[\s\S]*find/,
+      rejectsArgument("replacements[0].find"),
     );
   });
 });
@@ -418,7 +415,7 @@ test("replace: invalid flag char throws", async () => {
         path: "f.txt",
         replacements: [{ find: "a", replace: "x", flags: "z" }],
       }),
-      /Validation failed for tool "replace"[\s\S]*flags/,
+      rejectsArgument("replacements[0].flags"),
     );
   });
 });
@@ -572,19 +569,19 @@ test("invalid batches reject every change and never run a fused command", async 
         ],
       ],
       [
-        /Invalid argument replacements\[1\]\.find: invalid regex/,
+        rejectsArgument("replacements[1].find", /invalid regex/),
         [{ replacements: [first, { find: "(", replace: "x", regex: true }] }],
       ],
       [
-        /Invalid argument replacements\[1\]\.replace: UNSUPPORTED_TEXT: NUL bytes are not editable\./,
+        rejectsArgument("replacements[1].replace", /UNSUPPORTED_TEXT: NUL/),
         [{ replacements: [first, { find: "foo", replace: "\0" }] }],
       ],
       [
-        /Invalid argument replacements\[1\]\.replace: INVALID_UNICODE: content cannot be encoded losslessly as UTF-8\./,
+        rejectsArgument("replacements[1].replace", /INVALID_UNICODE:/),
         [{ replacements: [first, { find: "foo", replace: "\ud800" }] }],
       ],
       [
-        /Validation failed for tool "replace"/,
+        rejectsArguments("replace"),
         [
           { replacements: [first, { find: "", replace: "x" }] },
           { replacements: [first, { find: "foo" }] },
@@ -762,7 +759,7 @@ test("replace rejects JSON-string rules without publishing", async () =>
         path: "f.txt",
         replacements: JSON.stringify([{ find: "foo", replace: "bar" }]),
       }),
-      /Validation failed for tool "replace"[\s\S]*replacements/,
+      rejectsArgument("replacements[0]", /object/),
     );
     assert.equal(await readFile(file, "utf8"), "hello foo world");
   }));

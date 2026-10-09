@@ -1,3 +1,4 @@
+import { rejectsArgument } from "../pi/argument-error.testing.ts";
 /**
  * Explicit integration coverage for the platform rg bundled by @vscode/ripgrep.
  * This suite is excluded from the default test script.
@@ -295,7 +296,7 @@ test("real rg requires an explicit mode and separates exact text from regex", as
     const tool = makeGrepOverrideWithBackend(directory, DEFAULT_CONFIG, {});
     await assert.rejects(
       invoke(tool, "missing-mode", { pattern: "foo" }),
-      /Validation failed[\s\S]*literal:/,
+      rejectsArgument("literal", /required/),
     );
     for (const pattern of ["(?i)^foo$", "(?P<name>foo)$"]) {
       const result = await invoke(tool, "regex", { pattern, literal: false });

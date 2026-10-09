@@ -1,3 +1,4 @@
+import { argumentError } from "./argument-error.testing.ts";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
@@ -354,8 +355,8 @@ test("all file tools expose validation causes in collapsed and expanded error ca
         errorText = error.message;
         return true;
       });
-      const cause = errorText.split("\n").find((line) => line.includes("unexpected"));
-      assert.ok(cause);
+      const issues = argumentError(new Error(errorText)).issues;
+      assert.ok(issues.length > 0);
       for (const expanded of [false, true]) {
         const context = {
           args,
@@ -384,10 +385,14 @@ test("all file tools expose validation causes in collapsed and expanded error ca
         );
         const card = tool.renderShell === "self" ? call : result;
         assert.ok(card);
-        assert.ok(
-          card.render(200).join("\n").includes(cause),
-          `${tool.name} hid the validation cause`,
-        );
+        const displayed = card.render(200).join("\n");
+        for (const value of [issues[0].field, issues[0].reason]) {
+          assert.ok(displayed.includes(value), `${tool.name} hid the first validation issue`);
+        }
+        if (expanded) {
+          assert.ok(displayed.includes('"field": "unexpected"'));
+          assert.ok(displayed.includes('"reason": "is not allowed"'));
+        }
       }
     }
   }

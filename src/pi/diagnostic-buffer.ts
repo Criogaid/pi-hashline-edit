@@ -3,8 +3,15 @@
  * model-facing search warnings. Retain the opening context and final cause;
  * mark omitted text instead of silently dropping diagnostics.
  */
-import { truncateHead, truncateTail } from "@earendil-works/pi-coding-agent";
 import { formatKiB } from "./budgets.ts";
+
+/** Cut only at UTF-8 boundaries; diagnostics may contain a single oversized line. */
+function byteSlice(text: string, maxBytes: number, tail: boolean): string {
+  const bytes = Buffer.from(text);
+  let boundary = tail ? Math.max(0, bytes.length - maxBytes) : Math.min(bytes.length, maxBytes);
+  while (boundary < bytes.length && (bytes[boundary] & 0xc0) === 0x80) boundary += tail ? 1 : -1;
+  return (tail ? bytes.subarray(boundary) : bytes.subarray(0, boundary)).toString("utf8");
+}
 
 export class DiagnosticBuffer {
   private head = "";
@@ -31,10 +38,7 @@ export class DiagnosticBuffer {
         this.head = combined;
         return;
       }
-      this.head = truncateHead(combined, {
-        maxBytes: this.headBytes,
-        maxLines: Number.MAX_SAFE_INTEGER,
-      }).content;
+      this.head = byteSlice(combined, this.headBytes, false);
       this.tail = this.truncateTail(combined);
       this.truncated = true;
       return;
@@ -47,13 +51,6 @@ export class DiagnosticBuffer {
   }
 
   private truncateTail(text: string): string {
-    // Pi's truncated previews omit the final newline; streaming must retain it
-    // so the next chunk cannot merge two diagnostic lines.
-    const newline = text.endsWith("\n") ? "\n" : "";
-    const preview = truncateTail(text, {
-      maxBytes: this.tailBytes - newline.length,
-      maxLines: Number.MAX_SAFE_INTEGER,
-    });
-    return preview.content + (preview.truncated ? newline : "");
+    return byteSlice(text, this.tailBytes, true);
   }
 }

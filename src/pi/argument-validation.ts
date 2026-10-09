@@ -9,9 +9,7 @@ import { validateToolArguments, type ToolCall } from "@earendil-works/pi-ai";
 import { ObjectOptions, Type, type Static, type TObject, type TSchema } from "typebox";
 import { errorMessage } from "../core/errors.ts";
 import { diagnoseArguments, type ArgumentIssue } from "./argument-diagnostics.ts";
-import { MAX_BLOCK_BYTES } from "./budgets.ts";
-import { DiagnosticBuffer } from "./diagnostic-buffer.ts";
-import { invalidArgument } from "./error-text.ts";
+import { formatArgumentError } from "./argument-error.ts";
 
 export type ReportArgumentIssue = (field: string, reason: string) => void;
 type CheckArguments = (args: unknown, report: ReportArgumentIssue) => void;
@@ -19,15 +17,6 @@ type CheckArguments = (args: unknown, report: ReportArgumentIssue) => void;
 /** Inspect arrays and the singleton objects Pi may coerce, without changing input. */
 export function argumentItems(value: unknown): readonly unknown[] {
   return Array.isArray(value) ? value : value !== null && typeof value === "object" ? [value] : [];
-}
-
-/** Compact Pi 0.99.1's exact argument suffix; preserve an unrecognised format. */
-function schemaDiagnostic(error: unknown, args: unknown): string {
-  const message = errorMessage(error);
-  const label = "Received arguments:";
-  const suffix = `\n\n${label}\n${JSON.stringify(args, null, 2)}`;
-  if (!message.endsWith(suffix)) return message;
-  return `${message.slice(0, -suffix.length)}\n${label} ${JSON.stringify(args)}`;
 }
 
 export function createArgumentPreparer<T extends TObject>(
@@ -74,9 +63,15 @@ export function createArgumentPreparer<T extends TObject>(
         // The original schema already failed; this call only observes preparation.
       }
       if (!observation) {
-        const diagnostics = new DiagnosticBuffer(MAX_BLOCK_BYTES);
-        diagnostics.append(schemaDiagnostic(schemaFailure, args));
-        throw new Error(diagnostics.toString().trimEnd(), { cause: schemaFailure });
+        throw new Error(
+          formatArgumentError(
+            name,
+            [{ field: "$", reason: errorMessage(schemaFailure) }],
+            undefined,
+            false,
+          ),
+          { cause: schemaFailure },
+        );
       }
       checked = observation.value;
     }
@@ -84,30 +79,14 @@ export function createArgumentPreparer<T extends TObject>(
     check?.(checked, (field, reason) => issues.push({ field, reason }));
     if (schemaFailure === undefined && issues.length === 0) return args as Static<T>;
     const result = diagnoseArguments(parameters, checked, issues, schemaFailure !== undefined);
-    const diagnostics = new DiagnosticBuffer(MAX_BLOCK_BYTES);
-    for (const issue of result.semanticIssues) {
-      diagnostics.append(`${invalidArgument(issue.field, issue.reason).message}\n`);
-    }
-    if (result.schemaIssues.length > 0) {
-      diagnostics.append(`Validation failed for tool "${name}":\n`);
-      for (const issue of result.schemaIssues)
-        diagnostics.append(`  - ${issue.field}: ${issue.reason}\n`);
-      diagnostics.append(`Received arguments: ${JSON.stringify(args)}\n`);
-    }
-    if (result.limited) {
-      diagnostics.append(
-        "\nPi limits schema diagnostics within each field; additional errors may remain.\n",
-      );
-    }
-    if (
-      schemaFailure !== undefined &&
-      result.schemaIssues.length === 0 &&
-      result.semanticIssues.length === 0
-    ) {
-      diagnostics.append(schemaDiagnostic(schemaFailure, args));
-    }
-    if (schemaFailure !== undefined || result.semanticIssues.length > 0) {
-      throw new Error(diagnostics.toString().trimEnd(), { cause: schemaFailure });
+    const reported =
+      result.issues.length > 0
+        ? result.issues
+        : [{ field: "$", reason: errorMessage(schemaFailure) }];
+    if (schemaFailure !== undefined || result.issues.length > 0) {
+      throw new Error(formatArgumentError(name, reported, checked, result.limited), {
+        cause: schemaFailure,
+      });
     }
     // Keep Pi's preparation contract: the framework performs its own coercion next.
     return args as Static<T>;

@@ -1,3 +1,4 @@
+import { argumentError, rejectsArguments } from "./argument-error.testing.ts";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -76,7 +77,9 @@ test("then_run schemas reject invalid commands, unknown keys, and excessive time
       ]) {
         await assert.rejects(
           callTool(tool, { path, ...mutation, then_run }, { ctx: await ctx(dir, t) }),
-          new RegExp(`Validation failed for tool "${tool.name}":[\\s\\S]*- then_run`),
+          (error: unknown) =>
+            rejectsArguments(tool.name)(error) &&
+            argumentError(error).issues.some((issue) => issue.field.startsWith("then_run.")),
         );
         assert.equal(await readFile(join(dir, path), "utf8"), "old\n");
       }

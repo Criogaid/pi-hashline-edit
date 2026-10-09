@@ -1,3 +1,4 @@
+import { rejectsArgument, rejectsArguments } from "./argument-error.testing.ts";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp, rm, readFile, writeFile } from "node:fs/promises";
@@ -207,10 +208,7 @@ test("read rejects noninteger and nonpositive offsets and limits before reading"
         Number.MAX_SAFE_INTEGER + 1,
       ]) {
         const params = { path: "pages.txt", [key]: invalid };
-        await assert.rejects(
-          call(read, params),
-          new RegExp(`Validation failed for tool "read":\\n {2}- ${key}: `),
-        );
+        await assert.rejects(call(read, params), rejectsArgument(key));
       }
     }
     assert.deepEqual(
@@ -224,7 +222,7 @@ test("read rejects noninteger and nonpositive offsets and limits before reading"
     );
     await assert.rejects(
       call(read, { path: "missing.txt", offset: 1.5 }),
-      /Validation failed for tool "read"/,
+      rejectsArguments("read"),
     );
     const page = await call(read, { path: "pages.txt", offset: 2, limit: 1 });
     assert.match(page.content[0].text, /\n2#[0-9A-Z]+│second/);
@@ -247,7 +245,7 @@ test("read schema rejects empty paths and unknown fields before file access", as
       { path: "missing.txt", offest: 3 },
     ];
     for (const args of invalidArgs) {
-      await assert.rejects(call(read, args), /Validation failed for tool "read"/);
+      await assert.rejects(call(read, args), rejectsArguments("read"));
     }
   }));
 

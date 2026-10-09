@@ -1,3 +1,4 @@
+import { rejectsArgument, rejectsArguments } from "./argument-error.testing.ts";
 /** Tool-level edit and shared mutation workflow tests. */
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -228,7 +229,7 @@ test("edit execute: empty edits → throws", async () => {
     await writeFile(join(dir, "f.txt"), "a\n");
     await assert.rejects(
       call(makeEditOverride(dir, DEFAULT_CONFIG), { path: "f.txt", edits: [] }),
-      /Validation failed for tool "edit"/,
+      rejectsArguments("edit"),
     );
   });
 });
@@ -336,7 +337,7 @@ test("edit schema rejects misspelled range fields and invalid operation shapes",
       path: "range.txt",
       edits: [{ op: "replace", anchor, endd: h(original, 3), body: ["merged"] }],
     };
-    await assert.rejects(call(edit, callArgs), /edits\.0\.endd: is not allowed/);
+    await assert.rejects(call(edit, callArgs), rejectsArgument("edits[0].endd", /not allowed/));
     assert.equal(await readFile(join(dir, "range.txt"), "utf8"), original);
     for (const edits of [
       [],
@@ -345,7 +346,7 @@ test("edit schema rejects misspelled range fields and invalid operation shapes",
       [{ op: "insert_after", body: ["bad"] }],
       [{ op: "append", anchor, body: ["bad"] }],
     ]) {
-      await assert.rejects(call(edit, { path: "range.txt", edits }), /Validation failed/);
+      await assert.rejects(call(edit, { path: "range.txt", edits }), rejectsArguments("edit"));
       assert.equal(await readFile(join(dir, "range.txt"), "utf8"), original);
     }
     const alternates: Parameters<typeof validateToolArguments>[1]["arguments"][] = [
@@ -353,7 +354,7 @@ test("edit schema rejects misspelled range fields and invalid operation shapes",
       { path: "range.txt", edits: JSON.stringify([{ op: "replace", anchor, body: ["ok"] }]) },
     ];
     for (const alternate of alternates) {
-      await assert.rejects(call(edit, alternate), /Validation failed/);
+      await assert.rejects(call(edit, alternate), rejectsArguments("edit"));
       assert.equal(await readFile(join(dir, "range.txt"), "utf8"), original);
     }
   }));
@@ -402,7 +403,7 @@ test("invalid anchors and conflicting fields fail before changing the file", asy
     for (const operation of invalid) {
       await assert.rejects(
         call(edit, { path: "invalid.txt", edits: [operation] }),
-        /Invalid argument|Invalid anchor|Validation failed for tool "edit"/,
+        /INVALID_ARGUMENTS|Invalid anchor/,
       );
       assert.equal(await readFile(join(dir, "invalid.txt"), "utf8"), original);
     }
@@ -424,7 +425,10 @@ test("edit rejects empty bodies before file access for arrays and Pi-converted o
     ]) {
       for (const path of [file, join(dir, "missing.txt")]) {
         for (const edits of [[operation], operation]) {
-          await assert.rejects(call(edit, { path, edits }), /edits\[0\]\.body: is empty/);
+          await assert.rejects(
+            call(edit, { path, edits }),
+            rejectsArgument("edits[0].body", /empty/),
+          );
           assert.equal(await readFile(file, "utf8"), original);
         }
       }
@@ -458,8 +462,8 @@ test("mixed empty-body batches name every rejected edit without publishing or ru
         { ctx: { cwd: dir } },
       ),
       (error: Error) => {
-        assert.match(error.message, /edits\[1\]\.body:.*\[""\]/);
-        assert.match(error.message, /edits\[3\]\.body:.*delete/);
+        rejectsArgument("edits[1].body", /\[""\]/)(error);
+        rejectsArgument("edits[3].body", /delete/)(error);
         return true;
       },
     );
@@ -761,7 +765,7 @@ test("edit rejects embedded line terminators at its schema boundary", async () =
           path: "body.txt",
           edits: [{ op: "append", body: [line] }],
         }),
-        /Validation failed for tool "edit"/,
+        rejectsArguments("edit"),
       );
       assert.equal(await readFile(target, "utf8"), "a\n");
     }
@@ -774,8 +778,8 @@ test("edit rejects unwritable body lines before reading a missing target", async
     const valid = { path: target, edits: [{ op: "append" as const, body: ["ok"] }] };
     assert.equal(edit.prepareArguments(valid), valid);
     for (const [line, expected] of [
-      ["bad\0", /Invalid argument edits\[0\]\.body\[1\]: UNSUPPORTED_TEXT:/],
-      ["\ud800", /Invalid argument edits\[0\]\.body\[1\]: INVALID_UNICODE:/],
+      ["bad\0", rejectsArgument("edits[0].body[1]", /UNSUPPORTED_TEXT:/)],
+      ["\ud800", rejectsArgument("edits[0].body[1]", /INVALID_UNICODE:/)],
     ] as const) {
       await assert.rejects(
         call(edit, { path: target, edits: [{ op: "append", body: ["ok", line] }] }),
@@ -953,7 +957,7 @@ test("schema-invalid bodies omit anchor checks; subsequent retries revalidate", 
             edits: [operation, { op: "replace", anchor: laterAnchor, body: ["B"] }],
           }),
           (error: Error) => {
-            assert.match(error.message, /Validation failed for tool "edit"/);
+            rejectsArguments("edit")(error);
             assert.doesNotMatch(error.message, /Input-anchor checks|\/ matched|\/ mismatched/);
             return true;
           },
@@ -1156,7 +1160,7 @@ test("edit tool rejects non-array formats Pi cannot convert", async () =>
       { path: "f.txt", op: "replace", anchor, body: ["SECOND"] },
     ]) {
       const original = structuredClone(alternate);
-      await assert.rejects(call(edit, alternate), /Validation failed/);
+      await assert.rejects(call(edit, alternate), rejectsArguments("edit"));
       assert.deepEqual(alternate, original);
       assert.equal(await readFile(file, "utf8"), "first\nsecond\n");
     }
@@ -1183,8 +1187,8 @@ test("edit receives multiple wrong-length anchors → reports each location with
 
     await assert.rejects(call(edit, args), (error: Error) => {
       assert.match(error.message, /Anchor hash length mismatch/);
-      assert.match(error.message, /Invalid argument edits\[0\]\.end:/);
-      assert.match(error.message, /Invalid argument edits\[1\]\.anchor:/);
+      rejectsArgument("edits[0].end")(error);
+      rejectsArgument("edits[1].anchor")(error);
       assert.equal(error.message.match(/read or grep/gi)?.length, 1);
       assert.ok(error.message.includes(short));
       assert.match(error.message, new RegExp(`${hashLen - 2} hash characters`));
@@ -1223,14 +1227,14 @@ test("edit execute rejects legacy oldText/newText without op", async () =>
         oldText: "first",
         newText: "FIRST",
       }),
-      /Validation failed for tool "edit"/,
+      rejectsArguments("edit"),
     );
     await assert.rejects(
       call(edit, {
         path: "f.txt",
         edits: [{ oldText: "first", newText: "FIRST" } as any],
       }),
-      /Validation failed for tool "edit"/,
+      rejectsArguments("edit"),
     );
     assert.equal(await readFile(file, "utf8"), "first\nsecond\n");
   }));
@@ -1304,7 +1308,7 @@ test("edit rejects impossible checksum characters before accessing the file", as
           path: "missing.txt",
           edits: [{ op: "delete", anchor: `1#${char.repeat(DEFAULT_CONFIG.hashLen)}` }],
         }),
-        /Validation failed/,
+        rejectsArguments("edit"),
       );
     }
   }));

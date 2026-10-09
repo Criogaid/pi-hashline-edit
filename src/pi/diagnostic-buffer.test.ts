@@ -22,6 +22,18 @@ test("bounded diagnostics retain opening context and the final cause across stre
   assert.ok(Buffer.byteLength(result) <= MAX_SEARCH_DIAGNOSTIC_BYTES);
 });
 
+test("a diagnostic is one oversized line → retain its opening and final cause without splitting UTF-8", () => {
+  const source = `opening cause: ${"中🙂".repeat(MAX_SEARCH_DIAGNOSTIC_BYTES)}; final recovery`;
+  const buffer = new DiagnosticBuffer(MAX_SEARCH_DIAGNOSTIC_BYTES);
+  buffer.append(source);
+  const result = buffer.toString();
+  assert.match(result, /^opening cause:/);
+  assert.match(result, /final recovery$/);
+  assert.match(result, /omitted/);
+  assert.doesNotMatch(result, /�/);
+  assert.ok(Buffer.byteLength(result) <= MAX_SEARCH_DIAGNOSTIC_BYTES);
+});
+
 test("diagnostics within the budget are unchanged", () => {
   const buffer = new DiagnosticBuffer(MAX_SEARCH_DIAGNOSTIC_BYTES);
   const source = "path: 权限不足🙂\nretry with another path\n";

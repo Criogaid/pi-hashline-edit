@@ -24,8 +24,3 @@ export function fileChangedDuringReadError(cause?: unknown): Error {
 export function searchChangedError(): Error {
   return new Error("File changed during search; rerun the query.");
 }
-
-/** Rejection from a tool's prepareArguments for a check the schema cannot express. */
-export function invalidArgument(path: string, reason: string): Error {
-  return new Error(`Invalid argument ${path}: ${reason}`);
-}

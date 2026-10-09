@@ -21,8 +21,7 @@ export interface ArgumentIssue {
   readonly reason: string;
 }
 export interface ArgumentDiagnostics {
-  readonly semanticIssues: readonly ArgumentIssue[];
-  readonly schemaIssues: readonly ArgumentIssue[];
+  readonly issues: readonly ArgumentIssue[];
   readonly limited: boolean;
 }
 
@@ -116,7 +115,7 @@ function projectValueSchema(
         projectSchema(
           child,
           Reflect.get(value, key),
-          path ? `${path}.${key}` : key,
+          propertyPath(path, key),
           explained,
           applicable,
         ),
@@ -135,23 +134,26 @@ function projectValueSchema(
   return schema;
 }
 
-function fieldPath(pointer: string, key?: string): string {
+function propertyPath(path: string, key: string): string {
+  return /^[A-Za-z_][A-Za-z_0-9]*$/.test(key)
+    ? path
+      ? `${path}.${key}`
+      : key
+    : `${path}[${JSON.stringify(key)}]`;
+}
+
+function fieldPath(pointer: string, prepared: unknown, key?: string): string {
   const parts = pointer
     .split("/")
     .slice(1)
     .map((part) => part.replaceAll("~1", "/").replaceAll("~0", "~"));
-  if (key !== undefined) parts.push(key);
-  return (
-    parts.reduce(
-      (path, part) =>
-        /^[A-Za-z_][A-Za-z_0-9]*$|^[0-9]+$/.test(part)
-          ? path
-            ? `${path}.${part}`
-            : part
-          : `${path}[${JSON.stringify(part)}]`,
-      "",
-    ) || "root"
-  );
+  let value = prepared;
+  let path = "";
+  for (const part of parts) {
+    path = Array.isArray(value) ? `${path}[${part}]` : propertyPath(path, part);
+    value = typeof value === "object" && value !== null ? Reflect.get(value, part) : undefined;
+  }
+  return (key === undefined ? path : propertyPath(path, key)) || "$";
 }
 
 function combineIssues(issues: readonly ArgumentIssue[]): readonly ArgumentIssue[] {
@@ -164,7 +166,10 @@ function combineIssues(issues: readonly ArgumentIssue[]): readonly ArgumentIssue
   return [...reasons].map(([field, values]) => ({ field, reason: [...values].join("; ") }));
 }
 
-function aggregateErrors(errors: readonly TLocalizedValidationError[]): readonly ArgumentIssue[] {
+function aggregateErrors(
+  errors: readonly TLocalizedValidationError[],
+  prepared: unknown,
+): readonly ArgumentIssue[] {
   const issues: ArgumentIssue[] = [];
   const add = (field: string, reason: string) => issues.push({ field, reason });
   for (const error of errors) {
@@ -182,23 +187,23 @@ function aggregateErrors(errors: readonly TLocalizedValidationError[]): readonly
     switch (error.keyword) {
       case "required":
         for (const key of error.params.requiredProperties)
-          add(fieldPath(error.instancePath, key), "is required");
+          add(fieldPath(error.instancePath, prepared, key), "is required");
         break;
       case "additionalProperties":
         for (const key of error.params.additionalProperties)
-          add(fieldPath(error.instancePath, key), "is not allowed");
+          add(fieldPath(error.instancePath, prepared, key), "is not allowed");
         break;
       case "boolean":
-        add(fieldPath(error.instancePath), "is not allowed");
+        add(fieldPath(error.instancePath, prepared), "is not allowed");
         break;
       case "enum":
         add(
-          fieldPath(error.instancePath),
+          fieldPath(error.instancePath, prepared),
           `expected one of: ${error.params.allowedValues.map((value) => JSON.stringify(value)).join(", ")}`,
         );
         break;
       default:
-        add(fieldPath(error.instancePath), error.message);
+        add(fieldPath(error.instancePath, prepared), error.message);
     }
   }
   return combineIssues(issues);
@@ -235,7 +240,7 @@ export function diagnoseArguments(
     applicable,
   );
   const retained = combineIssues(semanticIssues.filter((issue) => applicable.has(issue.field)));
-  if (!schemaFailed) return { semanticIssues: retained, schemaIssues: [], limited: false };
+  if (!schemaFailed) return { issues: retained, limited: false };
   const batches =
     IsObject(projected) &&
     typeof prepared === "object" &&
@@ -262,8 +267,10 @@ export function diagnoseArguments(
           ])
       : [boundedErrors(projected, prepared)];
   return {
-    semanticIssues: retained,
-    schemaIssues: batches.flatMap((batch) => aggregateErrors(batch.errors)),
+    issues: combineIssues([
+      ...retained,
+      ...batches.flatMap((batch) => aggregateErrors(batch.errors, prepared)),
+    ]),
     limited: batches.some((batch) => batch.limited),
   };
 }

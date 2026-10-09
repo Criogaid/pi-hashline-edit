@@ -1,3 +1,4 @@
+import { rejectsArgument } from "./argument-error.testing.ts";
 import assert from "node:assert/strict";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -266,8 +267,8 @@ for (const invalid of [
         .filter((block) => block.type === "text")
         .map((block) => block.text)
         .join("\n");
-      assert.match(text, /\n  - ids/);
-      assert.match(text, /\n  - note:/);
+      rejectsArgument("ids[0]", /pattern/)(new Error(text));
+      rejectsArgument("note")(new Error(text));
     }
     assert.deepEqual(toolResult(f.requests[2], "read-log"), toolResult(f.requests[1], "read-log"));
   });

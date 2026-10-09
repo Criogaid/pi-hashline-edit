@@ -39,6 +39,7 @@ pi 扩展 `@criogaid/pi-hashline-edit`，注册入口为 `src/index.ts`。
 - 同类工具共用同一条执行流程，工具只实现自己独有的部分。
 - 同一类失败（如取消、校验失败）使用一致的报错形式。
 - Keep Pi argument preparation and original-schema acceptance in `argument-validation.ts`; observe prepared failures without reimplementing coercion or optional-null rules. Keep failure-only schema projection and structured aggregation in `argument-diagnostics.ts`; derive branches and choices from the declared schema, suppress only inapplicable or already explained issues, and retain independent fields with bounded native diagnostics.
+- Keep the JSON argument-error envelope and its byte budget in `argument-error.ts`; retain exact field paths, omit whole issues or the argument copy with explicit markers, and never truncate serialized JSON. Use the same envelope for preparation failures.
 - Keep grep scope error classification in `grep-scope.ts`: only `ENOENT` means `Path not found`; preserve other filesystem errors.
 - 依赖外部引擎语义的判断交给该引擎本身，不在本地重新实现或近似。
 

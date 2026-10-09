@@ -1,3 +1,4 @@
+import { rejectsArgument } from "./argument-error.testing.ts";
 import { computeLineHash } from "../core/hash.ts";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import assert from "node:assert/strict";
@@ -363,7 +364,7 @@ test("unpaired surrogate arguments are rejected before Fusion", async (t) => {
         callTool(tool, args, { ctx: await ctx(dir, t) }),
         (error: unknown) =>
           error instanceof Error &&
-          error.message.startsWith(`Invalid argument ${field}: INVALID_UNICODE:`) &&
+          rejectsArgument(field, /INVALID_UNICODE:/)(error) &&
           !("publication" in error),
       );
       assert.equal(await readFile(path, "utf8"), "original\n");
@@ -450,7 +451,7 @@ test("NUL arguments are rejected before Fusion for all mutation tools", async (t
         callTool(tool, args, { ctx: await ctx(dir, t) }),
         (error: unknown) =>
           error instanceof Error &&
-          error.message.startsWith(`Invalid argument ${field}: UNSUPPORTED_TEXT: NUL`) &&
+          rejectsArgument(field, /UNSUPPORTED_TEXT: NUL/)(error) &&
           !("publication" in error),
       );
       assert.equal(await readFile(path, "utf8"), "original\n");

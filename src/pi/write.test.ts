@@ -1,3 +1,4 @@
+import { rejectsArgument } from "./argument-error.testing.ts";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -39,7 +40,7 @@ test("write rejects unknown fields rather than ignoring a misspelled create mode
       const args = { path: "file.txt", content: "new\n", modee: "create" };
       await assert.rejects(
         callTool(tool, args, { ctx: context(dir) }),
-        /Validation failed for tool "write":[\s\S]*- modee: is not allowed/,
+        rejectsArgument("modee", /not allowed/),
       );
       assert.equal(await readFile(file, "utf8"), "original\n");
     }
@@ -52,8 +53,8 @@ test("write rejects unwritable content before accessing a missing target", async
     const valid = { path: file, content: "ready\n", mode: "create" };
     assert.equal(tool.prepareArguments(valid), valid);
     for (const [content, expected] of [
-      ["bad\0", /Invalid argument content: UNSUPPORTED_TEXT: NUL bytes are not editable\./],
-      ["\ud800", /Invalid argument content: INVALID_UNICODE:/],
+      ["bad\0", rejectsArgument("content", /UNSUPPORTED_TEXT: NUL/)],
+      ["\ud800", rejectsArgument("content", /INVALID_UNICODE:/)],
     ] as const) {
       await assert.rejects(
         callTool(tool, { path: file, content, mode: "create" }, { ctx: context(dir) }),
@@ -83,7 +84,7 @@ test("write omits mode → rejects before changing files or running commands", a
             { path, content: "changed\n", ...(executor ? { then_run: { command: "check" } } : {}) },
             { ctx: context(dir) },
           ),
-          /\n {2}- mode:/,
+          rejectsArgument("mode", /required/),
         );
       }
     }
@@ -132,7 +133,7 @@ test("write rejects obsolete expectedRevision without overwriting", async () =>
       const write = makeWriteOverride(dir, fusion);
       await assert.rejects(
         callTool(write, params, { ctx: context(dir) }),
-        /Validation failed for tool "write":\n {2}- expectedRevision: is not allowed/,
+        rejectsArgument("expectedRevision", /not allowed/),
       );
       assert.equal(await readFile(target, "utf8"), "original\n");
     }

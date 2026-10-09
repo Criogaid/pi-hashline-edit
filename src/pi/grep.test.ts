@@ -1,3 +1,4 @@
+import { rejectsArgument, rejectsArguments } from "./argument-error.testing.ts";
 /**
  * Deterministic grep override tests. Ripgrep and built-in grep are injected;
  * fixture files live only in a per-test system temporary directory.
@@ -179,15 +180,15 @@ test("grep exposes nine parameters and rejects only the six removed fields", asy
       for (const input of [value, false, null]) {
         await assert.rejects(
           call(tool, { literal: true, pattern: "needle", [key]: input }),
-          (error: Error) => error.message.includes(`- ${key}: is not allowed`),
+          rejectsArgument(key, /not allowed/),
         );
       }
     }
     await assert.rejects(
       call(tool, { literal: true, pattern: "needle", follow: false, noIgnore: null }),
       (error: Error) =>
-        error.message.includes("- follow: is not allowed") &&
-        error.message.includes("- noIgnore: is not allowed"),
+        rejectsArgument("follow", /not allowed/)(error) &&
+        rejectsArgument("noIgnore", /not allowed/)(error),
     );
     assert.equal(fake.calls.length, 0);
   });
@@ -204,7 +205,7 @@ test("grep limit accepts only positive integers", async () => {
     for (const limit of [0, -3, 0.5, 2.5]) {
       await assert.rejects(
         call(tool, { literal: true, pattern: "needle", limit }),
-        /Validation failed for tool "grep":\n {2}- limit: /,
+        rejectsArgument("limit"),
       );
     }
     assert.equal(fake.calls.length, 0);
@@ -228,15 +229,11 @@ test("grep schema rejects empty search inputs and fractional context", async () 
       { literal: true, pattern: "needle", limit: Number.MAX_SAFE_INTEGER + 1 },
     ];
     for (const args of invalidArgs) {
-      await assert.rejects(
-        call(tool, args),
-        /Validation failed for tool "grep"/,
-        JSON.stringify(args),
-      );
+      await assert.rejects(call(tool, args), rejectsArguments("grep"), JSON.stringify(args));
     }
     await assert.rejects(
       call(tool, { literal: true, pattern: "needle", context: 1.5 }),
-      /Validation failed for tool "grep":\n {2}- context: /,
+      rejectsArgument("context"),
     );
     assert.equal(fake.calls.length, 0);
   }));
@@ -700,10 +697,7 @@ test("limit counts matched lines and stops the fake runner", async () => {
 test("grep requires literal before invoking the backend", async () => {
   const fake = fakeBackend();
   const tool = makeGrepOverrideWithBackend(process.cwd(), DEFAULT_CONFIG, fake.backend);
-  await assert.rejects(
-    callTool(tool, { pattern: "needle" }),
-    /Validation failed for tool "grep":\n {2}- literal: /,
-  );
+  await assert.rejects(callTool(tool, { pattern: "needle" }), rejectsArgument("literal"));
   assert.equal(fake.probes.length, 0);
   assert.equal(fake.calls.length, 0);
 });
@@ -849,10 +843,7 @@ test("rejects empty patterns while allowing wildcard, literal, and empty-line se
     const tool = makeGrepOverrideWithBackend(dir, DEFAULT_CONFIG, fake.backend);
 
     for (const pattern of ["", [], ["valid", ""]]) {
-      await assert.rejects(
-        call(tool, { pattern, literal: true }),
-        /Validation failed for tool "grep"/,
-      );
+      await assert.rejects(call(tool, { pattern, literal: true }), rejectsArguments("grep"));
     }
     assert.equal(fake.calls.length, 0);
     for (const pattern of [".*", "^.+$", ".?"]) {
