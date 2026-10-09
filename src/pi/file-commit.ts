@@ -15,7 +15,7 @@ import { dirname, join } from "node:path";
 import { createHash } from "node:crypto";
 import { decodeEditableText, unwritableTextReason } from "../core/text.ts";
 import { errorMessage } from "../core/errors.ts";
-import { OPERATION_ABORTED, throwIfCancelled } from "./error-text.ts";
+import { FileChangedDuringReadError, OPERATION_ABORTED, throwIfCancelled } from "./error-text.ts";
 import { withFileRead } from "./file-read.ts";
 
 export type PublicationStatus = "NOT_PUBLISHED" | "PUBLISHED" | "UNKNOWN";
@@ -32,7 +32,8 @@ export interface CommitOptions {
 export interface MutationVersions {
   baseRevision?: string;
   publishedRevision: string;
-  observedRevision: string;
+  /** Absent when a concurrent change prevented a stable observation after publication. */
+  observedRevision?: string;
 }
 
 export interface CommitResult extends MutationVersions {
@@ -360,16 +361,18 @@ export async function commitFile(
     else await publishReplace(tempPath, publishPath, options.signal);
     published = true;
     await syncDirectory(publishDirectory);
+    const committed = {
+      created: mode === "create",
+      baseRevision: target.beforeRevision,
+      publishedRevision,
+      publication: "PUBLISHED",
+    } as const;
     try {
-      const observedRevision = await fileRevision(publishPath);
-      return {
-        created: mode === "create",
-        baseRevision: target.beforeRevision,
-        publishedRevision,
-        observedRevision,
-        publication: "PUBLISHED",
-      };
+      return { ...committed, observedRevision: await fileRevision(publishPath) };
     } catch (error) {
+      // Another writer is replacing the published bytes: report a changed target, not a failed
+      // mutation whose retry would apply it again.
+      if (error instanceof FileChangedDuringReadError) return committed;
       throw new FileMutationError(
         "post_process",
         "PUBLISHED",

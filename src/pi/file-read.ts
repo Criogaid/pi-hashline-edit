@@ -2,7 +2,7 @@
 import { constants, type BigIntStats } from "node:fs";
 import { open, stat, type FileHandle } from "node:fs/promises";
 import { Utf8DecodingError } from "../core/text.ts";
-import { fileChangedDuringReadError, throwIfCancelled } from "./error-text.ts";
+import { FileChangedDuringReadError, throwIfCancelled } from "./error-text.ts";
 
 function sameObservation(before: BigIntStats, after: BigIntStats): boolean {
   return (
@@ -42,13 +42,13 @@ export async function withFileRead<T>(
         current = await stat(path, { bigint: true });
       } catch (error) {
         if (error instanceof Error && "code" in error && error.code === "ENOENT") {
-          throw fileChangedDuringReadError(error);
+          throw new FileChangedDuringReadError(error);
         }
         throw error;
       }
       throwIfCancelled(signal);
       if (!sameObservation(before, after) || !sameObservation(before, current)) {
-        throw fileChangedDuringReadError(outcome.ok ? undefined : outcome.error);
+        throw new FileChangedDuringReadError(outcome.ok ? undefined : outcome.error);
       }
     }
     if (!outcome.ok) throw outcome.error;

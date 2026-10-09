@@ -416,7 +416,7 @@ A nested Bash result's `terminate` hint is passed to the parent mutation result 
 
 Only confirmed malformed UTF-8 produces `UNSUPPORTED_ENCODING`. Decoder resource failures, including the runtime string-length limit for whole-file `edit`/`replace`, retain their original error instead of being reported as an encoding problem.
 
-File reads compare the opened file and current path's identity, size, and modification/change timestamps before accepting content or reporting a decoding error. An observed concurrent write, truncation, deletion, or replacement reports `File changed during read; retry the tool.` This metadata check does not create an atomic snapshot and cannot detect changes hidden by filesystem timestamp resolution; grep and mutations retain their byte revision checks.
+File reads compare the opened file and current path's identity, size, and modification/change timestamps before accepting content or reporting a decoding error. An observed concurrent write, truncation, deletion, or replacement reports `File changed during read; retry the tool.` After a mutation is published, observation reads treat such a change as a changed target instead of a failure and never ask to retry the published mutation. This metadata check does not create an atomic snapshot and cannot detect changes hidden by filesystem timestamp resolution; grep and mutations retain their byte revision checks.
 
 Line boundaries are LF or CRLF; a standalone CR remains line content. Anchored rows display standalone CR as `␍` (U+240D), while hashes use the original content. Edit/replace `details.diff` marks raw CR as `␍`; `details.displayDiff` renders the shared LF view for the TUI, so CRLF boundary markers stay hidden even in mixed-ending files or beside an unterminated last line. Standalone CR and literal `␍` characters remain visible. Unified patches retain the original characters and line endings. The marker is a display aid, not replacement text.
 
@@ -489,7 +489,7 @@ PUBLISHED, even if a step after publication fails
 | `publication` | `NOT_PUBLISHED`, `PUBLISHED`, or `UNKNOWN`. Fusion also reports it in `actionFusion.publication`. |
 | `baseRevision` | SHA-256 of bytes read before mutation, when available. |
 | `publishedRevision` | SHA-256 of intended published bytes. |
-| `observedRevision` | SHA-256 observed by the commit layer after publication, or at the no-op check. |
+| `observedRevision` | SHA-256 observed by the commit layer after publication, or at the no-op check. Absent when a concurrent change prevented a stable observation after publication; the target is then not confirmed unchanged. |
 | `actionFusion.command` | `not_requested`, `skipped`, `succeeded`, `failed`, `timeout`, or `cancelled`. |
 | `actionFusion.freshness` | `unchanged`, `changed`, `missing`, or `unknown`, relative to the published revision. |
 | `actionFusion.mutationCompleted` | Progress flag set after mutation execution and result generation succeed; publication alone is not mutation success. |

@@ -10,9 +10,14 @@ export function throwIfCancelled(signal: AbortSignal | undefined, detail?: strin
   if (signal?.aborted) throw cancellationError(detail);
 }
 
-/** A read observed a concurrent file change; partial bytes must not be classified as source text. */
-export function fileChangedDuringReadError(cause?: unknown): Error {
-  return new Error("File changed during read; retry the tool.", { cause });
+/**
+ * A read observed a concurrent file change; partial bytes must not be classified as source text.
+ * Its retry advice holds only before publication; observers after publication report a changed target.
+ */
+export class FileChangedDuringReadError extends Error {
+  constructor(cause?: unknown) {
+    super("File changed during read; retry the tool.", { cause });
+  }
 }
 
 /**

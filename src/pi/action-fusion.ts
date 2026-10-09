@@ -27,7 +27,7 @@ import { Type, type Static, type TObject, type TProperties } from "typebox";
 import { fileRevision, FileMutationError, type PublicationStatus } from "./file-commit.ts";
 import { commitFreshness, finalizeMutation, type MutationOutcome } from "./mutation-result.ts";
 import { errorMessage } from "../core/errors.ts";
-import { OPERATION_ABORTED, throwIfCancelled } from "./error-text.ts";
+import { FileChangedDuringReadError, OPERATION_ABORTED, throwIfCancelled } from "./error-text.ts";
 
 const MILLISECONDS_PER_SECOND = 1_000;
 
@@ -153,6 +153,8 @@ async function readFreshness(path: string, baseline: string): Promise<Freshness>
   try {
     return (await fileRevision(path)) === baseline ? "unchanged" : "changed";
   } catch (error) {
+    // A write observed during the read has already moved the target off the published revision.
+    if (error instanceof FileChangedDuringReadError) return "changed";
     if (typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT")
       return "missing";
     return "unknown";
@@ -164,12 +166,15 @@ async function assertUnchangedBeforeCommand(path: string, baseline: string): Pro
     const before = await fileRevision(path);
     await new Promise<void>((resolve) => setImmediate(resolve));
     const after = await fileRevision(path);
-    if (before !== baseline || after !== baseline) {
-      throw new Error("target content changed after the fused mutation");
-    }
+    if (before === baseline && after === baseline) return;
   } catch (error) {
-    throw new Error(`${THEN_RUN_SKIPPED} ${errorMessage(error)}; the command was not run.`);
+    // The mutation is already published; a concurrent change must not suggest retrying it.
+    if (!(error instanceof FileChangedDuringReadError))
+      throw new Error(`${THEN_RUN_SKIPPED} ${errorMessage(error)}; the command was not run.`);
   }
+  throw new Error(
+    `${THEN_RUN_SKIPPED} target content changed after the fused mutation; the command was not run.`,
+  );
 }
 
 export class ActionFusionError extends Error {
