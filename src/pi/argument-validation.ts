@@ -2,12 +2,27 @@
  * Shared argument preparation for every tool. Tool checks only report independent
  * field issues; this boundary combines them with Pi's schema diagnostics and throws
  * once. Pi still validates returned arguments in its mandatory tool-call pipeline.
- * Failure diagnostics validate independent top-level fields separately so an invalid
- * union in one field cannot exhaust Pi's error budget for another. Tool schemas have
- * no cross-field constraints. Arguments and TypeBox's process-wide settings are not changed.
+ * Failure diagnostics select a uniquely matching literal-tagged object branch and omit
+ * schema issues already explained by tool checks. Independent top-level fields retain
+ * separate Pi error budgets. Validation still uses the original schema and Pi pipeline.
+ * Tool schemas have no cross-field constraints.
  */
 import { validateToolArguments, type ToolCall } from "@earendil-works/pi-ai";
-import { ObjectOptions, Type, type Static, type TObject, type TSchema } from "typebox";
+import {
+  ArrayOptions,
+  IsArray,
+  IsLiteral,
+  IsObject,
+  IsOptional,
+  IsUnion,
+  ObjectOptions,
+  Type,
+  UnionOptions,
+  type Static,
+  type TObject,
+  type TSchema,
+} from "typebox";
+import { Value } from "typebox/value";
 import { errorMessage } from "../core/errors.ts";
 import { MAX_BLOCK_BYTES } from "./budgets.ts";
 import { DiagnosticBuffer } from "./diagnostic-buffer.ts";
@@ -31,6 +46,62 @@ function schemaDiagnostic(error: unknown, args: unknown): string {
   const suffix = `\n\n${label}\n${JSON.stringify(args, null, 2)}`;
   if (!message.endsWith(suffix)) return message;
   return `${message.slice(0, -suffix.length)}\n${label} ${JSON.stringify(args)}`;
+}
+
+/** Literal tags only: overlapping or unrecognised tags keep the original union diagnostics. */
+function isLiteralTag(schema: TSchema): boolean {
+  return IsLiteral(schema) || (IsUnion(schema) && schema.anyOf.every(IsLiteral));
+}
+
+/** Project diagnostics from the declared schema; never use this projection to accept input. */
+function diagnosticSchema(
+  schema: TSchema,
+  value: unknown,
+  path: string,
+  explained: ReadonlySet<string>,
+): TSchema {
+  if (explained.has(path)) {
+    return IsOptional(schema) ? Type.Optional(Type.Unknown()) : Type.Unknown();
+  }
+  if (IsUnion(schema) && typeof value === "object" && value !== null && !Array.isArray(value)) {
+    const branches = schema.anyOf.filter(IsObject);
+    const first = branches[0];
+    if (first && branches.length === schema.anyOf.length) {
+      const tag = Object.keys(first.properties).find((key) =>
+        branches.every(
+          (branch) => branch.required?.includes(key) && isLiteralTag(branch.properties[key]),
+        ),
+      );
+      if (tag) {
+        const matches = branches.filter((branch) =>
+          Value.Check(branch.properties[tag], Reflect.get(value, tag)),
+        );
+        if (matches.length === 1) {
+          return {
+            ...UnionOptions(schema),
+            ...diagnosticSchema(matches[0], value, path, explained),
+          };
+        }
+      }
+    }
+  }
+  if (IsObject(schema) && typeof value === "object" && value !== null && !Array.isArray(value)) {
+    const properties = Object.fromEntries(
+      Object.entries(schema.properties).map(([key, child]) => [
+        key,
+        diagnosticSchema(child, Reflect.get(value, key), path ? `${path}.${key}` : key, explained),
+      ]),
+    );
+    return { ...schema, properties };
+  }
+  if (IsArray(schema) && Array.isArray(value)) {
+    const items = value.map((item, index) =>
+      diagnosticSchema(schema.items, item, `${path}[${index}]`, explained),
+    );
+    if (items.every((item) => item === schema.items)) return schema;
+    return Type.Tuple(items, ArrayOptions(schema));
+  }
+  return schema;
 }
 
 export function createArgumentPreparer<T extends TObject>(
@@ -67,17 +138,21 @@ export function createArgumentPreparer<T extends TObject>(
     }
     const diagnostics = new DiagnosticBuffer(MAX_BLOCK_BYTES);
     let hasIssues = schemaFailure !== undefined;
+    const explained = new Set<string>();
     check?.(checked, (field, reason) => {
       hasIssues = true;
+      explained.add(field);
       diagnostics.append(`${invalidArgument(field, reason).message}\n`);
     });
     if (schemaFailure !== undefined) {
+      let hasSchemaDiagnostics = false;
       if (typeof args === "object" && args !== null && !Array.isArray(args)) {
         const entries = Object.entries(args);
         const diagnose = (schema: TSchema, value: unknown) => {
           try {
-            validate(schema, value);
+            validate(diagnosticSchema(schema, value, "", explained), value);
           } catch (error) {
+            hasSchemaDiagnostics = true;
             diagnostics.append(`${schemaDiagnostic(error, value)}\n`);
           }
         };
@@ -89,11 +164,14 @@ export function createArgumentPreparer<T extends TObject>(
           Object.fromEntries(entries.filter(([key]) => !fields.includes(key))),
         );
       } else {
+        hasSchemaDiagnostics = true;
         diagnostics.append(schemaDiagnostic(schemaFailure, args));
       }
-      diagnostics.append(
-        "\nPi limits schema diagnostics within each field; additional errors may remain.\n",
-      );
+      if (hasSchemaDiagnostics) {
+        diagnostics.append(
+          "\nPi limits schema diagnostics within each field; additional errors may remain.\n",
+        );
+      }
     }
     if (hasIssues) throw new Error(diagnostics.toString().trimEnd(), { cause: schemaFailure });
     // Keep Pi's preparation contract: the framework performs its own coercion next.

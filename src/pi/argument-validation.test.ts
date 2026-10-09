@@ -134,3 +134,68 @@ test("argument diagnostics exceed the shared budget → rejection labels omitted
     return true;
   });
 });
+
+test("known edit operations with empty bodies → report the actionable issue once", async () => {
+  const tool = makeEditOverride(process.cwd(), DEFAULT_CONFIG);
+  for (const op of ["replace", "insert_after", "insert_before", "append", "prepend"]) {
+    const operation = {
+      op,
+      ...(op === "append" || op === "prepend" ? {} : { anchor: `22#${anchorHash}` }),
+      body: [],
+    };
+    await assert.rejects(
+      callTool(tool, { path: "unused.txt", edits: [operation] }),
+      (error: Error) => {
+        assert.match(error.message, /Invalid argument edits\[0\]\.body:.*empty/);
+        assert.doesNotMatch(
+          error.message,
+          /Validation failed|schema is false|must be equal to constant|additional errors may remain/,
+        );
+        return true;
+      },
+    );
+  }
+});
+
+test("known edit branch has independent errors → report them without unrelated branches", async () => {
+  const tool = makeEditOverride(process.cwd(), DEFAULT_CONFIG, createActionFusionExecutor());
+  await assert.rejects(
+    callTool(tool, {
+      path: "unused.txt",
+      edits: [
+        { op: "insert_after", body: [], extra: true },
+        { op: "delete", anchor: `2#${anchorHash}`, body: ["wrong"] },
+        { op: "replace", anchor: "bad", body: ["valid"] },
+      ],
+      then_run: invalidCommand,
+      unexpected: true,
+    }),
+    (error: Error) => {
+      assert.match(error.message, /Invalid argument edits\[0\]\.body:/);
+      for (const field of [
+        "edits.0.anchor",
+        "edits.0.extra",
+        "edits.1.body",
+        "edits.2.anchor",
+        "then_run.command",
+        "then_run.timeout",
+        "unexpected",
+      ]) {
+        assert.ok(error.message.includes(`- ${field}:`), error.message);
+      }
+      assert.doesNotMatch(error.message, /- edits\.\d+\.op:|- edits\.0\.body:/);
+      return true;
+    },
+  );
+});
+
+test("unknown edit operation → retain schema rejection instead of guessing a branch", async () => {
+  const tool = makeEditOverride(process.cwd(), DEFAULT_CONFIG);
+  await assert.rejects(
+    callTool(tool, {
+      path: "unused.txt",
+      edits: [{ op: "unknown", anchor: `1#${anchorHash}`, body: ["valid"] }],
+    }),
+    /Validation failed for tool "edit":[\s\S]*edits\.0\.op:/,
+  );
+});
