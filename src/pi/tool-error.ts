@@ -1,202 +1,164 @@
-/**
- * The plugin's single error protocol.
- *
- * Pi passes only a thrown error's message to the model, so every tool failure
- * is thrown as one JSON record. Fields, in order: `error` (the code), `tool`,
- * `path` when the call names one, `publication` and `stage` for mutation tools,
- * a fact-only `message`, code-specific facts, and last `next`, the single
- * recovery instruction. Argument errors (argument-error.ts) are records of the
- * same envelope with their own fields.
- *
- * Each fact appears once. Layers add fields instead of sentences: the commit
- * layer owns `publication` and `stage`, Action Fusion adds `then_run`, and a
- * native cause's text (which already names its errno) stays in `message`.
- *
- * Throw sites classify failures as `HashlineError` (core/errors.ts) and may
- * supply a specific `next`. This module owns the default recovery per code,
- * the publication override, filesystem and cancellation classification, the
- * fact-list budget, and the serialization every record shares.
- *
- * @module pi-hashline-edit/pi
- */
-
-import {
-  ERROR_CODES,
-  errorMessage,
-  filesystemErrorCode,
-  HashlineError,
-  type ErrorCode,
-  type ErrorFacts,
-} from "../core/errors.ts";
-import { MAX_ERROR_TEXT_BYTES } from "./budgets.ts";
-import { DiagnosticBuffer } from "./diagnostic-buffer.ts";
+/** Execution error adapter. Classification and transport never append diagnostic prose. */
+import type { AgentToolResult } from "@earendil-works/pi-agent-core";
+import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
+import type { TSchema } from "typebox";
+import { filesystemErrorCode, HashlineError } from "../core/errors.ts";
+import type { ToolReport, ToolName, CommandFact, CauseFact } from "../core/report-schema.ts";
 import { cancellationError } from "./error-text.ts";
-import { FileMutationError, type MutationStage, type PublicationStatus } from "./file-commit.ts";
-
-/** One serialized tool failure. Code-specific facts follow `message`; `next` comes last. */
-export interface ErrorRecord {
-  readonly error: ErrorCode;
-  readonly tool: string;
-  readonly path?: string | readonly string[];
-  readonly publication?: PublicationStatus;
-  readonly stage?: MutationStage;
-  readonly message?: string;
-  readonly next?: string;
-  readonly [fact: string]: unknown;
-}
-
-/** Recovery per code, unless the throw site supplies a more specific one. */
-const NEXT: Partial<Record<ErrorCode, string>> = {
-  PATH_NOT_FOUND: "Check the path.",
-  FILE_CHANGED: "Retry the call.",
-  ANCHOR_MISMATCH:
-    "Before reusing a candidate or observed anchor, confirm it is the intended target; use read or grep for omitted rows, out-of-range lines, or more context. Retries verify every anchor again.",
-  OVERLAPPING_EDITS: "Merge overlapping edits into one edit per range.",
-  NO_MATCH:
-    "Verify the target text with read or grep; check case sensitivity or regex flags if applicable.",
-};
-
-/** Once a mutation may have reached the file, a retry could apply it twice. */
-const PUBLICATION_NEXT: Record<Exclude<PublicationStatus, "NOT_PUBLISHED">, string> = {
-  PUBLISHED: "The change is saved; do not repeat it. Read the file before further edits.",
-  UNKNOWN: "The change may already be applied; read the file before retrying.",
-};
+import { FileMutationError, unpublishedMutationFact } from "./file-commit.ts";
+import {
+  boundedText,
+  causeFacts,
+  emptyReport,
+  publishReport,
+  renderModelReport,
+  type ReportDetails,
+} from "./report.ts";
 
 export interface ErrorContext {
-  /** The path or paths the call names, as supplied. */
-  readonly path?: string | readonly string[];
-  /** Mutation tools report `publication` and `stage` on every record. */
+  readonly path?: string | string[];
   readonly mutation?: boolean;
   readonly signal?: AbortSignal;
 }
-
-/**
- * Adds facts a caller knows about a failure, such as `then_run`, without
- * changing its classification. Facts from outer annotations come last.
- */
+export interface ErrorAnnotation {
+  readonly command: CommandFact;
+  readonly progressFailures?: CauseFact[];
+}
+/** Fusion annotates only its command and observer failures; mutation facts stay with their owner. */
 export class AnnotatedError extends Error {
   readonly error: unknown;
-  readonly facts: ErrorFacts;
-
-  constructor(error: unknown, facts: ErrorFacts) {
-    super(errorMessage(error), { cause: error });
+  readonly annotation: ErrorAnnotation;
+  constructor(error: unknown, annotation: ErrorAnnotation) {
+    super("Fused mutation failed.", { cause: error });
     this.name = "AnnotatedError";
     this.error = error;
-    this.facts = facts;
+    this.annotation = annotation;
   }
 }
-
-/** The failure an annotation wraps, for callers that inspect publication or stage. */
 export function unannotated(error: unknown): unknown {
   while (error instanceof AnnotatedError) error = error.error;
   return error;
 }
-
-function classify(error: unknown, signal: AbortSignal | undefined): HashlineError {
+function classify(error: unknown, signal?: AbortSignal): HashlineError {
   if (error instanceof HashlineError) return error;
-  // Pi's native tools and Node report cancellation with their own errors.
   if (signal?.aborted) return cancellationError(error);
-  const code = filesystemErrorCode(error) ?? "UNCLASSIFIED";
-  return new HashlineError(code, errorMessage(error), { cause: error });
+  return new HashlineError(
+    filesystemErrorCode(error) ?? "UNCLASSIFIED",
+    "External operation failed.",
+    { cause: error },
+  );
 }
-
-function boundedText(text: string): string {
-  const buffer = new DiagnosticBuffer(MAX_ERROR_TEXT_BYTES);
-  buffer.append(text);
-  return buffer.toString();
-}
-
-/** Classify a caught failure as the record the model receives. */
-export function describeError(tool: string, caught: unknown, context: ErrorContext): ErrorRecord {
-  const annotations: ErrorFacts[] = [];
+export function describeError(tool: ToolName, caught: unknown, context: ErrorContext): ToolReport {
   let error = caught;
+  let annotation: ErrorAnnotation | undefined;
   while (error instanceof AnnotatedError) {
-    annotations.unshift(error.facts);
+    annotation ??= error.annotation;
     error = error.error;
   }
   const failure = classify(error, context.signal);
-  const publication =
-    failure instanceof FileMutationError ? failure.publication : ("NOT_PUBLISHED" as const);
-  const stage = failure instanceof FileMutationError ? failure.stage : ("prepare" as const);
-  const next =
-    context.mutation && publication !== "NOT_PUBLISHED"
-      ? PUBLICATION_NEXT[publication]
-      : (failure.next ?? NEXT[failure.errorCode]);
   return {
-    error: failure.errorCode,
-    tool,
+    ...emptyReport(tool),
+    outcome: "failure",
     ...(context.path === undefined ? {} : { path: context.path }),
-    ...(context.mutation ? { publication, stage } : {}),
-    message: boundedText(failure.message),
-    ...failure.facts,
-    ...Object.assign({}, ...annotations),
-    ...(next === undefined ? {} : { next }),
+    error: { ...failure.descriptor(), message: boundedText(failure.message) },
+    ...(failure.cause === undefined ? {} : { causes: causeFacts(failure.cause) }),
+    ...(context.mutation
+      ? {
+          mutation:
+            failure instanceof FileMutationError
+              ? failure.mutationFact()
+              : unpublishedMutationFact(),
+        }
+      : {}),
+    ...(annotation === undefined ? {} : annotation),
   };
 }
-
-/** Every record, including argument errors, uses this one serialization. */
-export function encodeErrorRecord(record: object): string {
-  return JSON.stringify(record, null, 2);
-}
-
-/** Pi transports only the message: it is the serialized record; the original stays as cause. */
+/** Preparation must throw because Pi has not entered execute; the same renderer supplies its message. */
 export class ReportedToolError extends Error {
-  readonly record: ErrorRecord;
-
-  constructor(record: ErrorRecord, cause: unknown) {
-    super(encodeErrorRecord(record), { cause });
+  readonly report: ToolReport;
+  constructor(report: ToolReport, cause?: unknown) {
+    super(renderModelReport(report), { cause });
     this.name = "ReportedToolError";
-    this.record = record;
+    this.report = report;
   }
 }
-
-/** Run one tool execution, reporting any failure as its error record. */
 export async function reportToolErrors<T>(
-  tool: string,
+  tool: ToolName,
   context: ErrorContext,
-  run: () => Promise<T>,
-): Promise<T> {
+  run: () => Promise<AgentToolResult<T>>,
+): Promise<AgentToolResult<T | ReportDetails>> {
   try {
-    return await run();
+    const result = await run();
+    const base =
+      reportOf(result) ??
+      emptyReport(
+        tool,
+        result.content.flatMap((block) => (block.type === "text" ? [block.text] : [])),
+      );
+    const report = {
+      ...base,
+      ...(base.path === undefined && context.path !== undefined ? { path: context.path } : {}),
+    };
+    return publishReport(result, report);
   } catch (error) {
-    throw new ReportedToolError(describeError(tool, error, context), error);
+    const report = describeError(tool, error, context);
+    return publishReport({ content: [], details: { report } }, report);
   }
 }
-
-/** Recognize a serialized record; other text is not one of ours. */
-export function parseErrorRecord(text: string): ErrorRecord | undefined {
-  if (!text.startsWith("{")) return undefined;
-  let value: unknown;
-  try {
-    value = JSON.parse(text);
-  } catch {
-    return undefined;
-  }
-  if (
-    typeof value !== "object" ||
-    value === null ||
-    Array.isArray(value) ||
-    !("error" in value) ||
-    !(ERROR_CODES as readonly unknown[]).includes(value.error) ||
-    !("tool" in value) ||
-    typeof value.tool !== "string"
-  )
-    return undefined;
-  return value as ErrorRecord;
+/** Details are produced by this plugin; foreign host failures have no report and retain opaque text. */
+export function reportOf(
+  result: Pick<AgentToolResult<unknown>, "details">,
+): ToolReport | undefined {
+  const details = result.details;
+  if (typeof details !== "object" || details === null || !("report" in details)) return undefined;
+  return details.report as ToolReport;
 }
-
-/**
- * Keep the leading entries of a fact list whose compact JSON fits `maxBytes`;
- * report how many were omitted. Whole entries are omitted, never cut.
- */
+/** Preserve preparation diagnostics without parsing transport text. Weak keys follow the host's raw argument objects. */
+export function withToolReports<P extends TSchema, D, S>(
+  tool: ToolDefinition<P, D, S>,
+): ToolDefinition<P, D, S> {
+  const preparationFailures = new WeakMap<object, ToolReport>();
+  return {
+    ...tool,
+    prepareArguments:
+      tool.prepareArguments &&
+      ((args) => {
+        if (typeof args === "object" && args !== null) preparationFailures.delete(args);
+        try {
+          return tool.prepareArguments!(args);
+        } catch (error) {
+          if (error instanceof ReportedToolError && typeof args === "object" && args !== null)
+            preparationFailures.set(args, error.report);
+          throw error;
+        }
+      }),
+    renderResult:
+      tool.renderResult &&
+      ((result, options, theme, context) => {
+        const preparedReport =
+          typeof context.args === "object" && context.args !== null
+            ? preparationFailures.get(context.args)
+            : undefined;
+        return tool.renderResult!(
+          preparedReport && !reportOf(result)
+            ? { ...result, details: Object.assign({}, result.details, { report: preparedReport }) }
+            : result,
+          options,
+          theme,
+          context,
+        );
+      }),
+  };
+}
+/** Whole fact entries are bounded before rendering; omitted counts remain explicit. */
 export function boundedFacts<T>(
   entries: readonly T[],
   maxBytes: number,
 ): { kept: T[]; omitted: number } {
   const kept: T[] = [];
-  let bytes = 0;
+  let bytes = 2;
   for (const entry of entries) {
-    const entryBytes = Buffer.byteLength(JSON.stringify(entry)) + 1;
+    const entryBytes = Buffer.byteLength(JSON.stringify(entry)) + (kept.length ? 1 : 0);
     if (bytes + entryBytes > maxBytes) break;
     kept.push(entry);
     bytes += entryBytes;

@@ -17,6 +17,10 @@ export class DiagnosticBuffer {
   private head = "";
   private tail = "";
   private truncated = false;
+  private inputBytes = 0;
+  get omittedBytes(): number {
+    return this.inputBytes - Buffer.byteLength(this.head) - Buffer.byteLength(this.tail);
+  }
   private readonly notice: string;
   private readonly headBytes: number;
   private readonly tailBytes: number;
@@ -25,13 +29,15 @@ export class DiagnosticBuffer {
 
   constructor(maxBytes: number) {
     this.maxBytes = maxBytes;
-    this.notice = `\n[Diagnostics truncated (${formatKiB(maxBytes)} limit); middle omitted.]\n`;
+    const notice = `\n[Diagnostics truncated (${formatKiB(maxBytes)} limit); middle omitted.]\n`;
+    this.notice = Buffer.byteLength(notice) <= maxBytes ? notice : "";
     const contentBytes = maxBytes - Buffer.byteLength(this.notice);
     this.headBytes = Math.floor(contentBytes / 2);
     this.tailBytes = contentBytes - this.headBytes;
   }
 
   append(text: string): void {
+    this.inputBytes += Buffer.byteLength(text);
     if (!this.truncated) {
       const combined = this.head + text;
       if (Buffer.byteLength(combined) <= this.maxBytes) {

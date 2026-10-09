@@ -6,20 +6,16 @@ import {
   type Theme,
   type ToolRenderResultOptions,
 } from "@earendil-works/pi-coding-agent";
-import {
-  ACTION_FUSION_GUIDELINES,
-  withThenRunSchema,
-  type ThenRunInput,
-  type ActionFusionDetails,
-} from "./action-fusion.ts";
-import { commitFile, type CommitResult } from "./file-commit.ts";
+import { ACTION_FUSION_GUIDELINES, withThenRunSchema, type ThenRunInput } from "./action-fusion.ts";
+import { commitFile, mutationFact } from "./file-commit.ts";
+import { emptyReport, type ReportDetails } from "./report.ts";
 import { postProcessMutation } from "./mutation-result.ts";
 import { executeMutation, type ActionFusionExecutor } from "./mutation-runner.ts";
 import { MUTATION_TOOL_GUIDELINE } from "./tool-prompts.ts";
 import { throwIfCancelled } from "./error-text.ts";
 import { createArgumentPreparer } from "./argument-validation.ts";
 import { unwritableTextError } from "../core/text.ts";
-import { renderToolError } from "./render.ts";
+import { renderToolError, renderReportResult } from "./render.ts";
 
 const writeSchema = Type.Object(
   {
@@ -39,7 +35,7 @@ function createWriteSchema(actionFusion: boolean) {
   return withThenRunSchema(writeSchema, "write", actionFusion);
 }
 type WriteParams = Static<typeof writeSchema> & { then_run?: ThenRunInput };
-type WriteDetails = CommitResult & { path: string; actionFusion?: ActionFusionDetails };
+type WriteDetails = ReportDetails;
 type WriteRenderContext = Parameters<
   NonNullable<ReturnType<typeof createWriteToolDefinition>["renderCall"]>
 >[2];
@@ -65,13 +61,13 @@ export function makeWriteOverride(cwd: string, fusion?: ActionFusionExecutor) {
       return builtin.renderCall!(args, theme, context);
     },
     renderResult(
-      result: AgentToolResult<WriteDetails>,
+      result: AgentToolResult<WriteDetails | ReportDetails>,
       options: ToolRenderResultOptions,
       theme: Theme,
       context: WriteRenderContext,
     ) {
       if (context.isError) return renderToolError(result, theme, options.expanded);
-      return builtin.renderResult!({ ...result, details: undefined }, options, theme, context);
+      return renderReportResult(result, options.expanded, theme);
     },
     async execute(
       toolCallId: string,
@@ -94,16 +90,14 @@ export function makeWriteOverride(cwd: string, fusion?: ActionFusionExecutor) {
             return {
               commit: result,
               result: postProcessMutation(result.publication, () => ({
-                content: [
-                  {
-                    type: "text" as const,
-                    text:
-                      result.publication === "NOT_PUBLISHED"
-                        ? `Wrote ${displayPath} (no net change).`
-                        : `${result.created ? "Created" : "Wrote"} ${displayPath}.`,
+                content: [],
+                details: {
+                  report: {
+                    ...emptyReport("write"),
+                    path: displayPath,
+                    mutation: mutationFact(result),
                   },
-                ],
-                details: { path: displayPath, ...result },
+                },
               })),
             };
           },

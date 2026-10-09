@@ -2,7 +2,7 @@
  * Override edit: hashline ops via structured `edits` (LINE#HASH anchors).
  *
  * Each op in `edits` references line anchors copied from read / grep / replace output
- * (or from a prior edit's "Updated anchors"). The core verifies each anchor live against
+ * (or from a prior mutation report's anchors.rows). The core verifies each anchor live against
  * the current file content — no prior-read revision guard: a cited line
  * that changed (or was misremembered) fails its own anchor; unchanged lines
  * elsewhere never block the edit. The extension requires structured `edits` arrays
@@ -47,6 +47,8 @@ import {
 } from "./render.ts";
 import { describeEditFailure } from "./failure-context.ts";
 import { formatMutationAnchors } from "./mutation-result.ts";
+import type { AnchorReport } from "../core/report-schema.ts";
+import type { ReportDetails } from "./report.ts";
 import {
   executeMutation,
   runTextMutation,
@@ -60,7 +62,7 @@ import {
   createArgumentPreparer,
   type ReportArgumentIssue,
 } from "./argument-validation.ts";
-type EditDetails = TextMutationDetails;
+type EditDetails = TextMutationDetails & Partial<ReportDetails>;
 type EditRenderContext = Parameters<NonNullable<ToolDefinition<EditSchema>["renderCall"]>>[2];
 
 /** Split a validated anchor token; prepareArguments and the schema already checked it. */
@@ -181,16 +183,16 @@ type EditOpInput = Static<EditSchema>["edits"][number];
 function checkEditArguments(args: unknown, hashLen: number, report: ReportArgumentIssue): void {
   const raw = (args as { edits?: unknown } | null)?.edits;
   const edits = argumentItems(raw);
-  let hashLengthRecoveryHint = " Read or grep the file for current anchors.";
   edits.forEach((op, index) => {
     const body = (op as Record<string, unknown> | null)?.body;
     if (Array.isArray(body)) {
       if (body.length === 0) {
         report(
           `edits[${index}].body`,
+          "is empty",
           (op as Record<string, unknown>).op === "replace"
-            ? 'is empty; use {"op":"delete"} to remove lines, or supply the replacement lines.'
-            : 'is empty; remove this edit or supply at least one line ([""] for a blank line).',
+            ? 'Use {"op":"delete"} to remove lines, or supply replacement lines.'
+            : 'Remove this edit or supply at least one line ([""] for a blank line).',
         );
       }
       body.forEach((line, lineIndex) => {
@@ -205,15 +207,16 @@ function checkEditArguments(args: unknown, hashLen: number, report: ReportArgume
       if (token && !Number.isSafeInteger(token.line)) {
         report(
           `edits[${index}].${field}`,
-          `line number in ${value} exceeds the safe integer range; copy a complete "LINE#HASH" token from the latest tool result.`,
+          `line number in ${value} exceeds the safe integer range`,
+          'Copy a complete "LINE#HASH" token from the latest tool result.',
         );
       }
       if (token && token.hash.length !== hashLen) {
         report(
           `edits[${index}].${field}`,
-          `Anchor hash length mismatch: ${value} has ${token.hash.length} hash characters, but hashLen is ${hashLen}.${hashLengthRecoveryHint}`,
+          `has ${token.hash.length} hash characters; hashLen requires ${hashLen}`,
+          "Read or grep the file for current anchors.",
         );
-        hashLengthRecoveryHint = "";
       }
     }
   });
@@ -259,14 +262,13 @@ function formatUpdatedAnchors(
   touched: readonly number[],
   contextLines: readonly number[],
   anchors: AnchorFormatter,
-): string {
+): AnchorReport {
   const idxs = [...new Set(touched)].sort((a, b) => a - b);
   return formatMutationAnchors(
     splitLines(before),
     splitLines(newText),
     idxs,
     anchors,
-    "Updated anchors:",
     new Set(contextLines),
   );
 }
@@ -324,7 +326,7 @@ export function makeEditOverride(
       MUTATION_TOOL_GUIDELINE,
       "Batch all edits to one file in a single edit call; all its anchors are checked against one snapshot.",
       "Use copy/move for unchanged whole-line transfers; use body edits when text or indentation must change.",
-      "Reuse anchors while their line number and content are unchanged; inserts and deletes shift later lines, so use the edit's Updated anchors or re-read shifted lines.",
+      "Reuse anchors while their line number and content are unchanged; inserts and deletes shift later lines, so use the report's anchors.rows or re-read shifted lines.",
       "On edit anchor failure, inspect the recovery candidates before retrying or re-reading.",
       ...(fusion ? ACTION_FUSION_GUIDELINES : []),
     ],
@@ -339,7 +341,7 @@ export function makeEditOverride(
     },
 
     renderResult(
-      result: AgentToolResult<EditDetails>,
+      result: AgentToolResult<EditDetails | ReportDetails>,
       options: ToolRenderResultOptions,
       theme: Theme,
       context: EditRenderContext,
@@ -409,8 +411,7 @@ function runHashline(
           result.contextLines,
           anchorFormatter,
         ),
-      summary: () =>
-        `Edited ${target.displayPath} (${translated.length} op(s)${result.changed ? "" : ", no net change"}).`,
+      facts: { edit: { operations: translated.length } },
     };
   });
 }

@@ -1,48 +1,44 @@
-/**
- * Model-facing argument rejection: an error record (tool-error.ts) with the
- * issues and argument copy in place of a message, within one byte budget.
- * The JSON is never truncated; whole issues or the argument copy are omitted.
- */
-import type { ArgumentIssue } from "./argument-diagnostics.ts";
+/** Bounded argument facts in the same report used by execution results. */
+import type { ArgumentIssue, ErrorFacts, ToolName, ToolReport } from "../core/report-schema.ts";
 import { MAX_ERROR_TEXT_BYTES, MAX_BLOCK_BYTES } from "./budgets.ts";
-import { DiagnosticBuffer } from "./diagnostic-buffer.ts";
-import { encodeErrorRecord, parseErrorRecord } from "./tool-error.ts";
+import { boundedText, causeFacts, emptyReport, renderModelReport } from "./report.ts";
+import { unpublishedMutationFact } from "./file-commit.ts";
+export type ArgumentError = ErrorFacts<"INVALID_ARGUMENTS">;
 
-const INVALID_ARGUMENTS = "INVALID_ARGUMENTS";
-
-export interface ArgumentError {
-  readonly error: typeof INVALID_ARGUMENTS;
-  readonly tool: string;
-  readonly executed: false;
-  readonly issues: readonly ArgumentIssue[];
-  readonly arguments?: unknown;
-  readonly argumentsOmitted?: true;
-  readonly schemaLimited?: true;
-  readonly omittedIssues?: number;
-}
-
-/** Encode prepared arguments once; unsupported values and oversized copies are explicitly omitted. */
-export function formatArgumentError(
-  tool: string,
+export function argumentReport(
+  tool: ToolName,
   issues: readonly ArgumentIssue[],
   prepared: unknown,
   schemaLimited: boolean,
-): string {
-  const bounded = issues.map(({ field, reason }) => {
-    const buffer = new DiagnosticBuffer(MAX_ERROR_TEXT_BYTES);
-    buffer.append(reason);
-    return { field, reason: buffer.toString() };
-  });
+  preparationCause?: unknown,
+): ToolReport {
+  const bounded = issues.map(({ field, fact, fix }) => ({
+    field,
+    fact: boundedText(fact, MAX_ERROR_TEXT_BYTES),
+    ...(fix === undefined ? {} : { fix: boundedText(fix, MAX_ERROR_TEXT_BYTES) }),
+  }));
   const base = {
-    error: INVALID_ARGUMENTS,
-    tool,
-    executed: false,
+    executed: false as const,
+    issues: bounded,
     ...(schemaLimited ? { schemaLimited: true as const } : {}),
-  } as const;
-  const encode = (value: ArgumentError) => encodeErrorRecord(value);
-  const fits = (text: string) => Buffer.byteLength(text) <= MAX_BLOCK_BYTES;
+  };
+  const report = (facts: ArgumentError): ToolReport => ({
+    ...emptyReport(tool),
+    outcome: "failure",
+    ...(["edit", "replace", "write"].includes(tool) ? { mutation: unpublishedMutationFact() } : {}),
+    error: {
+      code: "INVALID_ARGUMENTS",
+      message: "Arguments were rejected before execution.",
+      facts,
+    },
+    ...(preparationCause === undefined
+      ? {}
+      : { causes: causeFacts(preparationCause, MAX_ERROR_TEXT_BYTES) }),
+  });
+  const fits = (facts: ArgumentError) =>
+    Buffer.byteLength(renderModelReport(report(facts))) <= MAX_BLOCK_BYTES;
   let argumentsCopy: unknown;
-  let argumentsAvailable = false;
+  let available = false;
   try {
     const encoded = JSON.stringify(prepared, (_key, value: unknown) => {
       if (
@@ -51,96 +47,39 @@ export function formatArgumentError(
         typeof value === "symbol" ||
         typeof value === "bigint" ||
         (typeof value === "number" && !Number.isFinite(value))
-      ) {
-        throw new TypeError("Prepared arguments contain a value JSON cannot represent");
-      }
+      )
+        throw new TypeError("Prepared arguments are not JSON values.");
       return value;
     });
-    if (encoded !== undefined && fits(encoded)) {
+    if (encoded !== undefined && Buffer.byteLength(encoded) <= MAX_BLOCK_BYTES) {
       argumentsCopy = JSON.parse(encoded);
-      argumentsAvailable = true;
+      available = true;
     }
   } catch {
-    // Pi preparation can fail before producing a JSON value (for example, a cycle).
-    // Report the original cause through issues and label the missing argument copy.
+    // Failed preparation may leave cycles or values JSON cannot represent; explicitly omit the copy.
   }
-  if (argumentsAvailable) {
-    const complete = encode({ ...base, issues: bounded, arguments: argumentsCopy });
-    if (fits(complete)) return complete;
-  }
-  const withoutArguments = { ...base, argumentsOmitted: true } as const;
-  const complete = encode({ ...withoutArguments, issues: bounded });
-  if (fits(complete)) return complete;
-
-  // An oversized field path must be omitted whole: a shortened path could name another field.
+  if (available && fits({ ...base, arguments: argumentsCopy }))
+    return report({ ...base, arguments: argumentsCopy });
+  const withoutArguments = { ...base, argumentsOmitted: true as const };
+  if (fits(withoutArguments)) return report(withoutArguments);
   const eligible = bounded.filter((issue) =>
-    fits(encode({ ...withoutArguments, issues: [issue], omittedIssues: bounded.length - 1 })),
+    fits({ ...withoutArguments, issues: [issue], omittedIssues: bounded.length - 1 }),
   );
-  const frame = (count: number) => {
+  const frame = (count: number): ArgumentError => {
     const head = Math.ceil(count / 2);
     const tail = count - head;
-    return encode({
+    return {
       ...withoutArguments,
       issues: [...eligible.slice(0, head), ...(tail ? eligible.slice(-tail) : [])],
       omittedIssues: bounded.length - count,
-    });
+    };
   };
-  let low = 0;
-  let high = eligible.length;
+  let low = 0,
+    high = eligible.length;
   while (low < high) {
     const middle = Math.ceil((low + high) / 2);
     if (fits(frame(middle))) low = middle;
     else high = middle - 1;
   }
-  return frame(low);
-}
-
-/** Recognize our diagnostic in serialized results; other errors retain their original text. */
-export function parseArgumentError(text: string): ArgumentError | undefined {
-  const value = parseErrorRecord(text);
-  if (
-    value === undefined ||
-    value.error !== INVALID_ARGUMENTS ||
-    !("executed" in value) ||
-    value.executed !== false ||
-    !("issues" in value) ||
-    !Array.isArray(value.issues)
-  )
-    return undefined;
-  const issues: ArgumentIssue[] = [];
-  const rawIssues: readonly unknown[] = value.issues;
-  for (const issue of rawIssues) {
-    if (
-      typeof issue !== "object" ||
-      issue === null ||
-      !("field" in issue) ||
-      typeof issue.field !== "string" ||
-      !("reason" in issue) ||
-      typeof issue.reason !== "string"
-    )
-      return undefined;
-    issues.push({ field: issue.field, reason: issue.reason });
-  }
-  const argumentsOmitted = "argumentsOmitted" in value ? value.argumentsOmitted : undefined;
-  const schemaLimited = "schemaLimited" in value ? value.schemaLimited : undefined;
-  const omittedIssues = "omittedIssues" in value ? value.omittedIssues : undefined;
-  if (
-    (argumentsOmitted !== undefined && argumentsOmitted !== true) ||
-    (schemaLimited !== undefined && schemaLimited !== true) ||
-    (omittedIssues !== undefined &&
-      (typeof omittedIssues !== "number" ||
-        !Number.isSafeInteger(omittedIssues) ||
-        omittedIssues < 0))
-  )
-    return undefined;
-  return {
-    error: INVALID_ARGUMENTS,
-    tool: value.tool,
-    executed: false,
-    issues,
-    ...("arguments" in value ? { arguments: value.arguments } : {}),
-    ...(argumentsOmitted ? { argumentsOmitted } : {}),
-    ...(schemaLimited ? { schemaLimited } : {}),
-    ...(omittedIssues !== undefined ? { omittedIssues } : {}),
-  };
+  return report(frame(low));
 }

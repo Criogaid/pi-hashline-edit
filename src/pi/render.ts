@@ -13,9 +13,9 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import { Text, type Component } from "@earendil-works/pi-tui";
-import type { ActionFusionProgress } from "./action-fusion.ts";
-import { parseArgumentError, type ArgumentError } from "./argument-error.ts";
-import { parseErrorRecord, type ErrorRecord } from "./tool-error.ts";
+import type { ToolReport, CommandFact } from "../core/report-schema.ts";
+import { reportNext, mutationCompleted } from "./report.ts";
+import { reportOf } from "./tool-error.ts";
 
 /** Max diff lines shown when a result is rendered collapsed. */
 const MAX_COLLAPSED_DIFF_LINES = 24;
@@ -124,34 +124,6 @@ export function renderOutputPreview(
   return new Text(shown.join("\n") + more, 0, 0);
 }
 
-/** Present the serialized model diagnostic without its transport fields or argument echo. */
-function argumentErrorLines(error: ArgumentError, theme: Theme, expanded: boolean): string[] {
-  const lines = [theme.fg("error", theme.bold(`Invalid arguments · ${error.tool} not executed`))];
-  // Keep source omission notices ahead of the bounded collapsed preview.
-  if (error.argumentsOmitted)
-    lines.push(theme.fg("warning", "Prepared arguments omitted from diagnostic."));
-  if (error.schemaLimited)
-    lines.push(
-      theme.fg("warning", "Schema diagnostic limit reached; additional issues may remain."),
-    );
-  if (error.omittedIssues)
-    lines.push(theme.fg("warning", `${error.omittedIssues} issues omitted from diagnostic.`));
-  for (const { field, reason } of error.issues) {
-    const [first, ...rest] = reason.split("\n");
-    lines.push(`${theme.fg("accent", theme.bold(field))}: ${theme.fg("error", first)}`);
-    lines.push(...rest.map((line) => `  ${theme.fg("error", line)}`));
-  }
-  if (expanded && Object.hasOwn(error, "arguments")) {
-    lines.push("", theme.fg("dim", "Prepared arguments:"));
-    lines.push(
-      ...JSON.stringify(error.arguments, null, 2)
-        .split("\n")
-        .map((line) => theme.fg("dim", line)),
-    );
-  }
-  return lines;
-}
-
 /** One fact as `key: value`; lists and objects continue on indented lines. */
 function factLines(key: string, value: unknown, theme: Theme, indent = ""): string[] {
   const label = `${indent}${theme.fg("accent", key)}:`;
@@ -180,50 +152,77 @@ function factLines(key: string, value: unknown, theme: Theme, indent = ""): stri
   ];
 }
 
-/** Present an error record: code and target, publication, message, facts, then the recovery step. */
-function errorRecordLines(record: ErrorRecord, theme: Theme): string[] {
-  const { error, tool, path, publication, stage, message, next, ...facts } = record;
-  const target = path === undefined ? "" : ` ${Array.isArray(path) ? path.join(", ") : path}`;
-  const lines = [theme.fg("error", theme.bold(`${error} · ${tool}${target}`))];
-  if (publication !== undefined)
-    lines.push(
-      theme.fg(
-        publication === "NOT_PUBLISHED" ? "dim" : "warning",
-        `${publication}${stage === undefined ? "" : ` · ${stage}`}`,
-      ),
-    );
-  if (message !== undefined)
-    lines.push(...message.split("\n").map((line) => theme.fg("error", line)));
-  for (const [key, value] of Object.entries(facts)) lines.push(...factLines(key, value, theme));
-  if (next !== undefined) lines.push(`${theme.fg("dim", "next:")} ${next}`);
+/** Render metadata directly from the report; payload adapters only style content rows. */
+export function reportLines(report: ToolReport, theme: Theme): string[] {
+  const color = report.outcome === "failure" ? "error" : "success";
+  const lines = [theme.fg(color, theme.bold(report.error?.code ?? report.outcome))];
+  if (report.error) {
+    lines.push(theme.fg("error", report.error.message));
+    for (const [key, value] of Object.entries(report.error.facts))
+      lines.push(...factLines(key, value, theme));
+  }
+  for (const key of [
+    "causes",
+    "mutation",
+    "command",
+    "read",
+    "search",
+    "edit",
+    "replace",
+    "forget",
+    "progressFailures",
+  ] as const) {
+    const value = report[key];
+    if (value !== undefined) lines.push(...factLines(key, value, theme));
+  }
+  if (report.anchors?.omitted)
+    lines.push(...factLines("omittedAnchors", report.anchors.omitted, theme));
+  const next = reportNext(report);
+  if (next) lines.push(`${theme.fg("dim", "next:")} ${next}`);
   return lines;
 }
 
-/** Render error records from every text block; other text keeps its original lines. */
+/** A command card projects command facts; its native Bash adapter owns output styling. */
+export function commandDetailLines(command: CommandFact, theme: Theme): string[] {
+  return [
+    ...(command.blockedBy ? factLines("blockedBy", command.blockedBy, theme) : []),
+    ...(command.causes?.length ? factLines("causes", command.causes, theme) : []),
+    ...(command.terminate ? factLines("terminate", command.terminate, theme) : []),
+  ];
+}
+
 export function renderToolError(
-  result: Pick<AgentToolResult<unknown>, "content">,
+  result: Pick<AgentToolResult<unknown>, "content" | "details">,
   theme: Theme,
   expanded: boolean,
 ): Text {
-  const lines = result.content.flatMap((block) => {
-    if (block.type !== "text" || !block.text) return [];
-    const argumentError = parseArgumentError(block.text);
-    if (argumentError) return argumentErrorLines(argumentError, theme, expanded);
-    const record = parseErrorRecord(block.text);
-    return record
-      ? errorRecordLines(record, theme)
-      : block.text.split("\n").map((line) => theme.fg("error", line));
-  });
-  return renderOutputPreview(lines.length ? lines : [theme.fg("error", "Error")], expanded, theme);
+  const report = reportOf(result);
+  const lines = report
+    ? reportLines(report, theme)
+    : result.content.flatMap((block) =>
+        block.type === "text" ? block.text.split("\n").map((line) => theme.fg("error", line)) : [],
+      );
+  return renderOutputPreview(lines, expanded, theme);
 }
 
-/** Render mutation status or a diff, refreshing the call header's counts in place. */
+export function renderReportResult(
+  result: AgentToolResult<unknown>,
+  expanded: boolean,
+  theme: Theme,
+  payload: (text: string) => string[] = (text) => text.split("\n"),
+): Text {
+  const report = reportOf(result);
+  if (!report) return renderToolError(result, theme, expanded);
+  return renderOutputPreview(
+    [...reportLines(report, theme), ...report.payload.flatMap(payload)],
+    expanded,
+    theme,
+  );
+}
+
+/** Render a mutation report and its diff, refreshing the call header in place. */
 export function renderMutationResult<TArgs>(
-  result: AgentToolResult<{
-    displayDiff?: string;
-    diff?: string;
-    actionFusion?: Partial<Pick<ActionFusionProgress, "publication" | "mutationCompleted">>;
-  }>,
+  result: AgentToolResult<unknown>,
   { isPartial, expanded }: ToolRenderResultOptions,
   theme: Theme,
   context: { isError: boolean; args: TArgs; state?: MutationRenderState },
@@ -231,19 +230,23 @@ export function renderMutationResult<TArgs>(
   fallback: string,
   header: (args: TArgs, theme: Theme, counts?: DiffCounts) => string,
 ): Text {
-  if (isPartial && result.details?.actionFusion?.mutationCompleted !== true)
+  const details = result.details;
+  if (isPartial && !mutationCompleted(reportOf(result)))
     return new Text(theme.fg("warning", pending), 0, 0);
-  const content = result.content?.[0];
   if (context.isError) return renderToolError(result, theme, expanded);
-  const diff: string | undefined = result.details?.displayDiff ?? result.details?.diff;
-  // Refresh in place: invalidation inside a renderer re-enters updateDisplay.
-  publishDiffCounts(diff, context, (counts) => {
-    context.state?.callText?.setText(header(context.args, theme, counts));
-  });
-  if (!diff) {
-    // Only the summary is displayed; subsequent anchor rows are for the model.
-    const summary = content?.type === "text" ? content.text.split("\n")[0] : fallback;
-    return new Text(theme.fg("success", summary), 0, 0);
-  }
-  return new Text(renderDiffPreview(diff, expanded, theme), 0, 0);
+  const diff =
+    details && typeof details === "object"
+      ? "displayDiff" in details && typeof details.displayDiff === "string"
+        ? details.displayDiff
+        : "diff" in details && typeof details.diff === "string"
+          ? details.diff
+          : undefined
+      : undefined;
+  publishDiffCounts(diff, context, (counts) =>
+    context.state?.callText?.setText(header(context.args, theme, counts)),
+  );
+  const report = reportOf(result);
+  const lines = report ? reportLines(report, theme) : [theme.fg("success", fallback)];
+  if (diff) lines.push(renderDiffPreview(diff, expanded, theme));
+  return renderOutputPreview(lines, expanded, theme);
 }

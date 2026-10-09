@@ -7,11 +7,12 @@
  */
 import { validateToolArguments, type ToolCall } from "@earendil-works/pi-ai";
 import { ObjectOptions, Type, type Static, type TObject, type TSchema } from "typebox";
-import { errorMessage } from "../core/errors.ts";
 import { diagnoseArguments, type ArgumentIssue } from "./argument-diagnostics.ts";
-import { formatArgumentError } from "./argument-error.ts";
+import { argumentReport } from "./argument-error.ts";
+import { ReportedToolError } from "./tool-error.ts";
+import type { ToolName } from "../core/report-schema.ts";
 
-export type ReportArgumentIssue = (field: string, reason: string) => void;
+export type ReportArgumentIssue = (field: string, fact: string, fix?: string) => void;
 type CheckArguments = (args: unknown, report: ReportArgumentIssue) => void;
 
 /** Inspect arrays and the singleton objects Pi may coerce, without changing input. */
@@ -20,7 +21,7 @@ export function argumentItems(value: unknown): readonly unknown[] {
 }
 
 export function createArgumentPreparer<T extends TObject>(
-  name: string,
+  name: ToolName,
   parameters: T,
   check?: CheckArguments,
 ): (args: unknown) => Static<T> {
@@ -63,30 +64,34 @@ export function createArgumentPreparer<T extends TObject>(
         // The original schema already failed; this call only observes preparation.
       }
       if (!observation) {
-        throw new Error(
-          formatArgumentError(
+        throw new ReportedToolError(
+          argumentReport(
             name,
-            [{ field: "$", reason: errorMessage(schemaFailure) }],
+            [{ field: "$", fact: "Argument preparation failed." }],
             undefined,
             false,
+            schemaFailure,
           ),
-          { cause: schemaFailure },
+          schemaFailure,
         );
       }
       checked = observation.value;
     }
     const issues: ArgumentIssue[] = [];
-    check?.(checked, (field, reason) => issues.push({ field, reason }));
+    check?.(checked, (field, fact, fix) =>
+      issues.push({ field, fact, ...(fix === undefined ? {} : { fix }) }),
+    );
     if (schemaFailure === undefined && issues.length === 0) return args as Static<T>;
     const result = diagnoseArguments(parameters, checked, issues, schemaFailure !== undefined);
     const reported =
       result.issues.length > 0
         ? result.issues
-        : [{ field: "$", reason: errorMessage(schemaFailure) }];
+        : [{ field: "$", fact: "Schema validation failed without field diagnostics." }];
     if (schemaFailure !== undefined || result.issues.length > 0) {
-      throw new Error(formatArgumentError(name, reported, checked, result.limited), {
-        cause: schemaFailure,
-      });
+      throw new ReportedToolError(
+        argumentReport(name, reported, checked, result.limited),
+        schemaFailure,
+      );
     }
     // Keep Pi's preparation contract: the framework performs its own coercion next.
     return args as Static<T>;

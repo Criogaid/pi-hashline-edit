@@ -1,7 +1,8 @@
+import type { SearchDiagnosticBuffer } from "./search-diagnostics.ts";
 import { stat } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { canonicalPath } from "./path.ts";
-import { COMMON_RG_ARGS, ripgrepFailure } from "./rg-process.ts";
+import { COMMON_RG_ARGS, ripgrepFailure, ripgrepExitCause } from "./rg-process.ts";
 import {
   recordSearchDiagnostics,
   scopeArgs,
@@ -19,10 +20,8 @@ const REGEX_PARSE_ERROR = /^(?:rg: )?regex parse error:/m;
 const NON_RUST_REGEX_SYNTAX = /(?:^|[^\\])(?:\\\\)*(?:\(\?<?[=!]|\\[1-9]|\\k<)/;
 
 /** Recovery for a parse failure: another dialect's syntax if the query contains any, else literal search. */
-function invalidRegexNext(patterns: readonly string[]): string {
-  return patterns.some((pattern) => NON_RUST_REGEX_SYNTAX.test(pattern))
-    ? "Rewrite the pattern without lookaround or backreferences, or use replace for a JavaScript regex within one file."
-    : "Set literal to true to search the text exactly.";
+function invalidRegexRecovery(patterns: readonly string[]): "dialect" | "literal" {
+  return patterns.some((pattern) => NON_RUST_REGEX_SYNTAX.test(pattern)) ? "dialect" : "literal";
 }
 
 /** Reject a regex query ripgrep cannot parse before any file is searched. */
@@ -37,11 +36,12 @@ export async function assertValidRegex(
   throwIfCancelled(signal);
   if (result.code === 0 || result.code === 1) return;
   if (result.code === 2 && REGEX_PARSE_ERROR.test(result.stderr)) {
-    throw new HashlineError("INVALID_REGEX", result.stderr.trim(), {
-      next: invalidRegexNext(patterns),
+    throw new HashlineError("INVALID_REGEX", "Ripgrep rejected the search pattern.", {
+      cause: ripgrepExitCause(result),
+      recovery: invalidRegexRecovery(patterns),
     });
   }
-  throw ripgrepFailure(result.stderr.trim() || `ripgrep exited with code ${result.code}.`);
+  throw ripgrepFailure("Regex validation failed.", ripgrepExitCause(result));
 }
 
 /** Normalize a `string | string[]` param to an array (`undefined` → `[]`). */
@@ -67,11 +67,9 @@ export async function resolveSearchPaths(cwd: string, path: string | string[] | 
     } catch (error) {
       // Only a missing path is PATH_NOT_FOUND; other filesystem errors keep their cause.
       if (errnoCode(error) !== "ENOENT") throw error;
-      throw new HashlineError("PATH_NOT_FOUND", `Path not found: ${searchPath}.`, {
+      throw new HashlineError("PATH_NOT_FOUND", "Search scope cannot be inspected.", {
         cause: error,
-        ...(/[*?]/.test(searchPath)
-          ? { next: "Use an existing directory as path and a filename wildcard as glob." }
-          : {}),
+        ...(/[*?]/.test(searchPath) ? { recovery: "glob" as const } : {}),
       });
     }
   }
@@ -89,7 +87,7 @@ export async function filterExplicitFilesByGlob(
   scope: SearchScope,
   paths: readonly SearchPathInfo[],
   signal: AbortSignal | undefined,
-  warnings: string[],
+  warnings: SearchDiagnosticBuffer,
 ): Promise<string[]> {
   const explicitFiles = paths.filter(({ isFile }) => isFile);
   if (scope.globs.length === 0 || explicitFiles.length === 0) return paths.map(({ path }) => path);

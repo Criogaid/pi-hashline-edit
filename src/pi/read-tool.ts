@@ -26,7 +26,7 @@ import { Type } from "typebox";
 import { scanTextLines } from "./text-stream.ts";
 import { createAnchorFormatter, displayCarriageReturns, parseHashline } from "./anchor-format.ts";
 import { canonicalPath } from "./path.ts";
-import { renderToolError } from "./render.ts";
+import { renderToolError, renderReportResult } from "./render.ts";
 import {
   type ForgetReceiptDetails,
   readReceipt,
@@ -35,55 +35,24 @@ import {
 } from "./forget-tool.ts";
 import { POSITIVE_SAFE_INTEGER } from "./schema.ts";
 import { throwIfCancelled } from "./error-text.ts";
-import { reportToolErrors } from "./tool-error.ts";
-import { formatKiB } from "./budgets.ts";
+import { reportToolErrors, reportOf } from "./tool-error.ts";
+import { emptyReport, type ReportDetails } from "./report.ts";
+import type { ReadFact } from "../core/report-schema.ts";
 import type { HashlineEditConfig } from "./config.ts";
 import { createArgumentPreparer } from "./argument-validation.ts";
 
 const DEFAULT_OFFSET = 1;
 
-type ReadDetails = ReadToolDetails & { nativeRead?: true } & ForgetReceiptDetails;
+type ReadDetails = ReadToolDetails & { nativeRead?: true } & ForgetReceiptDetails &
+  Partial<ReportDetails>;
 
-/**
- * First result line: `<path> · <N> lines`, optionally ` (from line <offset>)` and
- * ` · no trailing newline`. A missing final newline is a byte-level fact the
- * numbered rows cannot show, so the header, which the model never copies into an
- * edit `body`, states it. READ_HEADER is the TUI's parser for this exact line.
- */
-function formatReadHeader(
-  path: string,
-  totalLines: number,
-  start: number,
-  finalNewline: boolean,
-): string {
-  const shownFrom = start > DEFAULT_OFFSET ? ` (from line ${start})` : "";
-  return `${path} · ${totalLines} lines${shownFrom}${finalNewline ? "" : " · no trailing newline"}`;
-}
-const READ_HEADER = /^(.+?) · (\d+ lines(?: \(from line \d+\))?(?: · no trailing newline)?)$/;
-
-/**
- * Render the expanded read body for the TUI: color the header, strip the
- * `LINE#HASH│` prefix from every anchor line to `   N: content`, and
- * syntax-highlight the code block by the file's language (falls back to a
- * single `toolOutput` color when the language is unknown or the highlight
- * line count diverges). Trailing notices (e.g. truncation) are shown in
- * `warning`.
- */
+/** Style payload rows without interpreting report metadata or notices. */
 function renderReadBody(raw: string, path: string, theme: Theme): string {
   const lines = raw.split("\n");
-  if (lines.length === 0) return "";
   const out: string[] = [];
+  const bodyStart = 0;
 
-  // Header: "<path> · <N> lines", optionally followed by " (from line <offset>)"
-  // and/or " · no trailing newline".
-  let bodyStart = 0;
-  const h = lines[0].match(READ_HEADER);
-  if (h) {
-    out.push(theme.fg("success", h[1]) + theme.fg("dim", ` · ${h[2]}`));
-    bodyStart = 1;
-  }
-
-  // Collect anchor rows (full content); the first non-anchor line begins the tail.
+  // Highlight complete anchor rows; preserve foreign payload rows as plain content.
   const lineNos: string[] = [];
   const codeContents: string[] = [];
   let tailStart = lines.length;
@@ -113,7 +82,7 @@ function renderReadBody(raw: string, path: string, theme: Theme): string {
   }
 
   for (let i = tailStart; i < lines.length; i++) {
-    out.push(theme.fg("warning", lines[i]));
+    out.push(theme.fg("toolOutput", lines[i]));
   }
   return out.join("\n");
 }
@@ -170,15 +139,27 @@ export function makeReadOverride(
     renderResult(result, options, theme, context) {
       const { isPartial, expanded } = options;
       if (isPartial) return new Text(theme.fg("warning", "Reading…"), 0, 0);
-      const content = result.content?.[0];
+      const report = reportOf(result);
       if (context?.isError) return renderToolError(result, theme, expanded);
       if (result.details?.nativeRead)
-        return builtin.renderResult!(withoutResultTag(result), options, theme, context);
+        return builtin.renderResult!(
+          {
+            ...withoutResultTag(result),
+            content: [
+              ...(report?.payload.map((text) => ({ type: "text" as const, text })) ?? []),
+              ...result.content.filter((block) => block.type === "image"),
+            ],
+          },
+          options,
+          theme,
+          context,
+        );
       // Collapsed (not expanded): show nothing — the call line carries the
       // title, matching the built-in read's fold behavior.
       if (!expanded) return new Text("", 0, 0);
-      const raw = content?.type === "text" ? content.text : "";
-      return new Text(renderReadBody(raw, String(context?.args?.path ?? ""), theme), 0, 0);
+      return renderReportResult(result, expanded, theme, (text) =>
+        renderReadBody(text, String(context.args.path), theme).split("\n"),
+      );
     },
 
     async execute(
@@ -188,128 +169,133 @@ export function makeReadOverride(
       onUpdate: AgentToolUpdateCallback<ReadToolDetails | undefined> | undefined,
       ctx: ExtensionToolContext,
     ) {
-      return reportToolErrors("read", { path: params.path, signal }, async () => {
-        throwIfCancelled(signal);
-        const offset = params.offset ?? DEFAULT_OFFSET;
-        const limit = params.limit ?? defaultLimit;
-        const anchors = createAnchorFormatter(hashLen);
-        const readNative = async () => {
-          const result = await builtin.execute(toolCallId, params, signal, onUpdate, ctx);
+      return reportToolErrors<ReadDetails | undefined>(
+        "read",
+        { path: params.path, signal },
+        async () => {
+          throwIfCancelled(signal);
+          const offset = params.offset ?? DEFAULT_OFFSET;
+          const limit = params.limit ?? defaultLimit;
+          const anchors = createAnchorFormatter(hashLen);
+          const readNative = async () => {
+            const result = await builtin.execute(toolCallId, params, signal, onUpdate, ctx);
+            return withResultTag(
+              toolCallId,
+              {
+                ...result,
+                details: {
+                  ...result.details,
+                  nativeRead: true as const,
+                  report: {
+                    ...emptyReport(
+                      "read",
+                      result.content.flatMap((block) =>
+                        block.type === "text" ? [block.text] : [],
+                      ),
+                    ),
+                    path: params.path,
+                    read: { native: true as const },
+                  },
+                },
+              },
+              config.forget,
+              () =>
+                readReceipt(
+                  params.path,
+                  result.content.some((block) => block.type === "image")
+                    ? { image: true }
+                    : undefined,
+                ),
+            );
+          };
+
+          const absPath = canonicalPath(cwd, params.path as string);
+          try {
+            if (await detectSupportedImageMimeTypeFromFile(absPath)) {
+              return readNative();
+            }
+          } catch {
+            return readNative();
+          }
+
+          const start = offset;
+          const rows: string[] = [];
+          const crExpansion = Buffer.byteLength(displayCarriageReturns("\r")) - 1;
+          let totalRows = 0;
+          let outputBytes = 0;
+          let truncated = false;
+          let firstLineExceedsLimit = false;
+          let stats: Awaited<ReturnType<typeof scanTextLines>>;
+          try {
+            stats = await scanTextLines(
+              absPath,
+              (number) => number >= start && number - start < limit,
+              (line) => {
+                const rowBytes =
+                  line.byteLength +
+                  line.carriageReturns * crExpansion +
+                  Buffer.byteLength(anchors.row(line.number, ""));
+                totalRows++;
+                if (truncated) return;
+                const nextBytes = outputBytes + rowBytes + (rows.length > 0 ? 1 : 0);
+                if (nextBytes > maxBytes) {
+                  truncated = true;
+                  firstLineExceedsLimit = rows.length === 0;
+                  return;
+                }
+                rows.push(anchors.row(line.number, line.text!));
+                outputBytes = nextBytes;
+              },
+              { signal, maxLineBytes: maxBytes },
+            );
+          } catch (error) {
+            // Keep native filesystem diagnostics without retrying decoding or cancellation failures.
+            if (!signal?.aborted && error instanceof Error && "code" in error) {
+              return readNative();
+            }
+            throw error;
+          }
+          if (stats.hasNul) return readNative();
+          const nextOffset =
+            !truncated && rows.length > 0 && stats.totalLines - start >= limit
+              ? start + rows.length
+              : undefined;
+
+          const read: ReadFact = {
+            start,
+            end: rows.length ? start + rows.length - 1 : start - 1,
+            totalLines: stats.totalLines,
+            native: false,
+            finalNewline: stats.finalNewline,
+            truncated,
+            maxBytes,
+            omittedRows: totalRows - rows.length,
+            ...(truncated && !firstLineExceedsLimit && start + rows.length <= stats.totalLines
+              ? { nextOffset: start + rows.length }
+              : nextOffset === undefined
+                ? {}
+                : { nextOffset }),
+            ...(firstLineExceedsLimit ? { oversizedLine: start } : {}),
+          };
+          const body = rows.join("\n");
+
           return withResultTag(
             toolCallId,
-            { ...result, details: { ...result.details, nativeRead: true as const } },
+            {
+              content: [{ type: "text" as const, text: body }],
+              details: {
+                report: { ...emptyReport("read", [body]), path: params.path, read },
+              },
+            },
             config.forget,
             () =>
               readReceipt(
                 params.path,
-                result.content.some((block) => block.type === "image")
-                  ? { image: true }
-                  : undefined,
+                rows.length > 0 ? { start, end: start + rows.length - 1, truncated } : undefined,
               ),
           );
-        };
-
-        const absPath = canonicalPath(cwd, params.path as string);
-        try {
-          if (await detectSupportedImageMimeTypeFromFile(absPath)) {
-            return readNative();
-          }
-        } catch {
-          return readNative();
-        }
-
-        const start = offset;
-        const rows: string[] = [];
-        const crExpansion = Buffer.byteLength(displayCarriageReturns("\r")) - 1;
-        let totalRows = 0;
-        let totalBytes = 0;
-        let outputBytes = 0;
-        let truncated = false;
-        let firstLineExceedsLimit = false;
-        let stats: Awaited<ReturnType<typeof scanTextLines>>;
-        try {
-          stats = await scanTextLines(
-            absPath,
-            (number) => number >= start && number - start < limit,
-            (line) => {
-              const rowBytes =
-                line.byteLength +
-                line.carriageReturns * crExpansion +
-                Buffer.byteLength(anchors.row(line.number, ""));
-              totalBytes += rowBytes + (totalRows++ > 0 ? 1 : 0);
-              if (truncated) return;
-              const nextBytes = outputBytes + rowBytes + (rows.length > 0 ? 1 : 0);
-              if (nextBytes > maxBytes) {
-                truncated = true;
-                firstLineExceedsLimit = rows.length === 0;
-                return;
-              }
-              rows.push(anchors.row(line.number, line.text!));
-              outputBytes = nextBytes;
-            },
-            { signal, maxLineBytes: maxBytes },
-          );
-        } catch (error) {
-          // Keep native filesystem diagnostics without retrying decoding or cancellation failures.
-          if (!signal?.aborted && error instanceof Error && "code" in error) {
-            return readNative();
-          }
-          throw error;
-        }
-        if (stats.hasNul) return readNative();
-        const pagination =
-          !truncated && rows.length > 0 && stats.totalLines - start >= limit
-            ? {
-                start,
-                end: start + (rows.length - 1),
-                totalLines: stats.totalLines,
-                nextOffset: start + rows.length,
-              }
-            : undefined;
-        const truncation = {
-          content: rows.join("\n"),
-          truncated,
-          truncatedBy: truncated ? ("bytes" as const) : null,
-          totalLines: totalRows,
-          totalBytes,
-          outputLines: rows.length,
-          outputBytes,
-          lastLinePartial: false,
-          firstLineExceedsLimit,
-          maxLines: totalRows,
-          maxBytes,
-        };
-
-        const tail = truncation.firstLineExceedsLimit
-          ? `\n… (line ${start} exceeds ${formatKiB(maxBytes)}; cannot return a complete anchor row. Reducing limit cannot split a physical line; use bash to inspect it in chunks, or replace for a known literal/regex change)`
-          : truncation.truncated
-            ? `\n… (truncated at ${formatKiB(maxBytes)}; use offset/limit to read more)`
-            : pagination
-              ? `\n… (showing lines ${pagination.start}-${pagination.end} of ${pagination.totalLines}; use offset ${pagination.nextOffset} to continue)`
-              : "";
-        const header = `${formatReadHeader(params.path, stats.totalLines, start, stats.finalNewline)}\n`;
-        const body = truncation.content;
-
-        return withResultTag(
-          toolCallId,
-          {
-            content: [{ type: "text" as const, text: header + body + tail }],
-            details: truncation.truncated
-              ? { truncation }
-              : pagination
-                ? { pagination }
-                : undefined,
-          },
-          config.forget,
-          () =>
-            readReceipt(
-              params.path,
-              rows.length > 0
-                ? { start, end: start + rows.length - 1, truncated: truncation.truncated }
-                : undefined,
-            ),
-        );
-      });
+        },
+      );
     },
   };
 }

@@ -45,6 +45,8 @@ import {
   type DiffCounts,
 } from "./render.ts";
 import { formatMutationAnchors } from "./mutation-result.ts";
+import type { AnchorReport } from "../core/report-schema.ts";
+import type { ReportDetails } from "./report.ts";
 import {
   executeMutation,
   runTextMutation,
@@ -60,7 +62,7 @@ import {
   createArgumentPreparer,
   type ReportArgumentIssue,
 } from "./argument-validation.ts";
-type ReplaceDetails = TextMutationDetails;
+type ReplaceDetails = TextMutationDetails & Partial<ReportDetails>;
 type ReplaceRenderContext = Parameters<
   NonNullable<ToolDefinition<typeof replaceSchema>["renderCall"]>
 >[2];
@@ -147,18 +149,11 @@ function formatSpanAnchors(
   newLines: readonly string[],
   span: NonNullable<ReturnType<typeof anchorSpan>>,
   anchors: AnchorFormatter,
-): string {
+): AnchorReport {
   function* indices() {
     for (let i = span.start; i <= span.end; i++) yield i;
   }
-  return formatMutationAnchors(
-    oldLines,
-    newLines,
-    indices(),
-    anchors,
-    "Updated anchors:",
-    new Set(span.contextLines),
-  );
+  return formatMutationAnchors(oldLines, newLines, indices(), anchors, new Set(span.contextLines));
 }
 
 /** Call-header line: `replace path — N rules`, plus `+N -N` once diff counts are known. */
@@ -216,7 +211,7 @@ export function makeReplaceTool(
     },
 
     renderResult(
-      result: AgentToolResult<ReplaceDetails>,
+      result: AgentToolResult<ReplaceDetails | ReportDetails>,
       options: ToolRenderResultOptions,
       theme: Theme,
       context: ReplaceRenderContext,
@@ -283,13 +278,9 @@ function runReplace(
         const oldLines = splitLines(currentText);
         const newLines = splitLines(newText);
         const span = changed ? anchorSpan(oldLines, newLines) : null;
-        return span ? formatSpanAnchors(oldLines, newLines, span, anchorFormatter) : "";
+        return span ? formatSpanAnchors(oldLines, newLines, span, anchorFormatter) : undefined;
       },
-      summary: () => {
-        const matchWord = `match${count !== 1 ? "es" : ""}`;
-        const note = changed ? `${count} ${matchWord}` : `${count} ${matchWord}, no net change`;
-        return `Replaced ${target.displayPath} (${note}).`;
-      },
+      facts: { replace: { matches: count } },
     };
   });
 }

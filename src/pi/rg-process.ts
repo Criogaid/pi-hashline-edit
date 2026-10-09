@@ -11,7 +11,7 @@ import { DiagnosticBuffer } from "./diagnostic-buffer.ts";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import type { Readable } from "node:stream";
 import { escapeRegex } from "../core/text.ts";
-import { errorMessage, HashlineError } from "../core/errors.ts";
+import { HashlineError } from "../core/errors.ts";
 import { throwIfCancelled } from "./error-text.ts";
 
 export const COMMON_RG_ARGS = ["--no-config", "--color=never", "--no-crlf"];
@@ -54,6 +54,7 @@ export interface RgRunResult {
   code: number | null;
   stderr: string;
   stopped: boolean;
+  diagnostics?: import("../core/report-schema.ts").SearchDiagnostics;
 }
 
 function startRg(rgPath: string, args: readonly string[], signal?: AbortSignal): RunningProcess {
@@ -146,8 +147,7 @@ async function runDelimited(
     }
     const result = await process.done;
     throwIfCancelled(signal);
-    if (result.error)
-      throw ripgrepFailure(`Failed to run ripgrep: ${errorMessage(result.error)}`, result.error);
+    if (result.error) throw ripgrepFailure("Failed to run ripgrep.", result.error);
     return { code: result.code, stderr: result.stderr, stopped };
   } finally {
     process.kill();
@@ -181,10 +181,18 @@ export function runRgPaths(
   });
 }
 
+/** Translate a process exit into a structured cause without rewriting its stderr. */
+export function ripgrepExitCause(result: Pick<RgRunResult, "code" | "stderr">): Error {
+  const cause = new Error(result.stderr.trim());
+  cause.name = "RipgrepExit";
+  if (result.code !== null) Object.assign(cause, { code: String(result.code) });
+  return cause;
+}
+
 /** Accept both matches and no matches; callers handle intentional early stops separately. */
 export function assertRgSucceeded(result: Pick<RgRunResult, "code" | "stderr">): void {
   if (result.code !== 0 && result.code !== 1) {
-    throw ripgrepFailure(result.stderr.trim() || `ripgrep exited with code ${result.code}.`);
+    throw ripgrepFailure("Ripgrep did not complete successfully.", ripgrepExitCause(result));
   }
 }
 
@@ -213,8 +221,7 @@ export const runText: RunText = async (rgPath, args, input, signal) => {
   process.child.stdin.end(input);
   const result = await process.done;
   throwIfCancelled(signal);
-  if (result.error)
-    throw ripgrepFailure(`Failed to run ripgrep: ${errorMessage(result.error)}`, result.error);
+  if (result.error) throw ripgrepFailure("Failed to run ripgrep.", result.error);
   if (bytes > MAX_RG_PROBE_OUTPUT_BYTES)
     throw ripgrepFailure("Unexpected ripgrep probe output overflow.");
   return {

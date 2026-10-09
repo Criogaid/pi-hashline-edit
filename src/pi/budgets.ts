@@ -16,6 +16,8 @@ export const GREP_MAX_LINE_LENGTH = 500;
 export const MAX_BLOCK_BYTES = 16 * 1024;
 /** One free-text field of an error record (a message or argument reason): leave room for the envelope. */
 export const MAX_ERROR_TEXT_BYTES = MAX_BLOCK_BYTES / 4;
+/** Maximum causal entries retained across external errors and AggregateError branches. */
+export const MAX_CAUSE_ENTRIES = 16;
 /** One recovery-candidate or cited row inside a failure diagnostic. */
 export const MAX_RECOVERY_CANDIDATE_BYTES = 4 * 1024;
 /** grep search diagnostics appended to a result. */

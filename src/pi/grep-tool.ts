@@ -11,7 +11,7 @@ import { type ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { rgPath as bundledRgPath } from "@vscode/ripgrep";
 import { Type, type Static } from "typebox";
 import { Text } from "@earendil-works/pi-tui";
-import { renderOutputPreview, renderToolError } from "./render.ts";
+import { renderReportResult, renderToolError } from "./render.ts";
 import { type ForgetReceiptDetails, grepReceipt, withResultTag } from "./forget-tool.ts";
 import { normalizeLineEndings } from "../core/lines.ts";
 import { createAnchorFormatter } from "./anchor-format.ts";
@@ -35,6 +35,8 @@ import { runRgTextView } from "./rg-text-view.ts";
 import { GREP_CONTEXT_RANGE, POSITIVE_SAFE_INTEGER } from "./schema.ts";
 import { throwIfCancelled } from "./error-text.ts";
 import { reportToolErrors } from "./tool-error.ts";
+import { type ReportDetails } from "./report.ts";
+import { SearchDiagnosticBuffer } from "./search-diagnostics.ts";
 import type { HashlineEditConfig } from "./config.ts";
 import { createArgumentPreparer } from "./argument-validation.ts";
 
@@ -112,10 +114,7 @@ function createGrepSchema({ defaultLimit, defaultContext }: HashlineEditConfig["
   );
 }
 type GrepSchema = ReturnType<typeof createGrepSchema>;
-type GrepTool = ToolDefinition<
-  GrepSchema,
-  ({ incomplete?: true } & ForgetReceiptDetails) | undefined
->;
+type GrepTool = ToolDefinition<GrepSchema, Partial<ReportDetails> & ForgetReceiptDetails>;
 
 /** Build the production grep override (a ToolDefinition fragment for registerTool). */
 export function makeGrepOverride(cwd: string, config: HashlineEditConfig) {
@@ -186,8 +185,7 @@ export function makeGrepOverrideWithBackend(
     ) {
       if (isPartial) return new Text(theme.fg("warning", "Searching…"), 0, 0);
       if (context?.isError) return renderToolError(result, theme, expanded);
-      const out = result.content?.[0]?.type === "text" ? result.content[0].text : "";
-      return renderOutputPreview(toDisplayLines(out, theme), expanded, theme);
+      return renderReportResult(result, expanded, theme, (text) => toDisplayLines(text, theme));
     },
 
     async execute(
@@ -199,7 +197,7 @@ export function makeGrepOverrideWithBackend(
       return reportToolErrors("grep", { path: params.path, signal }, async () => {
         throwIfCancelled(signal);
         const anchors = createAnchorFormatter(hashLen);
-        const warnings: string[] = [];
+        const warnings = new SearchDiagnosticBuffer();
 
         const patterns = toArray(params.pattern);
         const effectiveLimit = params.limit ?? config.grep.defaultLimit;
@@ -268,11 +266,19 @@ export function makeGrepOverrideWithBackend(
           if (warnings.length) throw searchIncompleteError("No matches confirmed.", warnings);
           return {
             content: [{ type: "text" as const, text: "No matches found" }],
-            details: undefined,
+            details: assembleGrepOutput({
+              blocks: [],
+              warnings: new SearchDiagnosticBuffer(),
+              outputMode,
+              matchLimitReached,
+              effectiveLimit,
+              partialRows: 0,
+              invalidUtf8Paths: [],
+            }).details,
           };
         }
 
-        const { blocks, linesTruncated } = await formatMatches({
+        const { blocks, partialRows, invalidUtf8Paths } = await formatMatches({
           cwd,
           raw,
           outputMode,
@@ -288,7 +294,8 @@ export function makeGrepOverrideWithBackend(
           outputMode,
           matchLimitReached,
           effectiveLimit,
-          linesTruncated,
+          partialRows,
+          invalidUtf8Paths,
         });
         // Only content mode returns file text; paths and counts have nothing to forget.
         if (outputMode !== "content") return output;

@@ -16,10 +16,8 @@ import {
 import type { TLocalizedValidationError } from "typebox/error";
 import { Value } from "typebox/value";
 
-export interface ArgumentIssue {
-  readonly field: string;
-  readonly reason: string;
-}
+export type { ArgumentIssue } from "../core/report-schema.ts";
+import type { ArgumentIssue } from "../core/report-schema.ts";
 export interface ArgumentDiagnostics {
   readonly issues: readonly ArgumentIssue[];
   readonly limited: boolean;
@@ -189,13 +187,18 @@ function fieldPath(pointer: string, prepared: unknown, key?: string): string {
 }
 
 function combineIssues(issues: readonly ArgumentIssue[]): readonly ArgumentIssue[] {
-  const reasons = new Map<string, Set<string>>();
-  for (const { field, reason } of issues) {
-    const existing = reasons.get(field) ?? new Set<string>();
-    existing.add(reason);
-    reasons.set(field, existing);
+  const fields = new Map<string, { facts: Set<string>; fixes: Set<string> }>();
+  for (const { field, fact, fix } of issues) {
+    const entry = fields.get(field) ?? { facts: new Set<string>(), fixes: new Set<string>() };
+    entry.facts.add(fact);
+    if (fix !== undefined) entry.fixes.add(fix);
+    fields.set(field, entry);
   }
-  return [...reasons].map(([field, values]) => ({ field, reason: [...values].join("; ") }));
+  return [...fields].map(([field, entry]) => ({
+    field,
+    fact: [...entry.facts].join("; "),
+    ...(entry.fixes.size ? { fix: [...entry.fixes].join(" ") } : {}),
+  }));
 }
 
 function aggregateErrors(
@@ -203,7 +206,7 @@ function aggregateErrors(
   prepared: unknown,
 ): readonly ArgumentIssue[] {
   const issues: ArgumentIssue[] = [];
-  const add = (field: string, reason: string) => issues.push({ field, reason });
+  const add = (field: string, fact: string) => issues.push({ field, fact });
   for (const error of errors) {
     if (
       error.keyword === "anyOf" &&

@@ -9,7 +9,7 @@
  * appears once, in `failures`; a row shown in a neighborhood is not repeated
  * in a failure entry. The `observed` and neighborhood rows are observations,
  * not verified targets. Every list has its own byte budget and an explicit
- * omission count. The recovery instruction is the record's `next` (tool-error.ts).
+ * omission count. The recovery instruction is the record's `next` (report.ts).
  *
  * @module pi-hashline-edit/pi
  */
@@ -18,8 +18,12 @@ import { type AnchorFormatter, displayCarriageReturns } from "./anchor-format.ts
 import { splitLines } from "../core/lines.ts";
 import type { Anchor, AnchorFailure, ApplyFailure } from "../core/types.ts";
 import { mergeRanges } from "../core/ranges.ts";
-import { HashlineError, type ErrorFacts } from "../core/errors.ts";
-import { formatKiB, MAX_BLOCK_BYTES, MAX_RECOVERY_CANDIDATE_BYTES } from "./budgets.ts";
+import { HashlineError } from "../core/errors.ts";
+import type { ErrorFacts, AnchorFailureFact } from "../core/report-schema.ts";
+type AnchorFacts = ErrorFacts<"ANCHOR_MISMATCH">;
+type NeighborhoodFacts = Pick<AnchorFacts, "candidateNeighborhoods" | "omittedNeighborhoodRows">;
+type MatchedFacts = ErrorFacts<"INVALID_RANGE">;
+import { MAX_BLOCK_BYTES, MAX_RECOVERY_CANDIDATE_BYTES } from "./budgets.ts";
 import { boundedFacts } from "./tool-error.ts";
 
 const CONTEXT_RADIUS = 3;
@@ -94,7 +98,7 @@ export function ambiguousCandidateNeighborhoods(
   currentText: string,
   failures: readonly AnchorFailure[],
   anchors: AnchorFormatter,
-): { facts: ErrorFacts; shownLines: ReadonlySet<number> } {
+): { facts: NeighborhoodFacts; shownLines: ReadonlySet<number> } {
   const centers = failures.flatMap((failure) =>
     failure.recovery.kind === "ambiguous"
       ? selectAmbiguousCandidates(failure.recovery.candidates).map((candidate) => candidate.line)
@@ -122,7 +126,7 @@ export function ambiguousCandidateNeighborhoods(
 }
 
 const RESULT = { found: "shifted", ambiguous: "ambiguous", none: "unresolved" } as const;
-const ROW_TOO_LARGE = `row exceeds ${formatKiB(MAX_RECOVERY_CANDIDATE_BYTES)}`;
+const ROW_TOO_LARGE = "row_too_large" as const;
 
 /** One failure entry: what was cited, then what the search found or what the cited line holds. */
 function failureEntry(
@@ -130,15 +134,14 @@ function failureEntry(
   snapshot: Snapshot,
   currentLines: readonly string[],
   shownLines: Set<number>,
-): ErrorFacts {
-  const entry: Record<string, unknown> = {
+): AnchorFailureFact {
+  const entry: AnchorFailureFact = {
     field: `edits[${f.opIndex}].${f.which}`,
     op: f.op,
     cited: snapshot.anchors.reference(f.cited.line, f.cited.hash),
     result: RESULT[f.recovery.kind],
   };
-  if (f.recovery.kind !== "none")
-    entry.search = f.recovery.scope === "local" ? "local window" : "full file";
+  if (f.recovery.kind !== "none") entry.search = f.recovery.scope;
   switch (f.recovery.kind) {
     case "found": {
       const { newLine, newHash } = f.recovery;
@@ -169,7 +172,7 @@ function failureEntry(
     }
     case "none": {
       const row = f.current === null ? null : snapshot.anchors.row(f.cited.line, f.current.content);
-      if (row === null) entry.observedOmitted = "cited line is out of range";
+      if (row === null) entry.observedOmitted = "out_of_range";
       else if (Buffer.byteLength(row, "utf8") <= MAX_RECOVERY_CANDIDATE_BYTES) entry.observed = row;
       else entry.observedOmitted = ROW_TOO_LARGE;
       break;
@@ -178,23 +181,11 @@ function failureEntry(
   return entry;
 }
 
-function anchorMismatchMessage(failures: readonly AnchorFailure[]): string {
-  const counts = new Map<string, number>();
-  for (const f of failures) {
-    const result = RESULT[f.recovery.kind];
-    counts.set(result, (counts.get(result) ?? 0) + 1);
-  }
-  const parts = Object.values(RESULT)
-    .filter((result) => counts.has(result))
-    .map((result) => `${counts.get(result)} ${result}`);
-  return `Anchors did not match: ${parts.join(", ")}.`;
-}
-
 /**
  * The batch's anchors whose checksum matched, by field. An anchor absent from
  * both `matched` and `failures` is counted as omitted, never implied matched.
  */
-function matchedAnchorFacts(failure: ApplyFailure): ErrorFacts {
+function matchedAnchorFacts(failure: ApplyFailure): MatchedFacts {
   const { kept, omitted } = boundedFacts(
     failure.checks
       .filter((check) => check.status === "matched")
@@ -227,7 +218,7 @@ export function describeEditFailure(
     failure.failures.map((f) => failureEntry(f, snapshot, currentLines, shownLines)),
     MAX_BLOCK_BYTES,
   );
-  return new HashlineError("ANCHOR_MISMATCH", anchorMismatchMessage(failure.failures), {
+  return new HashlineError("ANCHOR_MISMATCH", "Edit anchor verification failed.", {
     facts: {
       failures: kept,
       ...(omitted ? { omittedFailures: omitted } : {}),

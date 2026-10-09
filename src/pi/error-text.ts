@@ -14,7 +14,7 @@ export function throwIfCancelled(signal: AbortSignal | undefined): void {
 
 /**
  * A read observed a concurrent file change; partial bytes must not be classified as source text.
- * Its retry advice holds only before publication; a published mutation's record replaces it.
+ * The report derives retry advice before publication and inspection advice after publication.
  */
 export class FileChangedDuringReadError extends HashlineError {
   constructor(cause?: unknown) {

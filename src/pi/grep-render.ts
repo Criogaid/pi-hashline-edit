@@ -1,6 +1,6 @@
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import { parseDisplayRow } from "./anchor-format.ts";
-import { isNoticeLine, parseFileHeader } from "./grep-output.ts";
+import { parseFileHeader } from "./grep-output.ts";
 
 function countLeading(s: string): number {
   const m = s.match(/^[ \t]*/);
@@ -48,8 +48,7 @@ export function toDisplayLines(raw: string, theme: Theme): string[] {
       i = j;
       continue;
     }
-    if (isNoticeLine(line)) out.push(theme.fg("warning", line));
-    else out.push(theme.fg("toolOutput", line));
+    out.push(theme.fg("toolOutput", line));
     i++;
   }
   return out;

@@ -14,7 +14,9 @@ import {
   type RgRunResult,
 } from "./rg-process.ts";
 import { scopeArgs, type SearchRunner, type SearchTextView } from "./grep-search.ts";
-import { errorMessage } from "../core/errors.ts";
+import { causeFacts } from "./report.ts";
+import { SearchDiagnosticBuffer } from "./search-diagnostics.ts";
+import type { SearchDiagnostic } from "../core/report-schema.ts";
 import { searchChangedError, throwIfCancelled } from "./error-text.ts";
 
 /** CRLF snapshot batches flush after this many files or source bytes (README: 64 files / 8 MiB). */
@@ -52,17 +54,20 @@ export const runRgTextView: SearchRunner = async (
   let directory: string | undefined;
   const result: RgRunResult = { code: 1, stderr: "", stopped: false };
   const diagnostics = new DiagnosticBuffer(MAX_RG_STDERR_BYTES);
+  const fileDiagnostics = new SearchDiagnosticBuffer();
   // Only valid UTF-8 CRLF files use LF snapshots; malformed UTF-8 keeps its raw search view.
   const snapshots = new Map<string, string>();
   const views = new Map<string, SearchTextView>();
   const batchPaths: string[] = [];
   let batchBytes = 0;
-  const record = (run: RgRunResult) => {
+  const record = (run: RgRunResult, diagnostic?: SearchDiagnostic) => {
     diagnostics.append(run.stderr);
     result.stderr = diagnostics.toString();
     if (run.code !== 0 && run.code !== 1 && !run.stopped) result.code = run.code;
     else if (run.code === 0 && result.code === 1) result.code = 0;
     result.stopped ||= run.stopped;
+    if (diagnostic) fileDiagnostics.push(diagnostic);
+    if (fileDiagnostics.length) result.diagnostics = fileDiagnostics.snapshot();
   };
 
   const searchBatch = async (
@@ -173,8 +178,10 @@ export const runRgTextView: SearchRunner = async (
         batchBytes += info.byteLength;
       } catch (error) {
         throwIfCancelled(signal);
-        const message = errorMessage(error);
-        record({ code: 2, stopped: false, stderr: `${original}: ${message}\n` });
+        record(
+          { code: 2, stopped: false, stderr: "" },
+          { kind: "file", path: original, causes: causeFacts(error) },
+        );
         return true;
       }
       return (

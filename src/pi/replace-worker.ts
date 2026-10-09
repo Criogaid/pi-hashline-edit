@@ -1,16 +1,24 @@
 import { parentPort, workerData } from "node:worker_threads";
 import { applyReplacements } from "../core/replace.ts";
 import { errorMessage, HashlineError } from "../core/errors.ts";
+import type { WorkerMessage } from "./replace-worker-protocol.ts";
 
-// Errors cross the thread boundary as their code and message.
+// Worker input is produced by the validated replace entry point. Output crosses a schema boundary.
+let response: WorkerMessage;
 try {
   const { source, rules } = workerData;
-  parentPort!.postMessage({ result: applyReplacements(source, rules) });
+  response = { status: "success", result: applyReplacements(source, rules) };
 } catch (error) {
-  parentPort!.postMessage({
-    error: {
-      code: error instanceof HashlineError ? error.errorCode : "REGEX_WORKER_FAILED",
-      message: errorMessage(error),
-    },
-  });
+  response =
+    error instanceof HashlineError
+      ? { status: "failure", error: error.descriptor() }
+      : {
+          status: "failure",
+          error: new HashlineError("REGEX_WORKER_FAILED", "Regex evaluation failed.").descriptor(),
+          cause: {
+            name: error instanceof Error ? error.name : "ThrownValue",
+            message: errorMessage(error),
+          },
+        };
 }
+parentPort!.postMessage(response);

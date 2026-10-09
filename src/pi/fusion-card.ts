@@ -13,32 +13,61 @@ import type {
 import { createBashToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Box, Container, Text, type Component } from "@earendil-works/pi-tui";
 import type { TSchema } from "typebox";
-import type { ActionFusionProgress } from "./action-fusion.ts";
-import { renderToolError, type MutationRenderState } from "./render.ts";
+import { commandTimingSchema, type ActionFusionProgress } from "./action-fusion.ts";
+import { commandDetailLines, type MutationRenderState } from "./render.ts";
+import { reportOf } from "./tool-error.ts";
+import { mutationCompleted } from "./report.ts";
+import { commandSchema } from "../core/report-schema.ts";
+import { Type, type Static } from "typebox";
+import { Check } from "typebox/value";
 
 const CARD_TYPE = "hashline-then-run";
 const RESULT_TYPE = "hashline-then-run-result";
 
-type CommandCardData = Pick<
-  ActionFusionProgress,
-  "toolCallId" | "commandText" | "command" | "output" | "reason" | "timing"
->;
-
-function commandCardData({
-  toolCallId,
-  commandText,
-  command,
-  output,
-  reason,
-  timing,
-}: ActionFusionProgress): CommandCardData {
+const cardSchema = Type.Object({
+  version: Type.Literal(1),
+  toolCallId: Type.String(),
+  commandText: Type.String(),
+  command: commandSchema,
+  timing: Type.Optional(commandTimingSchema),
+});
+type CommandCardData = Static<typeof cardSchema>;
+// Existing sessions used an unversioned card. Convert that persisted format only at this boundary.
+const legacyCardSchema = Type.Object(
+  {
+    toolCallId: Type.String(),
+    commandText: Type.String(),
+    command: commandSchema.properties.status,
+    output: Type.String(),
+    reason: Type.Optional(Type.String()),
+    timing: Type.Optional(commandTimingSchema),
+  },
+  { additionalProperties: false },
+);
+function readCommandCard(data: unknown): CommandCardData | undefined {
+  if (Check(cardSchema, data)) return data;
+  if (!Check(legacyCardSchema, data)) return undefined;
   return {
-    toolCallId,
-    commandText,
-    command,
-    output,
-    ...(reason ? { reason } : {}),
-    ...(timing ? { timing } : {}),
+    version: 1,
+    toolCallId: data.toolCallId,
+    commandText: data.commandText,
+    command: {
+      status: data.command,
+      output: data.output,
+      ...(data.reason
+        ? { causes: [{ name: "LegacyDiagnostic", message: data.reason, depth: 0 }] }
+        : {}),
+    },
+    ...(data.timing ? { timing: data.timing } : {}),
+  };
+}
+function commandCardData(progress: ActionFusionProgress): CommandCardData {
+  return {
+    version: 1,
+    toolCallId: progress.toolCallId,
+    commandText: progress.commandText,
+    command: progress.report.command,
+    ...(progress.timing ? { timing: progress.timing } : {}),
   };
 }
 
@@ -59,22 +88,15 @@ export function registerFusionCards(pi: ExtensionAPI) {
         (entry.customType !== CARD_TYPE && entry.customType !== RESULT_TYPE)
       )
         continue;
-      const data = entry.data as ActionFusionProgress | undefined;
-      if (
-        data &&
-        typeof data.toolCallId === "string" &&
-        typeof data.commandText === "string" &&
-        typeof data.output === "string"
-      ) {
-        states.set(data.toolCallId, commandCardData(data));
-      }
+      const data = readCommandCard(entry.data);
+      if (data) states.set(data.toolCallId, data);
     }
   };
   pi.on("session_start", (_event, ctx) => restore(ctx));
   pi.on("session_tree", (_event, ctx) => restore(ctx));
 
-  pi.registerEntryRenderer<CommandCardData>(CARD_TYPE, (entry, { expanded }, theme) => {
-    const initial = entry.data;
+  pi.registerEntryRenderer<unknown>(CARD_TYPE, (entry, { expanded }, theme) => {
+    const initial = readCommandCard(entry.data);
     if (!initial) return undefined;
     const statusText = new Text("", 0, 0);
     const box = new Box(1, 1);
@@ -86,20 +108,21 @@ export function registerFusionCards(pi: ExtensionAPI) {
       render(width) {
         // Read live state during rendering; native tool updates schedule the repaint.
         const current = states.get(initial.toolCallId) ?? initial;
-        const pending = current.command === "waiting" || current.command === "running";
+        const pending =
+          current.command.status === "waiting" || current.command.status === "running";
         const interrupted = pending && !active.has(current.toolCallId);
-        const status = interrupted ? "interrupted (final status unknown)" : current.command;
+        const status = interrupted ? "interrupted (final status unknown)" : current.command.status;
         const countdown =
-          current.command === "running" && !interrupted && current.timing
+          current.command.status === "running" && !interrupted && current.timing
             ? ` · ${current.timing.remainingSeconds}s remaining`
             : "";
-        const failed = current.command === "failed" || current.command === "timeout";
+        const failed = current.command.status === "failed" || current.command.status === "timeout";
         const color =
-          pending || current.command === "cancelled"
+          pending || current.command.status === "cancelled"
             ? "warning"
             : failed
               ? "error"
-              : current.command === "succeeded"
+              : current.command.status === "succeeded"
                 ? "success"
                 : "dim";
         const background =
@@ -107,7 +130,7 @@ export function registerFusionCards(pi: ExtensionAPI) {
             ? "toolPendingBg"
             : failed
               ? "toolErrorBg"
-              : current.command === "succeeded"
+              : current.command.status === "succeeded"
                 ? "toolSuccessBg"
                 : "customMessageBg";
         box.setBgFn((line) => theme.bg(background, line));
@@ -135,10 +158,11 @@ export function registerFusionCards(pi: ExtensionAPI) {
         box.clear();
         box.addChild(statusText);
         box.addChild(call);
-        if (current.reason) box.addChild(new Text(theme.fg("dim", current.reason), 0, 0));
-        if (current.output || current.command === "succeeded" || failed) {
+        for (const line of commandDetailLines(current.command, theme))
+          box.addChild(new Text(line, 0, 0));
+        if (current.command.output || current.command.status === "succeeded" || failed) {
           result = bash.renderResult!(
-            { content: [{ type: "text", text: current.output }], details: undefined },
+            { content: [{ type: "text", text: current.command.output }], details: undefined },
             { expanded, isPartial: context.isPartial },
             theme,
             { ...context, lastComponent: result },
@@ -155,7 +179,8 @@ export function registerFusionCards(pi: ExtensionAPI) {
     const first = !states.has(progress.toolCallId);
     const data = commandCardData(progress);
     states.set(progress.toolCallId, data);
-    const pending = progress.command === "waiting" || progress.command === "running";
+    const pending =
+      progress.report.command.status === "waiting" || progress.report.command.status === "running";
     if (pending) active.add(progress.toolCallId);
     else active.delete(progress.toolCallId);
     // Only endpoints are persisted; streaming snapshots reuse Bash's bounded output.
@@ -164,7 +189,7 @@ export function registerFusionCards(pi: ExtensionAPI) {
   };
 }
 
-type MutationCardProgress = Partial<Pick<ActionFusionProgress, "freshness" | "mutationCompleted">>;
+type MutationCardProgress = Pick<ActionFusionProgress, "mutationCompleted">;
 
 function mutationPending(isPartial: boolean, progress?: MutationCardProgress): boolean {
   return isPartial && progress?.mutationCompleted !== true;
@@ -206,29 +231,24 @@ export function withMutationStatus<TParams extends TSchema, TDetails>(
     },
     renderResult(result, options, theme, context) {
       const shell = (context.state.mutationShell ??= { box: new Box(1, 1) });
-      // Fusion updates carry progress alongside TDetails; final results carry only the outcome.
-      const details = result.details as { actionFusion?: MutationCardProgress } | undefined;
-      const file = details?.actionFusion ?? shell.fileState;
+      const report = reportOf(result);
+      const file = report?.mutation
+        ? { mutationCompleted: mutationCompleted(report) }
+        : shell.fileState;
       const isPartial = mutationPending(options.isPartial, file);
-      // Pi serializes fused failures into one diagnostic; retain it when the card expands.
-      const fusedError = context.isError && (context.args as { then_run?: unknown })?.then_run;
-      shell.result = fusedError
-        ? renderToolError(result, theme, options.expanded)
-        : tool.renderResult!(result, { ...options, isPartial }, theme, {
-            ...context,
-            isPartial,
-            lastComponent: shell.result,
-          });
+      // The transcript command card displays command facts; this card projects the mutation facts.
+      const fileReport = report && (({ command: _command, ...file }) => file)(report);
+      const displayed = fileReport
+        ? { ...result, details: Object.assign({}, result.details, { report: fileReport }) }
+        : result;
+      shell.result = tool.renderResult!(displayed, { ...options, isPartial }, theme, {
+        ...context,
+        isPartial,
+        lastComponent: shell.result,
+      });
       // Pi runs renderCall first; update its box in place without invalidating the tool row.
       shell.box.addChild(shell.result);
-      if (file) {
-        shell.fileState = { freshness: file.freshness, mutationCompleted: file.mutationCompleted };
-        if (file.freshness === "changed" || file.freshness === "missing") {
-          shell.box.addChild(
-            new Text(theme.fg("warning", `Anchors are stale: target ${file.freshness}.`), 0, 0),
-          );
-        }
-      }
+      if (file) shell.fileState = file;
       shell.box.setBgFn((line: string) =>
         theme.bg(
           isPartial ? "toolPendingBg" : context.isError ? "toolErrorBg" : "toolSuccessBg",

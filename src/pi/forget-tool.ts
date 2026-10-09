@@ -31,8 +31,9 @@ import type {
 import { Text } from "@earendil-works/pi-tui";
 import { Type, type Static } from "typebox";
 import { FORGET_MIN_BYTES, formatKiB, MAX_BLOCK_BYTES } from "./budgets.ts";
-import { renderToolError } from "./render.ts";
-import { boundedFacts, reportToolErrors } from "./tool-error.ts";
+import { renderToolError, renderReportResult } from "./render.ts";
+import { boundedFacts, reportToolErrors, withToolReports } from "./tool-error.ts";
+import { emptyReport, type ReportDetails } from "./report.ts";
 import { HashlineError } from "../core/errors.ts";
 import { createArgumentPreparer } from "./argument-validation.ts";
 
@@ -120,7 +121,11 @@ export function withResultTag<T extends { content: ResultContent; details?: unkn
   return {
     ...result,
     content: [...result.content, { type: "text" as const, text: resultTag(toolCallId) }],
-    details: { ...(result.details as object | undefined), forgetReceipt: createReceipt() },
+    details: {
+      ...(result.details as object | undefined),
+      forgetReceipt: createReceipt(),
+      resultTag: resultTag(toolCallId),
+    },
   };
 }
 
@@ -155,7 +160,7 @@ const forgetSchema = Type.Object(
 );
 type ForgetParams = Static<typeof forgetSchema>;
 /** One line per forgotten result; receipt is absent for results tagged before receipts existed. */
-type ForgetDetails = { forgotten: { id: string; receipt?: string }[] };
+type ForgetDetails = ReportDetails & { forgotten: { id: string; receipt?: string }[] };
 
 /** Register the forget tool and the context hooks that apply it. */
 export function registerForgetTool(pi: ExtensionAPI): void {
@@ -258,68 +263,77 @@ export function registerForgetTool(pi: ExtensionAPI): void {
     if (entries.length > 0) return { entries };
   });
 
-  pi.registerTool({
-    name: "forget",
-    label: "forget",
-    description: `Remove tagged inspection output from your context once you have taken what you need. Only results from the previous step tagged [result rXXXXX] (${formatKiB(FORGET_MIN_BYTES)} or larger, or images) can be forgotten. After this response each selected result's entire content, including headers and notices, is replaced with a forgotten receipt. A codemode tag covers its entire output, including other results printed by the script. Save facts you still need in note. Files and session history are unchanged.`,
-    promptSnippet: "Forget tagged inspection output you no longer need",
-    promptGuidelines: [
-      "Right after tagged inspection output, call forget with its id if you will not need any of its content again; put facts you still need in note. A codemode tag forgets the entire script output. Results from earlier steps cannot be forgotten.",
-    ],
-    parameters: forgetSchema,
-    prepareArguments: createArgumentPreparer("forget", forgetSchema),
-    renderShell: "default" as const,
-    renderCall(args: ForgetParams, theme: Theme) {
-      let text =
-        theme.fg("toolTitle", theme.bold("forget")) +
-        (Array.isArray(args?.ids)
-          ? theme.fg("dim", ` · ${plural(args.ids.length, "result")}`)
-          : "");
-      if (typeof args?.note === "string") text += `\n${theme.fg("dim", args.note)}`;
-      return new Text(text, 0, 0);
-    },
-    renderResult(result, { expanded }, theme, context) {
-      if (context?.isError) return renderToolError(result, theme, expanded);
-      const forgotten = result.details?.forgotten ?? [];
-      return new Text(
-        forgotten
-          .map(
-            ({ id, receipt }) =>
-              (expanded && receipt ? theme.fg("dim", `${id} · `) : "") +
-              theme.fg("toolOutput", receipt ?? id),
-          )
-          .join("\n"),
-        0,
-        0,
-      );
-    },
-    async execute(_toolCallId: string, params: ForgetParams) {
-      return reportToolErrors("forget", {}, async () => {
-        const unknown = params.ids.filter((id) => !forgettable.has(id));
-        if (unknown.length > 0) {
-          const available = boundedFacts([...forgettable.keys()], MAX_BLOCK_BYTES);
-          throw new HashlineError(
-            "NOT_FORGETTABLE",
-            "Only tagged inspection results from the previous step can be forgotten.",
-            {
-              facts: {
-                ids: unknown,
-                available: available.kept,
-                ...(available.omitted ? { omittedAvailable: available.omitted } : {}),
+  pi.registerTool(
+    withToolReports({
+      name: "forget",
+      label: "forget",
+      description: `Remove tagged inspection output from your context once you have taken what you need. Only results from the previous step tagged [result rXXXXX] (${formatKiB(FORGET_MIN_BYTES)} or larger, or images) can be forgotten. After this response each selected result's entire content, including headers and notices, is replaced with a forgotten receipt. A codemode tag covers its entire output, including other results printed by the script. Save facts you still need in note. Files and session history are unchanged.`,
+      promptSnippet: "Forget tagged inspection output you no longer need",
+      promptGuidelines: [
+        "Right after tagged inspection output, call forget with its id if you will not need any of its content again; put facts you still need in note. A codemode tag forgets the entire script output. Results from earlier steps cannot be forgotten.",
+      ],
+      parameters: forgetSchema,
+      prepareArguments: createArgumentPreparer("forget", forgetSchema),
+      renderShell: "default" as const,
+      renderCall(args: ForgetParams, theme: Theme) {
+        let text =
+          theme.fg("toolTitle", theme.bold("forget")) +
+          (Array.isArray(args?.ids)
+            ? theme.fg("dim", ` · ${plural(args.ids.length, "result")}`)
+            : "");
+        if (typeof args?.note === "string") text += `\n${theme.fg("dim", args.note)}`;
+        return new Text(text, 0, 0);
+      },
+      renderResult(result, { expanded }, theme, context) {
+        if (context?.isError) return renderToolError(result, theme, expanded);
+        const forgotten =
+          result.details && "forgotten" in result.details ? result.details.forgotten : [];
+        return renderReportResult(
+          {
+            ...result,
+            details: {
+              ...result.details,
+              report: {
+                ...result.details.report,
+                payload: forgotten.flatMap(({ receipt }) => (receipt ? [receipt] : [])),
               },
             },
-          );
-        }
-        const forgotten = params.ids.map((id) => {
-          const { toolCallId, receipt } = forgettable.get(id)!;
-          pending.add(toolCallId);
-          return { id, receipt };
+          },
+          expanded,
+          theme,
+        );
+      },
+      async execute(_toolCallId: string, params: ForgetParams) {
+        return reportToolErrors("forget", {}, async () => {
+          const unknown = params.ids.filter((id) => !forgettable.has(id));
+          if (unknown.length > 0) {
+            const available = boundedFacts([...forgettable.keys()], MAX_BLOCK_BYTES);
+            throw new HashlineError(
+              "NOT_FORGETTABLE",
+              "Only tagged inspection results from the previous step can be forgotten.",
+              {
+                facts: {
+                  ids: unknown,
+                  available: available.kept,
+                  ...(available.omitted ? { omittedAvailable: available.omitted } : {}),
+                },
+              },
+            );
+          }
+          const forgotten = params.ids.map((id) => {
+            const { toolCallId, receipt } = forgettable.get(id)!;
+            pending.add(toolCallId);
+            return { id, receipt };
+          });
+          return {
+            content: [{ type: "text" as const, text: "" }],
+            details: {
+              forgotten,
+              report: { ...emptyReport("forget"), forget: { ids: params.ids } },
+            },
+          };
         });
-        return {
-          content: [{ type: "text" as const, text: `Forgot ${params.ids.join(", ")}.` }],
-          details: { forgotten },
-        };
-      });
-    },
-  } satisfies ToolDefinition<typeof forgetSchema, ForgetDetails>);
+      },
+    } satisfies ToolDefinition<typeof forgetSchema, ForgetDetails | ReportDetails>),
+  );
 }

@@ -1,20 +1,20 @@
-import { truncateHead, formatSize, DEFAULT_MAX_BYTES } from "@earendil-works/pi-coding-agent";
-import { DiagnosticBuffer } from "./diagnostic-buffer.ts";
+import { truncateHead, DEFAULT_MAX_BYTES } from "@earendil-works/pi-coding-agent";
+import type { SearchDiagnosticBuffer } from "./search-diagnostics.ts";
 import { createHash } from "node:crypto";
 import { createAnchorFormatter, displayCarriageReturns, plainRow } from "./anchor-format.ts";
 import { fileReadWarning, type RgMatch, type SearchFileSnapshot } from "./grep-search.ts";
 import { scanTextFile, scanTextLines } from "./text-stream.ts";
-import { GREP_MAX_LINE_LENGTH, MAX_SEARCH_DIAGNOSTIC_BYTES } from "./budgets.ts";
+import { GREP_MAX_LINE_LENGTH } from "./budgets.ts";
 import { searchChangedError } from "./error-text.ts";
+import type { SearchDiagnostic } from "../core/report-schema.ts";
 import { HashlineError } from "../core/errors.ts";
+import { emptyReport } from "./report.ts";
 import { serializePath } from "./path.ts";
 import { rawMatchVerifier } from "./rg-match-bytes.ts";
 
 /** UTF-16 units kept before the match column when a preview window is cut. */
 const GREP_PREVIEW_LEAD = 100;
 const MAX_CONCURRENT_FILE_READS = 16;
-const INVALID_UTF8_PREVIEW_NOTICE =
-  "Invalid UTF-8: replacement characters shown; plain line numbers cannot be used as edit anchors";
 
 /** Content-mode file header: `<path> · <N> match(es)`. parseFileHeader is its TUI parser. */
 function formatFileHeader(path: string, matches: number): string {
@@ -27,27 +27,13 @@ export function parseFileHeader(line: string): { path: string; summary: string }
   return match ? { path: match[1], summary: match[2] } : undefined;
 }
 
-/** Notices and search diagnostics open with `[` (see assembleGrepOutput and formatSearchWarnings). */
-export function isNoticeLine(line: string): boolean {
-  return line.startsWith("[");
-}
-
-/** Distinct search diagnostics within their budget, keeping opening context and the final cause. */
-function searchDiagnostics(warnings: readonly string[]): string {
-  const diagnostics = new DiagnosticBuffer(MAX_SEARCH_DIAGNOSTIC_BYTES);
-  for (const warning of new Set(warnings)) diagnostics.append(`${warning}\n`);
-  return diagnostics.toString().trimEnd();
-}
-
-export function formatSearchWarnings(warnings: readonly string[]): string {
-  if (!warnings.length) return "";
-  return `\n\n[Search incomplete; results and counts cover only confirmed matches.\n${searchDiagnostics(warnings)}]`;
-}
-
 /** No result can be returned from an incomplete search: report it rather than "no matches". */
-export function searchIncompleteError(message: string, warnings: readonly string[]): HashlineError {
+export function searchIncompleteError(
+  message: string,
+  warnings: SearchDiagnosticBuffer,
+): HashlineError {
   return new HashlineError("SEARCH_INCOMPLETE", message, {
-    facts: { diagnostics: searchDiagnostics(warnings) },
+    facts: { diagnostics: warnings.snapshot() },
   });
 }
 
@@ -71,7 +57,7 @@ interface FormatMatchesOptions {
   context: number;
   anchors: ReturnType<typeof createAnchorFormatter>;
   signal?: AbortSignal;
-  warnings: string[];
+  warnings: SearchDiagnosticBuffer;
   searchSnapshots: ReadonlyMap<string, SearchFileSnapshot>;
 }
 
@@ -86,12 +72,18 @@ export async function formatMatches(options: FormatMatchesOptions) {
   for (const lines of byFile.values()) lines.sort((a, b) => a.lineNumber - b.lineNumber);
   const formatPath = (filePath: string): string => serializePath(cwd, filePath);
   const blocks: string[] = [];
-  let linesTruncated = false;
+  let partialRows = 0;
+  const invalidUtf8Paths: string[] = [];
   const fileEntries = [...byFile.entries()].filter(
     ([, matches]) => outputMode === "content" || matches.some((match) => match.rawMatch),
   );
   if (fileEntries.length) {
-    const fileResults = new Array<{ block?: string; warning?: string }>(fileEntries.length);
+    const fileResults = new Array<{
+      block?: string;
+      warning?: SearchDiagnostic;
+      partialRows?: number;
+      invalidUtf8Path?: string;
+    }>(fileEntries.length);
     let nextIndex = 0;
     const workerAbort = new AbortController();
     const scanSignal = signal ? AbortSignal.any([signal, workerAbort.signal]) : workerAbort.signal;
@@ -136,6 +128,7 @@ export async function formatMatches(options: FormatMatchesOptions) {
                   windowSet.add(n);
               }
               const rows: string[] = [];
+              let partial = 0;
               const matchedRows = new Set<number>();
               const hash = createHash("sha256");
               // Content-mode search snapshots every file before recording its matches.
@@ -154,7 +147,7 @@ export async function formatMatches(options: FormatMatchesOptions) {
                     displayCarriageReturns(line.text),
                     columns.get(line.number),
                   );
-                  if (wasTruncated) linesTruncated = true;
+                  if (wasTruncated) partial++;
                   rows.push(
                     snapshot.validUtf8
                       ? anchors.row(line.number, line.text, display)
@@ -179,8 +172,11 @@ export async function formatMatches(options: FormatMatchesOptions) {
                 throw searchChangedError();
               }
               const header = `${formatFileHeader(formatPath(filePath), matchLines.length)}\n`;
-              const notice = snapshot.validUtf8 ? "" : `\n[${INVALID_UTF8_PREVIEW_NOTICE}]`;
-              fileResults[current] = { block: header + rows.join("\n") + notice };
+              fileResults[current] = {
+                block: header + rows.join("\n"),
+                partialRows: partial,
+                ...(snapshot.validUtf8 ? {} : { invalidUtf8Path: formatPath(filePath) }),
+              };
             } catch (error) {
               const warning = fileReadWarning(filePath, error, scanSignal);
               if (!warning) throw error;
@@ -202,7 +198,11 @@ export async function formatMatches(options: FormatMatchesOptions) {
       if (result.warning) {
         warnings.push(result.warning);
         byFile.delete(fileEntries[index][0]);
-      } else if (result.block) blocks.push(result.block);
+      } else if (result.block) {
+        blocks.push(result.block);
+        partialRows += result.partialRows ?? 0;
+        if (result.invalidUtf8Path) invalidUtf8Paths.push(result.invalidUtf8Path);
+      }
     }
   }
   if (outputMode === "files") {
@@ -217,49 +217,47 @@ export async function formatMatches(options: FormatMatchesOptions) {
       `Total: ${total} match${total !== 1 ? "es" : ""} in ${byFile.size} file${byFile.size !== 1 ? "s" : ""}`,
     );
   }
-  return { blocks, linesTruncated };
+  return { blocks, partialRows, invalidUtf8Paths };
 }
 
 interface AssembleGrepOutputOptions {
   blocks: readonly string[];
-  warnings: readonly string[];
+  warnings: SearchDiagnosticBuffer;
   outputMode: "content" | "files" | "count";
   matchLimitReached: boolean;
   effectiveLimit: number;
-  linesTruncated: boolean;
+  partialRows: number;
+  invalidUtf8Paths: string[];
 }
 
-export function assembleGrepOutput(options: AssembleGrepOutputOptions): {
-  content: [{ type: "text"; text: string }];
-  details: { incomplete: true } | undefined;
-} {
-  const { blocks, warnings, outputMode, matchLimitReached, effectiveLimit, linesTruncated } =
-    options;
-
-  if (!blocks.length && warnings.length) {
+export function assembleGrepOutput(options: AssembleGrepOutputOptions) {
+  const {
+    blocks,
+    warnings,
+    outputMode,
+    matchLimitReached,
+    effectiveLimit,
+    partialRows,
+    invalidUtf8Paths,
+  } = options;
+  if (!blocks.length && warnings.length)
     throw searchIncompleteError("No matches could be displayed.", warnings);
-  }
-  let output = blocks.join(outputMode === "content" ? "\n\n" : "\n");
+  const output = blocks.join(outputMode === "content" ? "\n\n" : "\n");
   const truncation = truncateHead(output, { maxBytes: DEFAULT_MAX_BYTES });
-  output = truncation.content;
-
-  const notices: string[] = [];
-  if (matchLimitReached) {
-    notices.push(
-      `${effectiveLimit} matches limit reached. Use limit=${effectiveLimit * 2} for more, or refine pattern`,
-    );
-  }
-  if (truncation.truncated) notices.push(`${formatSize(DEFAULT_MAX_BYTES)} limit reached`);
-  if (linesTruncated) {
-    notices.push(
-      `Line previews capped at ${GREP_MAX_LINE_LENGTH} chars (anchors hash full lines); use read for full content`,
-    );
-  }
-  if (notices.length) output += `\n\n[${notices.join(". ")}]`;
-  output += formatSearchWarnings(warnings);
-
-  return {
-    content: [{ type: "text" as const, text: output }],
-    details: warnings.length ? { incomplete: true } : undefined,
+  const report = {
+    ...emptyReport("grep", [truncation.content]),
+    search: {
+      mode: outputMode,
+      incomplete: warnings.length > 0,
+      diagnostics: warnings.snapshot(),
+      limit: effectiveLimit,
+      limitReached: matchLimitReached,
+      byteLimit: DEFAULT_MAX_BYTES,
+      omittedRows: truncation.totalLines - truncation.outputLines,
+      previewUnits: GREP_MAX_LINE_LENGTH,
+      partialRows,
+      invalidUtf8Paths,
+    },
   };
+  return { content: [{ type: "text" as const, text: truncation.content }], details: { report } };
 }

@@ -15,18 +15,26 @@ import {
 } from "./rg-process.ts";
 import { submatchesToLineRanges } from "./rg-line-ranges.ts";
 import { rawMatchRevision, type RawMatchRevision } from "./rg-match-bytes.ts";
+import type { SearchDiagnostic } from "../core/report-schema.ts";
+import { causeFacts } from "./report.ts";
+import type { SearchDiagnosticBuffer } from "./search-diagnostics.ts";
 import { searchChangedError, throwIfCancelled } from "./error-text.ts";
 
 /** Surface incomplete search diagnostics without discarding confirmed matches. */
-export function recordSearchDiagnostics(result: RgRunResult, warnings?: string[]): void {
-  const message =
+export function recordSearchDiagnostics(
+  result: RgRunResult,
+  warnings: SearchDiagnosticBuffer,
+): void {
+  if (result.diagnostics) warnings.append(result.diagnostics);
+  if (
     result.stderr.trim() ||
-    (!result.stopped && result.code !== 0 && result.code !== 1
-      ? `ripgrep exited with code ${result.code}.`
-      : "");
-  if (!message) return;
-  if (!warnings) throw ripgrepFailure(message);
-  warnings.push(message);
+    (!result.stopped &&
+      result.code !== 0 &&
+      result.code !== 1 &&
+      !result.diagnostics?.entries.length &&
+      !result.diagnostics?.omittedEntries)
+  )
+    warnings.push({ kind: "process", code: result.code, stderr: result.stderr.trim() });
 }
 
 export interface RgMatch {
@@ -102,7 +110,7 @@ interface SearchMatchesOptions {
   limit: number;
   outputMode: "content" | "files" | "count";
   signal?: AbortSignal;
-  warnings: string[];
+  warnings: SearchDiagnosticBuffer;
 }
 
 /** What a matched file looked like when searched; content output re-verifies it before display. */
@@ -133,9 +141,9 @@ export function fileReadWarning(
   filePath: string,
   error: unknown,
   signal?: AbortSignal,
-): string | undefined {
+): SearchDiagnostic | undefined {
   if (signal?.aborted || !(error instanceof Error) || !("code" in error)) return undefined;
-  return `Could not read ${filePath}: ${error.message}`;
+  return { kind: "file", path: filePath, causes: causeFacts(error) };
 }
 
 export async function searchMatches(options: SearchMatchesOptions) {

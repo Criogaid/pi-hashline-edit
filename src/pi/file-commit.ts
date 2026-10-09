@@ -20,13 +20,19 @@ import {
   filesystemErrorCode,
   HashlineError,
   type ErrorCode,
+  type ErrorOptions,
 } from "../core/errors.ts";
 import { cancellationError, FileChangedDuringReadError, throwIfCancelled } from "./error-text.ts";
 import { withFileRead } from "./file-read.ts";
+import { causeFacts } from "./report.ts";
+import type { MutationFact } from "../core/report-schema.ts";
 
-export type PublicationStatus = "NOT_PUBLISHED" | "PUBLISHED" | "UNKNOWN";
-export type MutationStage = "prepare" | "commit" | "post_process";
+export type PublicationStatus = MutationFact["publication"];
+export type MutationStage = MutationFact["stage"];
 export type CommitMode = "create" | "overwrite";
+export function unpublishedMutationFact(): MutationFact {
+  return { publication: "NOT_PUBLISHED", stage: "prepare" };
+}
 
 export interface CommitOptions {
   mode: CommitMode;
@@ -52,27 +58,26 @@ export interface CommitResult extends MutationVersions {
  * A mutation failure with the stage it reached and what it published. Other
  * failures of a mutation tool happened while preparing and published nothing.
  */
-export class FileMutationError extends HashlineError {
+export class FileMutationError<C extends ErrorCode = ErrorCode> extends HashlineError<C> {
   readonly stage: MutationStage;
   readonly publication: PublicationStatus;
 
   constructor(
-    code: ErrorCode,
+    code: C,
     stage: MutationStage,
     publication: PublicationStatus,
     message: string,
-    options?: { cause?: unknown; next?: string },
+    options?: ErrorOptions<NoInfer<C>>,
   ) {
     super(code, message, options);
     this.name = "FileMutationError";
     this.stage = stage;
     this.publication = publication;
   }
+  mutationFact(): MutationFact {
+    return { publication: this.publication, stage: this.stage };
+  }
 }
-
-/** Recovery for a write whose mode does not fit the target. */
-const USE_OVERWRITE = 'Use mode "overwrite" to replace the existing file.';
-const USE_CREATE = 'Use mode "create" to create a new file.';
 
 export function byteRevision(content: string | Uint8Array): string {
   return createHash("sha256").update(content).digest("hex");
@@ -120,17 +125,21 @@ export function commitReplacement(
   });
 }
 
-function prepareError(
-  code: ErrorCode,
+function prepareError<C extends ErrorCode>(
+  code: C,
   message: string,
-  options?: { cause?: unknown; next?: string },
+  options?: ErrorOptions<NoInfer<C>>,
 ): FileMutationError {
   return new FileMutationError(code, "prepare", "NOT_PUBLISHED", message, options);
 }
 
 /** A classified failure before any publication step keeps its code and recovery. */
 function asPrepareError(error: HashlineError): FileMutationError {
-  return prepareError(error.errorCode, error.message, { cause: error.cause, next: error.next });
+  return prepareError(error.errorCode, error.message, {
+    cause: error.cause,
+    recovery: error.recovery,
+    facts: error.facts,
+  });
 }
 
 function throwIfCancelledBeforePublication(signal: AbortSignal | undefined): void {
@@ -144,9 +153,9 @@ function causeCode(error: unknown, fallback: ErrorCode): ErrorCode {
     : (filesystemErrorCode(error) ?? fallback);
 }
 
-/** A prepare-stage failure of a filesystem step, described as `<step>: <cause>`. */
+/** A filesystem step owns its message; the native failure remains a cause. */
 function stepError(step: string, error: unknown): FileMutationError {
-  return prepareError(causeCode(error, "FILESYSTEM_ERROR"), `${step}: ${errorMessage(error)}`, {
+  return prepareError(causeCode(error, "FILESYSTEM_ERROR"), `${step}.`, {
     cause: error,
   });
 }
@@ -172,11 +181,9 @@ async function inspectTarget(path: string, knownBeforeRevision?: string): Promis
     try {
       publishPath = await realpath(path);
     } catch (error) {
-      throw prepareError(
-        "SYMLINK_UNRESOLVED",
-        `Target symlink cannot be resolved: ${errorMessage(error)}`,
-        { cause: error },
-      );
+      throw prepareError("SYMLINK_UNRESOLVED", "Target symlink cannot be resolved.", {
+        cause: error,
+      });
     }
   }
 
@@ -244,14 +251,14 @@ async function publishCreate(
         "commit",
         "NOT_PUBLISHED",
         "Target appeared during create.",
-        { cause: error, next: USE_OVERWRITE },
+        { cause: error, recovery: "overwrite" },
       );
     }
     throw new FileMutationError(
       "PUBLISH_FAILED",
       "commit",
       "UNKNOWN",
-      `Unable to publish new target: ${errorMessage(error)}`,
+      "Unable to publish new target.",
       { cause: error },
     );
   }
@@ -271,7 +278,7 @@ async function publishReplace(
       "PUBLISH_FAILED",
       "commit",
       "UNKNOWN",
-      `Unable to publish replacement: ${errorMessage(error)}`,
+      "Unable to publish replacement.",
       { cause: error },
     );
   }
@@ -304,9 +311,9 @@ export async function commitFile(
   const target = await inspectTarget(path, options.knownBeforeRevision);
   const { mode } = options;
   if (mode === "create" && target.existed)
-    throw prepareError("TARGET_EXISTS", "Target already exists.", { next: USE_OVERWRITE });
+    throw prepareError("TARGET_EXISTS", "Target already exists.", { recovery: "overwrite" });
   if (mode === "overwrite" && !target.existed)
-    throw prepareError("PATH_NOT_FOUND", "Target does not exist.", { next: USE_CREATE });
+    throw prepareError("PATH_NOT_FOUND", "Target does not exist.", { recovery: "create" });
   if (mode === "create" && options.expectedRevision !== undefined)
     throw prepareError("UNCLASSIFIED", "expectedRevision cannot be combined with mode=create.");
   if (
@@ -358,7 +365,7 @@ export async function commitFile(
       "PUBLISH_FAILED",
       "commit",
       "NOT_PUBLISHED",
-      `Unable to prepare temporary publication area: ${errorMessage(error)}`,
+      "Unable to prepare temporary publication area.",
       { cause: error },
     );
   }
@@ -397,7 +404,7 @@ export async function commitFile(
         "POST_PROCESS_FAILED",
         "post_process",
         "PUBLISHED",
-        `Final revision could not be read: ${errorMessage(error)}`,
+        "Final revision could not be read.",
         { cause: error },
       );
     }
@@ -409,19 +416,19 @@ export async function commitFile(
         "POST_PROCESS_FAILED",
         "post_process",
         "PUBLISHED",
-        `Post-publication processing failed: ${errorMessage(error)}`,
+        "Post-publication processing failed.",
         { cause: error },
       );
     // Cancellation keeps its own record; any other failure here stopped before publication.
     if (error instanceof HashlineError && error.errorCode === "OPERATION_ABORTED")
       throw new FileMutationError("OPERATION_ABORTED", "commit", "NOT_PUBLISHED", error.message, {
-        cause: error,
+        cause: error.cause,
       });
     throw new FileMutationError(
       "PUBLISH_FAILED",
       "commit",
       "NOT_PUBLISHED",
-      `Unable to prepare or publish target: ${errorMessage(error)}`,
+      "Unable to prepare or publish target.",
       { cause: error },
     );
   } finally {
@@ -436,14 +443,44 @@ export async function commitFile(
         "POST_PROCESS_FAILED",
         "post_process",
         "PUBLISHED",
-        `Temporary cleanup failed: ${errorMessage(error)}`,
+        "Temporary cleanup failed.",
         {
           cause:
             failure === undefined
               ? error
-              : new AggregateError([failure, error], "post-publication cleanup also failed"),
+              : new AggregateError([failure, error], "Multiple operation failures."),
         },
       );
     }
+  }
+}
+
+/** The commit owner also owns observations of its published revision. */
+export function commitFreshness(commit: MutationVersions): "unchanged" | "changed" {
+  return commit.publishedRevision === commit.observedRevision ? "unchanged" : "changed";
+}
+export function mutationFact(
+  commit: CommitResult,
+  observation: RevisionObservation = { freshness: commitFreshness(commit) },
+): MutationFact {
+  return {
+    ...commit,
+    stage: "post_process",
+    freshness: observation.freshness,
+    ...("cause" in observation ? { observationCauses: causeFacts(observation.cause) } : {}),
+  };
+}
+export type RevisionObservation =
+  | { freshness: "unchanged" | "changed" }
+  | { freshness: "missing" | "unknown"; cause: unknown };
+export async function observePublishedRevision(
+  path: string,
+  baseline: string,
+): Promise<RevisionObservation> {
+  try {
+    return { freshness: (await fileRevision(path)) === baseline ? "unchanged" : "changed" };
+  } catch (error) {
+    if (error instanceof FileChangedDuringReadError) return { freshness: "changed" };
+    return { freshness: errnoCode(error) === "ENOENT" ? "missing" : "unknown", cause: error };
   }
 }

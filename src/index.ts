@@ -23,6 +23,7 @@ import { makeReplaceTool } from "./pi/replace-tool.ts";
 import { makeWriteOverride } from "./pi/write-tool.ts";
 import { createActionFusionExecutor } from "./pi/action-fusion.ts";
 import { registerFusionCards, withMutationStatus } from "./pi/fusion-card.ts";
+import { withToolReports } from "./pi/tool-error.ts";
 
 export default function (pi: ExtensionAPI) {
   const cwd = process.cwd();
@@ -39,13 +40,13 @@ export default function (pi: ExtensionAPI) {
       : undefined;
     const registerMutation = <TParams extends TSchema, TDetails>(
       tool: ToolDefinition<TParams, TDetails>,
-    ) => pi.registerTool(fusion ? withMutationStatus(tool) : tool);
+    ) => pi.registerTool(withToolReports(fusion ? withMutationStatus(tool) : tool));
     registerMutation(makeWriteOverride(cwd, fusion));
     registerMutation(makeEditOverride(cwd, config, fusion));
     registerMutation(makeReplaceTool(cwd, config, fusion));
 
-    pi.registerTool(makeReadOverride(cwd, config));
-    pi.registerTool(makeGrepOverride(cwd, config));
+    pi.registerTool(withToolReports(makeReadOverride(cwd, config)));
+    pi.registerTool(withToolReports(makeGrepOverride(cwd, config)));
     if (config.forget) registerForgetTool(pi);
   }
 }

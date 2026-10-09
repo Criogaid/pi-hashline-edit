@@ -4,7 +4,7 @@ pi 扩展 `@criogaid/pi-hashline-edit`，注册入口为 `src/index.ts`。
 
 ## 按任务定位
 
-- `src/core/`：内部纯函数层，无公开 API，不依赖 Pi：行拆分、checksum、文本解码、错误码，以及 edit（`apply.ts`）与 replace（`replace.ts`）的引擎。它信任工具层已筛过的输入。
+- `src/core/` is the internal pure layer with no Pi imports: text/checksum/edit/replace engines and the TypeBox-owned report/error schemas in `report-schema.ts`. It trusts tool-entry validation.
 - `src/pi/`：工具注册、配置、渲染、grep 与 ripgrep 进程层、文件提交和 Action Fusion。
 - Use `src/pi/file-read.ts` for guarded stream and whole-file reads; keep byte revision checks in search and commit owners.
 - `src/integration/`：真实后端集成测试。
@@ -22,7 +22,7 @@ pi 扩展 `@criogaid/pi-hashline-edit`，注册入口为 `src/index.ts`。
 - `edit` 的空正文行是实际逻辑行；末尾空行需要终止符才能保留时补上终止符，BOM-only 单行除外。非空末行保留原有最终换行状态。
 - Use the shared CRLF-to-LF view for valid UTF-8 in `read/grep/edit/replace`; standalone CR and literal source escapes remain content. Map mutation offsets back to the original bytes; `write` uses the supplied full content and line endings exactly.
 - Skip NUL-containing files silently in `grep`. Search invalid UTF-8 as raw bytes and display plain preview rows without edit anchors; verify the pre-search source revision and complete raw match spans in every output mode, even when the output limit omits part of a span. Preserve full byte revision checks for both preview and anchored content.
-- Route tool-error previews through `src/pi/render.ts`. Use `src/pi/diagnostic-buffer.ts` for bounded stderr and search diagnostics; preserve the final cause and label omitted text.
+- Render report metadata in `src/pi/render.ts` from structured details, never by parsing result text. Keep native/payload styling in tool adapters. Bound external diagnostics with `diagnostic-buffer.ts` and structured search entries with `search-diagnostics.ts`; retain opening/latest failures and count omissions.
 - 行 hash 是可碰撞的位置相关 checksum。恢复候选由调用方重新提交验证；range 验证边界见 README。
 - `edit/replace` 提交绑定实际读取字节的 revision。工具结果使用 `publishedRevision`；Action Fusion 以 mutation 返回的 `publishedRevision` 为 freshness 基线。
 - 保留提交阶段与 `NOT_PUBLISHED` / `PUBLISHED` / `UNKNOWN` 状态，分别报告文件发布结果和后续命令结果。
@@ -39,9 +39,13 @@ pi 扩展 `@criogaid/pi-hashline-edit`，注册入口为 `src/index.ts`。
 - 用户可见的限制和数值与 README 保持同源；提示文本中的数值由常量生成，不写死。
 - 同类工具共用同一条执行流程，工具只实现自己独有的部分。
 - 同一类失败（如取消、校验失败）使用一致的报错形式。
-- Every tool failure is one JSON error record built in `src/pi/tool-error.ts`: code, tool, path, mutation publication and stage, a fact-only message, code facts, and a single `next` recovery instruction. Throw sites classify failures as `HashlineError` with a code from `core/errors.ts`; they never put recovery advice in `message`.
+- Define success/failure reports, error codes, per-code facts, and permitted recovery selectors once in `src/core/report-schema.ts`. Derive types from those schemas; throw `HashlineError` with code-specific facts and an unflattened cause.
+- Keep ownership explicit: commit owns publication/stage/revisions/freshness and observation causes; edit owns anchor failure facts; replace owns matches; Fusion owns command facts; grep owns completeness/diagnostics/limits; read owns pagination/truncation; forget owns ids.
+- Serialize model reports once in `src/pi/report.ts`, with one final `next` derived from code/publication/feature facts. Keep messages fact-only and field-specific argument fixes separate. Preserve native images and existing forget identity tags.
+- Return execution failures with `isError: true` and `details.report`. Preparation throws `ReportedToolError`; `withToolReports` retains its report for live rendering. Treat host failures without a report as opaque text. Never re-parse JSON text for TUI rendering.
+- Keep the README error-code table derived from `errorDefinitions`; update/check its rows when a definition changes.
 - Keep Pi argument preparation and original-schema acceptance in `argument-validation.ts`; observe prepared failures without reimplementing coercion or optional-null rules. Keep failure-only schema projection and structured aggregation in `argument-diagnostics.ts`; derive branches and choices from the declared schema, suppress only inapplicable or already explained issues, and retain independent fields with bounded native diagnostics.
-- Keep the JSON argument-error envelope and its byte budget in `argument-error.ts`; retain exact field paths, omit whole issues or the argument copy with explicit markers, and never truncate serialized JSON. Use the same envelope for preparation failures.
+- Keep argument-report budgeting in `argument-error.ts`: exact field paths, separate fact/fix, whole issues/argument-copy omissions, valid serialized JSON, and bounded preparation causes. Use the same report for preparation failures.
 - Keep grep scope error classification in `grep-scope.ts`: only `ENOENT` means `PATH_NOT_FOUND`; preserve other filesystem errors.
 - 依赖外部引擎语义的判断交给该引擎本身，不在本地重新实现或近似。
 
@@ -65,7 +69,7 @@ pi 扩展 `@criogaid/pi-hashline-edit`，注册入口为 `src/index.ts`。
 
 - 格式：`npm run format:check`（自动格式化为 `npm run format`）。
 - 类型：`npm run typecheck`。
-- 单文件测试：`node --test src/pi/execute.test.ts`（按需替换路径）。
+- Single case: `npm test -- --test-name-pattern "<regex>"`; use the same option with `npm run test:integration`. Direct `node --test` bypasses environment isolation.
 - core 和 pi 测试：`npm test`。
 - 真实后端集成：`npm run test:integration`；组合运行用 `npm run test:all`。
 

@@ -77,20 +77,18 @@ export function applyReplacements(
       });
     }
     if (count === 0)
-      throw new HashlineError(
-        "NO_MATCH",
-        `Rule ${index} has no matches for ${rule.regex ? `/${rule.find}/` : JSON.stringify(rule.find)}.`,
-      );
+      throw new HashlineError("NO_MATCH", "Replacement rule has no matches.", {
+        facts: { rule: index, find: rule.find, regex: rule.regex === true },
+      });
   }
   changes.sort((a, b) => a.start - b.start || a.end - b.end);
   const conflict = findSortedRangeConflict(changes.map((change) => [change.start, change.end]));
   if (conflict !== undefined) {
     const previous = changes[conflict - 1];
     const current = changes[conflict];
-    throw new HashlineError(
-      "OVERLAPPING_MATCHES",
-      `Rules ${previous.rule} and ${current.rule} overlap at offset ${current.start}.`,
-    );
+    throw new HashlineError("OVERLAPPING_MATCHES", "Replacement ranges overlap.", {
+      facts: { rules: [previous.rule, current.rule], offset: current.start },
+    });
   }
   const parts: string[] = [];
   let cursor = 0;

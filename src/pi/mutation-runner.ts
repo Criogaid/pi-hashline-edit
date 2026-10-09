@@ -20,14 +20,19 @@
 import { withFileMutationQueue, type ExtensionToolContext } from "@earendil-works/pi-coding-agent";
 import type { AgentToolResult, AgentToolUpdateCallback } from "@earendil-works/pi-agent-core";
 import type {
-  ActionFusionDetails,
   createActionFusionExecutor,
   MutationToolName,
   ThenRunInput,
 } from "./action-fusion.ts";
-import { commitReplacement, readEditableSnapshot } from "./file-commit.ts";
 import {
+  commitReplacement,
+  readEditableSnapshot,
   commitFreshness,
+  mutationFact,
+} from "./file-commit.ts";
+import { emptyReport, type ReportDetails } from "./report.ts";
+import type { AnchorReport, ToolReport } from "../core/report-schema.ts";
+import {
   finalizeMutation,
   generateMutationDetails,
   postProcessMutation,
@@ -40,12 +45,11 @@ import { reportToolErrors } from "./tool-error.ts";
 export type ActionFusionExecutor = ReturnType<typeof createActionFusionExecutor>;
 
 /** Result details shared by the read-modify-write tools. */
-export type TextMutationDetails = ReturnType<typeof generateMutationDetails> & {
-  actionFusion?: ActionFusionDetails;
-};
+export type TextMutationDetails = ReturnType<typeof generateMutationDetails>;
 
 /** The file a mutation targets, resolved once per call. */
 export interface MutationTarget {
+  readonly tool: MutationToolName;
   readonly absolutePath: string;
   /** The caller-supplied path, used in result text and diffs. */
   readonly displayPath: string;
@@ -73,24 +77,26 @@ export interface MutationCall<TParams, TDetails> {
 export async function executeMutation<TParams extends { path: string }, TDetails>(
   spec: MutationToolSpec<TParams, TDetails>,
   call: MutationCall<TParams, TDetails>,
-): Promise<AgentToolResult<TDetails>> {
+): Promise<AgentToolResult<(TDetails & ReportDetails) | ReportDetails>> {
   const { cwd, fusion } = spec;
   const { toolCallId, signal, onUpdate, ctx } = call;
   const { then_run, ...mutationParams } = call.params;
   const displayPath = mutationParams.path;
   return reportToolErrors(spec.tool, { path: displayPath, mutation: true, signal }, async () => {
     const absolutePath = canonicalPath(cwd, displayPath);
-    const target: MutationTarget = { absolutePath, displayPath, signal };
+    const target: MutationTarget = { tool: spec.tool, absolutePath, displayPath, signal };
     const mutate = (): Promise<MutationOutcome<TDetails>> =>
       withFileMutationQueue(absolutePath, () =>
         spec.run(mutationParams as unknown as TParams, target),
       );
     if (!fusion) {
       const outcome = await mutate();
-      return finalizeMutation(outcome, commitFreshness(outcome.commit) === "unchanged");
+      return finalizeMutation(outcome, { freshness: commitFreshness(outcome.commit) });
     }
     return fusion({
       toolCallId,
+      tool: spec.tool,
+      displayPath,
       absolutePath,
       thenRun: then_run,
       mutate,
@@ -106,9 +112,8 @@ export interface TextChange {
   /** Complete replacement text; equal to the snapshot for a no-op. */
   readonly text: string;
   /** Fresh anchor report for the committed text. Called during result generation. */
-  anchors(): string;
-  /** First result line. Called during result generation. */
-  summary(): string;
+  anchors(): AnchorReport | undefined;
+  readonly facts: Pick<ToolReport, "edit" | "replace">;
 }
 
 /**
@@ -131,19 +136,21 @@ export async function runTextMutation(
   throwIfCancelled(signal);
 
   const versions = await commitReplacement(absolutePath, next.text, baseRevision, signal);
-  let anchors = "";
+  let anchors: AnchorReport | undefined;
   const result = postProcessMutation(versions.publication, () => {
-    const details = generateMutationDetails(
-      displayPath,
-      currentText,
-      next.text,
-      versions,
-      versions.publication,
-    );
+    const details = generateMutationDetails(displayPath, currentText, next.text);
     anchors = next.anchors();
     return {
-      content: [{ type: "text" as const, text: next.summary() }],
-      details,
+      content: [],
+      details: {
+        ...details,
+        report: {
+          ...emptyReport(target.tool),
+          path: displayPath,
+          mutation: mutationFact(versions),
+          ...next.facts,
+        },
+      },
     };
   });
   return { result, commit: versions, anchors };
