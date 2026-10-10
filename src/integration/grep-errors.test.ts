@@ -6,6 +6,7 @@ import { test } from "node:test";
 import { DEFAULT_CONFIG } from "../pi/config.ts";
 import { makeGrepOverrideWithBackend } from "../pi/grep-tool.ts";
 import { callTool } from "../pi/tool-call.testing.ts";
+import { expectToolFailure } from "../pi/report-failure.testing.ts";
 
 for (const condition of ["permission denied", "symlink loop"] as const) {
   test(`existing search path has ${condition} → grep retains the real filesystem error`, {
@@ -36,14 +37,12 @@ for (const condition of ["permission denied", "symlink loop"] as const) {
     }
     await assert.rejects(stat(path), { code });
     const tool = makeGrepOverrideWithBackend(directory, DEFAULT_CONFIG, {});
-    await assert.rejects(
+    await expectToolFailure(
       callTool(tool, { path, pattern: "needle", literal: true, ignoreCase: false }),
-      (error: unknown) => {
-        assert.ok(error instanceof Error);
-        assert.doesNotMatch(error.message, /Path not found/);
-        assert.ok("code" in error);
-        assert.equal(error.code, code);
-        return true;
+      "FILESYSTEM_ERROR",
+      (report) => {
+        assert.doesNotMatch(report.message ?? "", /Path not found/);
+        assert.equal(report.cause?.code, code);
       },
     );
   });
