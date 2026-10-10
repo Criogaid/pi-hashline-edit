@@ -18,13 +18,7 @@ import {
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import { Text, type Component } from "@earendil-works/pi-tui";
 import type { ActionFusionProgress } from "./action-fusion.ts";
-import {
-  renderReport,
-  reportEntries,
-  reportOf,
-  type Report,
-  type ReportDetails,
-} from "./report.ts";
+import { reportEntries, reportBlock, type Report } from "./report.ts";
 
 /** Max diff lines shown when a result is rendered collapsed. */
 const MAX_COLLAPSED_DIFF_LINES = 24;
@@ -233,26 +227,26 @@ export function reportLines(
 export function withoutReport<T extends Pick<AgentToolResult<unknown>, "content" | "details">>(
   result: T,
 ): T {
-  const report = (result.details as Partial<ReportDetails> | undefined)?.report;
-  const last = result.content.at(-1);
-  if (!report || last?.type !== "text" || last.text !== renderReport(report)) return result;
-  return { ...result, content: result.content.slice(0, -1) };
+  const owned = reportBlock(result);
+  if (!owned) return result;
+  return { ...result, content: result.content.filter((_, index) => index !== owned.index) };
 }
 
 /** Render a failure from its report; text that is not ours keeps its original lines. */
 export function renderToolError(
-  result: Pick<AgentToolResult<unknown>, "content" | "details">,
+  result: Pick<AgentToolResult<unknown>, "content"> &
+    Partial<Pick<AgentToolResult<unknown>, "details">>,
   theme: Theme,
   expanded: boolean,
 ): Text {
-  const report = reportOf(result);
-  const lines = report
-    ? reportLines(report, theme, expanded)
-    : result.content.flatMap((block) =>
-        block.type === "text" && block.text
-          ? block.text.split("\n").map((line) => theme.fg("error", line))
-          : [],
-      );
+  const owned = reportBlock(result);
+  const lines = result.content.flatMap((block, index) =>
+    owned?.index === index
+      ? reportLines(owned.report, theme, expanded)
+      : block.type === "text" && block.text
+        ? block.text.split("\n").map((line) => theme.fg("error", line))
+        : [],
+  );
   return renderOutputPreview(lines.length ? lines : [theme.fg("error", "Error")], expanded, theme);
 }
 

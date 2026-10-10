@@ -23,13 +23,22 @@ const opt = Type.Optional;
 /** A failure reported beneath the step that failed: our code or Node's errno, its own message, and its causes. */
 export const CAUSE_SCHEMA = Type.Cyclic(
   {
-    Cause: Type.Object({
-      error: Type.Optional(Type.String({ description: "Error code of a classified cause." })),
-      code: Type.Optional(Type.String({ description: "Node errno code, such as EACCES." })),
-      message: Type.String(),
-      cause: Type.Optional(Type.Ref("Cause")),
-      errors: Type.Optional(Type.Array(Type.Ref("Cause"))),
-    }),
+    Cause: Type.Object(
+      {
+        error: Type.Optional(Type.String({ description: "Error code of a classified cause." })),
+        code: Type.Optional(Type.String({ description: "Node errno code, such as EACCES." })),
+        message: Type.String(),
+        cause: Type.Optional(Type.Ref("Cause")),
+        errors: Type.Optional(Type.Array(Type.Ref("Cause"))),
+        omitted: Type.Optional(
+          Type.Integer({
+            minimum: 1,
+            description: "Unexpanded cause references, including cycles and repeats.",
+          }),
+        ),
+      },
+      { additionalProperties: false },
+    ),
   },
   "Cause",
 );
@@ -67,33 +76,41 @@ export const COMMAND_STATUS_SCHEMA = Type.Union([
 ]);
 export type CommandStatus = Static<typeof COMMAND_STATUS_SCHEMA>;
 
-const ANCHOR_FAILURE_SCHEMA = Type.Object({
-  field: Type.String(),
-  op: Type.String(),
-  cited: Type.String(),
-  result: Type.Union([
-    Type.Literal("shifted"),
-    Type.Literal("ambiguous"),
-    Type.Literal("unresolved"),
-  ]),
-  search: opt(Type.Union([Type.Literal("local window"), Type.Literal("full file")])),
-  candidate: opt(Type.String()),
-  content: opt(Type.String()),
-  contentOmitted: opt(Type.String()),
-  candidates: opt(Type.Array(Type.String())),
-  omittedCandidates: opt(Type.Integer({ minimum: 1 })),
-  observed: opt(Type.String()),
-  observedOmitted: opt(Type.String()),
-});
+const ANCHOR_FAILURE_SCHEMA = Type.Object(
+  {
+    field: Type.String(),
+    op: Type.String(),
+    cited: Type.String(),
+    result: Type.Union([
+      Type.Literal("shifted"),
+      Type.Literal("ambiguous"),
+      Type.Literal("unresolved"),
+    ]),
+    search: opt(Type.Union([Type.Literal("local window"), Type.Literal("full file")])),
+    candidate: opt(Type.String()),
+    content: opt(Type.String()),
+    contentOmitted: opt(Type.String()),
+    candidates: opt(Type.Array(Type.String())),
+    omittedCandidates: opt(Type.Integer({ minimum: 1 })),
+    observed: opt(Type.String()),
+    observedOmitted: opt(Type.String()),
+  },
+  { additionalProperties: false },
+);
 export type AnchorFailureFact = Static<typeof ANCHOR_FAILURE_SCHEMA>;
 
-export const ARGUMENT_ISSUE_SCHEMA = Type.Object({
-  field: Type.String({
-    description: "Path of the field in Pi's prepared arguments; `$` for none.",
-  }),
-  reason: Type.String({ description: "What is wrong with the value; facts only." }),
-  fix: opt(Type.String({ description: "How to correct it, when the reason alone does not say." })),
-});
+export const ARGUMENT_ISSUE_SCHEMA = Type.Object(
+  {
+    field: Type.String({
+      description: "Path of the field in Pi's prepared arguments; `$` for none.",
+    }),
+    reason: Type.String({ description: "What is wrong with the value; facts only." }),
+    fix: opt(
+      Type.String({ description: "How to correct it, when the reason alone does not say." }),
+    ),
+  },
+  { additionalProperties: false },
+);
 export type ArgumentIssue = Static<typeof ARGUMENT_ISSUE_SCHEMA>;
 
 /**
@@ -117,7 +134,10 @@ export const FACT_FIELDS = {
   matched: Type.Array(Type.String()),
   omittedMatched: count("Matched anchors omitted from the byte budget."),
   candidateNeighborhoods: Type.Array(
-    Type.Object({ lines: Type.String(), rows: Type.Array(Type.String()) }),
+    Type.Object(
+      { lines: Type.String(), rows: Type.Array(Type.String()) },
+      { additionalProperties: false },
+    ),
   ),
   omittedNeighborhoodRows: count("Neighborhood rows omitted from the byte budget."),
   // Replacement rules (core/replace.ts, replace-regex.ts).
@@ -131,14 +151,20 @@ export const FACT_FIELDS = {
   available: Type.Array(Type.String()),
   omittedAvailable: count("Available ids omitted from the byte budget."),
   // read outcome.
-  pagination: Type.Object({
-    start: Type.Integer(),
-    end: Type.Integer(),
-    totalLines: Type.Integer(),
-    nextOffset: Type.Integer(),
-  }),
+  pagination: Type.Object(
+    {
+      start: Type.Integer(),
+      end: Type.Integer(),
+      totalLines: Type.Integer(),
+      nextOffset: Type.Integer(),
+    },
+    { additionalProperties: false },
+  ),
   truncatedAt: Type.String({ description: "The byte budget that stopped the output." }),
-  lineTooLong: Type.Object({ line: Type.Integer(), limit: Type.String() }),
+  lineTooLong: Type.Object(
+    { line: Type.Integer(), limit: Type.String() },
+    { additionalProperties: false },
+  ),
   // grep outcome; `matches` is also replace's match count.
   matches: Type.Integer({ minimum: 0 }),
   files: Type.Integer({ minimum: 0 }),
@@ -156,7 +182,10 @@ export const FACT_FIELDS = {
   freshness: FRESHNESS_SCHEMA,
   freshnessError: CAUSE_SCHEMA,
   // Action Fusion.
-  then_run: Type.Object({ status: COMMAND_STATUS_SCHEMA, output: opt(Type.String()) }),
+  then_run: Type.Object(
+    { status: COMMAND_STATUS_SCHEMA, output: opt(Type.String()) },
+    { additionalProperties: false },
+  ),
   progressError: CAUSE_SCHEMA,
   // forget.
   forgotten: Type.Array(Type.String()),
@@ -168,17 +197,21 @@ export const FACT_FIELDS = {
 type FactName = keyof typeof FACT_FIELDS;
 
 /** Facts of one code: the named fields, each optional unless listed as required. */
-function facts<const R extends FactName, const O extends FactName = never>(
-  required: readonly R[],
-  optional: readonly O[] = [],
+function facts<const R extends readonly FactName[], const O extends readonly FactName[] = []>(
+  required: R,
+  optional?: O,
 ) {
-  const properties = {} as Record<string, unknown>;
+  const properties: TProperties = {};
   for (const name of required) properties[name] = FACT_FIELDS[name];
-  for (const name of optional) properties[name] = Type.Optional(FACT_FIELDS[name]);
+  for (const name of optional ?? []) properties[name] = Type.Optional(FACT_FIELDS[name]);
+  // A single mapped property set preserves required keys in TypeBox's static inference.
   return Type.Object(
-    properties as { [K in R]: (typeof FACT_FIELDS)[K] } & {
-      [K in O]: ReturnType<typeof Type.Optional<(typeof FACT_FIELDS)[K]>>;
+    properties as {
+      [K in R[number] | O[number]]: K extends R[number]
+        ? (typeof FACT_FIELDS)[K]
+        : ReturnType<typeof Type.Optional<(typeof FACT_FIELDS)[K]>>;
     },
+    { additionalProperties: false },
   );
 }
 const NONE = facts([]);
@@ -288,7 +321,11 @@ type Definitions = typeof ERROR_DEFINITIONS;
 export type ErrorCode = keyof Definitions;
 export const ERROR_CODES = Object.keys(ERROR_DEFINITIONS) as ErrorCode[];
 /** The facts a failure of `code` carries. */
-export type ErrorFacts<C extends ErrorCode> = Static<Definitions[C]["facts"]>;
+export type ErrorFacts<C extends ErrorCode> = C extends ErrorCode
+  ? keyof Static<Definitions[C]["facts"]> extends never
+    ? Readonly<Record<string, never>>
+    : Static<Definitions[C]["facts"]>
+  : never;
 /** Recovery alternatives a throw site may select for `code`. */
 export type NextVariant<C extends ErrorCode> = Definitions[C] extends {
   next: infer N;
@@ -338,3 +375,98 @@ export const REPORT_SCHEMA = Type.Object({
   next: opt(Type.String()),
 });
 export type Report = Omit<Static<typeof REPORT_SCHEMA>, "error"> & { error?: ErrorCode };
+
+/** Reports crossing a text boundary identify their protocol; internal reports omit transport fields. */
+export const REPORT_VERSION = 1;
+const WIRE_IDENTITY_SCHEMA = Type.Object({ $hashline: Type.Literal(REPORT_VERSION) });
+const SUCCESS_DEFINITIONS = {
+  read: facts([], ["pagination", "truncatedAt", "lineTooLong", "resultId", "contentForgotten"]),
+  grep: facts(
+    [],
+    [
+      "matches",
+      "files",
+      "matchLimit",
+      "outputLimit",
+      "linePreviewLimit",
+      "invalidUtf8",
+      "diagnostics",
+      "resultId",
+      "contentForgotten",
+    ],
+  ),
+  edit: facts([], ["omittedAnchors"]),
+  replace: facts([], ["matches", "omittedAnchors"]),
+  write: facts([], ["created"]),
+  forget: facts(["forgotten"]),
+  codemode: facts([], ["resultId", "forgetScope", "contentForgotten"]),
+} as const;
+export type ReportTool = keyof typeof SUCCESS_DEFINITIONS;
+const TOOL_SCHEMA = Type.Union(Object.keys(SUCCESS_DEFINITIONS).map((tool) => Type.Literal(tool)));
+const COMMON_WIRE_FIELDS = {
+  tool: TOOL_SCHEMA,
+  path: REPORT_SCHEMA.properties.path,
+  next: REPORT_SCHEMA.properties.next,
+};
+const MUTATION_WIRE_FIELDS = {
+  publication: REPORT_SCHEMA.properties.publication,
+  freshness: REPORT_SCHEMA.properties.freshness,
+  freshnessError: REPORT_SCHEMA.properties.freshnessError,
+  then_run: REPORT_SCHEMA.properties.then_run,
+  progressError: REPORT_SCHEMA.properties.progressError,
+};
+const FAILURE_SCHEMAS = ERROR_CODES.map((code) =>
+  Type.Object(
+    {
+      ...COMMON_WIRE_FIELDS,
+      ...MUTATION_WIRE_FIELDS,
+      stage: REPORT_SCHEMA.properties.stage,
+      error: Type.Literal(code),
+      message: code === "INVALID_ARGUMENTS" ? opt(Type.String()) : Type.String(),
+      cause: REPORT_SCHEMA.properties.cause,
+      ...ERROR_DEFINITIONS[code].facts.properties,
+    },
+    { additionalProperties: false },
+  ),
+);
+const SUCCESS_SCHEMAS = Object.entries(SUCCESS_DEFINITIONS).map(([tool, schema]) =>
+  Type.Object(
+    {
+      ...COMMON_WIRE_FIELDS,
+      tool: Type.Literal(tool),
+      ...(["edit", "replace", "write"].includes(tool) ? MUTATION_WIRE_FIELDS : {}),
+      ...schema.properties,
+    },
+    { additionalProperties: false },
+  ),
+);
+/** Strict legacy records support saved argument errors and intermediate unified session tags. */
+export const LEGACY_REPORT_SCHEMA = Type.Union([...FAILURE_SCHEMAS, ...SUCCESS_SCHEMAS]);
+export const WIRE_REPORT_SCHEMA = Type.Union(
+  [...FAILURE_SCHEMAS, ...SUCCESS_SCHEMAS].map((schema) =>
+    Type.Object(
+      {
+        ...WIRE_IDENTITY_SCHEMA.properties,
+        ...schema.properties,
+      },
+      { additionalProperties: false },
+    ),
+  ),
+);
+type WireIdentity = Static<typeof WIRE_IDENTITY_SCHEMA>;
+type WireContext = Pick<Report, "path" | "next">;
+type WireMutation = Pick<Report, keyof typeof MUTATION_WIRE_FIELDS>;
+type SuccessWire = {
+  [T in ReportTool]: WireIdentity &
+    WireContext & { tool: T } & Static<(typeof SUCCESS_DEFINITIONS)[T]> &
+    (T extends "edit" | "replace" | "write" ? WireMutation : {});
+}[ReportTool];
+type FailureWire = {
+  [C in ErrorCode]: WireIdentity &
+    WireContext &
+    WireMutation &
+    Pick<Report, "stage" | "cause"> & { tool: ReportTool; error: C } & ErrorFacts<C> &
+    (C extends "INVALID_ARGUMENTS" ? { message?: string } : { message: string });
+}[ErrorCode];
+/** The wire union retains each code's required facts; dynamic schema arrays validate the same cases. */
+export type WireReport = SuccessWire | FailureWire;

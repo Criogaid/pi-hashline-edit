@@ -395,7 +395,7 @@ test("no-op commit with knownBeforeRevision validates disk revision against exte
     const target = join(dir, "target.txt");
     const initialContent = "line 1\nline 2\n";
     await writeFile(target, initialContent);
-    const snapshot = await readEditableSnapshot(target, "target.txt");
+    const snapshot = await readEditableSnapshot(target);
     assert.equal(snapshot.text, initialContent);
 
     // External process modifies target after snapshot is read.
@@ -404,7 +404,7 @@ test("no-op commit with knownBeforeRevision validates disk revision against exte
 
     // A no-op replacement (same text as snapshot) must reject because disk has changed.
     await assert.rejects(
-      commitReplacement(target, "target.txt", snapshot.text, snapshot.baseRevision),
+      commitReplacement(target, snapshot.text, snapshot.baseRevision),
       (error: unknown) =>
         error instanceof FileMutationError &&
         error.stage === "prepare" &&
@@ -438,10 +438,9 @@ test("no-op commit with knownBeforeRevision validates disk revision against exte
     assert.equal(await readFile(target, "utf8"), initialContent);
 
     // When target does not change externally, no-op commit succeeds and confirms observed revision.
-    const freshSnapshot = await readEditableSnapshot(target, "target.txt");
+    const freshSnapshot = await readEditableSnapshot(target);
     const noopResult = await commitReplacement(
       target,
-      "target.txt",
       freshSnapshot.text,
       freshSnapshot.baseRevision,
     );
@@ -455,12 +454,12 @@ test("no-op commit with knownBeforeRevision rejects if target was deleted extern
   withTemp(async (dir) => {
     const target = join(dir, "deleted.txt");
     await writeFile(target, "content\n");
-    const snapshot = await readEditableSnapshot(target, "deleted.txt");
+    const snapshot = await readEditableSnapshot(target);
 
     await rm(target);
 
     await assert.rejects(
-      commitReplacement(target, "deleted.txt", snapshot.text, snapshot.baseRevision),
+      commitReplacement(target, snapshot.text, snapshot.baseRevision),
       (error: unknown) =>
         error instanceof FileMutationError &&
         error.stage === "prepare" &&

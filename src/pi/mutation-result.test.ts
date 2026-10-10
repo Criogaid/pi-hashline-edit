@@ -40,35 +40,35 @@ for (const [name, before, after] of [
 test("mutation anchors use the full byte budget when no omission notice is needed", () => {
   const anchors = createAnchorFormatter(4);
   const heading = "Updated anchors:";
-  const prefix = `\n${heading}\n`;
+  const prefix = `${heading}\n`;
   const available = MAX_BLOCK_BYTES - Buffer.byteLength(prefix + anchors.row(1, ""));
   const content = "界".repeat(Math.floor(available / 3)) + "x".repeat(available % 3);
   const expected = prefix + anchors.row(1, content);
   assert.equal(Buffer.byteLength(expected), MAX_BLOCK_BYTES);
   const report = formatMutationAnchors([], [content], [0], anchors, heading, new Set([0]));
-  assert.equal(report, expected);
+  assert.deepEqual(report, { text: expected, omitted: 0 });
 });
 
 test("mutation anchors count separators exactly at the byte boundary", () => {
   const anchors = createAnchorFormatter(4);
   const heading = "Updated anchors:";
-  const prefix = `\n${heading}\n`;
+  const prefix = `${heading}\n`;
   const tail = "tail";
   const overhead = Buffer.byteLength(`${prefix}${anchors.row(1, "")}\n${anchors.row(2, tail)}`);
   const lines = ["x".repeat(MAX_BLOCK_BYTES - overhead), tail];
   const expected = prefix + lines.map((line, index) => anchors.row(index + 1, line)).join("\n");
   assert.equal(Buffer.byteLength(expected), MAX_BLOCK_BYTES);
   assert.equal(
-    formatMutationAnchors([], lines, [0, 1], anchors, heading, new Set([0, 1])),
+    formatMutationAnchors([], lines, [0, 1], anchors, heading, new Set([0, 1])).text,
     expected,
   );
 });
 
-test("mutation anchors reserve the notice after overflow and retain later fitting rows", () => {
+test("mutation anchors overflow → report whole omissions and retain later fitting rows", () => {
   const anchors = createAnchorFormatter(4);
   const heading = "Updated anchors:";
-  const overhead = Buffer.byteLength(`\n${heading}\n${anchors.row(1, "")}`);
-  for (const extra of [0, 1, MAX_BLOCK_BYTES]) {
+  const overhead = Buffer.byteLength(`${heading}\n${anchors.row(1, "")}`);
+  for (const extra of [1, MAX_BLOCK_BYTES]) {
     const lines = ["x".repeat(MAX_BLOCK_BYTES - overhead + extra), "short", "last"];
     const report = formatMutationAnchors(
       [],
@@ -78,10 +78,10 @@ test("mutation anchors reserve the notice after overflow and retain later fittin
       heading,
       new Set([0, 1, 2]),
     );
-    assert.ok(Buffer.byteLength(report) <= MAX_BLOCK_BYTES);
-    assert.match(report, /additional anchors omitted/);
-    assert.ok(!report.includes(anchors.row(1, lines[0])));
-    assert.ok(report.includes(`${anchors.row(2, lines[1])}\n${anchors.row(3, lines[2])}`));
+    assert.ok(Buffer.byteLength(report.text) <= MAX_BLOCK_BYTES);
+    assert.equal(report.omitted, 1);
+    assert.ok(!report.text.includes(anchors.row(1, lines[0])));
+    assert.ok(report.text.includes(`${anchors.row(2, lines[1])}\n${anchors.row(3, lines[2])}`));
   }
 });
 
@@ -90,16 +90,16 @@ test("compact mutation anchors have no row cap and stop at the byte budget", () 
   for (const count of [80, 3000]) {
     const lines = Array.from({ length: count }, (_, index) => `changed ${index}`);
     const report = formatMutationAnchors([], lines, lines.keys(), anchors, "Updated anchors:");
-    const rows = report.match(/^\d+#[0-9A-Z]+$/gm) ?? [];
+    const rows = report.text.match(/^\d+#[0-9A-Z]+$/gm) ?? [];
     assert.ok(rows.length > 40);
-    assert.doesNotMatch(report, /│/);
-    assert.ok(Buffer.byteLength(report) <= MAX_BLOCK_BYTES);
+    assert.doesNotMatch(report.text, /│/);
+    assert.ok(Buffer.byteLength(report.text) <= MAX_BLOCK_BYTES);
     if (count === 80) {
       assert.equal(rows.length, count);
-      assert.doesNotMatch(report, /omitted/);
+      assert.equal(report.omitted, 0);
     } else {
       assert.ok(rows.length < count);
-      assert.match(report, /additional anchors omitted/);
+      assert.equal(report.omitted, count - rows.length);
     }
     assert.deepEqual(
       rows,

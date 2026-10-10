@@ -3,20 +3,21 @@ import { byteRevision } from "./file-commit.ts";
 import type { MutationOutcome } from "./mutation-result.ts";
 
 /** Build a completed overwrite fixture with matching published and observed bytes. */
-export function publishedMutation<T>(
+export function publishedMutation<T extends object | undefined>(
   content: string,
   result: AgentToolResult<T>,
   anchors?: string,
-): MutationOutcome<T> {
+): MutationOutcome<T extends object ? T : object> {
   const revision = byteRevision(content);
   return {
-    result,
+    details: (result.details ?? {}) as T extends object ? T : object,
+    facts: {},
     commit: {
       publication: "PUBLISHED",
       publishedRevision: revision,
       observedRevision: revision,
       created: false,
     },
-    anchors,
+    anchors: anchors === undefined ? undefined : { text: anchors, omitted: 0 },
   };
 }

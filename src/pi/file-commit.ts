@@ -19,7 +19,7 @@ import {
   filesystemErrorCode,
   HashlineError,
   type ErrorCode,
-  type HashlineErrorOptions,
+  type HashlineErrorArguments,
 } from "../core/errors.ts";
 import { cancellationError, FileChangedDuringReadError, throwIfCancelled } from "./error-text.ts";
 import { withFileRead } from "./file-read.ts";
@@ -60,9 +60,9 @@ export class FileMutationError<C extends ErrorCode = ErrorCode> extends Hashline
     stage: MutationStage,
     publication: PublicationStatus,
     message: string,
-    options?: HashlineErrorOptions<C>,
+    ...options: HashlineErrorArguments<NoInfer<C>>
   ) {
-    super(code, message, ...([options] as [HashlineErrorOptions<C>]));
+    super(code, message, ...options);
     this.name = "FileMutationError";
     this.stage = stage;
     this.publication = publication;
@@ -118,18 +118,25 @@ export function commitReplacement(
 function prepareError<C extends ErrorCode>(
   code: C,
   message: string,
-  options?: HashlineErrorOptions<C>,
+  ...options: HashlineErrorArguments<NoInfer<C>>
 ): FileMutationError<C> {
-  return new FileMutationError(code, "prepare", "NOT_PUBLISHED", message, options);
+  return new FileMutationError(code, "prepare", "NOT_PUBLISHED", message, ...options);
 }
 
 /** A classified failure before any publication step keeps its code, facts, cause, and recovery. */
 function asPrepareError<C extends ErrorCode>(error: HashlineError<C>): FileMutationError<C> {
-  return prepareError(error.errorCode, error.message, {
-    cause: error.cause,
-    next: error.next,
-    facts: error.facts,
-  } as HashlineErrorOptions<C>);
+  // The original constructor already enforced its code's facts; preserve that correlated tuple.
+  return prepareError(
+    error.errorCode,
+    error.message,
+    ...([
+      {
+        cause: error.cause,
+        next: error.next,
+        facts: error.facts,
+      },
+    ] as HashlineErrorArguments<C>),
+  );
 }
 
 function throwIfCancelledBeforePublication(signal: AbortSignal | undefined): void {

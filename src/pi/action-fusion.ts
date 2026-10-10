@@ -239,7 +239,7 @@ export function createActionFusionExecutor(
     signal: AbortSignal | undefined;
     ctx: ExtensionToolContext;
     onUpdate?: AgentToolUpdateCallback<TDetails>;
-  }): Promise<AgentToolResult<TDetails & ReportDetails>> {
+  }): Promise<AgentToolResult<TDetails & ReportDetails & { actionFusion: ActionFusionDetails }>> {
     let completedMutation: MutationOutcome<TDetails> | undefined;
     let progressFailure: unknown;
     let commandTiming: { readonly timeoutSeconds: number; readonly deadlineMs: number } | undefined;

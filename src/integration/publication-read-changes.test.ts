@@ -11,7 +11,8 @@ import { createActionFusionExecutor } from "../pi/action-fusion.ts";
 import { DEFAULT_CONFIG } from "../pi/config.ts";
 import { makeEditOverride } from "../pi/edit-tool.ts";
 import { byteRevision, commitFile, FileMutationError } from "../pi/file-commit.ts";
-import { staleTargetNotice } from "../pi/mutation-result.ts";
+import { reportOf } from "../pi/report.ts";
+import { REREAD } from "../pi/report-schema.ts";
 import { makeReplaceTool } from "../pi/replace-tool.ts";
 import { callTool, createToolContext } from "../pi/tool-call.testing.ts";
 import { makeWriteOverride } from "../pi/write-tool.ts";
@@ -133,7 +134,7 @@ for (const fused of [false, true]) {
             assert.equal(result.details.publishedRevision, byteRevision(PUBLISHED));
             if (mutation.name !== "write create")
               assert.equal(result.details.baseRevision, byteRevision(BEFORE));
-            assert.ok(text(result).includes(staleTargetNotice()));
+            assert.equal(reportOf(result)?.next, REREAD);
             assert.doesNotMatch(text(result), /Updated anchors|retry the tool/);
             if (fused) {
               assert.equal(result.details.actionFusion.command, "not_requested");
@@ -239,7 +240,7 @@ test("disturbance during post-command freshness read → retains publication and
           result.details.actionFusion.freshness,
           disturbance === "I/O failure" ? "unknown" : "changed",
         );
-        assert.ok(text(result).includes(staleTargetNotice("[then_run:stale]")));
+        assert.equal(reportOf(result)?.next, REREAD);
         assert.doesNotMatch(text(result), /Updated anchors|retry the tool/);
         await assertTarget(path, PUBLISHED, disturbance);
       },

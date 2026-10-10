@@ -84,8 +84,11 @@ Valid UTF-8 text inspection and matching uses one logical representation: CRLF b
 
 Every result of every tool (`read`, `grep`, `edit`, `replace`, `write`, and `forget`) states its facts in one **report**: a single JSON object, the only form the plugin uses for facts the model reads. A successful result is the tool's content payload (anchored `read` rows, `grep` rows, `Updated anchors:` rows) followed by its report; the report is omitted when it would state nothing beyond `tool` and `path`. A failure — including argument rejection, filesystem errors, cancellation, and a mutation failure under Action Fusion — is the report alone, returned as an error result.
 
+Reports serialized to text carry `$hashline: 1`, defined by `REPORT_VERSION` in [`report-schema.ts`](src/pi/report-schema.ts). The wire schemas accept only registered tools and the `codemode` output tag, reject unknown fields, and require the facts associated with each error code. Internal reports omit the transport marker. Progress updates remain separate: Fusion sends command progress and publication in details, with no final anchor payload.
+
 ```json
 {
+  "$hashline": 1,
   "error": "ANCHOR_MISMATCH",
   "tool": "edit",
   "path": "src/foo.ts",
@@ -109,6 +112,7 @@ A successful edit whose `then_run` command failed, after its `Updated anchors:` 
 
 ```json
 {
+  "$hashline": 1,
   "tool": "edit",
   "path": "src/foo.ts",
   "publication": "PUBLISHED",
@@ -125,7 +129,7 @@ Fields appear in this order and are omitted when they do not apply. Each has one
 | `publication` | Commit layer | Mutation tools only: `NOT_PUBLISHED`, `PUBLISHED`, or `UNKNOWN`. On success, `NOT_PUBLISHED` means no net change. See [Publication](#publication). |
 | `stage` | Commit layer | Failures of mutation tools only: `prepare`, `commit`, or `post_process`. |
 | `message` | Throwing layer | What the failing step found, in its own words; never advice, and never a restatement of a deeper failure. Up to 4 KiB. |
-| `cause` | Throwing layer | The failure beneath that step, structured: `error` (our code) or `code` (Node's errno, such as `EACCES`), its own `message`, and its own `cause` or `errors`, recursively. |
+| `cause` | Throwing layer | The failure beneath that step: `error` (our code) or `code` (Node's errno), its own `message`, and nested `cause` or `errors`. The whole graph is bounded; `omitted` counts references not expanded, including cycles and repeats, rather than all unseen descendants. |
 | Code facts | Code | The facts of the error code, listed below. |
 | `pagination`, `truncatedAt`, `lineTooLong` | `read` | Rows shown and the next `offset` when more remain; the byte budget that stopped output; a first row too long to return. |
 | `matches`, `files`, `matchLimit`, `outputLimit`, `linePreviewLimit`, `invalidUtf8`, `diagnostics` | `grep` | Confirmed matching lines and files; the match limit or Pi's output limit when reached; the preview width when a line was cut; files shown as plain non-anchor previews; search diagnostics when the search was incomplete. `replace` also states `matches`. |
@@ -169,7 +173,9 @@ The codes, their facts (`?` marks optional ones), and their recovery are defined
 | `NOT_FORGETTABLE` | `forget` names an id that is not a tagged result of the previous step. | `ids`, `available`, `omittedAvailable`? |
 | `UNCLASSIFIED` | Any other failure, with its original message. | — |
 
-The TUI renders the same report object from the result's `details.report`, not from the model text. A failure shows a header with the code, tool, and path, a publication line for mutation tools, the message, one `key: value` row per fact (lists continue on indented lines), and `next` last; a success shows its payload and then the same fact rows, leaving out facts the card shows another way (the diff, the separate command card, the forget id). Short errors are shown in full when collapsed; longer errors use the same collapsed preview and expansion as grep results. Text that is not a report keeps its original lines. Rendering does not change the model result; RPC hosts choose their own presentation.
+The TUI renders structured `details.report` only when its serialized block still occurs exactly once in the final content. Hook text before or after that block keeps its original order; a hook replacement is displayed as supplied. Without structured details, the codec searches every text block for one strictly valid report. Unknown versions, invalid schemas, and multiple candidates retain the complete raw content. Saved legacy failure records and intermediate `resultId` tags are recognized by their closed schemas; arbitrary unmarked success JSON is not a report.
+
+A failure shows a header with the code, tool, and path, a publication line for mutation tools, the message, one `key: value` row per fact, and `next` last. A success shows its payload and applicable fact rows. Collapsed previews can be expanded. Rendering preserves the result's error status and content blocks; it does not change what the model receives. RPC hosts choose their own presentation.
 
 #### Argument errors
 
@@ -181,6 +187,7 @@ An argument rejection is an `INVALID_ARGUMENTS` report. In place of `message`, i
 
 ```json
 {
+  "$hashline": 1,
   "error": "INVALID_ARGUMENTS",
   "tool": "edit",
   "issues": [
@@ -197,7 +204,7 @@ An argument rejection is an `INVALID_ARGUMENTS` report. In place of `message`, i
 }
 ```
 
-Pi raises argument rejections before execution and transports them as text only, so the TUI decodes this one report from the error text with the same codec. It renders a diagnostic header and highlighted field/reason rows, each fix below its reason:
+Pi raises argument rejections before execution and transports them as text only. The TUI uses the same strict codec for live rejections and serialized replay, including reports surrounded by hook text. It renders a diagnostic header and highlighted field/reason rows, each fix below its reason:
 
 ```text
 Invalid arguments · edit not executed
@@ -531,6 +538,7 @@ These limits bound model context, not file size. Each omission is a counted or n
 | `forget` tag | With `forget` enabled: direct `read` and content-mode `grep` text results of 2 KiB or more, and image reads. Successful codemode outputs containing a successful read or content-mode grep call use the same threshold and are forgotten as one result; nested results are not tagged. |
 | `edit` / `replace` anchors | 16 KiB including the heading, with no fixed entry-count limit. Compact tokens for changed positions; selected deletion successors retain complete content. Rows that do not fit are omitted in full and counted in `omittedAnchors`; later rows that fit are still returned. |
 | Report `message` | 4 KiB, preserving the opening and the final cause with an omission notice; each `message` within `cause` has the same budget. |
+| Cause graph | 16 KiB of serialized UTF-8 JSON, at most 8 levels and 16 visited references, including repeated or cyclic references. Limits are defined in [`budgets.ts`](src/pi/budgets.ts). `omitted` records unexpanded references. External reports exceeding these bounds fall back to raw text before recursive schema validation. |
 | Argument errors | 16 KiB of valid JSON for combined tool-specific and schema issues; omit the argument copy before omitting whole issues and label both omissions. Each reason and fix has a 4 KiB budget preserving opening/closing text. Pi's schema error allowance applies separately within each top-level field. |
 | Anchor `failures` | 16 KiB of compact JSON, with no fixed failure-count limit; leading entries are kept whole and the rest counted in `omittedFailures`. Unique candidates include complete rows up to 4 KiB, and ambiguous failures list up to eight candidates each. Unresolved anchors show the current cited row when it fits; oversized or out-of-range rows require a fresh `read` or `grep`. |
 | Anchor `matched` | Independent 16 KiB, with no fixed entry-count limit. Omitted entries are counted in `omittedMatched` and are not implied matched. |

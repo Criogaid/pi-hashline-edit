@@ -7,29 +7,18 @@ import { writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { formatKiB, MAX_BLOCK_BYTES } from "./budgets.ts";
-import { createActionFusionExecutor, THEN_RUN_STALE } from "./action-fusion.ts";
+import { MAX_BLOCK_BYTES } from "./budgets.ts";
+import { createActionFusionExecutor } from "./action-fusion.ts";
 import { makeReplaceTool } from "./replace-tool.ts";
 import { makeWriteOverride } from "./write-tool.ts";
 import { makeEditOverride } from "./edit-tool.ts";
-import { byteRevision, FileMutationError } from "./file-commit.ts";
-import {
-  commitFreshness,
-  finalizeMutation,
-  postProcessMutation,
-  staleTargetNotice,
-  type MutationOutcome,
-} from "./mutation-result.ts";
+import { byteRevision, commitFreshness, FileMutationError } from "./file-commit.ts";
+import { finalizeMutation, postProcessMutation, type MutationOutcome } from "./mutation-result.ts";
+import { CommandNotRun, decodeReport, reportOf } from "./report.ts";
+import { REREAD } from "./report-schema.ts";
 import { callTool, createToolContext as ctx } from "./tool-call.testing.ts";
 import { DEFAULT_CONFIG } from "./config.ts";
 import { publishedMutation } from "./mutation-outcome.testing.ts";
-
-const KIB = formatKiB(MAX_BLOCK_BYTES);
-const DIAGNOSTIC_TRUNCATED = new RegExp(`Diagnostic output truncated at ${KIB}`);
-const ANCHOR_CHECK_TRUNCATED = new RegExp(
-  `Anchor-check output truncated at ${KIB}; omitted entries are not implied matched`,
-);
-const ANCHORS_OMITTED = new RegExp(`additional anchors omitted: ${KIB} limit`);
 
 const text = (result: Pick<AgentToolResult<unknown>, "content">): string =>
   result.content.map((block) => (block.type === "text" ? block.text : "")).join("\n");
@@ -44,25 +33,21 @@ const invoke = (
 ) => callTool(tool, args, { toolCallId, signal, onUpdate, ctx: context });
 
 function assertFailureByteBudgets(message: string): void {
-  const checksAt = message.indexOf("\nInput-anchor checks (");
-  const guidanceAt = message.lastIndexOf("\nBefore reusing ");
-  const neighborhoodsAt = message.indexOf("\nAmbiguous-candidate neighborhoods", checksAt);
-  assert.ok(checksAt > 0 && guidanceAt > checksAt);
-  assert.ok(Buffer.byteLength(message.slice(0, checksAt)) <= MAX_BLOCK_BYTES);
-  assert.ok(
-    Buffer.byteLength(
-      message.slice(checksAt + 1, neighborhoodsAt < 0 ? guidanceAt : neighborhoodsAt),
-    ) <= MAX_BLOCK_BYTES,
-  );
-  if (neighborhoodsAt >= 0) {
-    const rows = message.slice(neighborhoodsAt, guidanceAt).match(/^\d+#[0-9A-Z]+│.*$/gm) ?? [];
+  const report = decodeReport(message);
+  assert.ok(report);
+  assert.equal(report.error, "ANCHOR_MISMATCH");
+  assert.ok(report.failures && report.failures.length > 0);
+  assert.ok(Buffer.byteLength(JSON.stringify(report.failures)) <= MAX_BLOCK_BYTES);
+  assert.equal(report.failures.length + (report.omittedFailures ?? 0), 1000);
+  assert.ok(report.omittedFailures);
+  assert.equal(report.matched, undefined);
+  assert.equal(report.omittedMatched, undefined);
+  assert.ok(report.next?.includes("intended target"));
+  if (report.candidateNeighborhoods) {
+    const rows = report.candidateNeighborhoods.flatMap((group) => group.rows);
     assert.ok(rows.length > 0);
     assert.ok(Buffer.byteLength(rows.join("\n")) + 1 <= MAX_BLOCK_BYTES);
   }
-  assert.match(message, DIAGNOSTIC_TRUNCATED);
-  assert.match(message, ANCHOR_CHECK_TRUNCATED);
-  const checks = message.match(/^op \d+ \/ anchor \/ .* \/ mismatched$/gm) ?? [];
-  assert.ok(checks.length > 40 && checks.length < 1000);
 }
 
 test("replace withholds anchors in progress and after commands change or remove the file", async (t) => {
@@ -99,16 +84,9 @@ test("replace withholds anchors in progress and after commands change or remove 
         assert.equal(result.details.actionFusion.freshness, state);
         assert.equal(result.details.publication, "PUBLISHED");
         assert.doesNotMatch(text(result), /Updated anchors|\d+#[0-9A-Z]+│/);
-        assert.deepEqual(result.content[1], {
-          type: "text",
-          text: staleTargetNotice(THEN_RUN_STALE),
-        });
-        assert.equal(
-          result.content.filter(
-            (block: any) => block.type === "text" && block.text.includes(THEN_RUN_STALE),
-          ).length,
-          1,
-        );
+        assert.equal(reportOf(result)?.freshness, state);
+        assert.equal(reportOf(result)?.next, REREAD);
+        assert.equal(result.content.length, 1);
         for (const update of updates)
           assert.doesNotMatch(text(update), /Updated anchors|\d+#[0-9A-Z]+│/);
       }
@@ -161,14 +139,25 @@ test("progress callback failures preserve publication and do not prevent the com
       fusion({
         toolCallId: "failed",
         absolutePath: join(dir, "failed"),
+        tool: "write",
+        displayPath: "failed",
         thenRun: { command: "check" },
         mutate: async () => {
-          throw new FileMutationError("post_process", "PUBLISHED", "original failure");
+          throw new FileMutationError(
+            "POST_PROCESS_FAILED",
+            "post_process",
+            "PUBLISHED",
+            "original failure",
+          );
         },
         signal: undefined,
         ctx: await ctx(dir, t),
       }),
-      (error: any) => error.publication === "PUBLISHED" && /original failure/.test(error.message),
+      (error: unknown) =>
+        error instanceof CommandNotRun &&
+        error.error instanceof FileMutationError &&
+        error.error.publication === "PUBLISHED" &&
+        /original failure/.test(error.error.message),
     );
   } finally {
     await rm(dir, { recursive: true, force: true });
@@ -182,29 +171,27 @@ test("standalone and Fusion finalizers use commit freshness with or without anch
       for (const observedRevision of ["published", "external"]) {
         for (const anchors of [" ANCHOR", undefined]) {
           const mutation = {
-            result: {
-              content: [{ type: "text", text: "saved" }],
-              details: {
-                publication: "UNKNOWN",
-                publishedRevision: "ignored",
-                observedRevision: "ignored",
-              },
+            details: {
+              publication: "UNKNOWN",
+              publishedRevision: "ignored",
+              observedRevision: "ignored",
             },
+            facts: {},
             commit: {
               publication,
               publishedRevision: "published",
               observedRevision,
               created: false,
             },
-            anchors,
-          } satisfies MutationOutcome<unknown>;
+            anchors: anchors ? { text: anchors, omitted: 0 } : undefined,
+          } satisfies MutationOutcome<object>;
           const fresh = observedRevision === "published";
-          assert.equal(commitFreshness(mutation.commit), fresh ? "unchanged" : "changed");
-          const standalone = finalizeMutation(
-            mutation,
-            commitFreshness(mutation.commit) === "unchanged",
-          );
+          const observation = commitFreshness(mutation.commit);
+          assert.equal(observation.freshness, fresh ? "unchanged" : "changed");
+          const standalone = finalizeMutation("edit", "file", mutation, observation);
           const fused = await createActionFusionExecutor()({
+            tool: "edit",
+            displayPath: "file",
             toolCallId: "no-command",
             absolutePath: join(dir, "file"),
             thenRun: undefined,
@@ -212,20 +199,22 @@ test("standalone and Fusion finalizers use commit freshness with or without anch
             signal: undefined,
             ctx: await ctx(dir, t),
           });
-          const expectedContent = [{ type: "text", text: `saved${fresh ? (anchors ?? "") : ""}` }];
-          if (!fresh) expectedContent.push({ type: "text", text: staleTargetNotice() });
-          assert.deepEqual(standalone.content, expectedContent);
-          assert.deepEqual(fused.content, expectedContent);
-          assert.deepEqual(standalone.details, mutation.result.details);
-          assert.deepEqual(fused.details, {
-            ...mutation.result.details,
-            actionFusion: {
-              publication,
-              command: "not_requested",
-              freshness: fresh ? "unchanged" : "changed",
-            },
+          assert.deepEqual(fused.content, standalone.content);
+          assert.equal(standalone.details.publication, "UNKNOWN");
+          assert.equal(reportOf(standalone)?.publication, publication);
+          assert.equal(reportOf(fused)?.publication, publication);
+          assert.equal(reportOf(standalone)?.freshness, fresh ? undefined : "changed");
+          if (fresh && anchors)
+            assert.equal(
+              standalone.content[0].type === "text" && standalone.content[0].text,
+              anchors,
+            );
+          else assert.doesNotMatch(text(standalone), /ANCHOR/);
+          assert.deepEqual(mutation.details, {
+            publication: "UNKNOWN",
+            publishedRevision: "ignored",
+            observedRevision: "ignored",
           });
-          assert.deepEqual(mutation.result.content, [{ type: "text", text: "saved" }]);
         }
       }
     }
@@ -293,32 +282,20 @@ test("mutation anchor output and aggregate anchor diagnostics have byte budgets"
               undefined,
               await ctx(dir, t),
             );
-      const anchorStart = text(deleted).indexOf("\nUpdated anchors:");
-      assert.ok(anchorStart >= 0);
-      const anchorBlock = text(deleted).slice(anchorStart);
-      assert.ok(Buffer.byteLength(anchorBlock) <= MAX_BLOCK_BYTES);
-      assert.match(text(deleted), ANCHORS_OMITTED);
+      assert.equal(reportOf(deleted)?.omittedAnchors, 1);
       assert.doesNotMatch(text(deleted), /^\d+#[0-9A-Z]+/m);
     }
     await writeFile(path, "current\n");
-    await assert.rejects(
-      invoke(
-        makeEditOverride(dir, DEFAULT_CONFIG),
-        "errors",
-        {
-          path,
-          edits: Array.from({ length: 1000 }, () => ({ op: "delete", anchor: "1#XXXX" })),
-        },
-        undefined,
-        undefined,
-        await ctx(dir, t),
-      ),
-      (error: Error) => {
-        assertFailureByteBudgets(error.message);
-        assert.match(error.message, /omitted|truncated/i);
-        return true;
-      },
+    const failure = await invoke(
+      makeEditOverride(dir, DEFAULT_CONFIG),
+      "errors",
+      { path, edits: Array.from({ length: 1000 }, () => ({ op: "delete", anchor: "1#XXXX" })) },
+      undefined,
+      undefined,
+      await ctx(dir, t),
     );
+    assert.equal(failure.isError, true);
+    assertFailureByteBudgets(text(failure));
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
@@ -364,7 +341,7 @@ test("unpaired surrogate arguments are rejected before Fusion", async (t) => {
         callTool(tool, args, { ctx: await ctx(dir, t) }),
         (error: unknown) =>
           error instanceof Error &&
-          rejectsArgument(field, /INVALID_UNICODE:/)(error) &&
+          rejectsArgument(field, /encoded losslessly/)(error) &&
           !("publication" in error),
       );
       assert.equal(await readFile(path, "utf8"), "original\n");
@@ -383,29 +360,27 @@ test("ambiguous recovery bounds candidate lists and never claims content identit
     const lines = Array.from({ length: 100 }, () => "same");
     lines[49] = "different";
     await writeFile(path, lines.join("\n"));
-    await assert.rejects(
-      invoke(
-        makeEditOverride(dir, DEFAULT_CONFIG),
-        "ambiguous",
-        {
-          path,
-          edits: Array.from({ length: 1000 }, () => ({
-            op: "delete",
-            anchor: `50#${computeLineHash(50, "same", 4)}`,
-          })),
-        },
-        undefined,
-        undefined,
-        await ctx(dir, t),
-      ),
-      (error: Error) => {
-        assertFailureByteBudgets(error.message);
-        assert.match(error.message, /ambiguous checksum matches/);
-        assert.match(error.message, /candidates omitted/);
-        assert.doesNotMatch(error.message, /same content/);
-        return true;
+    const failure = await invoke(
+      makeEditOverride(dir, DEFAULT_CONFIG),
+      "ambiguous",
+      {
+        path,
+        edits: Array.from({ length: 1000 }, () => ({
+          op: "delete",
+          anchor: `50#${computeLineHash(50, "same", 4)}`,
+        })),
       },
+      undefined,
+      undefined,
+      await ctx(dir, t),
     );
+    assert.equal(failure.isError, true);
+    assertFailureByteBudgets(text(failure));
+    const report = reportOf(failure);
+    assert.ok(
+      report?.failures?.every((entry) => entry.result === "ambiguous" && entry.omittedCandidates),
+    );
+    assert.doesNotMatch(text(failure), /same content/);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
@@ -451,7 +426,7 @@ test("NUL arguments are rejected before Fusion for all mutation tools", async (t
         callTool(tool, args, { ctx: await ctx(dir, t) }),
         (error: unknown) =>
           error instanceof Error &&
-          rejectsArgument(field, /UNSUPPORTED_TEXT: NUL/)(error) &&
+          rejectsArgument(field, /NUL/)(error) &&
           !("publication" in error),
       );
       assert.equal(await readFile(path, "utf8"), "original\n");
@@ -478,21 +453,19 @@ test("Fusion skips the command when a replacement produces unencodable text", as
       },
       (event) => events.push(event.command),
     );
-    await assert.rejects(
-      callTool(
-        makeReplaceTool(dir, DEFAULT_CONFIG, fusion),
-        {
-          path,
-          replacements: [{ find: "^.", replace: "x", regex: true }],
-          then_run: { command: "check" },
-        },
-        { ctx: await ctx(dir, t) },
-      ),
-      (error: any) =>
-        error.publication === "NOT_PUBLISHED" &&
-        error.command === "skipped" &&
-        /INVALID_UNICODE/.test(error.message),
+    const result = await callTool(
+      makeReplaceTool(dir, DEFAULT_CONFIG, fusion),
+      {
+        path,
+        replacements: [{ find: "^.", replace: "x", regex: true }],
+        then_run: { command: "check" },
+      },
+      { ctx: await ctx(dir, t) },
     );
+    assert.equal(result.isError, true);
+    assert.equal(reportOf(result)?.error, "INVALID_UNICODE");
+    assert.equal(reportOf(result)?.publication, "NOT_PUBLISHED");
+    assert.equal(reportOf(result)?.then_run?.status, "skipped");
     assert.deepEqual(events, ["waiting", "skipped"]);
     assert.equal(await readFile(path, "utf8"), before);
     assert.equal(commands, 0);
@@ -506,7 +479,7 @@ test("shared result building preserves publication and appends anchors only to t
     const cause = new Error("render failed");
     assert.throws(
       () =>
-        postProcessMutation("replace", publication, () => {
+        postProcessMutation(publication, () => {
           throw cause;
         }),
       (error: any) =>
@@ -524,14 +497,12 @@ test("shared result building preserves publication and appends anchors only to t
     details: {},
   };
   const outcome = publishedMutation("saved", result, " ANCHOR");
-  assert.deepEqual(
-    finalizeMutation(outcome, true).content.map((block: any) => block.text),
-    ["summary ANCHOR", "command"],
-  );
-  assert.deepEqual(finalizeMutation(outcome, false).content, [
-    ...result.content,
-    { type: "text", text: staleTargetNotice() },
-  ]);
+  const fresh = finalizeMutation("edit", "file", outcome, { freshness: "unchanged" });
+  assert.equal(fresh.content[0].type === "text" && fresh.content[0].text, " ANCHOR");
+  const stale = finalizeMutation("edit", "file", outcome, { freshness: "changed" });
+  assert.equal(stale.content.length, 1);
+  assert.equal(reportOf(stale)?.freshness, "changed");
+  assert.equal(reportOf(stale)?.next, REREAD);
   assert.equal(result.content[0].text, "summary");
 });
 
@@ -578,7 +549,7 @@ test("all mutation tools succeed without rewriting on no-op, with and without Fu
           undefined,
           await ctx(dir, t),
         );
-        assert.match(text(result), /no net change/);
+        assert.equal(reportOf(result)?.publication, "NOT_PUBLISHED");
         assert.equal(result.details.publication, "NOT_PUBLISHED");
         const revision = byteRevision(Buffer.from("same\n"));
         for (const key of ["baseRevision", "publishedRevision", "observedRevision"])
@@ -835,9 +806,10 @@ test("oversized deletion successors do not suppress later editable anchors", asy
     assert.doesNotMatch(output, /^1#[0-9A-Z]+/m);
     const anchor = output.match(/^2#[0-9A-Z]+$/m)?.[0];
     assert.equal(anchor, `2#${computeLineHash(2, "new", 4)}`);
-    assert.match(output, ANCHORS_OMITTED);
+    assert.equal(reportOf(result)?.omittedAnchors, 1);
     assert.ok(
-      Buffer.byteLength(output.slice(output.indexOf("\nUpdated anchors:"))) <= MAX_BLOCK_BYTES,
+      Buffer.byteLength(result.content[0].type === "text" ? result.content[0].text : "") <=
+        MAX_BLOCK_BYTES,
     );
     await invoke(
       tool,

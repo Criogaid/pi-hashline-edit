@@ -11,7 +11,7 @@ test("snapshot cancelled while opening → rejects as an unpublished cancellatio
   const path = join(directory, "file.txt");
   await writeFile(path, "before\n");
   const controller = new AbortController();
-  const reading = readEditableSnapshot(path, "file.txt", controller.signal);
+  const reading = readEditableSnapshot(path, controller.signal);
   controller.abort();
   await assert.rejects(
     reading,

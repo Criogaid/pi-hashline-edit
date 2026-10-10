@@ -1,16 +1,13 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import {
-  createActionFusionExecutor,
-  ActionFusionError,
-  THEN_RUN_STALE,
-  THEN_RUN_SUCCEEDED,
-} from "./action-fusion.ts";
+import { createActionFusionExecutor, type ActionFusionProgress } from "./action-fusion.ts";
 import { FileMutationError } from "./file-commit.ts";
-import { staleTargetNotice } from "./mutation-result.ts";
+import { REREAD } from "./report-schema.ts";
+import { CommandNotRun, describeFailure, reportOf } from "./report.ts";
+import { createToolContext } from "./tool-call.testing.ts";
 import { publishedMutation } from "./mutation-outcome.testing.ts";
 
 async function withTemp<T>(run: (dir: string) => Promise<T>): Promise<T> {
@@ -21,175 +18,184 @@ async function withTemp<T>(run: (dir: string) => Promise<T>): Promise<T> {
     await rm(dir, { recursive: true, force: true });
   }
 }
+const mutation = (content: string) => publishedMutation(content, { content: [], details: {} });
 
-const context = (cwd: string) => ({ cwd }) as any;
-const result = (content: string) =>
-  publishedMutation(content, {
-    content: [{ type: "text", text: "mutation" }],
-    details: undefined,
-  });
-
-test("published post-processing failure skips command and preserves publication state", async () =>
+test("published post-processing failure → skips command and preserves publication state", async (t) =>
   withTemp(async (dir) => {
     const target = join(dir, "published.txt");
     await writeFile(target, "content\n");
     let commanded = false;
-    const updates: any[] = [];
-    const fusion = createActionFusionExecutor(async () => {
-      commanded = true;
-      return { status: "succeeded", output: "never" };
-    });
+    const progress: ActionFusionProgress[] = [];
+    const fusion = createActionFusionExecutor(
+      async () => {
+        commanded = true;
+        return { status: "succeeded", output: "never" };
+      },
+      (update) => progress.push(update),
+    );
     await assert.rejects(
       fusion({
         toolCallId: "published",
+        tool: "edit",
+        displayPath: "published.txt",
         absolutePath: target,
         thenRun: { command: "check" },
         mutate: async () => {
           throw new FileMutationError(
+            "POST_PROCESS_FAILED",
             "post_process",
             "PUBLISHED",
-            "file was published but result generation failed",
+            "result generation failed",
           );
         },
         signal: undefined,
-        ctx: context(dir),
-        onUpdate: (update) => updates.push(update),
+        ctx: await createToolContext(dir, t),
       }),
-      (error: unknown) =>
-        error instanceof ActionFusionError &&
-        error.publication === "PUBLISHED" &&
-        error.command === "skipped" &&
-        !commanded &&
-        /Re-read before retrying/.test(error.message),
+      (error: unknown) => {
+        assert.ok(error instanceof CommandNotRun);
+        const report = describeFailure("edit", error, { mutation: true });
+        assert.equal(report.publication, "PUBLISHED");
+        assert.equal(report.then_run?.status, "skipped");
+        assert.match(report.next ?? "", /change is saved; do not repeat/);
+        return true;
+      },
     );
-    assert.ok(updates.every((update) => update.details.actionFusion.mutationCompleted === false));
-    assert.equal(updates.at(-1).details.actionFusion.publication, "PUBLISHED");
+    assert.equal(commanded, false);
+    assert.ok(progress.every((update) => update.mutationCompleted === false));
+    assert.equal(progress.at(-1)?.publication, "PUBLISHED");
+    assert.equal(await readFile(target, "utf8"), "content\n");
   }));
 
-test("command failure still reports final changed freshness", async () =>
+test("command fails and modifies the target → reports changed freshness with no usable anchors", async (t) =>
   withTemp(async (dir) => {
     const target = join(dir, "failed.txt");
-    await writeFile(target, "before\n");
     const fusion = createActionFusionExecutor(async () => {
       await writeFile(target, "command changed\n");
       throw new Error("command failed");
     });
-    const outcome: any = await fusion({
+    const outcome = await fusion({
       toolCallId: "failed",
+      tool: "edit",
+      displayPath: "failed.txt",
       absolutePath: target,
       thenRun: { command: "check" },
       mutate: async () => {
         await writeFile(target, "mutation\n");
-        return result("mutation\n");
+        return {
+          ...mutation("mutation\n"),
+          anchors: { text: "Updated anchors: 1#AB", omitted: 0 },
+        };
       },
       signal: undefined,
-      ctx: context(dir),
+      ctx: await createToolContext(dir, t),
     });
     assert.deepEqual(outcome.details.actionFusion, {
       publication: "PUBLISHED",
       command: "failed",
       freshness: "changed",
     });
-    assert.deepEqual(outcome.content[1], { type: "text", text: staleTargetNotice(THEN_RUN_STALE) });
-    assert.equal(outcome.content.length, 3);
-    assert.match(outcome.content[2].text, /command failed/);
+    const report = reportOf(outcome);
+    assert.equal(report?.freshness, "changed");
+    assert.equal(report?.next, REREAD);
+    assert.equal(report?.then_run?.output, "command failed");
+    assert.doesNotMatch(
+      outcome.content.map((block) => (block.type === "text" ? block.text : "")).join("\n"),
+      /Updated anchors|1#AB/,
+    );
+    assert.equal(await readFile(target, "utf8"), "command changed\n");
   }));
 
-test("timeout and cancellation do not rerun mutation and still inspect freshness", async () =>
+test("cancellation after publication → does not rerun mutation and still inspects freshness", async (t) =>
   withTemp(async (dir) => {
     const target = join(dir, "cancelled.txt");
-    await writeFile(target, "before\n");
     let mutations = 0;
     const controller = new AbortController();
     const fusion = createActionFusionExecutor(async () => {
       controller.abort();
       throw new Error("timed out");
     });
-    const outcome: any = await fusion({
+    const outcome = await fusion({
       toolCallId: "cancelled",
+      tool: "edit",
+      displayPath: "cancelled.txt",
       absolutePath: target,
       thenRun: { command: "check" },
       mutate: async () => {
         mutations++;
         await writeFile(target, "mutation\n");
-        return result("mutation\n");
+        return mutation("mutation\n");
       },
       signal: controller.signal,
-      ctx: context(dir),
+      ctx: await createToolContext(dir, t),
     });
     assert.equal(outcome.details.actionFusion.command, "cancelled");
     assert.equal(outcome.details.actionFusion.freshness, "unchanged");
     assert.equal(mutations, 1);
+    assert.equal(await readFile(target, "utf8"), "mutation\n");
   }));
 
-test("queue is released after a failed command", async () =>
+test("first command fails → releases the queue for the next mutation", async (t) =>
   withTemp(async (dir) => {
     const target = join(dir, "queue.txt");
-    await writeFile(target, "before\n");
+    const ctx = await createToolContext(dir, t);
     let calls = 0;
     const fusion = createActionFusionExecutor(async () => {
       calls++;
       if (calls === 1) throw new Error("first command failed");
       return { status: "succeeded", output: "ok" };
     });
-    const first = fusion({
-      toolCallId: "first",
-      absolutePath: target,
-      thenRun: { command: "fail" },
-      mutate: async () => {
-        await writeFile(target, "first\n");
-        return result("first\n");
-      },
-      signal: undefined,
-      ctx: context(dir),
-    });
-    const failed: any = await first;
-    assert.equal(failed.details.actionFusion.command, "failed");
-    const second = await fusion({
-      toolCallId: "second",
-      absolutePath: target,
-      thenRun: { command: "ok" },
-      mutate: async () => {
-        await writeFile(target, "second\n");
-        return result("second\n");
-      },
-      signal: undefined,
-      ctx: context(dir),
-    });
+    for (const content of ["first\n", "second\n"]) {
+      const result = await fusion({
+        toolCallId: content,
+        tool: "edit",
+        displayPath: "queue.txt",
+        absolutePath: target,
+        thenRun: { command: "check" },
+        mutate: async () => {
+          await writeFile(target, content);
+          return mutation(content);
+        },
+        signal: undefined,
+        ctx,
+      });
+      assert.equal(reportOf(result)?.then_run?.status, calls === 1 ? "failed" : "succeeded");
+    }
     assert.equal(calls, 2);
-    assert.match(
-      second.content[1].type === "text" ? second.content[1].text : "",
-      /then_run:succeeded/,
-    );
+    assert.equal(await readFile(target, "utf8"), "second\n");
   }));
 
-test("successful command finalizes anchors and retains completed progress", async () =>
+test("command succeeds on an unchanged target → finalizes anchors and retains completed progress", async (t) =>
   withTemp(async (dir) => {
     const target = join(dir, "finalize.txt");
-    const progress: any[] = [];
+    const progress: ActionFusionProgress[] = [];
+    const partials: string[] = [];
     const fusion = createActionFusionExecutor(
       async () => ({ status: "succeeded", output: "command finished" }),
       (event) => progress.push(event),
     );
     const completed = await fusion({
       toolCallId: "finalize",
+      tool: "edit",
+      displayPath: "finalize.txt",
       absolutePath: target,
       thenRun: { command: "check" },
       signal: undefined,
-      ctx: context(dir),
+      ctx: await createToolContext(dir, t),
       mutate: async () => {
         await writeFile(target, "saved\n");
-        return { ...result("saved\n"), anchors: " ANCHOR" };
+        return { ...mutation("saved\n"), anchors: { text: " ANCHOR", omitted: 0 } };
       },
+      onUpdate: (update) =>
+        partials.push(
+          update.content.map((block) => (block.type === "text" ? block.text : "")).join("\n"),
+        ),
     });
-    assert.deepEqual(completed.content, [
-      { type: "text", text: "mutation ANCHOR" },
-      { type: "text", text: `${THEN_RUN_SUCCEEDED}\ncommand finished` },
-    ]);
+    assert.deepEqual(completed.content[0], { type: "text", text: " ANCHOR" });
+    assert.equal(reportOf(completed)?.then_run?.status, "succeeded");
+    assert.equal(reportOf(completed)?.then_run?.output, "command finished");
+    assert.ok(partials.every((text) => !text.includes("ANCHOR")));
     assert.equal(progress.filter((event) => event.command === "succeeded").length, 1);
-    assert.equal(progress.at(-1).publication, "PUBLISHED");
-    assert.equal(progress.at(-1).freshness, "unchanged");
-    assert.equal(progress.at(-1).command, "succeeded");
-    assert.equal(progress.at(-1).output, "command finished");
-    assert.equal(progress.at(-1).reason, undefined);
+    assert.equal(progress.at(-1)?.publication, "PUBLISHED");
+    assert.equal(progress.at(-1)?.freshness, "unchanged");
+    assert.equal(progress.at(-1)?.output, "command finished");
   }));

@@ -5,10 +5,14 @@ import { join } from "node:path";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { makeWriteOverride } from "./write-tool.ts";
-import { createActionFusionExecutor, THEN_RUN_STALE, THEN_RUN_SUCCEEDED } from "./action-fusion.ts";
+import { createActionFusionExecutor } from "./action-fusion.ts";
 import { fileRevision } from "./file-commit.ts";
 import { callTool } from "./tool-call.testing.ts";
-import { staleTargetNotice } from "./mutation-result.ts";
+import { reportOf } from "./report.ts";
+import { REREAD } from "./report-schema.ts";
+import { initTheme } from "@earendil-works/pi-coding-agent";
+import { theme } from "../../node_modules/@earendil-works/pi-coding-agent/dist/modes/interactive/theme/theme.js";
+initTheme("dark");
 
 const context = (cwd: string) => ({ cwd }) as any;
 
@@ -53,8 +57,8 @@ test("write rejects unwritable content before accessing a missing target", async
     const valid = { path: file, content: "ready\n", mode: "create" };
     assert.equal(tool.prepareArguments(valid), valid);
     for (const [content, expected] of [
-      ["bad\0", rejectsArgument("content", /UNSUPPORTED_TEXT: NUL/)],
-      ["\ud800", rejectsArgument("content", /INVALID_UNICODE:/)],
+      ["bad\0", rejectsArgument("content", /NUL/)],
+      ["\ud800", rejectsArgument("content", /encoded losslessly/)],
     ] as const) {
       await assert.rejects(
         callTool(tool, { path: file, content, mode: "create" }, { ctx: context(dir) }),
@@ -106,15 +110,21 @@ test("write supports create-only and overwrite-only modes", async () =>
     assert.doesNotMatch(created.content[0].text, /Revision:|[0-9a-f]{64}/);
     assert.equal(created.details.publishedRevision, await fileRevision(target));
     assert.equal("revision" in created.details, false);
-    await assert.rejects(
-      callTool(write, { path: "new.txt", content: "bad\n", mode: "create" }, options),
-      /already exists/,
+    const exists = await callTool(
+      write,
+      { path: "new.txt", content: "bad\n", mode: "create" },
+      options,
     );
+    assert.equal(exists.isError, true);
+    assert.equal(reportOf(exists)?.error, "TARGET_EXISTS");
     assert.equal(await readFile(target, "utf8"), "new\n");
-    await assert.rejects(
-      callTool(write, { path: "missing.txt", content: "bad\n", mode: "overwrite" }, options),
-      /does not exist/,
+    const missing = await callTool(
+      write,
+      { path: "missing.txt", content: "bad\n", mode: "overwrite" },
+      options,
     );
+    assert.equal(missing.isError, true);
+    assert.equal(reportOf(missing)?.error, "PATH_NOT_FOUND");
     await callTool(write, { path: "new.txt", content: "updated\n", mode: "overwrite" }, options);
     assert.equal(await readFile(target, "utf8"), "updated\n");
   }));
@@ -155,7 +165,10 @@ test("write returns only a summary for empty, short, and long content", async ()
         undefined,
         context(dir),
       );
-      assert.deepEqual(result.content, [{ type: "text", text: `Created ${path}.` }]);
+      assert.equal(reportOf(result)?.created, true);
+      assert.equal(reportOf(result)?.path, path);
+      assert.equal(reportOf(result)?.publication, "PUBLISHED");
+      assert.equal(result.content.length, 1);
       assert.equal(await readFile(join(dir, path), "utf8"), content);
     }
   }));
@@ -179,10 +192,8 @@ test("write returns its summary and command output after an unchanged then_run",
       undefined,
       context(dir),
     );
-    assert.deepEqual(result.content, [
-      { type: "text", text: "Created unchanged.txt." },
-      { type: "text", text: "[then_run:succeeded]\nchecked" },
-    ]);
+    assert.equal(reportOf(result)?.created, true);
+    assert.deepEqual(reportOf(result)?.then_run, { status: "succeeded", output: "checked" });
     assert.equal(result.details.actionFusion.freshness, "unchanged");
   }));
 
@@ -206,17 +217,19 @@ test("write reports changed freshness when then_run changes the target", async (
     );
     const text = result.content.map((block: any) => block.text).join("\n");
     assert.doesNotMatch(text, /revision:|[0-9a-f]{64}/i);
-    assert.deepEqual(result.content, [
-      { type: "text", text: "Created changed.txt." },
-      { type: "text", text: staleTargetNotice(THEN_RUN_STALE) },
-      { type: "text", text: `${THEN_RUN_SUCCEEDED}\nchecked` },
-    ]);
+    assert.equal(reportOf(result)?.created, true);
+    assert.equal(reportOf(result)?.freshness, "changed");
+    assert.equal(reportOf(result)?.next, REREAD);
+    assert.deepEqual(reportOf(result)?.then_run, { status: "succeeded", output: "checked" });
     assert.doesNotMatch(text, /Fresh anchors:|\b1#[0-9A-Z]+\b/);
     assert.equal(result.details.actionFusion.freshness, "changed");
-    assert.deepEqual(
-      write.renderResult(result, { isPartial: false }, {}, { isError: false }).render(100),
-      [],
-    );
+    const rendered = write
+      .renderResult(result, { isPartial: false }, theme, { isError: false })
+      .render(100)
+      .join("\n");
+    assert.match(rendered, /changed/);
+    assert.match(rendered, /Read the file/);
+    assert.doesNotMatch(rendered, /Command|checked/);
   }));
 
 test("write reports missing freshness when then_run removes the target", async () =>
@@ -241,7 +254,7 @@ test("write reports missing freshness when then_run removes the target", async (
     const text = result.content.map((block: any) => block.text).join("\n");
     assert.ok(result.details.actionFusion);
     assert.equal(result.details.actionFusion.freshness, "missing");
-    assert.match(text, /Re-read/);
+    assert.equal(reportOf(result)?.next, REREAD);
     assert.doesNotMatch(text, /Fresh anchors:/);
   }));
 
@@ -263,7 +276,7 @@ test("write preserves command failure and changed freshness", async () =>
     assert.ok(result.details.actionFusion);
     assert.equal(result.details.actionFusion.freshness, "changed");
     assert.equal(result.details.actionFusion.command, "failed");
-    assert.match(text, /Re-read/);
+    assert.equal(reportOf(result)?.next, REREAD);
     assert.doesNotMatch(text, /Fresh anchors:/);
   }));
 
@@ -271,14 +284,8 @@ test("write rejects NUL content", async () =>
   withTemp(async (dir) => {
     const write = makeWriteOverride(dir);
     await assert.rejects(
-      write.execute(
-        "nul",
-        { path: "nul.txt", content: "a\0b", mode: "create" },
-        undefined,
-        undefined,
-        context(dir),
-      ),
-      /UNSUPPORTED_TEXT/,
+      callTool(write, { path: "nul.txt", content: "a\0b", mode: "create" }, { ctx: context(dir) }),
+      rejectsArgument("content", /NUL/),
     );
     await assert.rejects(readFile(join(dir, "nul.txt")), /ENOENT/);
   }));

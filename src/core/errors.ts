@@ -20,7 +20,7 @@ export type HashlineErrorOptions<C extends ErrorCode> = {
   ? { readonly facts?: ErrorFacts<C> }
   : { readonly facts: ErrorFacts<C> });
 
-type OptionsArgument<C extends ErrorCode> =
+export type HashlineErrorArguments<C extends ErrorCode> =
   {} extends HashlineErrorOptions<C>
     ? [options?: HashlineErrorOptions<C>]
     : [options: HashlineErrorOptions<C>];
@@ -34,7 +34,7 @@ export class HashlineError<C extends ErrorCode = ErrorCode> extends Error {
   readonly facts: ErrorFacts<C> | undefined;
   readonly next: NextVariant<C> | undefined;
 
-  constructor(code: C, message: string, ...[options]: OptionsArgument<C>) {
+  constructor(code: C, message: string, ...[options]: HashlineErrorArguments<NoInfer<C>>) {
     super(message, options?.cause === undefined ? undefined : { cause: options.cause });
     this.name = "HashlineError";
     this.errorCode = code;

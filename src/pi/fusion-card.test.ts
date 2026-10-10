@@ -126,12 +126,15 @@ test("skips and cancellations stay neutral and restore their own reason", () => 
   for (const command of ["skipped", "cancelled"] as const) {
     const h = harness();
     h.report(waiting);
-    h.report({ ...waiting, command, reason: "Not run because the mutation did not complete." });
+    h.report({ ...waiting, command, mutationCompleted: false });
     for (const restored of [false, true]) {
       const view = restored ? harness(h.entries) : h;
       if (restored) view.restore();
       const output = view.card(h.entries[0], true).render(160).join("\n");
-      assert.match(output, /Not run because the mutation did not complete/);
+      assert.match(
+        output,
+        command === "skipped" ? /Not run: the mutation did not complete/ : /Not run: cancelled/,
+      );
       assert.doesNotMatch(output, /publication=|freshness=|\(no output\)/);
       assert.ok(!view.backgrounds.includes("toolErrorBg"));
       assert.ok(!view.backgrounds.includes("toolSuccessBg"));

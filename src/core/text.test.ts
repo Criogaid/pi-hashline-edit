@@ -1,10 +1,14 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createUtf8Decoder, decodeEditableText, decodeUtf8 } from "./text.ts";
-import { UNSUPPORTED_ENCODING } from "./errors.ts";
+import { HashlineError, TEXT_ERROR_MESSAGES } from "./errors.ts";
 
 test("decodeUtf8 rejects malformed input instead of replacing bytes", () => {
-  assert.throws(() => decodeUtf8(Uint8Array.from([0xc3, 0x28])), /UNSUPPORTED_ENCODING/);
+  assert.throws(
+    () => decodeUtf8(Uint8Array.from([0xc3, 0x28])),
+    (error: unknown) =>
+      error instanceof HashlineError && error.errorCode === "UNSUPPORTED_ENCODING",
+  );
 });
 
 test("decodeUtf8 preserves a leading BOM", () => {
@@ -12,7 +16,10 @@ test("decodeUtf8 preserves a leading BOM", () => {
 });
 
 test("decodeEditableText rejects NUL bytes", () => {
-  assert.throws(() => decodeEditableText(Uint8Array.from([0x61, 0, 0x62])), /UNSUPPORTED_TEXT/);
+  assert.throws(
+    () => decodeEditableText(Uint8Array.from([0x61, 0, 0x62])),
+    (error: unknown) => error instanceof HashlineError && error.errorCode === "UNSUPPORTED_TEXT",
+  );
 });
 
 test("streaming UTF-8 decoders preserve a split BOM in strict and lossy modes", () => {
@@ -35,7 +42,7 @@ test("lossy decoding replaces malformed bytes and flushes incomplete sequences a
 test("strict decoding retains the TextDecoder error as the unsupported encoding cause", () => {
   const isEncodingError = (error: unknown) =>
     error instanceof Error &&
-    error.message === UNSUPPORTED_ENCODING &&
+    error.message === TEXT_ERROR_MESSAGES.UNSUPPORTED_ENCODING &&
     error.cause instanceof TypeError;
   assert.throws(() => createUtf8Decoder("strict")(Uint8Array.from([0xff])), isEncodingError);
   const decode = createUtf8Decoder("strict");

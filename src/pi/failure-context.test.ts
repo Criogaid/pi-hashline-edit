@@ -6,7 +6,8 @@ import type { AnchorFailure, Edit } from "../core/types.ts";
 import { formatKiB, MAX_BLOCK_BYTES, MAX_RECOVERY_CANDIDATE_BYTES } from "./budgets.ts";
 import { DEFAULT_CONFIG } from "./config.ts";
 import { createAnchorFormatter } from "./anchor-format.ts";
-import { formatAmbiguousCandidateNeighborhoods, formatFailure } from "./failure-context.ts";
+import { ambiguousCandidateNeighborhoods, describeEditFailure } from "./failure-context.ts";
+import { describeFailure, renderReport } from "./report.ts";
 
 function failure(recovery: AnchorFailure["recovery"]): AnchorFailure {
   return {
@@ -18,7 +19,6 @@ function failure(recovery: AnchorFailure["recovery"]): AnchorFailure {
     current: null,
   };
 }
-
 function ambiguous(lines: readonly string[], positions: number[], hashLen = 4): AnchorFailure {
   return failure({
     kind: "ambiguous",
@@ -29,110 +29,122 @@ function ambiguous(lines: readonly string[], positions: number[], hashLen = 4): 
     })),
   });
 }
-
-function format(text: string, failures: readonly AnchorFailure[], hashLen = 4) {
-  return formatAmbiguousCandidateNeighborhoods(text, failures, createAnchorFormatter(hashLen));
+function neighborhoods(text: string, failures: readonly AnchorFailure[], hashLen = 4) {
+  return ambiguousCandidateNeighborhoods(text, failures, createAnchorFormatter(hashLen));
+}
+function rows(result: ReturnType<typeof neighborhoods>) {
+  return result.facts.candidateNeighborhoods?.flatMap((group) => group.rows) ?? [];
 }
 
-test("unique and unresolved failures produce no neighborhoods", () => {
+test("unique and unresolved failures → no ambiguous neighborhoods", () => {
   const failures = [
     failure({ kind: "found", scope: "local", newLine: 2, newHash: "NEW" }),
     failure({ kind: "none" }),
   ];
-  assert.deepEqual(format("a\nb\nc\n", failures), { text: "", shownLines: new Set() });
-  assert.deepEqual(format("", [failure({ kind: "none" })]), { text: "", shownLines: new Set() });
-});
-
-test("ambiguous context merges and sorts windows with CRLF and BOM-aware anchors", () => {
-  const lines = ["\uFEFFfirst", "a", "", "c", "d", "e", "f", "last"];
-  const { text: result, shownLines } = format(lines.join("\r\n"), [ambiguous(lines, [6, 2], 6)], 6);
-  assert.deepEqual([...shownLines], [1, 2, 3, 4, 5, 6, 7, 8]);
-  assert.match(result, /@@ candidate-neighborhood lines 1-8 @@/);
-  assert.match(result, /Ambiguous-candidate neighborhoods.*observation only/);
-  for (let line = 1; line <= lines.length; line++) {
-    const row = `${line}#${computeLineHash(line, lines[line - 1], 6)}│${lines[line - 1]}`;
-    assert.equal(result.split(row).length - 1, 1);
+  for (const text of ["a\nb\nc\n", ""]) {
+    assert.deepEqual(neighborhoods(text, failures), { facts: {}, shownLines: new Set() });
   }
-  assert.doesNotMatch(result, /\r|omitted|truncated/);
 });
 
-test("ambiguous context clips windows at BOF and EOF without padding", () => {
+test("ambiguous CRLF and BOM context → merges sorted windows with copyable anchors", () => {
+  const lines = ["\uFEFFfirst", "a", "", "c", "d", "e", "f", "last"];
+  const result = neighborhoods(lines.join("\r\n"), [ambiguous(lines, [6, 2], 6)], 6);
+  assert.deepEqual([...result.shownLines], [1, 2, 3, 4, 5, 6, 7, 8]);
+  assert.deepEqual(
+    result.facts.candidateNeighborhoods?.map((group) => group.lines),
+    ["1-8"],
+  );
+  assert.deepEqual(
+    rows(result),
+    lines.map(
+      (content, index) => `${index + 1}#${computeLineHash(index + 1, content, 6)}│${content}`,
+    ),
+  );
+  assert.doesNotMatch(rows(result).join("\n"), /\r/);
+  assert.equal(result.facts.omittedNeighborhoodRows, undefined);
+});
+
+test("ambiguous candidates at BOF and EOF → clipped windows without padding", () => {
   const lines = Array.from({ length: 10 }, (_, index) => `${index + 1}`);
-  const result = format(lines.join("\n"), [ambiguous(lines, [1, 10])]).text;
-  assert.match(result, /@@ candidate-neighborhood lines 1-4 @@/);
-  assert.match(result, /@@ candidate-neighborhood lines 7-10 @@/);
-  assert.equal((result.match(/^\d+#[0-9A-Z]+│/gm) ?? []).length, 8);
-  assert.doesNotMatch(result, /omitted/);
+  const result = neighborhoods(lines.join("\n"), [ambiguous(lines, [1, 10])]);
+  assert.deepEqual(
+    result.facts.candidateNeighborhoods?.map((group) => group.lines),
+    ["1-4", "7-10"],
+  );
+  assert.equal(rows(result).length, 8);
+  assert.equal(result.facts.omittedNeighborhoodRows, undefined);
 });
 
-test("ambiguous context exceeds forty rows and merges repeated candidate windows", () => {
+test("more than forty context rows and repeated windows → no row cap or duplication", () => {
   const lines = Array.from({ length: 60 }, (_, index) => `line-${index + 1}`);
-  const result = format(lines.join("\n"), [ambiguous(lines, [4, 14, 24, 34, 44, 54])]).text;
-  assert.doesNotMatch(result, /omitted|truncated/);
-  assert.equal((result.match(/^\d+#[0-9A-Z]+│/gm) ?? []).length, 42);
-  const repeated = format(
+  const result = neighborhoods(lines.join("\n"), [ambiguous(lines, [4, 14, 24, 34, 44, 54])]);
+  assert.equal(rows(result).length, 42);
+  assert.equal(result.facts.omittedNeighborhoodRows, undefined);
+  const repeated = neighborhoods(
     lines.join("\n"),
     Array.from({ length: 50 }, (_, opIndex) => ({ ...ambiguous(lines, [4, 5]), opIndex })),
-  ).text;
-  assert.equal((repeated.match(/^\d+#[0-9A-Z]+│/gm) ?? []).length, 8);
-  assert.doesNotMatch(repeated, /omitted|truncated/);
+  );
+  assert.equal(rows(repeated).length, 8);
+  assert.equal(new Set(rows(repeated)).size, 8);
 });
 
-test("ambiguous context uses the same first eight candidates as the detail list", () => {
+test("more than eight ambiguous candidates → context uses the same candidate prefix", () => {
   const lines = Array.from({ length: 90 }, (_, index) => `line-${index + 1}`);
-  const result = format(lines.join("\n"), [
+  const result = neighborhoods(lines.join("\n"), [
     ambiguous(lines, [4, 14, 24, 34, 44, 54, 64, 74, 84]),
-  ]).text;
-  assert.equal((result.match(/^\d+#[0-9A-Z]+│/gm) ?? []).length, 56);
-  assert.match(result, /^77#[0-9A-Z]+│line-77$/m);
-  assert.doesNotMatch(result, /^8[1-7]#[0-9A-Z]+│/m);
+  ]);
+  assert.equal(rows(result).length, 56);
+  assert.ok(rows(result).some((row) => /^77#[0-9A-Z]+│line-77$/.test(row)));
+  assert.ok(rows(result).every((row) => !/^8[1-7]#/.test(row)));
 });
 
-test("ambiguous context preserves complete rows at the byte budget", () => {
+test("neighborhood exceeds byte budget → whole rows and explicit omission counts", () => {
   const exact = "x".repeat(MAX_BLOCK_BYTES - Buffer.byteLength("1#XXXX│\n"));
-  const lines = [exact, "target", "last"];
-  const byteLimited = format(lines.join("\n"), [ambiguous(lines, [2, 3])]).text;
-  assert.ok(byteLimited.includes(`1#${computeLineHash(1, exact, 4)}│${exact}\n`));
-  assert.match(byteLimited, /Candidate-neighborhood rows: 1\/3; 2 omitted/);
-  assert.match(byteLimited, /truncated: byte limit/);
-  assert.doesNotMatch(byteLimited, /^2#[0-9A-Z]+│/m);
-  const oversizedFirst = ["界".repeat(6000), "target", "last"];
-  const skippedFirst = format(oversizedFirst.join("\n"), [ambiguous(oversizedFirst, [2, 3])]).text;
-  assert.match(skippedFirst, /Candidate-neighborhood rows: 2\/3; 1 omitted/);
-  assert.doesNotMatch(skippedFirst, /^1#[0-9A-Z]+│/m);
-  assert.match(skippedFirst, /^2#[0-9A-Z]+│target$/m);
-  assert.match(skippedFirst, /^3#[0-9A-Z]+│last$/m);
-  const oversizedMiddle = ["short", "界".repeat(6000), "target", "last"];
-  const partial = format(oversizedMiddle.join("\n"), [ambiguous(oversizedMiddle, [3, 4])]).text;
-  assert.match(partial, /Candidate-neighborhood rows: 3\/4; 1 omitted/);
-  assert.doesNotMatch(partial, /^2#[0-9A-Z]+│/m);
-  assert.match(partial, /@@ candidate-neighborhood lines 1-1 @@/);
-  assert.match(partial, /@@ candidate-neighborhood lines 3-4 @@/);
-  const allOversized = ["x".repeat(4096), "y".repeat(4096)];
-  const empty = format(allOversized.join("\n"), [ambiguous(allOversized, [1, 2])]).text;
-  assert.match(empty, /No complete neighborhood row fits the limits/);
-  assert.match(empty, /Candidate-neighborhood rows: 0\/2; 2 omitted/);
-});
-
-test("ambiguous context enforces the complete candidate row byte limit", () => {
-  for (const extra of [0, 1]) {
-    const candidate = "x".repeat(4096 - Buffer.byteLength("2#XXXXXX│") + extra);
-    const lines = ["prefix", candidate, "tail", "other"];
-    const output = format(lines.join("\n"), [ambiguous(lines, [2, 4], 6)], 6).text;
-    if (extra === 0) {
-      assert.ok(output.includes(`2#${computeLineHash(2, candidate, 6)}│${candidate}\n`));
-      assert.doesNotMatch(output, /omitted/);
-    } else {
-      assert.match(output, /truncated: candidate row limit/);
-      assert.doesNotMatch(output, /^2#[0-9A-Z]+│/m);
-      assert.match(output, /^4#[0-9A-Z]+│other$/m);
-    }
+  const cases = [
+    { lines: [exact, "target", "last"], shown: [1], omitted: 2 },
+    { lines: ["界".repeat(6000), "target", "last"], shown: [2, 3], omitted: 1 },
+    { lines: ["short", "界".repeat(6000), "target", "last"], shown: [1, 3, 4], omitted: 1 },
+    {
+      lines: ["x".repeat(MAX_RECOVERY_CANDIDATE_BYTES), "y".repeat(MAX_RECOVERY_CANDIDATE_BYTES)],
+      shown: [],
+      omitted: 2,
+    },
+  ];
+  for (const { lines, shown, omitted } of cases) {
+    const result = neighborhoods(lines.join("\n"), [
+      ambiguous(lines, [lines.length - 1, lines.length]),
+    ]);
+    assert.deepEqual([...result.shownLines], shown);
+    assert.equal(result.facts.omittedNeighborhoodRows, omitted);
+    assert.ok(
+      Buffer.byteLength(rows(result).join("\n") + (rows(result).length ? "\n" : "")) <=
+        MAX_BLOCK_BYTES,
+    );
+    for (const position of shown)
+      assert.ok(
+        rows(result).includes(
+          `${position}#${computeLineHash(position, lines[position - 1], 4)}│${lines[position - 1]}`,
+        ),
+      );
   }
 });
 
-test("unique candidates inside ambiguous neighborhoods retain the candidate row limit", () => {
-  const lines = ["prefix", "x".repeat(4096), "match", "match"];
-  const output = format(lines.join("\n"), [
+test("candidate complete row at its byte limit → kept exactly or omitted whole", () => {
+  for (const extra of [0, 1]) {
+    const candidate = "x".repeat(
+      MAX_RECOVERY_CANDIDATE_BYTES - Buffer.byteLength("2#XXXXXX│") + extra,
+    );
+    const lines = ["prefix", candidate, "tail", "other"];
+    const result = neighborhoods(lines.join("\n"), [ambiguous(lines, [2, 4], 6)], 6);
+    assert.equal(result.shownLines.has(2), extra === 0);
+    assert.equal(result.facts.omittedNeighborhoodRows, extra === 0 ? undefined : 1);
+    assert.ok(result.shownLines.has(4));
+  }
+});
+
+test("unique candidate inside ambiguous context exceeds limit → context cannot bypass its row limit", () => {
+  const lines = ["prefix", "x".repeat(MAX_RECOVERY_CANDIDATE_BYTES), "match", "match"];
+  const result = neighborhoods(lines.join("\n"), [
     ambiguous(lines, [3, 4]),
     failure({
       kind: "found",
@@ -140,96 +152,81 @@ test("unique candidates inside ambiguous neighborhoods retain the candidate row 
       newLine: 2,
       newHash: computeLineHash(2, lines[1], 4),
     }),
-  ]).text;
-  assert.match(output, /truncated: candidate row limit/);
-  assert.doesNotMatch(output, /^2#[0-9A-Z]+│/m);
+  ]);
+  assert.equal(result.shownLines.has(2), false);
+  assert.equal(result.facts.omittedNeighborhoodRows, 1);
 });
 
-test("neighborhoods keep shorter later rows when the remaining budget cannot fit a row", () => {
+test("remaining context budget cannot fit an intermediate row → retain shorter later rows", () => {
   const lines = ["x".repeat(MAX_BLOCK_BYTES - 100), "y".repeat(200), "target", "other"];
-  const output = format(lines.join("\n"), [ambiguous(lines, [3, 4])]);
-  assert.deepEqual([...output.shownLines], [1, 3, 4]);
-  assert.match(output.text, /Candidate-neighborhood rows: 3\/4; 1 omitted/);
-  const rows = output.text.match(/^\d+#[0-9A-Z]+│.*$/gm) ?? [];
-  assert.ok(Buffer.byteLength(rows.join("\n") + "\n") <= MAX_BLOCK_BYTES);
+  const result = neighborhoods(lines.join("\n"), [ambiguous(lines, [3, 4])]);
+  assert.deepEqual([...result.shownLines], [1, 3, 4]);
+  assert.equal(result.facts.omittedNeighborhoodRows, 1);
+  assert.ok(Buffer.byteLength(rows(result).join("\n") + "\n") <= MAX_BLOCK_BYTES);
 });
 
 function rejectedEdit(text: string, edits: Edit[], shiftRadius = 0) {
   const result = applyEdits(text, edits, DEFAULT_CONFIG.hashLen, shiftRadius);
-  assert.ok(!result.ok, "the fixture must reach failure formatting");
+  assert.ok(!result.ok, "the fixture must reach failure reporting");
+  const error = describeEditFailure(
+    result.failure,
+    { currentText: text, anchors: createAnchorFormatter(DEFAULT_CONFIG.hashLen) },
+    edits.length > 1,
+  );
   return {
     failure: result.failure,
-    message: formatFailure(
-      result.failure,
-      { currentText: text, anchors: createAnchorFormatter(DEFAULT_CONFIG.hashLen) },
-      edits.length > 1,
-    ),
+    report: describeFailure("edit", error, { path: "file.txt", mutation: true }),
   };
 }
-
 const oldAnchor = { line: 1, hash: computeLineHash(1, "old", DEFAULT_CONFIG.hashLen) };
 
-test("multiple unresolved anchors and candidate context → one closing recovery instruction survives truncation", () => {
-  const cases: {
-    readonly text: string;
-    readonly edits: Edit[];
-    readonly radius: number;
-    readonly truncated: boolean;
-  }[] = [
+test("multiple unresolved anchors and candidate context → one recovery survives omitted facts", () => {
+  const cases = [
     ...[2, MAX_BLOCK_BYTES].map((count) => ({
       text: "current\n",
       edits: Array.from({ length: count }, (): Edit => ({ op: "delete", start: oldAnchor })),
       radius: 0,
-      truncated: count === MAX_BLOCK_BYTES,
+      omitted: count === MAX_BLOCK_BYTES,
     })),
     {
       text: "current\nold\n",
-      edits: [{ op: "delete", start: oldAnchor }],
+      edits: [{ op: "delete", start: oldAnchor } as Edit],
       radius: 2,
-      truncated: false,
+      omitted: false,
     },
     {
       text: "current\nold\nold\n",
-      edits: [{ op: "delete", start: oldAnchor }],
+      edits: [{ op: "delete", start: oldAnchor } as Edit],
       radius: 2,
-      truncated: false,
+      omitted: false,
     },
   ];
   for (const fixture of cases) {
-    const { message } = rejectedEdit(fixture.text, fixture.edits, fixture.radius);
-    const instructions = message.match(/^Before reusing .+$/gm) ?? [];
-    assert.equal(instructions.length, 1);
-    assert.match(instructions[0], /candidate or observed anchor, confirm.*intended target/);
-    assert.match(instructions[0], /read or grep.*omitted rows.*out-of-range lines.*context/);
-    assert.match(instructions[0], /Retries verify every anchor again\.$/);
-    assert.ok(message.endsWith(instructions[0]), "guidance must follow every diagnostic block");
-    const facts = message.slice(0, message.lastIndexOf(instructions[0]));
-    assert.doesNotMatch(facts, /\b(?:confirm|read|grep|retries)\b/i);
+    const { report } = rejectedEdit(fixture.text, fixture.edits, fixture.radius);
+    assert.equal(report.error, "ANCHOR_MISMATCH");
+    assert.match(report.next ?? "", /confirm.*intended target/);
+    assert.match(report.next ?? "", /read or grep.*omitted rows.*out-of-range lines.*context/);
+    const { next, ...facts } = report;
+    assert.equal(renderReport(report).split(next!).length - 1, 1);
+    assert.doesNotMatch(JSON.stringify(facts), /\b(?:confirm|read|grep|retries)\b/i);
     if (fixture.radius === 0)
-      assert.match(facts, /Current cited line \(observation only\):\n1#[0-9A-Z]+│current/);
-    assert.equal(/Diagnostic output truncated/.test(message), fixture.truncated);
+      assert.match(report.failures?.[0].observed ?? "", /1#[0-9A-Z]+│current/);
+    assert.equal(Boolean(report.omittedFailures), fixture.omitted);
   }
 });
 
-test("anchor-check rows exceed their byte budget → header qualification and omission warning survive", () => {
-  const { message } = rejectedEdit(
+test("failure list exceeds budget → omitted anchors are never reported as matched", () => {
+  const { report } = rejectedEdit(
     "current\n",
     Array.from({ length: MAX_BLOCK_BYTES }, () => ({ op: "delete", start: oldAnchor })),
   );
-  const header = /^Input-anchor checks \(checksum only; this snapshot\):$/m.exec(message);
-  assert.ok(header);
-  const notice = /Anchor-check output truncated.*omitted entries are not implied matched/.exec(
-    message,
-  );
-  assert.ok(notice);
-  assert.ok(header.index < notice.index);
-  const rows =
-    message.slice(header.index, notice.index).match(/^op \d+ \/ anchor \/ .* \/ mismatched$/gm) ??
-    [];
-  assert.ok(rows.length > 0 && rows.length < MAX_BLOCK_BYTES);
+  assert.ok(report.failures && report.failures.length > 0);
+  assert.equal(report.failures.length + (report.omittedFailures ?? 0), MAX_BLOCK_BYTES);
+  assert.equal(report.matched, undefined);
+  assert.ok(report.failures.every((entry) => entry.result === "unresolved"));
 });
 
-test("reversed ranges and overlapping edits → preserve the core reason and state that nothing was written", () => {
+test("reversed ranges and overlapping edits → original reason and unpublished status without anchor recovery", () => {
   const text = "a\nb\nc\n";
   const anchor = (line: number, content: string) => ({
     line,
@@ -243,28 +240,30 @@ test("reversed ranges and overlapping edits → preserve the core reason and sta
     ],
   ];
   for (const edits of cases) {
-    const { failure, message } = rejectedEdit(text, edits);
+    const { failure, report } = rejectedEdit(text, edits);
     assert.ok(failure.kind === "range");
-    assert.equal(message.split("\n")[0], failure.message);
-    assert.equal(message.split("\n")[1], "No changes written by this edit batch.");
-    assert.doesNotMatch(message, /Before reusing|confirm|read or grep|Retries verify/);
+    assert.equal(report.message, failure.message);
+    assert.equal(report.publication, "NOT_PUBLISHED");
+    assert.doesNotMatch(report.next ?? "", /Before reusing|confirm|read or grep|Retries verify/);
   }
 });
 
-test("unresolved rows are out of range or oversized → failure entries contain omission facts without instructions", () => {
+test("unresolved row out of range or oversized → omission facts contain no recovery instructions", () => {
   const text = "x".repeat(MAX_RECOVERY_CANDIDATE_BYTES) + "\n";
   const cases = [
     {
       start: oldAnchor,
-      reason: new RegExp(`Current row exceeds ${formatKiB(MAX_RECOVERY_CANDIDATE_BYTES)}`),
+      reason: new RegExp(`row exceeds ${formatKiB(MAX_RECOVERY_CANDIDATE_BYTES)}`),
     },
-    { start: { ...oldAnchor, line: 2 }, reason: /Cited line is out of range/ },
+    { start: { ...oldAnchor, line: 2 }, reason: /cited line is out of range/ },
   ];
   for (const { start, reason } of cases) {
-    const { message } = rejectedEdit(text, [{ op: "delete", start }]);
-    const facts = message.slice(0, message.lastIndexOf("\nBefore reusing "));
-    assert.match(facts, reason);
-    assert.doesNotMatch(facts, /\b(?:confirm|read|grep|retry|retries)\b/i);
-    assert.doesNotMatch(facts, /^\d+#[0-9A-Z]+│/m);
+    const { report } = rejectedEdit(text, [{ op: "delete", start }]);
+    assert.match(report.failures?.[0].observedOmitted ?? "", reason);
+    assert.equal(report.failures?.[0].observed, undefined);
+    assert.doesNotMatch(
+      JSON.stringify(report.failures),
+      /\b(?:confirm|read|grep|retry|retries)\b/i,
+    );
   }
 });

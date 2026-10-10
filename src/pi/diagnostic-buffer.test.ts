@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { DiagnosticBuffer } from "./diagnostic-buffer.ts";
 import { MAX_SEARCH_DIAGNOSTIC_BYTES } from "./budgets.ts";
-import { formatSearchWarnings } from "./grep-output.ts";
+import { assembleGrepOutput } from "./grep-output.ts";
 import { MAX_RG_STDERR_BYTES, runText } from "./rg-process.ts";
 
 const diagnostic = (size: number) =>
@@ -42,11 +42,23 @@ test("diagnostics within the budget are unchanged", () => {
 });
 
 test("search warning aggregation retains the final cause and labels truncation", () => {
-  const result = formatSearchWarnings([diagnostic(MAX_SEARCH_DIAGNOSTIC_BYTES)]);
-  assert.match(result, /Search incomplete/);
-  assert.match(result, /regex parse error:/);
-  assert.match(result, /error: unclosed group/);
-  assert.match(result, /omitted/i);
+  const { facts, payload } = assembleGrepOutput({
+    formatted: {
+      blocks: ["confirmed match"],
+      linesTruncated: false,
+      invalidUtf8: [],
+      matches: 1,
+      files: 1,
+    },
+    warnings: [diagnostic(MAX_SEARCH_DIAGNOSTIC_BYTES)],
+    outputMode: "content",
+    matchLimitReached: false,
+    effectiveLimit: 100,
+  });
+  assert.equal(payload, "confirmed match");
+  assert.match(facts.diagnostics ?? "", /regex parse error:/);
+  assert.match(facts.diagnostics ?? "", /error: unclosed group/);
+  assert.match(facts.diagnostics ?? "", /omitted/i);
 });
 
 test("stderr collection preserves UTF-8 and reports overflow without losing the final cause", async () => {

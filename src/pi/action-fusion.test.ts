@@ -10,18 +10,11 @@ import { makeReplaceTool } from "./replace-tool.ts";
 import { makeWriteOverride } from "./write-tool.ts";
 import { computeLineHash } from "../core/hash.ts";
 import type { ActionFusionProgress, CommandOutcome } from "./action-fusion.ts";
-import {
-  ACTION_FUSION_GUIDELINES,
-  ActionFusionError,
-  createActionFusionExecutor,
-  THEN_RUN_FAILED,
-  THEN_RUN_SKIPPED,
-  THEN_RUN_STALE,
-  THEN_RUN_SUCCEEDED,
-} from "./action-fusion.ts";
+import { ACTION_FUSION_GUIDELINES, createActionFusionExecutor } from "./action-fusion.ts";
 import { byteRevision, FileMutationError } from "./file-commit.ts";
 import { DEFAULT_CONFIG } from "./config.ts";
-import { staleTargetNotice } from "./mutation-result.ts";
+import { REREAD } from "./report-schema.ts";
+import { CommandNotRun, describeFailure, renderReport, reportOf } from "./report.ts";
 import { publishedMutation } from "./mutation-outcome.testing.ts";
 
 async function tempDir(): Promise<string> {
@@ -125,14 +118,14 @@ test("edit and replace share one embedded executor and preserve mutation results
     );
     const editOutput = editResult.content.at(-1);
     assert.ok(editOutput?.type === "text");
-    assert.match(editOutput.text, new RegExp(THEN_RUN_SUCCEEDED));
+    assert.equal(reportOf(editResult)?.then_run?.status, "succeeded");
     assert.match(
       editResult.content.map((block) => (block.type === "text" ? block.text : "")).join("\n"),
       /Updated anchors/,
     );
     const replaceOutput = replaceResult.content.at(-1);
     assert.ok(replaceOutput?.type === "text");
-    assert.match(replaceOutput.text, new RegExp(THEN_RUN_SUCCEEDED));
+    assert.equal(reportOf(replaceResult)?.then_run?.status, "succeeded");
     assert.deepEqual(calls, ["check edit", "check replace"]);
     assert.equal(await readFile(join(dir, "edit.txt"), "utf8"), "before\nafter\n");
     assert.equal(await readFile(join(dir, "replace.txt"), "utf8"), "after\n");
@@ -153,6 +146,8 @@ test("mutation failure skips the command and command failure does not roll back"
     await assert.rejects(
       fusion({
         toolCallId: "x",
+        tool: "edit",
+        displayPath: join(dir, "missing.txt"),
         absolutePath: join(dir, "missing.txt"),
         thenRun: { command: "check" },
         mutate: async () => {
@@ -161,8 +156,9 @@ test("mutation failure skips the command and command failure does not roll back"
         signal: undefined,
         ctx: await ctx(dir, t),
       }),
-      (error: Error) =>
-        error.message.includes(THEN_RUN_SKIPPED) &&
+      (error: unknown) =>
+        error instanceof CommandNotRun &&
+        error.status === "skipped" &&
         error.message.includes("anchor mismatch: current 1#ABCD"),
     );
     assert.equal(calls, 0);
@@ -170,6 +166,8 @@ test("mutation failure skips the command and command failure does not roll back"
     await writeFile(target, "changed\n");
     const result = await fusion({
       toolCallId: "y",
+      tool: "edit",
+      displayPath: target,
       absolutePath: target,
       thenRun: { command: "check" },
       mutate: async () =>
@@ -180,9 +178,9 @@ test("mutation failure skips the command and command failure does not roll back"
       signal: undefined,
       ctx: await ctx(dir, t),
     });
-    assert.equal(result.content[0].type === "text" && result.content[0].text, "mutation");
-    const diagnostic = result.content[1].type === "text" ? result.content[1].text : "";
-    assert.ok(diagnostic.includes(THEN_RUN_FAILED) && diagnostic.includes(commandFailure));
+    assert.equal(result.details.ok, true);
+    assert.equal(reportOf(result)?.then_run?.status, "failed");
+    assert.equal(reportOf(result)?.then_run?.output, commandFailure);
     assert.equal(await readFile(target, "utf8"), "changed\n");
     assert.equal(calls, 1);
   } finally {
@@ -204,6 +202,8 @@ test("cancelled calls do not mutate or run the command", async (t) => {
     await assert.rejects(
       fusion({
         toolCallId: "x",
+        tool: "edit",
+        displayPath: join(dir, "cancelled.txt"),
         absolutePath: join(dir, "cancelled.txt"),
         thenRun: { command: "check" },
         mutate: async () => {
@@ -232,6 +232,8 @@ test("marks anchors stale when then_run changes the target", async (t) => {
     });
     const result = await fusion({
       toolCallId: "stale",
+      tool: "edit",
+      displayPath: target,
       absolutePath: target,
       thenRun: { command: "mutate target" },
       mutate: async () => {
@@ -252,7 +254,7 @@ test("marks anchors stale when then_run changes the target", async (t) => {
       .filter((block) => block.type === "text")
       .map((block) => (block.type === "text" ? block.text : ""))
       .join("\n");
-    assert.deepEqual(result.content[1], { type: "text", text: staleTargetNotice(THEN_RUN_STALE) });
+    assert.equal(reportOf(result)?.next, REREAD);
     assert.doesNotMatch(output, /ANCHOR/);
     assert.equal((result.details as any)?.actionFusion?.freshness, "changed");
   } finally {
@@ -271,6 +273,8 @@ test("Action Fusion omits structured anchors when target freshness is unknown", 
     });
     const result = await fusion({
       toolCallId: "unknown",
+      tool: "edit",
+      displayPath: missing,
       absolutePath: missing,
       thenRun: { command: "check" },
       mutate: async () => {
@@ -295,7 +299,7 @@ test("Action Fusion omits structured anchors when target freshness is unknown", 
     assert.equal(commands, 0);
     assert.equal((result.details as any).actionFusion.freshness, "unknown");
     assert.doesNotMatch(output, /ANCHOR/);
-    assert.deepEqual(result.content[1], { type: "text", text: staleTargetNotice(THEN_RUN_STALE) });
+    assert.equal(reportOf(result)?.next, REREAD);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
@@ -324,7 +328,7 @@ test("edit omits Updated anchors when then_run changes the target", async (t) =>
     const output = result.content.map((block: any) => block.text ?? "").join("\n");
     assert.ok(result.details.actionFusion);
     assert.equal(result.details.actionFusion.freshness, "changed");
-    assert.deepEqual(result.content[1], { type: "text", text: staleTargetNotice(THEN_RUN_STALE) });
+    assert.equal(reportOf(result)?.next, REREAD);
     assert.doesNotMatch(output, /Updated anchors|\b1#[0-9A-Z]+│/);
     assert.equal(await readFile(target, "utf8"), "command changed\n");
   } finally {
@@ -341,7 +345,16 @@ test("all mutation tools forward command progress before completion in RPC mode"
       async (_id, _input, _signal, _ctx, onUpdate) => {
         assert.equal(events.at(-1)?.command, "running");
         onUpdate?.({ content: [{ type: "text", text: "live output" }], details: undefined });
-        assert.match(updates.at(-1).content.at(-1).text, /live output/);
+        assert.equal(updates.at(-1).details.actionFusion.output, "live output");
+        assert.ok(
+          updates.every(
+            (update) =>
+              !update.content.some(
+                (block: { type: string; text?: string }) =>
+                  block.type === "text" && /Updated anchors|\d+#[0-9A-Z]+/.test(block.text ?? ""),
+              ),
+          ),
+        );
         assert.equal(events.at(-1)?.output, "live output");
         return { status: "succeeded", output: "final output" };
       },
@@ -421,42 +434,41 @@ test("progress reports skipped mutations and failed commands without rolling bac
       },
       (event) => events.push(event),
     );
-    await assert.rejects(
-      makeEditOverride(dir, DEFAULT_CONFIG, fusion).execute(
-        "skip",
-        {
-          path: "missing.txt",
-          edits: [{ op: "append", body: ["after"] }],
-          then_run: { command: "check" },
-        },
-        undefined,
-        undefined,
-        await ctx(dir, t),
-      ),
+    const skipped = await makeEditOverride(dir, DEFAULT_CONFIG, fusion).execute(
+      "skip",
+      {
+        path: "missing.txt",
+        edits: [{ op: "append", body: ["after"] }],
+        then_run: { command: "check" },
+      },
+      undefined,
+      undefined,
+      await ctx(dir, t),
     );
+    assert.equal(skipped.isError, true);
+    assert.equal(reportOf(skipped)?.then_run?.status, "skipped");
     assert.equal(commands, 0);
     assert.deepEqual(
       events.map((event) => event.command),
       ["waiting", "skipped"],
     );
     assert.equal(events.at(-1)!.output, "");
-    assert.equal(events.at(-1)!.reason, "Not run because the mutation did not complete.");
+    assert.equal(events.at(-1)!.mutationCompleted, false);
     events.length = 0;
     await writeFile(join(dir, "replace.txt"), "original\n");
-    await assert.rejects(
-      makeReplaceTool(dir, DEFAULT_CONFIG, fusion).execute(
-        "replace-skip",
-        {
-          path: "replace.txt",
-          replacements: [{ find: "missing", replace: "changed" }],
-          then_run: { command: "check" },
-        },
-        undefined,
-        undefined,
-        await ctx(dir, t),
-      ),
-      /no matches/,
+    const unmatched = await makeReplaceTool(dir, DEFAULT_CONFIG, fusion).execute(
+      "replace-skip",
+      {
+        path: "replace.txt",
+        replacements: [{ find: "missing", replace: "changed" }],
+        then_run: { command: "check" },
+      },
+      undefined,
+      undefined,
+      await ctx(dir, t),
     );
+    assert.equal(unmatched.isError, true);
+    assert.equal(reportOf(unmatched)?.error, "NO_MATCH");
     assert.equal(commands, 0);
     assert.deepEqual(
       events.map((event) => event.command),
@@ -503,6 +515,8 @@ test("concurrent mutations on case-differing paths serialize on Windows", {
     });
     const p1 = fusion({
       toolCallId: "1",
+      tool: "edit",
+      displayPath: join(dir, "caseTest.txt"),
       absolutePath: join(dir, "caseTest.txt"),
       thenRun: undefined,
       mutate: async () => {
@@ -518,6 +532,8 @@ test("concurrent mutations on case-differing paths serialize on Windows", {
     await firstStarted.promise;
     const p2 = fusion({
       toolCallId: "2",
+      tool: "edit",
+      displayPath: join(dir, "CASETEST.TXT"),
       absolutePath: join(dir, "CASETEST.TXT"),
       thenRun: undefined,
       mutate: async () => {
@@ -538,15 +554,22 @@ test("concurrent mutations on case-differing paths serialize on Windows", {
   }
 });
 
-test("ActionFusionError re-wrapping appends recovery guidance without duplicating outcome banners", async (t) => {
+test("published mutation failure → preserves the original failure and states command and recovery once", async (t) => {
   const dir = await tempDir();
   try {
     const fusion = createActionFusionExecutor();
-    const mutationError = new FileMutationError("post_process", "PUBLISHED", "post-process failed");
-    let caught: any;
+    const mutationError = new FileMutationError(
+      "POST_PROCESS_FAILED",
+      "post_process",
+      "PUBLISHED",
+      "post-process failed",
+    );
+    let caught: unknown;
     try {
       await fusion({
         toolCallId: "test-rewrap",
+        tool: "edit",
+        displayPath: join(dir, "target.txt"),
         absolutePath: join(dir, "target.txt"),
         thenRun: { command: "echo done" },
         mutate: async () => {
@@ -559,23 +582,17 @@ test("ActionFusionError re-wrapping appends recovery guidance without duplicatin
       caught = error;
     }
 
-    assert.ok(caught instanceof ActionFusionError);
-    assert.equal(caught.publication, "PUBLISHED");
-    assert.equal(caught.command, "skipped");
-    assert.ok(caught.cause instanceof ActionFusionError);
-    assert.equal(caught.cause.cause, mutationError);
-
-    const lines = caught.message.split("\n");
-    assert.equal(lines[0], "post-process failed");
-    assert.ok(lines[1].includes(THEN_RUN_SKIPPED));
-    assert.equal(lines[2], "File changes are saved. Command skipped.");
-    assert.equal(lines[3], "Re-read before retrying.");
-    assert.equal(lines.length, 4);
-
-    // Verify markers appear exactly once
-    assert.equal((caught.message.match(/\[then_run:skipped\]/g) ?? []).length, 1);
-    assert.equal((caught.message.match(/File changes are saved/g) ?? []).length, 1);
-    assert.equal((caught.message.match(/post-process failed/g) ?? []).length, 1);
+    assert.ok(caught instanceof CommandNotRun);
+    assert.equal(caught.status, "skipped");
+    assert.equal(caught.error, mutationError);
+    const report = describeFailure("edit", caught, { mutation: true });
+    assert.equal(report.publication, "PUBLISHED");
+    assert.equal(report.stage, "post_process");
+    assert.equal(report.then_run?.status, "skipped");
+    assert.match(report.next ?? "", /change is saved; do not repeat/);
+    const diagnostic = renderReport(report);
+    assert.equal(diagnostic.split("post-process failed").length - 1, 1);
+    assert.equal(diagnostic.split('"status": "skipped"').length - 1, 1);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
@@ -604,24 +621,27 @@ test("Fusion uses commit facts when details omit or contradict publication and r
         });
         const result = await fusion({
           toolCallId: "commit-facts",
+          tool: "edit",
+          displayPath: target,
           absolutePath: target,
           thenRun,
           signal: undefined,
           ctx: await ctx(dir, t),
           mutate: async () => ({
-            result: { content: [{ type: "text", text: "mutation" }], details },
+            details: details ?? {},
+            facts: {},
             commit,
-            anchors: " ANCHOR",
+            anchors: { text: " ANCHOR", omitted: 0 },
           }),
         });
-        assert.deepEqual(result.content[0], { type: "text", text: "mutation ANCHOR" });
-        assert.deepEqual(result.details, {
-          ...details,
-          actionFusion: {
-            publication: "NOT_PUBLISHED",
-            command: thenRun ? "succeeded" : "not_requested",
-            freshness: "unchanged",
-          },
+        assert.deepEqual(result.content[0], { type: "text", text: " ANCHOR" });
+        for (const [key, value] of Object.entries(details ?? {}))
+          assert.deepEqual(Reflect.get(result.details, key), value);
+        assert.equal(reportOf(result)?.publication, "NOT_PUBLISHED");
+        assert.deepEqual(result.details.actionFusion, {
+          publication: "NOT_PUBLISHED",
+          command: thenRun ? "succeeded" : "not_requested",
+          freshness: "unchanged",
         });
         assert.equal(commands, thenRun ? 1 : 0);
         assert.equal(await readFile(target, "utf8"), "same\n");
@@ -654,6 +674,8 @@ test("timed command progress ticks during silence, preserves output, and stops a
         );
         const execution = fusion({
           toolCallId: outcome,
+          tool: "edit",
+          displayPath: join(dir, "target.txt"),
           absolutePath: join(dir, "target.txt"),
           thenRun: { command: "check", timeout: 10 },
           mutate: async () => {
@@ -714,6 +736,8 @@ test("commands without an explicit timeout do not start countdown updates", asyn
     );
     const execution = fusion({
       toolCallId: "untimed",
+      tool: "edit",
+      displayPath: join(dir, "target.txt"),
       absolutePath: join(dir, "target.txt"),
       thenRun: { command: "check" },
       mutate: async () => {
@@ -784,9 +808,10 @@ test("Fusion fails at a mutation or command boundary → reports each command ou
               : scenario === "command failed"
                 ? "failed"
                 : "skipped";
-        const phase = stoppedDuringMutation ? `mutation ${scenario}` : "mutation completed";
         const invocation = fusion({
           toolCallId: scenario,
+          tool: "edit",
+          displayPath: target,
           absolutePath: target,
           thenRun: { command: "check" },
           signal: controller.signal,
@@ -795,6 +820,11 @@ test("Fusion fails at a mutation or command boundary → reports each command ou
             if (scenario === "failed") throw new Error("mutation diagnostic");
             if (scenario === "prepare" || scenario === "commit" || scenario === "post_process")
               throw new FileMutationError(
+                scenario === "post_process"
+                  ? "POST_PROCESS_FAILED"
+                  : scenario === "commit"
+                    ? "PUBLISH_FAILED"
+                    : "FILE_CHANGED",
                 scenario,
                 scenario === "post_process" ? "PUBLISHED" : "NOT_PUBLISHED",
                 "mutation diagnostic",
@@ -809,9 +839,10 @@ test("Fusion fails at a mutation or command boundary → reports each command ou
         let diagnostic = "";
         if (stoppedDuringMutation) {
           await assert.rejects(invocation, (error: unknown) => {
-            assert.ok(error instanceof ActionFusionError);
-            diagnostic = error.message;
-            assert.equal(error.command, expectedCommand);
+            assert.ok(error instanceof CommandNotRun);
+            const report = describeFailure("edit", error, { mutation: true });
+            diagnostic = renderReport(report);
+            assert.equal(report.then_run?.status, expectedCommand);
             return true;
           });
         } else {
@@ -831,14 +862,9 @@ test("Fusion fails at a mutation or command boundary → reports each command ou
           assert.equal(state.command, expectedCommand);
           assert.equal(state.publication, "PUBLISHED");
         }
-        assert.match(diagnostic, new RegExp(`(?:^|\\n)${phase} \\[then_run:`));
-        assert.equal(diagnostic.split(phase).length - 1, 1);
-        assert.equal((diagnostic.match(/\[then_run:(?:skipped|failed)\]/g) ?? []).length, 1);
-        assert.equal(
-          (diagnostic.match(/Command (?:skipped|failed|cancelled|timeout)\./g) ?? []).length,
-          1,
-        );
-        assert.ok(diagnostic.includes(`Command ${expectedCommand}.`));
+        const report = JSON.parse(diagnostic);
+        assert.equal(report.then_run.status, expectedCommand);
+        assert.equal((diagnostic.match(/"then_run"/g) ?? []).length, 1);
         assert.doesNotMatch(
           diagnostic,
           /the command was not run|then_run did not complete successfully/,
@@ -847,17 +873,11 @@ test("Fusion fails at a mutation or command boundary → reports each command ou
         if (stoppedDuringMutation && scenario !== "not started")
           assert.equal((diagnostic.match(/mutation diagnostic/g) ?? []).length, 1);
         if (scenario === "target changed") {
-          assert.match(
-            diagnostic,
-            /(?:^|\n)target content changed after the fused mutation(?:\n|$)/,
-          );
-          assert.equal(
-            (diagnostic.match(/target content changed after the fused mutation/g) ?? []).length,
-            1,
-          );
+          assert.equal(report.freshness, "changed");
+          assert.equal(report.next, REREAD);
           assert.equal(await readFile(target, "utf8"), "external\n");
         } else if (scenario === "revision unreadable") {
-          assert.match(diagnostic, /(?:^|\n)unable to confirm the target revision: .*ENOENT/);
+          assert.equal(report.freshness, "missing");
         } else if (scenario.startsWith("command ")) {
           assert.equal((diagnostic.match(/command diagnostic/g) ?? []).length, 1);
           assert.equal(await readFile(target, "utf8"), "published\n");

@@ -282,7 +282,10 @@ function collidingToolCallIds() {
     const id = taggedResultId(
       withResultTag(
         callId,
-        { content: [{ type: "text", text: LOG_BODY }] },
+        {
+          report: { tool: "read", path: "build.log" },
+          payload: [{ type: "text", text: LOG_BODY }],
+        },
         true,
         () => "build.log",
       ),
