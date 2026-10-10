@@ -50,6 +50,12 @@ const MILLISECONDS_PER_SECOND = 1_000;
 // Pi's built-in Bash rejects timeouts above the setTimeout millisecond limit.
 const MAX_BASH_TIMEOUT_SECONDS = 2_147_483_647 / 1_000;
 
+// Pi's Bash runs on this host, and Pi's prompt does not name the OS; only Windows needs the path note.
+const COMMAND_DESCRIPTION =
+  process.platform === "win32"
+    ? "Bash command to run. This host is Windows: avoid Unix-only paths such as /tmp."
+    : "Bash command to run.";
+
 export const ACTION_FUSION_GUIDELINES = [
   "Before each file mutation, identify its next command.",
   "then_run is a parameter of edit, replace, and write, not a separate tool.",
@@ -71,12 +77,7 @@ export function createThenRunSchema(tool: MutationToolName) {
   return Type.Optional(
     Type.Object(
       {
-        command: Type.String({
-          minLength: 1,
-          pattern: "\\S",
-          description:
-            "Bash command to run, written for this platform: no Unix-only paths like /tmp on Windows.",
-        }),
+        command: Type.String({ minLength: 1, pattern: "\\S", description: COMMAND_DESCRIPTION }),
         timeout: Type.Optional(
           Type.Number({
             exclusiveMinimum: 0,
