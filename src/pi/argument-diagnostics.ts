@@ -22,6 +22,16 @@ export interface ArgumentDiagnostics {
   readonly limited: boolean;
 }
 
+/** State shared by one failure projection. */
+interface Projection {
+  /** Fields a tool check already explained; their schema constraints are dropped. */
+  readonly explained: ReadonlySet<string>;
+  /** Fields that belong to the selected shapes. */
+  readonly applicable: Set<string>;
+  /** Branch constraints that native diagnostics would split across branches. */
+  readonly derived: ArgumentIssue[];
+}
+
 function literalValues(schema: TSchema): readonly TLiteralValue[] | undefined {
   if (IsLiteral(schema)) return [schema.const];
   if (!IsUnion(schema)) return undefined;
@@ -49,14 +59,34 @@ function objectTag(schema: TUnion):
   return undefined;
 }
 
+/**
+ * Fields that alone tell tag-sharing branches apart: each branch requires one
+ * field that every other branch forbids, and shares all others unchanged.
+ */
+function exclusiveFields(branches: readonly TObject[]): readonly string[] | undefined {
+  const fields = branches.map((branch) => {
+    const own = Object.keys(branch.properties).filter((field) =>
+      branches.some((other) => other.properties[field] !== branch.properties[field]),
+    );
+    return own.length === 1 &&
+      branch.required?.includes(own[0]) &&
+      ObjectOptions(branch).additionalProperties === false
+      ? own[0]
+      : undefined;
+  });
+  return fields.every((field): field is string => field !== undefined) &&
+    new Set(fields).size === fields.length
+    ? fields
+    : undefined;
+}
+
 function projectSchema(
   schema: TSchema,
   value: unknown,
   path: string,
-  explained: ReadonlySet<string>,
-  applicable: Set<string>,
+  projection: Projection,
 ): TSchema {
-  const projected = projectValueSchema(schema, value, path, explained, applicable);
+  const projected = projectValueSchema(schema, value, path, projection);
   return IsOptional(schema) && !IsOptional(projected) ? Type.Optional(projected) : projected;
 }
 
@@ -64,13 +94,12 @@ function projectValueSchema(
   schema: TSchema,
   value: unknown,
   path: string,
-  explained: ReadonlySet<string>,
-  applicable: Set<string>,
+  projection: Projection,
 ): TSchema {
   if (IsUnion(schema)) {
     const choices = literalValues(schema);
     if (choices) {
-      applicable.add(path);
+      projection.applicable.add(path);
       return Type.Unknown({ enum: [...new Set(choices)] });
     }
     const tag = objectTag(schema);
@@ -80,8 +109,7 @@ function projectValueSchema(
       const matches = tag.branches.filter((branch) =>
         Value.Check(branch.properties[tag.field], Reflect.get(value, tag.field)),
       );
-      if (matches.length === 1)
-        return projectSchema(matches[0], value, path, explained, applicable);
+      if (matches.length === 1) return projectSchema(matches[0], value, path, projection);
       if (matches.length === 0)
         return Type.Object({ [tag.field]: Type.Unknown({ enum: [...new Set(tag.choices)] }) });
       // Distinct property presence can disambiguate branches sharing a tag even
@@ -108,13 +136,35 @@ function projectValueSchema(
           shapeValue,
         ),
       );
-      if (shapes.length === 1) return projectSchema(shapes[0], value, path, explained, applicable);
-      // A shared tag can select several shapes (for example before/after destinations).
-      // Project every applicable branch so semantic checks are retained, then let the
-      // native engine select a shape after already-explained constraints are removed.
-      const projected = matches.map((branch) =>
-        projectSchema(branch, value, path, explained, applicable),
-      );
+      if (shapes.length === 1) return projectSchema(shapes[0], value, path, projection);
+      // Branches set apart only by exclusive fields (for example before/after
+      // destinations) fail together when none or several are given. Validate their
+      // merged shape once and state the choice as one issue, instead of each branch
+      // requiring its own field and forbidding the others.
+      const alternatives = exclusiveFields(matches);
+      if (alternatives) {
+        const given = alternatives.filter((field) => Object.hasOwn(value, field));
+        if (given.length !== 1)
+          projection.derived.push({
+            field: path || "$",
+            reason: `expected exactly one of: ${alternatives.join(", ")}`,
+          });
+        const merged = Type.Object(
+          Object.fromEntries(
+            matches
+              .flatMap((branch) => Object.entries(branch.properties))
+              .map(([field, child]) => [
+                field,
+                alternatives.includes(field) ? Type.Optional(child) : child,
+              ]),
+          ),
+          ObjectOptions(matches[0]),
+        );
+        return projectSchema(merged, value, path, projection);
+      }
+      // Otherwise project every applicable branch so semantic checks are retained, then
+      // let the native engine select a shape after already-explained constraints are removed.
+      const projected = matches.map((branch) => projectSchema(branch, value, path, projection));
       const accepted = projected.filter((branch) => Value.Check(branch, value));
       return accepted.length === 1 ? accepted[0] : Type.Union(projected);
     }
@@ -123,8 +173,7 @@ function projectValueSchema(
       const matches = typed.filter(
         (branch) => "type" in branch && Value.Check(Type.Unknown({ type: branch.type }), value),
       );
-      if (matches.length === 1)
-        return projectSchema(matches[0], value, path, explained, applicable);
+      if (matches.length === 1) return projectSchema(matches[0], value, path, projection);
       if (matches.length === 0) {
         const types = typed.flatMap((branch) =>
           "type" in branch ? (Array.isArray(branch.type) ? branch.type : [branch.type]) : [],
@@ -135,26 +184,20 @@ function projectValueSchema(
     return schema;
   }
   if ("type" in schema && !Value.Check(Type.Unknown({ type: schema.type }), value)) return schema;
-  applicable.add(path);
-  if (explained.has(path)) return Type.Unknown();
+  projection.applicable.add(path);
+  if (projection.explained.has(path)) return Type.Unknown();
   if (IsObject(schema) && typeof value === "object" && value !== null) {
     const properties = Object.fromEntries(
       Object.entries(schema.properties).map(([key, child]) => [
         key,
-        projectSchema(
-          child,
-          Reflect.get(value, key),
-          propertyPath(path, key),
-          explained,
-          applicable,
-        ),
+        projectSchema(child, Reflect.get(value, key), propertyPath(path, key), projection),
       ]),
     );
     return Type.Object(properties, ObjectOptions(schema));
   }
   if (IsArray(schema) && Array.isArray(value)) {
     const items = value.map((item, index) =>
-      projectSchema(schema.items, item, `${path}[${index}]`, explained, applicable),
+      projectSchema(schema.items, item, `${path}[${index}]`, projection),
     );
     return items.every((item) => item === schema.items)
       ? schema
@@ -266,15 +309,15 @@ export function diagnoseArguments(
   semanticIssues: readonly ArgumentIssue[],
   schemaFailed: boolean,
 ): ArgumentDiagnostics {
-  const applicable = new Set<string>();
-  const projected = projectSchema(
-    parameters,
-    prepared,
-    "",
-    new Set(semanticIssues.map((issue) => issue.field)),
-    applicable,
+  const projection: Projection = {
+    explained: new Set(semanticIssues.map((issue) => issue.field)),
+    applicable: new Set<string>(),
+    derived: [],
+  };
+  const projected = projectSchema(parameters, prepared, "", projection);
+  const retained = combineIssues(
+    semanticIssues.filter((issue) => projection.applicable.has(issue.field)),
   );
-  const retained = combineIssues(semanticIssues.filter((issue) => applicable.has(issue.field)));
   if (!schemaFailed) return { issues: retained, limited: false };
   const batches =
     IsObject(projected) &&
@@ -304,6 +347,7 @@ export function diagnoseArguments(
   return {
     issues: combineIssues([
       ...retained,
+      ...projection.derived,
       ...batches.flatMap((batch) => aggregateErrors(batch.errors, prepared)),
     ]),
     limited: batches.some((batch) => batch.limited),
