@@ -127,7 +127,7 @@ Fields appear in this order and are omitted when they do not apply. Each has one
 | `publication` | Commit layer | Mutation tools only: `NOT_PUBLISHED`, `PUBLISHED`, or `UNKNOWN`. On success, `NOT_PUBLISHED` means no net change. See [Publication](#publication). |
 | `stage` | Commit layer | Failures of mutation tools only: `prepare`, `commit`, or `post_process`. |
 | `message` | Throwing layer | What the failing step found, in its own words; never advice, and never a restatement of a deeper failure. Up to 4 KiB. |
-| `cause` | Throwing layer | The failure beneath that step: `error` (our code) or `code` (Node's errno), its own `message`, and nested `cause` or `errors`. The whole graph is bounded; `omitted` counts references not expanded, including cycles and repeats, rather than all unseen descendants. |
+| `cause` | Throwing layer | The failure beneath that step: `error` (our code) or `code` (Node's errno), its own `message`, and nested `cause` or `errors`. Cause chains and distinct aggregate branches are retained; cyclic and repeated native errors are skipped. |
 | Code facts | Code | The facts of the error code, listed below. |
 | `pagination`, `truncatedAt`, `lineTooLong` | `read` | Rows shown and the next `offset` when more remain; the byte budget that stopped output; a first row too long to return. |
 | `matches`, `files`, `matchLimit`, `outputLimit`, `linePreviewLimit`, `invalidUtf8`, `diagnostics` | `grep` | Confirmed matching lines and files; the match limit or Pi's output limit when reached; the preview width when a line was cut; files shown as plain non-anchor previews; search diagnostics when the search was incomplete. `replace` also states `matches`. |
@@ -379,7 +379,7 @@ Zero matches in any rule (`NO_MATCH`), an invalid rule (`INVALID_ARGUMENTS`), or
 Regex captures and prefix/suffix substitutions always refer to the original LF-normalized snapshot.
 Regex batches run in a worker and are terminated on cancellation (`OPERATION_ABORTED`) or when `replace.regexTimeoutMs` (default 5000 ms) elapses (`REGEX_TIMEOUT`). A cancelled or timed-out batch leaves the file unchanged; literal-only batches retain their existing execution path.
 
-Worker requests and replies are validated at the thread boundary. They use the shared replacement schema and code-specific error facts; replies contain exactly one result or failure. Invalid data produces `REGEX_WORKER_FAILED`. Causes retain their codes, nested branches, and omission counts under the same report budgets. The worker loads only production dependencies, including the pinned TypeBox schema validator; it does not import the Pi runtime.
+Worker requests and replies are validated at the thread boundary. They use the shared replacement schema and code-specific error facts; replies contain exactly one result or failure. Invalid data produces `REGEX_WORKER_FAILED`. Causes retain their codes and nested branches across the worker boundary. The worker loads only production dependencies, including the pinned TypeBox schema validator; it does not import the Pi runtime.
 
 ### Write
 
@@ -541,7 +541,6 @@ These limits bound model context, not file size. Each omission is a counted or n
 | `forget` tag | With `forget` enabled: direct `read` and content-mode `grep` text results of 2 KiB or more, and image reads. Successful codemode outputs containing a successful read or content-mode grep call use the same threshold and are forgotten as one result; nested results are not tagged. |
 | `edit` / `replace` anchors | 16 KiB including the heading, with no fixed entry-count limit. Compact tokens for changed positions; selected deletion successors retain complete content. Rows that do not fit are omitted in full and counted in `omittedAnchors`; later rows that fit are still returned. |
 | Report `message` | 4 KiB, preserving the opening and the final cause with an omission notice; each `message` within `cause` has the same budget. |
-| Cause graph | 16 KiB of serialized UTF-8 JSON, at most 8 levels and 16 visited references, including repeated or cyclic references. Limits are defined in [`budgets.ts`](src/pi/budgets.ts). `omitted` records unexpanded references. External reports exceeding these bounds fall back to raw text before recursive schema validation. |
 | Argument errors | 16 KiB of valid JSON for combined tool-specific and schema issues; omit the argument copy before omitting whole issues and label both omissions. Each reason and fix has a 4 KiB budget preserving opening/closing text. Pi's schema error allowance applies separately within each top-level field. |
 | Anchor `failures` | 16 KiB of compact JSON, with no fixed failure-count limit; leading entries are kept whole and the rest counted in `omittedFailures`. Unique candidates include complete rows up to 4 KiB, and ambiguous failures list up to eight candidates each. Unresolved anchors show the current cited row when it fits; oversized or out-of-range rows require a fresh `read` or `grep`. |
 | Anchor `matched` | Independent 16 KiB, with no fixed entry-count limit. Omitted entries are counted in `omittedMatched` and are not implied matched. |

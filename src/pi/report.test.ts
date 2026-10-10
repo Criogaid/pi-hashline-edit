@@ -14,7 +14,7 @@ import {
   describeFailure,
   renderReport,
 } from "./report.ts";
-import { MAX_CAUSE_BYTES } from "./budgets.ts";
+import { MAX_ERROR_TEXT_BYTES } from "./budgets.ts";
 import { REPORT_VERSION } from "./report-schema.ts";
 
 const text = (value: string) => ({ type: "text" as const, text: value });
@@ -107,55 +107,45 @@ test("report-contract: foreign or invalid reports → retain the complete raw di
   assert.match(shown, /hook tail/);
 });
 
-test("report-contract: deeply nested observer cause → serialization stays bounded without recursion failure", () => {
-  let error = new Error("terminal 中文🙂");
-  for (let index = 0; index < 6000; index++) error = new Error(`layer ${index}`, { cause: error });
-  const cause = causeOf(error);
-  assert.ok(cause);
-  const encoded = JSON.stringify(cause);
-  assert.ok(Buffer.byteLength(encoded) <= MAX_CAUSE_BYTES, `${Buffer.byteLength(encoded)} bytes`);
-  assert.ok(encoded.includes("omitted"));
+test("native failure with deeply nested cause → retains the terminal diagnostic through report decoding", () => {
+  const terminal = Object.assign(new Error("permission denied 中文🙂"), { code: "EACCES" });
+  let error: Error = terminal;
+  for (let index = 0; index < 12; index++)
+    error = Object.assign(new Error(`layer ${index}`, { cause: error }), { code: "EIO" });
+  const report = describeFailure("grep", error, { path: "source" });
+  const serialized = renderReport(report);
+  const decoded = decodeReport(serialized);
+  assert.ok(decoded);
+  assert.deepEqual(decoded, JSON.parse(serialized));
+  let cause = decoded.cause;
+  while (cause?.cause) cause = cause.cause;
+  assert.equal(cause?.code, terminal.code);
+  assert.equal(cause?.message, terminal.message);
+  assert.doesNotMatch(serialized, /"omitted"/);
 });
 
-test("report-contract: wide, cyclic and repeated cause graphs → omit bounded branches explicitly", () => {
-  const repeated = new Error("重复🙂".repeat(1500));
-  const errors = Array.from(
-    { length: 500 },
-    (_, index) => new Error(`${index} 中文🙂`.repeat(1000)),
-  );
+test("wide and repeated cause graph with a cycle → retains every distinct failure", () => {
+  const repeated = new Error("repeated failure");
+  const errors = Array.from({ length: 24 }, (_, index) => new Error(`failure ${index}`));
   const aggregate = new AggregateError([repeated, repeated, ...errors], "root");
   aggregate.cause = aggregate;
   const cause = causeOf(aggregate);
   assert.ok(cause);
-  const encoded = JSON.stringify(cause);
-  assert.ok(Buffer.byteLength(encoded) <= MAX_CAUSE_BYTES, `${Buffer.byteLength(encoded)} bytes`);
-  assert.ok(encoded.includes("omitted"));
-  assert.equal(cause.message, "root");
-  assert.ok(cause.errors?.length);
-  assert.equal(cause.errors?.filter((value) => value.message.startsWith("重复")).length, 1);
-  assert.equal(causeOf(new HashlineError("TARGET_EXISTS", "exists"))?.error, "TARGET_EXISTS");
+  assert.equal(cause.cause, undefined);
+  assert.deepEqual(
+    cause.errors?.map((value) => value.message),
+    [repeated.message, ...errors.map((error) => error.message)],
+  );
+  assert.doesNotMatch(JSON.stringify(cause), /"omitted"/);
 });
 
-test("report-contract: cause message requires JSON escaping → retain a bounded root with a truncation label", () => {
-  const cause = causeOf(new Error(`opening${"\u0000".repeat(MAX_CAUSE_BYTES)}terminal`));
+test("oversized cause message → retains opening and terminal text within the message budget", () => {
+  const cause = causeOf(new Error(`opening${"\u0000".repeat(MAX_ERROR_TEXT_BYTES * 2)}terminal`));
   assert.ok(cause);
   assert.match(cause.message, /^opening/);
   assert.match(cause.message, /terminal$/);
   assert.match(cause.message, /omitted/i);
-  assert.ok(Buffer.byteLength(JSON.stringify(cause, null, 2)) <= MAX_CAUSE_BYTES);
-});
-
-test("report-contract: external cause exceeds graph limits → rejects it before recursive schema checking", () => {
-  let cause: object = { message: "terminal" };
-  for (let index = 0; index < 6000; index++) cause = { message: "layer", cause };
-  const value = {
-    $hashline: REPORT_VERSION,
-    tool: "read",
-    error: "FILESYSTEM_ERROR",
-    message: "failed",
-    cause,
-  };
-  assert.equal(decodeReport(JSON.stringify(value)), undefined);
+  assert.ok(Buffer.byteLength(cause.message) <= MAX_ERROR_TEXT_BYTES);
 });
 
 test("native filesystem failure → reports its diagnostic once without a synthetic cause", () => {

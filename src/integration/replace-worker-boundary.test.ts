@@ -4,6 +4,7 @@ import { test } from "node:test";
 import { HashlineError } from "../core/errors.ts";
 import { runRegexReplacements } from "../pi/replace-regex.ts";
 import { causeOf } from "../pi/report.ts";
+import type { Cause } from "../pi/report-schema.ts";
 
 const timeoutMs = 10_000;
 const validRules = [{ find: "safe", replace: "changed", regex: true }];
@@ -68,15 +69,19 @@ test("worker boundary: malformed external reply → rejects its result and facts
   }
 });
 
-test("worker boundary: structured cause reply → preserves codes, branches and omissions", {
+test("worker boundary: deep structured cause reply → preserves the terminal cause and every branch", {
   timeout: timeoutMs,
 }, async (t) => {
-  const cause = {
-    code: "EACCES",
-    message: "permission denied",
-    cause: { error: "UNSUPPORTED_TEXT", message: "underlying content" },
-    errors: [{ code: "EIO", message: "another failure" }],
-    omitted: 3,
+  let nested: Cause = { code: "EACCES", message: "permission denied" };
+  for (let index = 0; index < 12; index++)
+    nested = { code: "EIO", message: `layer ${index}`, cause: nested };
+  const cause: Cause = {
+    message: "worker failure",
+    cause: nested,
+    errors: Array.from({ length: 24 }, (_, index) => ({
+      code: "EIO",
+      message: `branch ${index}`,
+    })),
   };
   const emit = Worker.prototype.emit;
   t.mock.method(

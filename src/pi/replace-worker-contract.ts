@@ -14,7 +14,7 @@ import {
   type ErrorFacts,
   type Cause,
 } from "./report-schema.ts";
-import { boundedCauseData, boundedText, causeOf, restoreCause } from "./report-cause.ts";
+import { boundedText, causeOf, restoreCause } from "./report-cause.ts";
 
 const REQUEST_SCHEMA = Type.Object(
   {
@@ -64,7 +64,6 @@ export function decodeWorkerReply(value: unknown): WorkerReply | undefined {
   try {
     const error: unknown = Reflect.get(value, "error");
     if (typeof error === "object" && error !== null) {
-      if (!boundedCauseData(Reflect.get(error, "cause"))) return undefined;
       // Worker cloning permits cycles and BigInt; diagnostics must survive the JSON report boundary.
       JSON.stringify(error);
     }

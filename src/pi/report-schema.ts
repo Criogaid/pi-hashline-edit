@@ -30,12 +30,6 @@ export const CAUSE_SCHEMA = Type.Cyclic(
         message: Type.String(),
         cause: Type.Optional(Type.Ref("Cause")),
         errors: Type.Optional(Type.Array(Type.Ref("Cause"))),
-        omitted: Type.Optional(
-          Type.Integer({
-            minimum: 1,
-            description: "Unexpanded cause references, including cycles and repeats.",
-          }),
-        ),
       },
       { additionalProperties: false },
     ),

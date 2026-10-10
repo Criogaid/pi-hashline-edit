@@ -21,7 +21,7 @@ import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import { Value } from "typebox/value";
 import type { TSchema } from "typebox";
 import { errorMessage, errnoCode, filesystemErrorCode, HashlineError } from "../core/errors.ts";
-import { boundedText, causeOf, boundedCauseData } from "./report-cause.ts";
+import { boundedText, causeOf } from "./report-cause.ts";
 export { boundedText, causeOf } from "./report-cause.ts";
 import { cancellationError } from "./error-text.ts";
 import { FileMutationError } from "./file-commit.ts";
@@ -64,12 +64,6 @@ export function renderReport(report: Report): string {
 function checkReportData(schema: TSchema, value: unknown): boolean {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
   try {
-    if (
-      !["cause", "freshnessError", "progressError"].every((key) =>
-        boundedCauseData(Reflect.get(value, key)),
-      )
-    )
-      return false;
     return Value.Check(schema, value);
   } catch (error) {
     // Unsupported JSON depth or non-serializable hook metadata retains the final raw content.
