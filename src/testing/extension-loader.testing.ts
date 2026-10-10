@@ -10,13 +10,9 @@ export async function loadInstalledExtension(entry: string): Promise<ExtensionFa
   assert.throws(() => require.resolve("@earendil-works/pi-coding-agent"), {
     code: "MODULE_NOT_FOUND",
   });
-  assert.ok(
-    require
-      .resolve("typebox/type")
-      .startsWith(
-        require.resolve("@criogaid/pi-hashline-edit/package.json").split("node_modules")[0],
-      ),
-  );
+  // typebox is a host-provided peer: the installed layout must NOT resolve its own
+  // copy; jiti's virtualModules supply it instead.
+  assert.throws(() => require.resolve("typebox/type"), { code: "MODULE_NOT_FOUND" });
   const jiti = createJiti(import.meta.url, {
     moduleCache: false,
     virtualModules: VIRTUAL_MODULES,

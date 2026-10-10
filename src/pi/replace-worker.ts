@@ -1,6 +1,7 @@
 import { parentPort, workerData } from "node:worker_threads";
 import { applyReplacements, type Replacement } from "../core/replace.ts";
-import { workerFailure } from "./replace-worker-contract.ts";
+// report-cause.ts only: the worker runs on plain jiti without the host's typebox mapping.
+import { workerFailure } from "./report-cause.ts";
 
 try {
   // The sole production sender forwards rules already validated by the tool entry point.

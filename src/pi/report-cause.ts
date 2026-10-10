@@ -1,5 +1,7 @@
 /**
  * Cause transport shared by reports and the replacement worker, without Pi runtime imports.
+ * The worker loads this module on plain jiti, which lacks the host's typebox
+ * mapping, so it must not import typebox at runtime.
  * External boundaries validate cause data before restoreCause.
  */
 import { errnoCode, errorMessage, HashlineError } from "../core/errors.ts";
@@ -34,6 +36,41 @@ function boundedCause(data: Cause, maxBytes: number): Cause {
     message: boundedText(data.message, maxBytes),
     ...(data.cause ? { cause: boundedCause(data.cause, maxBytes) } : {}),
     ...(data.errors ? { errors: data.errors.map((inner) => boundedCause(inner, maxBytes)) } : {}),
+  };
+}
+/** A worker reply error before schema validation; report-cause keeps its transport.
+ *
+ * Defined here, not in replace-worker-contract.ts, so the worker's runtime graph
+ * stays free of typebox: the contract module imports typebox to validate replies,
+ * and the worker runs on plain jiti without the host's module mapping.
+ */
+export interface WorkerError {
+  readonly code: string;
+  readonly message: string;
+  readonly facts?: unknown;
+  readonly cause?: Cause;
+}
+export type WorkerFailure = { readonly error: WorkerError };
+
+/** Transport full failures; the receiving tool applies its model-budget snapshot. */
+export function workerFailure(caught: unknown): WorkerFailure {
+  if (caught instanceof HashlineError) {
+    // Its constructor enforced the code/facts relationship before crossing the boundary.
+    return {
+      error: {
+        code: caught.errorCode,
+        message: caught.message,
+        ...(caught.facts === undefined ? {} : { facts: caught.facts }),
+        ...(caught.cause === undefined ? {} : { cause: causeOf(caught.cause, Infinity) }),
+      },
+    };
+  }
+  return {
+    error: {
+      code: "REGEX_WORKER_FAILED",
+      message: "Regex evaluation failed.",
+      cause: causeOf(caught, Infinity),
+    },
   };
 }
 

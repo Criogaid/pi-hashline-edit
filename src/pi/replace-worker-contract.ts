@@ -1,6 +1,8 @@
 /**
  * Replacement worker replies: result schemas and classified error facts are
- * checked on receipt; cause transport stays independent of Pi.
+ * checked on receipt. Reply decoding runs in the main thread; the worker itself
+ * imports only report-cause.ts (workerFailure), because plain jiti lacks the
+ * host's typebox mapping.
  */
 import { Type, type Static } from "typebox";
 import { Value } from "typebox/value";
@@ -13,7 +15,7 @@ import {
   type ErrorFacts,
   type Cause,
 } from "./report-schema.ts";
-import { causeOf, restoreCause } from "./report-cause.ts";
+import { restoreCause, type WorkerFailure } from "./report-cause.ts";
 
 const RESULT_SCHEMA = Type.Object(
   {
@@ -43,7 +45,6 @@ type WorkerError = {
     ? { facts?: ErrorFacts<C> }
     : { facts: ErrorFacts<C> });
 }[ErrorCode];
-type WorkerFailure = { error: WorkerError };
 type WorkerReply = { result: Static<typeof RESULT_SCHEMA> } | WorkerFailure;
 
 export function decodeWorkerReply(value: unknown): WorkerReply | undefined {
@@ -62,33 +63,16 @@ export function decodeWorkerReply(value: unknown): WorkerReply | undefined {
   }
 }
 
-/** Transport full failures; the receiving tool applies its model-budget snapshot. */
-export function workerFailure(caught: unknown): WorkerFailure {
-  if (caught instanceof HashlineError) {
-    // Its constructor enforced the code/facts relationship before crossing the boundary.
-    return {
-      error: {
-        code: caught.errorCode,
-        message: caught.message,
-        ...(caught.facts === undefined ? {} : { facts: caught.facts }),
-        ...(caught.cause === undefined ? {} : { cause: causeOf(caught.cause, Infinity) }),
-      },
-    } as WorkerFailure;
-  }
-  return {
-    error: {
-      code: "REGEX_WORKER_FAILED",
-      message: "Regex evaluation failed.",
-      cause: causeOf(caught, Infinity),
-    },
-  };
-}
-
 /** The caller supplies only a reply accepted by decodeWorkerReply. */
-export function restoreWorkerError(error: WorkerError): HashlineError {
-  // Runtime schema validation established the mapped code/facts tuple.
+/** The caller supplies only a reply accepted by decodeWorkerReply. */
+export function restoreWorkerError(error: {
+  readonly code: string;
+  readonly message: string;
+  readonly facts?: unknown;
+  readonly cause?: Cause;
+}): HashlineError {
   const options = [
     { facts: error.facts, cause: restoreCause(error.cause) },
   ] as HashlineErrorArguments<ErrorCode>;
-  return new HashlineError(error.code, error.message, ...options);
+  return new HashlineError(error.code as ErrorCode, error.message, ...options);
 }
