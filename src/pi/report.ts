@@ -19,7 +19,6 @@
 
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import { Value } from "typebox/value";
-import type { TSchema } from "typebox";
 import { errorMessage, errnoCode, filesystemErrorCode, HashlineError } from "../core/errors.ts";
 import { boundedText, causeOf } from "./report-cause.ts";
 export { boundedText, causeOf } from "./report-cause.ts";
@@ -30,7 +29,6 @@ import {
   OUTCOME_NEXT,
   PUBLICATION_NEXT,
   REPORT_SCHEMA,
-  LEGACY_REPORT_SCHEMA,
   WIRE_REPORT_SCHEMA,
   type Cause,
   type CommandStatus,
@@ -60,82 +58,28 @@ export function renderReport(report: Report): string {
   return JSON.stringify(Object.fromEntries(reportEntries(report)), null, 2);
 }
 
-/** The final-result boundary also accepts structured metadata modified by tool_result hooks. */
-function checkReportData(schema: TSchema, value: unknown): boolean {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+/** Decode the current report format for Pi's text-only argument failures and forget tags. */
+export function decodeReport(text: string): Report | undefined {
+  if (!text.startsWith("{")) return undefined;
   try {
-    return Value.Check(schema, value);
+    const value: unknown = JSON.parse(text);
+    return Value.Check(WIRE_REPORT_SCHEMA, value) ? (value as Report) : undefined;
   } catch (error) {
-    // Unsupported JSON depth or non-serializable hook metadata retains the final raw content.
-    if (error instanceof RangeError || error instanceof TypeError) return false;
+    if (error instanceof SyntaxError || error instanceof RangeError || error instanceof TypeError)
+      return undefined;
     throw error;
   }
 }
 
-/** Validate current and saved marked reports without deciding ownership of a content block. */
-function decodeReportRecord(
-  text: string,
-): { report: Report; source: "facts" | "marked" } | undefined {
-  if (!text.startsWith("{")) return undefined;
-  let value: unknown;
-  try {
-    value = JSON.parse(text);
-  } catch {
-    return undefined;
-  }
-  if (checkReportData(WIRE_REPORT_SCHEMA, value)) {
-    return { report: value as import("./report-schema.ts").WireReport, source: "facts" };
-  }
-  if (!checkReportData(LEGACY_REPORT_SCHEMA, value)) return undefined;
-  // Marked reports already saved in sessions remain readable; new reports carry only facts.
-  const { $hashline: _version, ...report } = value as import("./report-schema.ts").LegacyWireReport;
-  return { report, source: "marked" };
-}
-
-/** Decode a closed report record; content ownership is checked separately by reportBlock. */
-export function decodeReport(text: string): Report | undefined {
-  return decodeReportRecord(text)?.report;
-}
-
-/** One identifiable block in final content; hook replacements and ambiguous copies retain raw text. */
-export function reportBlock(result: {
-  readonly content?: Content;
-  readonly details?: unknown;
-}): { index: number; report: Report } | undefined {
-  const details = result.details as Partial<ReportDetails> | undefined;
-  const live = details?.report;
-  if (live !== undefined && !checkReportData(WIRE_REPORT_SCHEMA, live)) return undefined;
-  let expected: string | undefined;
-  if (live) {
-    try {
-      expected = renderReport(live);
-    } catch (error) {
-      // Hooks may replace details with non-JSON data; keep their final content unchanged.
-      if (error instanceof TypeError || error instanceof RangeError) return undefined;
-      throw error;
-    }
-  }
-  const candidates = (result.content ?? []).flatMap((block, index) => {
-    if (block.type !== "text") return [];
-    if (live && block.text === expected) return [{ index, report: live }];
-    const decoded = decodeReportRecord(block.text);
-    if (!decoded) return [];
-    const { report, source } = decoded;
-    if (live) return renderReport(report) === expected ? [{ index, report: live }] : [];
-    // Unmarked success JSON alone does not identify this tool's output.
-    return source === "marked" || report.error !== undefined || report.resultId !== undefined
-      ? [{ index, report }]
-      : [];
-  });
-  return candidates.length === 1 ? candidates[0] : undefined;
-}
-
-/** The report belonging to the final content, independent of registration or object identity. */
+/** Tool results carry their report in details; Pi argument failures carry it as their final text block. */
 export function reportOf(result: {
   readonly content?: Content;
   readonly details?: unknown;
 }): Report | undefined {
-  return reportBlock(result)?.report;
+  const details = result.details as Partial<ReportDetails> | undefined;
+  if (details?.report) return details.report;
+  const last = result.content?.at(-1);
+  return last?.type === "text" ? decodeReport(last.text) : undefined;
 }
 
 const ENVELOPE = new Set(["tool", "path"]);

@@ -451,7 +451,7 @@ test("expanded errors retain every text block while collapsed errors stay bounde
   assert.ok(collapsed.split("\n").length < expanded.split("\n").length);
 });
 
-test("argument cards preserve omission notices, all expanded issues and additional error blocks", () => {
+test("argument cards preserve omission notices and all expanded issues", () => {
   initTheme("dark");
   const issues = Array.from({ length: 200 }, (_, index) => ({
     field: `edits[${index}].body`,
@@ -461,10 +461,7 @@ test("argument cards preserve omission notices, all expanded issues and addition
   const parsed = argumentError(new Error(diagnostic));
   assert.ok(parsed.argumentsOmitted && parsed.schemaLimited && parsed.omittedIssues);
   const result = {
-    content: [
-      { type: "text" as const, text: diagnostic },
-      { type: "text" as const, text: "Additional cause: hook diagnostic" },
-    ],
+    content: [{ type: "text" as const, text: diagnostic }],
   };
   const original = structuredClone(result);
   const collapsed = stripVTControlCharacters(
@@ -481,7 +478,6 @@ test("argument cards preserve omission notices, all expanded issues and addition
   }
   for (const issue of parsed.issues) assert.ok(expanded.includes(issue.field));
   assert.match(expanded, /Final cause: empty body/);
-  assert.match(expanded, /Additional cause: hook diagnostic/);
   assert.ok(collapsed.split("\n").length < expanded.split("\n").length);
   assert.deepEqual(result, original);
 });

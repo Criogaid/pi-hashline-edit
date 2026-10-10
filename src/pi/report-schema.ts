@@ -395,9 +395,6 @@ export const REPORT_SCHEMA = Type.Object({
 });
 export type Report = Omit<Static<typeof REPORT_SCHEMA>, "error"> & { error?: ErrorCode };
 
-/** Version carried by older saved reports; current reports serialize only their facts. */
-export const REPORT_VERSION = 1;
-const WIRE_IDENTITY_SCHEMA = Type.Object({ $hashline: Type.Literal(REPORT_VERSION) });
 const SUCCESS_DEFINITIONS = {
   read: facts([], ["pagination", "truncatedAt", "lineTooLong", "resultId", "contentForgotten"]),
   grep: facts(
@@ -420,7 +417,6 @@ const SUCCESS_DEFINITIONS = {
   forget: facts(["forgotten"]),
   codemode: facts([], ["resultId", "forgetScope", "contentForgotten"]),
 } as const;
-export type ReportTool = keyof typeof SUCCESS_DEFINITIONS;
 const TOOL_SCHEMA = Type.Union(Object.keys(SUCCESS_DEFINITIONS).map((tool) => Type.Literal(tool)));
 const COMMON_WIRE_FIELDS = {
   tool: TOOL_SCHEMA,
@@ -461,31 +457,3 @@ const SUCCESS_SCHEMAS = Object.entries(SUCCESS_DEFINITIONS).map(([tool, schema])
 );
 /** Closed current records preserve code-specific facts without transport-only fields. */
 export const WIRE_REPORT_SCHEMA = Type.Union([...FAILURE_SCHEMAS, ...SUCCESS_SCHEMAS]);
-/** Previously marked session reports remain decodable at the same closed boundary. */
-export const LEGACY_REPORT_SCHEMA = Type.Union(
-  [...FAILURE_SCHEMAS, ...SUCCESS_SCHEMAS].map((schema) =>
-    Type.Object(
-      {
-        ...WIRE_IDENTITY_SCHEMA.properties,
-        ...schema.properties,
-      },
-      { additionalProperties: false },
-    ),
-  ),
-);
-type WireIdentity = Static<typeof WIRE_IDENTITY_SCHEMA>;
-type WireContext = Pick<Report, "path" | "next">;
-type WireMutation = Pick<Report, keyof typeof MUTATION_WIRE_FIELDS>;
-type SuccessWire = {
-  [T in ReportTool]: WireContext & { tool: T } & Static<(typeof SUCCESS_DEFINITIONS)[T]> &
-    (T extends "edit" | "replace" | "write" ? WireMutation : {});
-}[ReportTool];
-type FailureWire = {
-  [C in ErrorCode]: WireContext &
-    WireMutation &
-    Pick<Report, "stage" | "cause"> & { tool: ReportTool; error: C } & ErrorFacts<C> &
-    (C extends "INVALID_ARGUMENTS" ? { message?: string } : { message: string });
-}[ErrorCode];
-/** The wire union retains each code's required facts; dynamic schema arrays validate the same cases. */
-export type WireReport = SuccessWire | FailureWire;
-export type LegacyWireReport = WireReport & WireIdentity;

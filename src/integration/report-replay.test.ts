@@ -13,7 +13,7 @@ import { openTestSession, responseStream } from "../testing/session.testing.ts";
 
 const args = { path: "target.txt", edits: [{ op: "append", body: [] }] };
 
-test("live preparation failure → replays with surrounding content after fresh registration without losing diagnostics", async (t) => {
+test("live preparation failure → replays diagnostic after fresh registration", async (t) => {
   initTheme("dark");
   const first = await openTestSession(t, {
     tools: ["edit"],
@@ -49,17 +49,7 @@ test("live preparation failure → replays with surrounding content after fresh 
     (message) => message.role === "toolResult" && message.toolCallId === "invalid-edit",
   );
   assert.ok(live?.role === "toolResult");
-  // Pi returns preparation failures immediately, before tool_result hooks; replay may append content later.
-  const replay = {
-    content: [
-      { type: "text" as const, text: "Permission context: local fixture only." },
-      ...structuredClone(live.content),
-      { type: "text" as const, text: "Hook recovery: retain the current file." },
-      { type: "image" as const, data: "AA==", mimeType: "image/png" },
-    ],
-    details: undefined,
-  };
-  assert.equal(replay.content.at(-1)?.type, "image");
+  const replay = { content: structuredClone(live.content), details: undefined };
   const serialized = JSON.stringify(replay);
   const report = reportOf(replay);
   assert.equal(report?.issues?.[0].field, "edits[0].body");
@@ -92,10 +82,6 @@ test("live preparation failure → replays with surrounding content after fresh 
       });
       const shown = stripVTControlCharacters(component.render(240).join("\n"));
       assert.match(shown, /edits\[0\]\.body: is empty/);
-      assert.match(shown, /Permission context: local fixture only/);
-      assert.match(shown, /Hook recovery: retain the current file/);
-      assert.ok(shown.indexOf("Permission context") < shown.indexOf("Invalid arguments"));
-      assert.ok(shown.indexOf("Invalid arguments") < shown.indexOf("Hook recovery"));
       assert.equal(shown.split("edits[0].body: is empty").length - 1, 1);
       assert.doesNotMatch(shown, /"issues":/);
       assert.equal(JSON.stringify(decoded), serialized);
