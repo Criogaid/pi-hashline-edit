@@ -8,6 +8,8 @@ import type { Message, ToolCall } from "@earendil-works/pi-ai";
 import { normalizeContext } from "@earendil-works/pi-ai/utils/transcript";
 import { stream as streamCompletions } from "@earendil-works/pi-ai/api/openai-completions";
 import { initTheme } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { decodeReport } from "./report.ts";
 import { openTestSession, responseStream, type TestResponse } from "../testing/session.testing.ts";
 import { DEFAULT_CONFIG } from "./config.ts";
 import { registerForgetTool } from "./forget-tool.ts";
@@ -28,10 +30,16 @@ export const toolResponse = (...content: ToolCall[]): Response => ({
   stopReason: "toolUse",
 });
 
-/** Extract the public result tag without assuming how its id is generated. */
+/** Extract a public id from supported current or historical inspection tags, excluding receipts. */
 export function taggedResultId(result: Pick<AgentToolResult<unknown>, "content">) {
-  const last = result.content.at(-1);
-  return last?.type === "text" ? /^\[result (r[0-9a-f]{5})\]$/.exec(last.text)?.[1] : undefined;
+  const ids = result.content.flatMap((block) => {
+    if (block.type !== "text") return [];
+    const native = /^\[result (r[0-9a-f]{5})\]$/.exec(block.text)?.[1];
+    const report = decodeReport(block.text);
+    const id = native ?? (report?.contentForgotten ? undefined : report?.resultId);
+    return id ? [id] : [];
+  });
+  return ids.length === 1 ? ids[0] : undefined;
 }
 
 export function toolResult(messages: readonly Message[], id: string) {
@@ -53,7 +61,10 @@ export function forgetCall(messages: readonly Message[], ...sourceIds: string[])
   return { type: "toolCall", id: "forget-call", name: "forget", arguments: { ids } };
 }
 
-export async function openForgetSession(t: TestContext) {
+export async function openForgetSession(
+  t: TestContext,
+  configure?: (pi: ExtensionAPI, cwd: string) => void,
+) {
   const { cwd, session, model, sessionManager } = await openTestSession(t, {
     tools: ["read", "grep", "forget", "codemode"],
     configure(pi, cwd) {
@@ -62,6 +73,7 @@ export async function openForgetSession(t: TestContext) {
       pi.registerTool(makeGrepOverride(cwd, config));
       registerForgetTool(pi);
       pi.registerTool(createCodemodeToolDefinition());
+      configure?.(pi, cwd);
     },
   });
   const requests: Message[][] = [];
@@ -177,7 +189,7 @@ export function assertForgotten(result: ReturnType<typeof toolResult>, id: strin
   assert.equal(result.content.length, 1);
   const receipt = result.content[0];
   assert.equal(receipt.type, "text");
-  assert.ok(receipt.type === "text" && receipt.text.includes(id));
-  assert.ok(receipt.type === "text" && receipt.text.includes("forgotten"));
+  assert.equal(receipt.type === "text" && decodeReport(receipt.text)?.resultId, id);
+  assert.equal(receipt.type === "text" && decodeReport(receipt.text)?.contentForgotten, true);
   assert.equal(taggedResultId(result), undefined);
 }

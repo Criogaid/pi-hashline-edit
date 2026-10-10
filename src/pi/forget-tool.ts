@@ -37,7 +37,6 @@ import { renderToolError } from "./render.ts";
 import {
   boundedFacts,
   decodeReport,
-  reportOf,
   reportResult,
   runTool,
   type Report,
@@ -57,10 +56,22 @@ function resultId(toolCallId: string): string {
 
 type ResultContent = AgentToolResult<unknown>["content"];
 
-/** Whether the model saw this result tagged: its last block is a report naming the call's id. */
+/** A single visible identity bound to its tool call; current and historical tags survive hook tails. */
+function taggedBlock(
+  content: ResultContent,
+  toolCallId: string,
+): { index: number; report?: Report } | undefined {
+  const id = resultId(toolCallId);
+  const candidates = content.flatMap((block, index) => {
+    if (block.type !== "text") return [];
+    if (block.text === `[result ${id}]`) return [{ index }];
+    const report = decodeReport(block.text);
+    return report?.resultId === id && !report.contentForgotten ? [{ index, report }] : [];
+  });
+  return candidates.length === 1 ? candidates[0] : undefined;
+}
 function isTagged(content: ResultContent, toolCallId: string): boolean {
-  const last = content.at(-1);
-  return last?.type === "text" && decodeReport(last.text)?.resultId === resultId(toolCallId);
+  return taggedBlock(content, toolCallId) !== undefined;
 }
 
 /** Text results below the threshold save too little to be worth forgetting; images always qualify. */
@@ -168,21 +179,15 @@ export function registerForgetTool(pi: ExtensionAPI): void {
   let pending = new Set<string>();
 
   pi.on("tool_result", (event) => {
-    if (
-      !event.parentToolCallId ||
-      (event.toolName !== "read" && event.toolName !== "grep") ||
-      !isTagged(event.content, event.toolCallId)
-    )
-      return;
-    // A nested id cannot identify a transcript entry: rebuild the report without it.
-    const report = reportOf(event)!;
+    if (!event.parentToolCallId || (event.toolName !== "read" && event.toolName !== "grep")) return;
+    const tag = taggedBlock(event.content, event.toolCallId);
+    if (!tag) return;
     const { forgetReceipt: _receipt, ...details } = (event.details ?? {}) as ForgetReceiptDetails;
-    const result = reportResult(
-      { ...report, resultId: undefined },
-      event.content.slice(0, -1),
-      details,
-    );
-    // Preserve structured results while removing the tag.
+    const payload = event.content.filter((_, index) => index !== tag.index);
+    // Remove only the identified nested tag; preserve surrounding hook content and structured output.
+    const result = tag.report
+      ? reportResult({ ...tag.report, resultId: undefined }, payload, details)
+      : { content: payload, details };
     return { ...result, structuredContent: event.structuredContent };
   });
 

@@ -74,7 +74,9 @@ for (const { name, filename, body, receiptSuffix } of [
     assert.ok(!remainingText.includes(filename), "File headers are forgotten with the body");
     assertForgotten(forgotten, id);
     const receipt = `${join(f.cwd, filename)}${receiptSuffix}`;
-    assert.deepEqual(f.rawResult("forget-call").details, { forgotten: [{ id, receipt }] });
+    assert.partialDeepStrictEqual(f.rawResult("forget-call").details, {
+      forgotten: [{ id, receipt }],
+    });
     assert.ok(f.renderForgetCard().includes(receipt));
   });
 }
@@ -109,7 +111,7 @@ test("forget in a mixed tool batch → work continues and unselected results sta
     id: taggedResultId(toolResult(f.requests[1], callId)),
     receipt: `${join(f.cwd, index === 0 ? "build.log" : "test.log")} · lines 1–2`,
   }));
-  assert.deepEqual(f.rawResult("forget-call").details, { forgotten: expected });
+  assert.partialDeepStrictEqual(f.rawResult("forget-call").details, { forgotten: expected });
   const displayed = f.renderForgetCard();
   assert.equal(displayed.split("\n")[0].trimEnd(), `forget · ${expected.length} results`);
   assert.doesNotMatch(displayed, /Forgotten ·/);
@@ -127,7 +129,7 @@ test("forget in a mixed tool batch → work continues and unselected results sta
   const response = toolResult(f.requests[2], "forget-call");
   assert.deepEqual(response.content, f.rawResult("forget-call").content);
   for (const block of response.content) {
-    if (block.type === "text") assert.ok(payload.includes(block.text));
+    if (block.type === "text") assert.ok(payload.includes(JSON.stringify(block.text).slice(1, -1)));
   }
 });
 
@@ -152,7 +154,9 @@ for (const mode of ["pagination", "byte truncation"] as const) {
     const id = taggedResultId(toolResult(f.requests[1], "read-log"));
     assert.ok(id);
     const receipt = `${path} · lines 2–3${mode === "byte truncation" ? " · truncated" : ""}`;
-    assert.deepEqual(f.rawResult("forget-call").details, { forgotten: [{ id, receipt }] });
+    assert.partialDeepStrictEqual(f.rawResult("forget-call").details, {
+      forgotten: [{ id, receipt }],
+    });
     assert.ok(f.renderForgetCard().includes(receipt));
     assertForgotten(toolResult(f.requests[2], "read-log"), id);
     const details = f.rawResult("read-log").details;
@@ -370,7 +374,7 @@ for (const entry of ["direct", "codemode"] as const) {
           .map((block) => block.text)
           .join("\n");
         assert.equal(
-          [...text.matchAll(/\[result r[0-9a-f]{5}\]/g)].length,
+          [...text.matchAll(/\bresultId\b/g)].length,
           1,
           "Nested reads must not expose unusable tags",
         );
@@ -462,3 +466,47 @@ test("codemode prints inspection text and an image → forget removes every outp
   assert.deepEqual(f.rawResult("script-image").content, original.content);
   assert.equal(await readFile(join(f.cwd, "build.log"), "utf8"), LOG_BODY);
 });
+
+for (const format of ["native", "legacy JSON", "versioned JSON"] as const) {
+  test(`inspection tag in ${format} with a hook tail → forget replaces the complete result`, {
+    timeout: SESSION_TIMEOUT_MS,
+  }, async (t) => {
+    const f = await openForgetSession(t, (pi) => {
+      pi.on("tool_result", (event) => {
+        if (event.toolName !== "read" || event.isError) return;
+        const id = taggedResultId(event);
+        assert.ok(id);
+        const content = [...event.content];
+        if (format === "native")
+          content[content.length - 1] = { type: "text", text: `[result ${id}]` };
+        else if (format === "legacy JSON") {
+          const last = content[content.length - 1];
+          assert.equal(last.type, "text");
+          if (last.type === "text") {
+            const { $hashline: _version, ...legacy } = JSON.parse(last.text);
+            content[content.length - 1] = { type: "text", text: JSON.stringify(legacy) };
+          }
+        }
+        content.push({ type: "text", text: "hook context remains part of the inspection" });
+        return { content };
+      });
+    });
+    await writeFile(join(f.cwd, "build.log"), LOG_BODY);
+    await f.prompt(
+      toolResponse(f.read("historical-read")),
+      (messages) => toolResponse(forgetCall(messages, "historical-read")),
+      finish,
+    );
+    const original = toolResult(f.requests[1], "historical-read");
+    const id = taggedResultId(original);
+    assert.ok(id);
+    assert.ok(
+      original.content.some(
+        (block) => block.type === "text" && block.text.includes("hook context"),
+      ),
+    );
+    assert.equal(toolResult(f.requests[2], "forget-call").isError, false);
+    assertForgotten(toolResult(f.requests[2], "historical-read"), id);
+    assert.equal(await readFile(join(f.cwd, "build.log"), "utf8"), LOG_BODY);
+  });
+}
