@@ -149,7 +149,7 @@ const forgetSchema = Type.Object(
     ids: Type.Array(Type.String({ pattern: `^${RESULT_ID}$` }), {
       minItems: 1,
       uniqueItems: true,
-      description: "Result ids to forget: the resultId of results from the previous step.",
+      description: "resultId values to forget.",
     }),
     note: Type.Optional(
       Type.String({
@@ -286,10 +286,10 @@ export function registerForgetTool(
   pi.registerTool({
     name: "forget",
     label: "forget",
-    description: `Remove tagged inspection output from your context once you have taken what you need. Only results from the previous step whose report has a resultId (${formatKiB(FORGET_MIN_BYTES)} or larger, or images) can be forgotten. After this response each selected result's entire content, including its report, is replaced with a forgotten receipt. A codemode resultId covers its entire output, including other results printed by the script. Save facts you still need in note. Files and session history are unchanged.`,
+    description: `Remove tagged inspection output from your context. Only results from the previous step whose report has a resultId (${formatKiB(FORGET_MIN_BYTES)} or larger, or images) can be forgotten. After this response each selected result's entire content, including its report, is replaced with a forgotten receipt. A codemode resultId covers its entire output, including other results printed by the script. Files and session history are unchanged.`,
     promptSnippet: "Forget tagged inspection output you no longer need",
     promptGuidelines: [
-      "A result with a resultId can be forgotten only in your next step. In that step, forget it unless you will edit with its anchors or need its exact text again; first copy any facts you still need into note. A codemode resultId forgets the entire script output.",
+      "In the step right after a result with a resultId, forget it unless you will edit with its anchors or need its exact text again; first copy any facts you still need into note.",
     ],
     parameters: forgetSchema,
     prepareArguments: createArgumentPreparer("forget", forgetSchema, undefined, budgets),

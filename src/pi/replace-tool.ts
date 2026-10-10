@@ -5,8 +5,8 @@
  * Distinct from the anchor-verified `edit`. `replace` is **location-blind**:
  * it matches `find` everywhere across the whole file and substitutes every
  * occurrence. Use it for renames and pattern-based transforms that would
- * otherwise need many individual edits. For a single surgical, verified change,
- * prefer `edit`.
+ * otherwise need many individual edits. Inserting, deleting, or rewriting whole
+ * lines belongs to `edit`.
  *
  * - Both modes match the shared LF view and restore original line separators.
  * - Literal mode keeps `$` verbatim; regex mode expands JavaScript replacement tokens.

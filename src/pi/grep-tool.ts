@@ -47,7 +47,7 @@ function createGrepSchema({ defaultLimit, defaultContext }: HashlineEditConfig["
         [Type.String({ minLength: 1 }), Type.Array(Type.String({ minLength: 1 }), { minItems: 1 })],
         {
           description:
-            "String or array of strings (an array matches any of them). Regex syntax is ripgrep's Rust regex, not JavaScript: no lookaround or backreferences; ^ and $ match at line boundaries.",
+            "String or array of strings; an array matches any of them, so use it for alternatives instead of joining them with |. Regex syntax is ripgrep's Rust regex, not JavaScript: no lookaround or backreferences; ^ and $ match at line boundaries.",
         },
       ),
       path: Type.Optional(
@@ -70,13 +70,13 @@ function createGrepSchema({ defaultLimit, defaultContext }: HashlineEditConfig["
           ],
           {
             description:
-              "Filename glob, or an ordered array of them; prefix exclusions with !, e.g. ['*.ts', '!**/*.test.ts'].",
+              "Filename wildcards go here, not in path: a glob or an ordered array of them; prefix exclusions with !, e.g. ['*.ts', '!**/*.test.ts'].",
           },
         ),
       ),
       literal: Type.Boolean({
         description:
-          "true: match the text exactly, including regex punctuation. false: ripgrep Rust regex, where foo(0) matches foo0.",
+          "true: match the text exactly, including regex punctuation; use it for names, paths, and code snippets. false: ripgrep Rust regex, where foo(0) matches foo0; use it only for an intentional regex.",
       }),
       ignoreCase: Type.Optional(
         Type.Boolean({
@@ -93,7 +93,7 @@ function createGrepSchema({ defaultLimit, defaultContext }: HashlineEditConfig["
       context: Type.Optional(
         Type.Number({
           ...GREP_CONTEXT_RANGE,
-          description: `Lines shown before and after each match (${GREP_CONTEXT_RANGE.minimum}-${GREP_CONTEXT_RANGE.maximum}, default ${defaultContext}); display only, not matched.`,
+          description: `Lines shown before and after each match (${GREP_CONTEXT_RANGE.minimum}-${GREP_CONTEXT_RANGE.maximum}, default ${defaultContext}); display only, not matched. Use 3-5 when searching code to edit.`,
         }),
       ),
       limit: Type.Optional(
@@ -105,7 +105,7 @@ function createGrepSchema({ defaultLimit, defaultContext }: HashlineEditConfig["
       outputMode: Type.Optional(
         Type.Union([Type.Literal("content"), Type.Literal("files"), Type.Literal("count")], {
           description:
-            '"content" (default): matches/context with anchors for valid UTF-8 or plain previews otherwise; "files": paths; "count": matching lines per file and total. All modes share limit.',
+            '"content" (default): matches/context with anchors for valid UTF-8 or plain previews otherwise; "files": paths; "count": matching lines per file and total. Use files or count when only paths or counts are needed. All modes share limit.',
         }),
       ),
     },
@@ -150,16 +150,9 @@ export function makeGrepOverrideWithBackend(
     name: "grep" as const,
     label: "grep",
     description:
-      "Search file contents with ripgrep. Content mode returns LINE#HASH edit anchors for valid UTF-8 and plain line numbers without anchors otherwise; files/count modes return paths or matching-line counts. Valid UTF-8 CRLF is searched as LF; invalid UTF-8 is searched as raw bytes. NUL-containing files are skipped. Directory searches respect ignore rules and skip linked directories.",
+      "Search file contents with ripgrep. Content mode returns LINE#HASH edit anchors for valid UTF-8 and plain line numbers without anchors otherwise; files/count modes return paths or matching-line counts. Valid UTF-8 CRLF is searched as LF; invalid UTF-8 is searched as raw bytes. NUL-containing files are skipped. Directory searches respect ignore rules and skip linked directories. Use grep instead of rg or grep in a shell for content searches; use the shell only for ignored or linked directories.",
     promptSnippet: "Search file contents with ripgrep",
-    promptGuidelines: [
-      "Prefer grep for file-content searches; use another tool for ignored or linked directories.",
-      "In grep, use glob for filename wildcards.",
-      "In grep, use literal:true for exact text, including names, paths, and code snippets; use literal:false only for intentional regex.",
-      "In grep, use a pattern array for alternatives instead of joining them with |, and context:3-5 when searching code to edit.",
-      "In grep, use multiline:true for cross-line matches and outputMode files or count when only paths or counts are needed.",
-      "Copy grep anchors directly into edit; read the full line before rewriting from a partial preview.",
-    ],
+    promptGuidelines: ["Copy grep anchors directly into edit."],
     parameters: grepSchema,
     prepareArguments: createArgumentPreparer("grep", grepSchema, undefined, budgets),
 

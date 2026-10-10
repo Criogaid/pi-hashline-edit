@@ -131,7 +131,7 @@ export function makeReadOverride(
       offset: Type.Optional(
         Type.Number({
           ...POSITIVE_SAFE_INTEGER,
-          description: `1-based line to start from (default ${DEFAULT_OFFSET}).`,
+          description: `1-based line to start from (default ${DEFAULT_OFFSET}). For a large file, set offset and limit to read only the relevant section.`,
         }),
       ),
       limit: Type.Optional(
@@ -148,12 +148,8 @@ export function makeReadOverride(
     name: "read" as const,
     label: "read",
     description:
-      "Read a file. Text lines show as LINE#HASH│content anchors for edit; CRLF line endings show as LF.",
+      "Read a file. Text lines show as LINE#HASH│content anchors for edit; CRLF line endings show as LF. Use read, not shell output, for files you will edit.",
     promptSnippet: "Read files with editable line anchors",
-    promptGuidelines: [
-      "Prefer read over shell output for files you intend to edit.",
-      "For large files, pass read offset and limit to read only the relevant section.",
-    ],
     parameters: parameters as typeof builtin.parameters,
     prepareArguments: createArgumentPreparer("read", parameters, undefined, budgets),
     renderShell: "default" as const,

@@ -36,6 +36,7 @@ pi 扩展 `@criogaid/pi-hashline-edit`，注册入口为 `src/index.ts`。
 ## 编码约定
 
 - 同一条规则、常量、类型或文案只定义一次；新增代码先复用现有定义，不在调用处重写。
+- Give each model-facing rule one home, chosen by what it decides. Choosing a tool, or a parameter of the call being written, belongs in that tool's `description` or the field's description; an obligation spanning several calls belongs in `promptGuidelines`; what to do about one result belongs only in that report's `next` (`src/pi/report-schema.ts`). State a tool's or field's facts once, where they belong. Guidelines never restate a `next`; `NEXT_GUIDELINE`, appended at registration in `src/index.ts`, ranks a report's `next` above them. Word rules as instructions with a concrete trigger and listed exceptions, not as preferences.
 - 输入按漏斗处理：每个工具只有一个入口，非法输入在最上层一次性筛掉，包括 schema 表达不了的检查；下游信任已筛过的输入，不重复校验或防御，也不做兼容转换。新增防御前，先确认实际存在绕过上层的调用路径。
 - 测试按生产的调用顺序驱动工具，不为仅在测试中存在的调用路径保留防御代码。
 - 类型从 schema 推导，不另写同构的类型。
