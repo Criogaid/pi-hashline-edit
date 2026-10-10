@@ -62,6 +62,8 @@ function objectTag(schema: TUnion):
 /**
  * Fields that alone tell tag-sharing branches apart: each branch requires one
  * field that every other branch forbids, and shares all others unchanged.
+ * Shared fields are compared by schema identity, so branches must reuse one
+ * instance per field; otherwise the general union projection applies.
  */
 function exclusiveFields(branches: readonly TObject[]): readonly string[] | undefined {
   const fields = branches.map((branch) => {
