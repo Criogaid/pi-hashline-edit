@@ -442,7 +442,7 @@ Top-level settings control shared behavior; each group configures one tool.
 | `read.maxKiB` | Model capacity | Optional explicit anchored-text cap, 1–4096 KiB. Omit for automatic sizing; invalid values also select automatic sizing, which never exceeds this 4,096 KiB ceiling. Calls cannot raise an explicit cap. |
 | `grep.defaultLimit` | `100` | Matching lines returned when a call omits `limit`; positive safe integer. |
 | `grep.defaultContext` | `0` | Context lines shown when a call omits `context`, 0–20. |
-| `replace.regexTimeoutMs` | `5000` | Time limit for one regex batch, 1000–300000 ms, including worker startup. |
+| `replace.regexTimeoutMs` | `5000` | Time limit for one regex batch, 3000–300000 ms, including worker startup. Values below the floor are invalid and select the default. |
 
 The project's `hashlineEdit` object replaces the global object as a whole. Each setting is resolved on its own: a missing or invalid setting, or a group that is not an object, uses the defaults while valid neighbors are kept. Types, bounds, and defaults are defined once by the settings schema in `src/pi/config.ts`. Tools receive the resolved configuration at registration, keep it for their lifetime, and state configured defaults in their parameter descriptions. Reload Pi after changes to register tools with the new configuration.
 

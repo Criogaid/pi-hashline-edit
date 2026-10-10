@@ -106,7 +106,7 @@ test("project settings replace global groups while absent project settings use g
       shiftRadius: 0,
       read: { defaultLimit: 7, maxKiB: 2 },
       grep: { defaultLimit: 3, defaultContext: 2 },
-      replace: { regexTimeoutMs: 1_000 },
+      replace: { regexTimeoutMs: 3_000 },
     };
     await writeFile(
       join(agentDir, "settings.json"),
@@ -136,7 +136,7 @@ test("invalid tool groups default independently without discarding valid sibling
       shiftRadius: 0,
       read: { defaultLimit: 2, maxKiB: 1 },
       grep: { defaultLimit: 3, defaultContext: 2 },
-      replace: { regexTimeoutMs: 1_000 },
+      replace: { regexTimeoutMs: 3_000 },
     };
     for (const group of ["read", "grep", "replace"] as const) {
       for (const value of [null, [], 42, "invalid", true]) {
@@ -166,8 +166,8 @@ test("tool settings accept their boundary values and default invalid leaves", ()
       {
         group: "replace",
         key: "regexTimeoutMs",
-        valid: [1_000, 300_000],
-        invalid: [999, 300_001, 1000.5, "1000", null],
+        valid: [3_000, 300_000],
+        invalid: [2_999, 300_001, 3000.5, "3000", null],
       },
     ] as const;
     for (const { group, key, valid, invalid } of cases) {

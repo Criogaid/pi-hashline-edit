@@ -75,8 +75,10 @@ export const configSchema = Type.Object({
     ),
   }),
   replace: Type.Object({
+    // The floor must exceed measured worker startup+handshake (0.8–1.3 s on a slow
+    // Windows box); a timeout below it fails even trivial regex batches.
     regexTimeoutMs: integerSetting(
-      integerRange(1_000, 300_000),
+      integerRange(3_000, 300_000),
       5_000,
       "Time limit for one regex batch, in milliseconds.",
     ),
