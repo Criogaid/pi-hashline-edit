@@ -9,34 +9,6 @@ import type { Cause } from "../pi/report-schema.ts";
 const timeoutMs = 10_000;
 const validRules = [{ find: "safe", replace: "changed", regex: true }];
 
-test("worker boundary: invalid incoming data → rejects before replacement", async (t) => {
-  for (const workerData of [
-    { source: "safe", rules: [] },
-    { source: "safe", rules: [{ ...validRules[0], foreign: true }] },
-    { source: "safe", rules: validRules, foreign: true },
-  ]) {
-    await t.test(JSON.stringify(workerData), { timeout: timeoutMs }, async (t) => {
-      const worker = new Worker(new URL("../pi/replace-worker.mjs", import.meta.url), {
-        workerData,
-      });
-      t.after(() => worker.terminate());
-      try {
-        const reply = await new Promise<unknown>((resolve, reject) => {
-          worker.once("message", resolve);
-          worker.once("error", reject);
-          worker.once("exit", (code) => reject(new Error(`Worker exited before reply: ${code}`)));
-        });
-        assert.ok(typeof reply === "object" && reply !== null && "error" in reply);
-        const error = reply.error;
-        assert.ok(typeof error === "object" && error !== null && "code" in error);
-        assert.equal(error.code, "REGEX_WORKER_FAILED");
-      } finally {
-        await worker.terminate();
-      }
-    });
-  }
-});
-
 test("worker boundary: malformed external reply → rejects its result and facts", async (t) => {
   for (const reply of [
     { result: { text: 123, count: 1 } },

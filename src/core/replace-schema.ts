@@ -1,4 +1,4 @@
-/** Replacement rule data shared by the tool and worker boundaries; no Pi runtime imports. */
+/** Tool-validated replacement rules and their engine type; no Pi runtime imports. */
 import { Type, type Static } from "typebox";
 
 export const REGEX_FLAGS_PATTERN = "^[gimsuyd]*$";

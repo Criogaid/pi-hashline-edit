@@ -379,7 +379,7 @@ Zero matches in any rule (`NO_MATCH`), an invalid rule (`INVALID_ARGUMENTS`), or
 Regex captures and prefix/suffix substitutions always refer to the original LF-normalized snapshot.
 Regex batches run in a worker and are terminated on cancellation (`OPERATION_ABORTED`) or when `replace.regexTimeoutMs` (default 5000 ms) elapses (`REGEX_TIMEOUT`). A cancelled or timed-out batch leaves the file unchanged; literal-only batches retain their existing execution path.
 
-Worker requests and replies are validated at the thread boundary. They use the shared replacement schema and code-specific error facts; replies contain exactly one result or failure. Invalid data produces `REGEX_WORKER_FAILED`. Causes retain their codes and nested branches across the worker boundary. The worker loads only production dependencies, including the pinned TypeBox schema validator; it does not import the Pi runtime.
+The worker receives replacement rules already validated by the tool entry point. Replies are validated at the thread boundary using code-specific error facts and contain exactly one result or failure. Invalid replies produce `REGEX_WORKER_FAILED`. Causes retain their codes and nested branches across the worker boundary. The worker loads only production dependencies, including the pinned TypeBox schema validator; it does not import the Pi runtime.
 
 ### Write
 

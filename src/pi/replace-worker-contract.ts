@@ -1,10 +1,9 @@
 /**
- * Replacement worker data boundary. Request/result schemas and classified
- * error facts are checked on receipt; cause transport stays independent of Pi.
+ * Replacement worker replies: result schemas and classified error facts are
+ * checked on receipt; cause transport stays independent of Pi.
  */
 import { Type, type Static } from "typebox";
 import { Value } from "typebox/value";
-import { REPLACEMENTS_SCHEMA } from "../core/replace-schema.ts";
 import { HashlineError, type HashlineErrorArguments } from "../core/errors.ts";
 import {
   ERROR_CODES,
@@ -16,13 +15,6 @@ import {
 } from "./report-schema.ts";
 import { boundedText, causeOf, restoreCause } from "./report-cause.ts";
 
-const REQUEST_SCHEMA = Type.Object(
-  {
-    source: Type.String(),
-    rules: REPLACEMENTS_SCHEMA,
-  },
-  { additionalProperties: false },
-);
 const RESULT_SCHEMA = Type.Object(
   {
     text: Type.String(),
@@ -46,7 +38,6 @@ const REPLY_SCHEMA = Type.Union([
   Type.Object({ result: RESULT_SCHEMA }, { additionalProperties: false }),
   Type.Object({ error: Type.Union(ERROR_SCHEMAS) }, { additionalProperties: false }),
 ]);
-type WorkerRequest = Static<typeof REQUEST_SCHEMA>;
 type WorkerError = {
   [C in ErrorCode]: { code: C; message: string; cause?: Cause } & ({} extends ErrorFacts<C>
     ? { facts?: ErrorFacts<C> }
@@ -54,10 +45,6 @@ type WorkerError = {
 }[ErrorCode];
 type WorkerFailure = { error: WorkerError };
 type WorkerReply = { result: Static<typeof RESULT_SCHEMA> } | WorkerFailure;
-
-export function decodeWorkerRequest(value: unknown): WorkerRequest | undefined {
-  return Value.Check(REQUEST_SCHEMA, value) ? (value as WorkerRequest) : undefined;
-}
 
 export function decodeWorkerReply(value: unknown): WorkerReply | undefined {
   if (typeof value !== "object" || value === null) return undefined;
