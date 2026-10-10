@@ -7,7 +7,7 @@ Hash-anchored file editing for [Pi](https://github.com/earendil-works/pi-coding-
 Overrides `read`, `grep`, `edit`, and `write`, and adds `replace` for bulk transformations. Optional `forget` drops read/grep result content from model context.
 
 - **Search → edit:** `read` and `grep` return the same `LINE#HASH` anchors, so search results can feed directly into edits.
-- **Batch and chain edits:** submit structured JSON operations together, then use the returned fresh anchors for the next change.
+- **Batch edits:** submit structured JSON operations together against one snapshot.
 - **Recover from stale anchors:** rejected edits show a unique checksum-matching candidate's line, or neighborhoods around ambiguous candidates for comparison. With no candidate, they show the current cited row as an observation. Like every tool failure, the rejection is one JSON report whose single `next` instruction asks the model to confirm the target or re-read. Recovery never applies automatically.
 - **Edit → test:** Action Fusion lets a mutation include an optional follow-up command, with separate file and command outcomes and separate TUI cards.
 
@@ -45,11 +45,9 @@ To change the return value, copy the second line's anchor into `edit` and supply
 }
 ```
 
-The result returns the updated anchor, followed by its [report](#reports); the TUI shows the diff:
+The result returns its [report](#reports); the TUI shows the diff:
 
-```text
-Updated anchors:
-2#V8AT
+```json
 {
   "tool": "edit",
   "path": "greet.ts",
@@ -57,9 +55,7 @@ Updated anchors:
 }
 ```
 
-Use returned anchors for changed lines in subsequent edits. Previously observed anchors remain usable when their line number, full content, and hash-length configuration are unchanged. Content-mode `grep` provides the same references, grouped by file. Always copy actual tool output; the examples use the default four-character hash.
-
-Successful `edit` and `replace` results omit candidate rows whose full content at the same line number is unchanged, then return compact `LINE#HASH` tokens by default. `edit` retains complete content for a deletion successor unless the batch also supplies that row; `replace` retains it for the first surviving line after a pure deletion. Anchor rows have a 16 KiB byte limit, including their heading, with no fixed entry-count limit; rows that do not fit are omitted whole and counted in the report's `omittedAnchors`. Neither tool reports every shifted line in the remaining file; read shifted positions when needed and no fresh anchor was returned. `write` returns no anchors. Explicit `read`/`grep` results and edit failure context continue to include the requested or diagnostic rows.
+Successful `edit`, `replace`, and `write` results return a report without anchor rows. Use `read` or content-mode `grep` to obtain anchors for changed or shifted lines before editing them again. Previously observed anchors remain usable when their line number, full content, and hash-length configuration are unchanged. Edit failures retain their recovery anchors. Always copy actual tool output; the examples use the default four-character hash.
 
 ## Tools
 
@@ -82,9 +78,9 @@ Valid UTF-8 text inspection and matching uses one logical representation: CRLF b
 
 ### Reports
 
-Every result of every tool (`read`, `grep`, `edit`, `replace`, `write`, and `forget`) states its facts in one **report**: a single JSON object, the only form the plugin uses for facts the model reads. A successful result is the tool's content payload (anchored `read` rows, `grep` rows, `Updated anchors:` rows) followed by its report; the report is omitted when it would state nothing beyond `tool` and `path`. A failure — including argument rejection, filesystem errors, cancellation, and a mutation failure under Action Fusion — is the report alone, returned as an error result.
+Every result of every tool (`read`, `grep`, `edit`, `replace`, `write`, and `forget`) states its facts in one **report**: a single JSON object, the only form the plugin uses for facts the model reads. A successful result is the tool's content payload (anchored `read` rows or `grep` rows) followed by its report; successful mutations return the report alone. The report is omitted when it would state nothing beyond `tool` and `path`. A failure — including argument rejection, filesystem errors, cancellation, and a mutation failure under Action Fusion — is the report alone, returned as an error result.
 
-Reports serialize only their facts, without a protocol marker. The closed wire schemas in [`report-schema.ts`](src/pi/report-schema.ts) accept only registered tools and the `codemode` output tag, reject unknown fields, and require the facts associated with each error code. The TUI reads live reports from `details.report`; Pi's text-only argument rejections and forget tags decode from the final content block. Progress updates remain separate: Fusion sends command progress and publication in details, with no final anchor payload. Their type derives from `ACTION_FUSION_PROGRESS_SCHEMA`; saved command cards validate a closed projection on restore. Malformed snapshots are ignored, while historical cards lacking freshness or mutation-completion facts retain their unknown state.
+Reports serialize only their facts, without a protocol marker. The closed wire schemas in [`report-schema.ts`](src/pi/report-schema.ts) accept only registered tools and the `codemode` output tag, reject unknown fields, and require the facts associated with each error code. The TUI reads live reports from `details.report`; Pi's text-only argument rejections and forget tags decode from the final content block. Progress updates remain separate: Fusion sends command progress and publication in details. Their type derives from `ACTION_FUSION_PROGRESS_SCHEMA`; saved command cards validate a closed projection on restore. Malformed snapshots are ignored, while historical cards lacking freshness or mutation-completion facts retain their unknown state.
 
 ```json
 {
@@ -107,7 +103,7 @@ Reports serialize only their facts, without a protocol marker. The closed wire s
 }
 ```
 
-A successful edit whose `then_run` command failed, after its `Updated anchors:` rows:
+A successful edit whose `then_run` command failed:
 
 ```json
 {
@@ -131,7 +127,7 @@ Fields appear in this order and are omitted when they do not apply. Each has one
 | Code facts | Code | The facts of the error code, listed below. |
 | `pagination`, `truncatedAt`, `lineTooLong` | `read` | Rows shown and the next `offset` when more remain; the byte budget that stopped output; a first row too long to return. |
 | `matches`, `files`, `matchLimit`, `outputLimit`, `linePreviewLimit`, `invalidUtf8`, `diagnostics` | `grep` | Confirmed matching lines and files; the match limit or Pi's output limit when reached; the preview width when a line was cut; files shown as plain non-anchor previews; search diagnostics when the search was incomplete. `replace` also states `matches`. |
-| `created`, `omittedAnchors` | Mutation tool | `write` created the file; changed positions left out of the anchor budget. |
+| `created` | Mutation tool | `write` created the file. |
 | `freshness`, `freshnessError` | Commit layer | After publication, the target is not confirmed at the published revision: `changed`, `missing`, or `unknown`, with the read failure for `unknown`. Absent when unchanged. |
 | `then_run`, `progressError` | Action Fusion | The command's `status` (`succeeded`, `failed`, `timeout`, `cancelled`, or `skipped`) and its `output`; a failed progress observer. |
 | `forgotten`, `resultId`, `forgetScope`, `contentForgotten` | `forget` | See [Forget](#forget). |
@@ -139,7 +135,7 @@ Fields appear in this order and are omitted when they do not apply. Each has one
 
 Native failures are classified at the tool boundary and state their original diagnostic directly in `message`. An errno absent from that diagnostic is prefixed once. Only an actual underlying `Error.cause` becomes structured `cause`; the boundary does not add a generic message or wrap the same failure again.
 
-`next` is derived from the facts, never written by a throw site: once a mutation reached or may have reached the file (`PUBLISHED` or `UNKNOWN`), it says not to repeat the change and to read the file first, whatever the code; otherwise a failure's `next` is its code's recovery, or one of the alternatives the code defines. A success's `next` follows its first fact that needs one, in this order: `freshness` (read the file before further edits — the same sentence a published failure ends with), `omittedAnchors`, `lineTooLong`, `pagination`, `matchLimit`, `outputLimit`, `linePreviewLimit`, `contentForgotten`.
+`next` is derived from the facts, never written by a throw site: once a mutation reached or may have reached the file (`PUBLISHED` or `UNKNOWN`), it says not to repeat the change and to read the file first, whatever the code; otherwise a failure's `next` is its code's recovery, or one of the alternatives the code defines. A success's `next` follows its first fact that needs one, in this order: `freshness` (read the file before further edits — the same sentence a published failure ends with), `lineTooLong`, `pagination`, `matchLimit`, `outputLimit`, `linePreviewLimit`, `contentForgotten`.
 
 The codes, their facts (`?` marks optional ones), and their recovery are defined once in [`report-schema.ts`](src/pi/report-schema.ts):
 
@@ -486,9 +482,9 @@ run the session's callable Bash tool                             |
   v                                                               |
 file unchanged at the end? <--------------------------------------+
   |
-  +-- yes --> edit/replace anchor rows, then the report with then_run
+  +-- yes --> the report with then_run
   |
-  +-- no ---> no anchor rows; the report states freshness
+  +-- no ---> the report states freshness
               and then_run, and next asks for a re-read
 ```
 
@@ -510,7 +506,7 @@ A nested Bash result's `terminate` hint is passed to the parent mutation result 
 - **Validation is local to supplied anchors.** Unrelated in-place changes leave stable anchors usable. A range verifies its supplied start/end anchors, not every interior line.
 - **Line shifts change anchors.** Insertions/deletions can invalidate later references. Recovery searches within `shiftRadius`, then the rest of the file if no local candidates match. Unique candidates include bounded line content; ambiguous candidates include neighborhoods for comparison. Use `read` when no candidate is found or needed content is omitted. Retries verify again, without fuzzy matching or automatic relocation.
 - **Edits preserve text representation.** `edit` preserves existing line endings, untouched separators, and final-newline state, adding a terminator when needed to represent a final blank line. `edit`/`replace` reject invalid UTF-8 source text; all mutations reject NUL and output that cannot be encoded losslessly as UTF-8. Supplied text (`write` content, `edit` body lines, `replace` replacement text) is checked before the file is read, naming the offending field; the final content is checked again before publication, because a transformation such as a regex without `u` can split a surrogate pair. UTF-16 and legacy code pages are not decoded or preserved; a BOM-free file whose bytes happen to be valid UTF-8 may still be misinterpreted.
-- **Fresh anchors depend on the final observation.** After `then_run`, anchors are shown only for `unchanged` freshness. Without a command, observed and published revisions must agree. Otherwise every mutation report, including `write`'s, states `freshness`, and its `next` is to read the file before further edits — the same sentence that ends a published failure. Later edits still verify anchors.
+- **Freshness depends on the final observation.** After `then_run`, the target is checked against the published revision. Without a command, observed and published revisions must agree. Otherwise every mutation report states `freshness`, and its `next` is to read the file before further edits — the same sentence that ends a published failure. Later edits still verify their supplied anchors.
 - **Local queues are not cross-process transactions.** Revision checks bind mutations to the bytes read, but an external writer can still race a check and publication. There is no strict workspace jail or multi-file transaction.
 
 <details>
@@ -537,7 +533,6 @@ These limits bound model context, not file size. Each omission is a counted or n
 | `read` | Default 500 rows (`read.defaultLimit`), overridable with `limit`; 256 KiB of anchored text (`read.maxKiB`). No partial anchor rows. An oversized single row directs the caller to inspect chunks with `bash` or make a known text change with `replace`; reducing `limit` cannot split a physical line. |
 | `grep` | Default 100 matching lines (`grep.defaultLimit`), overridable; up to 500 UTF-16 units per partial line preview, plus labels and Pi's total output limits. Match previews use rg byte offsets; hashes use full content. The report's `diagnostics` have a separate 4 KiB budget. |
 | `forget` tag | With `forget` enabled: direct `read` and content-mode `grep` text results of 2 KiB or more, and image reads. Successful codemode outputs containing a successful read or content-mode grep call use the same threshold and are forgotten as one result; nested results are not tagged. |
-| `edit` / `replace` anchors | 16 KiB including the heading, with no fixed entry-count limit. Compact tokens for changed positions; selected deletion successors retain complete content. Rows that do not fit are omitted in full and counted in `omittedAnchors`; later rows that fit are still returned. |
 | Report `message` | 4 KiB, preserving the opening and the final cause with an omission notice; each `message` within `cause` has the same budget. |
 | Argument errors | 16 KiB of valid JSON for combined tool-specific and schema issues; omit the argument copy before omitting whole issues and label both omissions. Each reason and fix has a 4 KiB budget preserving opening/closing text. Pi's schema error allowance applies separately within each top-level field. |
 | Anchor `failures` | 16 KiB of compact JSON, with no fixed failure-count limit; leading entries are kept whole and the rest counted in `omittedFailures`. Unique candidates include complete rows up to 4 KiB, and ambiguous failures list up to eight candidates each. Unresolved anchors show the current cited row when it fits; oversized or out-of-range rows require a fresh `read` or `grep`. |
@@ -602,7 +597,7 @@ PUBLISHED, even if a step after publication fails
 | `actionFusion.freshness` | `unchanged`, `changed`, `missing`, or `unknown`, relative to the published revision. |
 | `actionFusion.mutationCompleted` | Progress flag set after mutation execution and result generation succeed; publication alone is not mutation success. |
 
-Streaming mutation summaries omit anchors. Result-generation failures preserve publication status and any completed command outcome; progress callback failures are reported separately from mutation/command outcomes. Command progress `output` contains only command output or execution errors; progress also carries `mutationCompleted` and `freshness`, from which the command card derives why a command never started. Command cards persist only their own state and use native Bash output rendering. Final cards survive reloads without adding model-context messages; unfinished saved commands show an interrupted/unknown outcome.
+Result-generation failures preserve publication status and any completed command outcome; progress callback failures are reported separately from mutation/command outcomes. Command progress `output` contains only command output or execution errors; progress also carries `mutationCompleted` and `freshness`, from which the command card derives why a command never started. Command cards persist only their own state and use native Bash output rendering. Final cards survive reloads without adding model-context messages; unfinished saved commands show an interrupted/unknown outcome.
 
 </details>
 

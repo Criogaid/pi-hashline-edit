@@ -5,7 +5,7 @@
  *
  * One report describes every result of every tool, success or failure. A
  * failure report is the entire result; a success report follows the tool's
- * content payload (read rows, grep rows, updated anchors). Each field has one
+ * content payload (read rows, grep rows). Each field has one
  * owning layer (README "Reports"), so no fact can be stated twice. report.ts
  * renders a report for the model; render.ts renders the same object for the TUI.
  *
@@ -196,7 +196,6 @@ export const FACT_FIELDS = {
   diagnostics: Type.String({ description: "Search diagnostics; results cover confirmed matches." }),
   // Mutation outcome.
   created: Type.Literal(true),
-  omittedAnchors: count("Changed positions omitted from the anchor budget."),
   // Commit-layer observation after publication.
   freshness: FRESHNESS_SCHEMA,
   freshnessError: CAUSE_SCHEMA,
@@ -367,7 +366,6 @@ export const PUBLICATION_NEXT = {
  */
 export const OUTCOME_NEXT = [
   ["freshness", REREAD],
-  ["omittedAnchors", "Read the file for the omitted anchor positions."],
   [
     "lineTooLong",
     "Inspect the line in chunks with bash, or use replace for a known literal or regex change; a smaller limit cannot split a line.",
@@ -411,8 +409,8 @@ const SUCCESS_DEFINITIONS = {
       "contentForgotten",
     ],
   ),
-  edit: facts([], ["omittedAnchors"]),
-  replace: facts([], ["matches", "omittedAnchors"]),
+  edit: facts([]),
+  replace: facts([], ["matches"]),
   write: facts([], ["created"]),
   forget: facts(["forgotten"]),
   codemode: facts([], ["resultId", "forgetScope", "contentForgotten"]),

@@ -91,41 +91,6 @@ test("multiple out-of-order ops → applied at the right positions", () => {
   if (r.ok) assert.equal(r.text, "A\nb\nc\nz\n");
 });
 
-test("touchedLines covers exactly the lines this edit produced (new-file indices)", () => {
-  const text = "a\nb\nc\n";
-  const r = applyEdits(
-    text,
-    [
-      { op: "insert_after", anchor: at(text, 3), body: ["z"] },
-      { op: "replace", start: at(text, 1), body: ["A"] },
-    ],
-    4,
-    15,
-  );
-  assert.equal(r.ok, true);
-  if (r.ok) {
-    // new file: [A, b, c, z]; this edit produced line index 0 (A) and 3 (z)
-    assert.deepEqual([...r.touchedLines], [0, 3]);
-  }
-});
-
-test("touchedLines for append", () => {
-  const text = "a\n";
-  const r = applyEdits(text, [{ op: "append", body: ["b", "c"] }], 4, 15);
-  assert.equal(r.ok, true);
-  if (r.ok) assert.deepEqual([...r.touchedLines], [1, 2]);
-});
-
-test("touchedLines for delete re-anchors the line that shifted into the gap", () => {
-  const text = "a\nb\nc\nd\n";
-  const r = applyEdits(text, [{ op: "delete", start: at(text, 2) }], 4, 15);
-  assert.equal(r.ok, true);
-  if (r.ok) {
-    // new file: [a, c, d]; deleting line 2 (b) shifts c into index 1
-    assert.deepEqual([...r.touchedLines], [1]);
-  }
-});
-
 // --- error paths ---
 
 test("anchor hash mismatch rejected (line changed)", () => {
@@ -207,11 +172,11 @@ test("conflict at the same insertion point rejected", () => {
   if (!r.ok) assert.equal(r.failure.kind, "range");
 });
 
-test("byte-identical edits succeed without updated anchors after validation", () => {
+test("byte-identical edits → validate anchors and preserve the source bytes", () => {
   for (const text of ["a\nb\n", "\uFEFFa\r\nb\n"]) {
     const body = text.startsWith("\uFEFF") ? "\uFEFFa" : "a";
     const r = applyEdits(text, [{ op: "replace", start: at(text, 1), body: [body] }], 4, 15);
-    assert.deepEqual(r, { ok: true, text, changed: false, touchedLines: [], contextLines: [] });
+    assert.deepEqual(r, { ok: true, text, changed: false });
     const invalid = applyEdits(
       text,
       [{ op: "replace", start: at("wrong\nb\n", 1), body: [body] }],
@@ -310,23 +275,19 @@ test("edits retain empty final logical lines even without an original final newl
     const line = splitLines(text).length;
     const ending = text.includes("\r\n") ? "\r\n" : "\n";
     const prefix = text.slice(0, text.lastIndexOf("\n") + 1);
-    const cases: [Edit, string, number[]][] = [
-      [{ op: "replace", start: at(text, line), body: [""] }, prefix + ending, [line - 1]],
+    const cases: [Edit, string][] = [
+      [{ op: "replace", start: at(text, line), body: [""] }, prefix + ending],
       [
         { op: "replace", start: at(text, line), body: ["new", ""] },
         `${prefix}new${ending}${ending}`,
-        [line - 1, line],
       ],
-      [{ op: "append", body: [""] }, text + ending + ending, [line]],
-      [{ op: "insert_after", anchor: at(text, line), body: [""] }, text + ending + ending, [line]],
+      [{ op: "append", body: [""] }, text + ending + ending],
+      [{ op: "insert_after", anchor: at(text, line), body: [""] }, text + ending + ending],
     ];
-    for (const [edit, expected, touched] of cases) {
+    for (const [edit, expected] of cases) {
       const result = applyEdits(text, [edit], 4, 15);
       assert.ok(result.ok);
       assert.equal(result.text, expected, `${edit.op}: ${JSON.stringify(text)}`);
-      assert.deepEqual(result.touchedLines, touched);
-      const newLines = splitLines(result.text);
-      assert.ok(result.touchedLines.every((index) => index < newLines.length));
     }
   }
   // Deleting an unterminated suffix must also retain an existing blank predecessor.
@@ -339,23 +300,21 @@ test("edits retain empty final logical lines even without an original final newl
     );
     assert.ok(result.ok);
     assert.equal(result.text, text.slice(0, -"last".length));
-    assert.deepEqual(result.touchedLines, []);
   }
 });
 
 test("a BOM represents an empty first line without a terminator, but not an empty later line", () => {
-  const cases: [string, Edit[], string, number[]][] = [
-    ["\uFEFFold", [{ op: "replace", start: at("\uFEFFold", 1), body: [""] }], "\uFEFF", [0]],
-    ["\uFEFF", [{ op: "replace", start: at("\uFEFF", 1), body: [""] }], "\uFEFF", []],
-    ["\uFEFF", [{ op: "append", body: [""] }], "\uFEFF\n\n", [1]],
-    ["\uFEFF", [{ op: "prepend", body: ["new"] }], "\uFEFFnew\n\n", [0]],
-    ["\uFEFF\nlast", [{ op: "delete", start: at("\uFEFF\nlast", 2) }], "\uFEFF", []],
+  const cases: [string, Edit[], string][] = [
+    ["\uFEFFold", [{ op: "replace", start: at("\uFEFFold", 1), body: [""] }], "\uFEFF"],
+    ["\uFEFF", [{ op: "replace", start: at("\uFEFF", 1), body: [""] }], "\uFEFF"],
+    ["\uFEFF", [{ op: "append", body: [""] }], "\uFEFF\n\n"],
+    ["\uFEFF", [{ op: "prepend", body: ["new"] }], "\uFEFFnew\n\n"],
+    ["\uFEFF\nlast", [{ op: "delete", start: at("\uFEFF\nlast", 2) }], "\uFEFF"],
   ];
-  for (const [text, edits, expected, touched] of cases) {
+  for (const [text, edits, expected] of cases) {
     const result = applyEdits(text, edits, 4, 15);
     assert.ok(result.ok);
     assert.equal(result.text, expected, JSON.stringify({ text, edits }));
-    assert.deepEqual(result.touchedLines, touched);
   }
 });
 
@@ -365,16 +324,12 @@ test("large replacement bodies retain snapshot boundaries without a function arg
   const result = applyEdits(text, [{ op: "replace", start: at(text, 2), body }], 4, 15);
   assert.ok(result.ok);
   assert.equal(result.text, `head\r\n${"x\r\n".repeat(body.length - 1)}x\ntail`);
-  assert.equal(result.touchedLines.length, body.length);
-  assert.equal(result.touchedLines[0], 1);
-  assert.equal(result.touchedLines.at(-1), body.length);
-  assert.deepEqual(result.contextLines, []);
 });
 
 test("noop is still detected when the file lacks a final newline", () => {
   const text = "a\nb";
   const r = applyEdits(text, [{ op: "replace", start: at(text, 1), body: ["a"] }], 4, 15);
-  assert.deepEqual(r, { ok: true, text, changed: false, touchedLines: [], contextLines: [] });
+  assert.deepEqual(r, { ok: true, text, changed: false });
 });
 
 // --- shifted-anchor recovery ---
@@ -638,40 +593,30 @@ test("matched anchor checks do not imply valid ranges", () => {
   }
 });
 
-test("copy/move original ranges → retain order and report final produced positions", () => {
+test("copy/move original ranges → retain captured text and order", () => {
   const text = "A\nB\nC\nD\n";
-  const cases: { edit: Edit; expected: string; touched: number[]; context: number[] }[] = [
+  const cases: { edit: Edit; expected: string }[] = [
     {
       edit: { op: "copy", start: at(text, 2), end: at(text, 3), after: at(text, 4) },
       expected: "A\nB\nC\nD\nB\nC\n",
-      touched: [4, 5],
-      context: [],
     },
     {
       edit: { op: "move", start: at(text, 1), end: at(text, 2), after: at(text, 4) },
       expected: "C\nD\nA\nB\n",
-      touched: [0, 2, 3],
-      context: [0],
     },
     {
       edit: { op: "move", start: at(text, 3), end: at(text, 4), before: at(text, 1) },
       expected: "C\nD\nA\nB\n",
-      touched: [0, 1],
-      context: [],
     },
     {
       edit: { op: "copy", start: at(text, 1), end: at(text, 3), after: at(text, 1) },
       expected: "A\nA\nB\nC\nB\nC\nD\n",
-      touched: [1, 2, 3],
-      context: [],
     },
   ];
-  for (const { edit, expected, touched, context } of cases) {
+  for (const { edit, expected } of cases) {
     const result = applyEdits(text, [edit], 4, 0);
     assert(result.ok);
     assert.equal(result.text, expected);
-    assert.deepEqual(result.touchedLines, touched);
-    assert.deepEqual(result.contextLines, context);
   }
 });
 
@@ -757,7 +702,7 @@ test("copy blank or BOM-only line → retain the added logical blank line", () =
   }
 });
 
-test("move to either adjacent gap → byte-identical no-op with no updated anchors", () => {
+test("move to either adjacent gap → byte-identical no-op", () => {
   const text = "A\r\nB\nC\r\nD";
   for (const destination of [{ before: at(text, 2) }, { after: at(text, 3) }]) {
     const result = applyEdits(
@@ -769,7 +714,6 @@ test("move to either adjacent gap → byte-identical no-op with no updated ancho
     assert(result.ok);
     assert.equal(result.text, text);
     assert.equal(result.changed, false);
-    assert.deepEqual(result.touchedLines, []);
   }
 });
 

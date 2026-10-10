@@ -5,8 +5,8 @@
  * prepared and validated the arguments: separating then_run, path resolution,
  * the shared file mutation queue, and the hand-off to Action Fusion or plain
  * finalization. Each tool
- * returns a typed `MutationOutcome` (commit facts, details, outcome facts,
- * anchors); `finalizeMutation` alone turns it into the result, so nothing
+ * returns a typed `MutationOutcome` (commit facts, details, outcome facts);
+ * `finalizeMutation` alone turns it into the result, so nothing
  * downstream reads publication or revisions back from result details. Every
  * failure leaves as one report with the call's path, stage, and publication.
  *
@@ -31,7 +31,6 @@ import {
   finalizeMutation,
   generateMutationDetails,
   postProcessMutation,
-  type AnchorReport,
   type MutationOutcome,
 } from "./mutation-result.ts";
 import { canonicalPath } from "./path.ts";
@@ -109,8 +108,6 @@ export async function executeMutation<TParams extends { path: string }, TDetails
 export interface TextChange {
   /** Complete replacement text; equal to the snapshot for a no-op. */
   readonly text: string;
-  /** Fresh anchor report for the committed text. Called during result generation. */
-  anchors(): AnchorReport;
   /** The tool's own outcome facts, such as replace's match count. */
   readonly facts?: MutationOutcome<unknown>["facts"];
 }
@@ -145,6 +142,5 @@ export async function runTextMutation(
       commit.publication,
     ),
     facts: next.facts ?? {},
-    anchors: next.anchors(),
   }));
 }

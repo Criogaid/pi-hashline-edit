@@ -12,7 +12,7 @@
 /** grep line preview, in UTF-16 units, excluding its partial-line label. */
 export const GREP_MAX_LINE_LENGTH = 500;
 
-/** Each diagnostic or anchor block: an argument error, each fact list of an error record, mutation anchors. */
+/** Each diagnostic block: an argument error or a report fact list. */
 export const MAX_BLOCK_BYTES = 16 * 1024;
 /** One free-text field of an error record (a message or argument reason): leave room for the envelope. */
 export const MAX_ERROR_TEXT_BYTES = MAX_BLOCK_BYTES / 4;

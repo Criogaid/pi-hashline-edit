@@ -31,13 +31,11 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import type { AgentToolResult, AgentToolUpdateCallback } from "@earendil-works/pi-agent-core";
 import { Type, type Static } from "typebox";
-import { splitLines } from "../core/lines.ts";
 import { applyReplacements, buildRegex } from "../core/replace.ts";
 import { REPLACEMENTS_SCHEMA, REGEX_FLAGS_PATTERN } from "../core/replace-schema.ts";
 import { runRegexReplacements } from "./replace-regex.ts";
 import { unwritableTextError } from "../core/text.ts";
 import { ACTION_FUSION_GUIDELINES, withThenRunSchema, type ThenRunInput } from "./action-fusion.ts";
-import { createAnchorFormatter, type AnchorFormatter } from "./anchor-format.ts";
 import type { HashlineEditConfig } from "./config.ts";
 import {
   formatDiffCounts,
@@ -45,7 +43,6 @@ import {
   renderMutationResult,
   type DiffCounts,
 } from "./render.ts";
-import { formatMutationAnchors, type AnchorReport } from "./mutation-result.ts";
 import {
   executeMutation,
   runTextMutation,
@@ -81,57 +78,6 @@ function createReplaceSchema(actionFusion: boolean) {
   return withThenRunSchema(replaceSchema, "replace", actionFusion);
 }
 type ReplaceParams = Static<typeof replaceSchema> & { then_run?: ThenRunInput };
-
-/**
- * Bound candidate anchors by stripping common prefix/suffix lines in O(n).
- * For a pure deletion, retain its first surviving successor. Shifted suffixes
- * are otherwise omitted; the shared formatter removes unchanged positions.
- */
-function anchorSpan(
-  oldLines: readonly string[],
-  newLines: readonly string[],
-): { start: number; end: number; contextLines: number[] } | null {
-  const n = Math.min(oldLines.length, newLines.length);
-  let prefix = 0;
-  while (prefix < n && oldLines[prefix] === newLines[prefix]) prefix++;
-  // same length and fully equal → no change
-  if (oldLines.length === newLines.length && prefix === oldLines.length) return null;
-  let oldSuffix = 0;
-  let newSuffix = 0;
-  while (
-    oldSuffix < oldLines.length - prefix &&
-    newSuffix < newLines.length - prefix &&
-    oldLines[oldLines.length - 1 - oldSuffix] === newLines[newLines.length - 1 - newSuffix]
-  ) {
-    oldSuffix++;
-    newSuffix++;
-  }
-  const start = prefix;
-  const end = newLines.length - 1 - newSuffix; // inclusive, 0-based, in new
-  return start >= newLines.length
-    ? null
-    : { start, end: Math.max(start, end), contextLines: end < start ? [start] : [] };
-}
-
-/** Format changed positions within the candidate span, subject to the shared output budget. */
-function formatSpanAnchors(
-  oldLines: readonly string[],
-  newLines: readonly string[],
-  span: NonNullable<ReturnType<typeof anchorSpan>>,
-  anchors: AnchorFormatter,
-): AnchorReport {
-  function* indices() {
-    for (let i = span.start; i <= span.end; i++) yield i;
-  }
-  return formatMutationAnchors(
-    oldLines,
-    newLines,
-    indices(),
-    anchors,
-    "Updated anchors:",
-    new Set(span.contextLines),
-  );
-}
 
 /** Call-header line: `replace path — N rules`, plus `+N -N` once diff counts are known. */
 function replaceHeader(args: ReplaceParams, theme: Theme, counts?: DiffCounts): string {
@@ -176,7 +122,7 @@ export function makeReplaceTool(
     name: "replace" as const,
     label: "replace",
     description:
-      "Replace every match of one or more literal or JavaScript-regex rules in a file. Overlapping matches or a rule with no match reject the whole call. Returns a diff and fresh anchors.",
+      "Replace every match of one or more literal or JavaScript-regex rules in a file. Overlapping matches or a rule with no match reject the whole call. Returns a mutation report.",
     promptSnippet: "Replace matching text across a file",
     promptGuidelines: [MUTATION_TOOL_GUIDELINE, ...(fusion ? ACTION_FUSION_GUIDELINES : [])],
     parameters,
@@ -221,8 +167,6 @@ function runReplace(
   rules: ReplaceParams["replacements"],
   config: HashlineEditConfig,
 ) {
-  const anchorFormatter = createAnchorFormatter(config.hashLen);
-
   return runTextMutation(target, async (currentText) => {
     let newText: string;
     let count: number;
@@ -239,19 +183,9 @@ function runReplace(
       if (target.signal?.aborted) throw cancellationError();
       throw error;
     }
-    const changed = newText !== currentText;
-
     return {
       text: newText,
       facts: { matches: count },
-      anchors: () => {
-        const oldLines = splitLines(currentText);
-        const newLines = splitLines(newText);
-        const span = changed ? anchorSpan(oldLines, newLines) : null;
-        return span
-          ? formatSpanAnchors(oldLines, newLines, span, anchorFormatter)
-          : { text: "", omitted: 0 };
-      },
     };
   });
 }

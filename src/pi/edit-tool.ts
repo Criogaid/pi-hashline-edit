@@ -1,17 +1,13 @@
 /**
  * Override edit: hashline ops via structured `edits` (LINE#HASH anchors).
  *
- * Each op in `edits` references line anchors copied from read / grep / replace output
- * (or from a prior edit's "Updated anchors"). The core verifies each anchor live against
+ * Each op in `edits` references line anchors from read, grep, or edit failure diagnostics.
+ * The core verifies each anchor live against
  * the current file content — no prior-read revision guard: a cited line
  * that changed (or was misremembered) fails its own anchor; unchanged lines
  * elsewhere never block the edit. The extension requires structured `edits` arrays
  * at execution; Pi may coerce a single object before validation. Legacy
  * oldText/newText inputs fail schema validation before mutation.
- *
- * On success the result carries fresh `LINE#HASH` anchors for the lines this
- * edit produced (and the line that shifted into a deletion gap), so the model
- * can chain edits without a re-read.
  *
  * Concurrency safety: read-modify-write is wrapped in withFileMutationQueue.
  * AbortSignal is honored — checked after read / before write.
@@ -29,16 +25,10 @@ import type { AgentToolResult, AgentToolUpdateCallback } from "@earendil-works/p
 import { Type, type Static } from "typebox";
 import { ACTION_FUSION_GUIDELINES, withThenRunSchema, type ThenRunInput } from "./action-fusion.ts";
 import { applyEdits } from "../core/apply.ts";
-import { splitLines } from "../core/lines.ts";
 import { unwritableTextError } from "../core/text.ts";
 import { EDIT_ANCHOR_FIELDS, type Anchor, type Edit } from "../core/types.ts";
 import type { HashlineEditConfig } from "./config.ts";
-import {
-  anchorPattern,
-  createAnchorFormatter,
-  parseAnchorToken,
-  type AnchorFormatter,
-} from "./anchor-format.ts";
+import { anchorPattern, createAnchorFormatter, parseAnchorToken } from "./anchor-format.ts";
 import {
   formatDiffCounts,
   renderMutationCall,
@@ -46,7 +36,6 @@ import {
   type DiffCounts,
 } from "./render.ts";
 import { describeEditFailure } from "./failure-context.ts";
-import { formatMutationAnchors, type AnchorReport } from "./mutation-result.ts";
 import {
   executeMutation,
   runTextMutation,
@@ -162,7 +151,7 @@ function buildEditSchema(hashLen: number) {
       }),
       edits: Type.Array(editOpSchema, {
         minItems: 1,
-        description: `Operations on one snapshot. Anchors are LINE#HASH with exactly ${hashLen} hash characters, copied from the latest read, grep, edit, or replace result.`,
+        description: `Operations on one snapshot. Anchors are LINE#HASH with exactly ${hashLen} hash characters, copied from read, grep, or edit failure diagnostics.`,
       }),
     },
     { additionalProperties: false },
@@ -258,28 +247,6 @@ function toCoreEdits(ops: readonly EditOpInput[]): Edit[] {
   });
 }
 
-/**
- * Return compact tokens for produced rows, retaining content for deletion successors.
- * Uses the applicator's final indices so mixed batches do not need a second position calculation.
- */
-function formatUpdatedAnchors(
-  before: string,
-  newText: string,
-  touched: readonly number[],
-  contextLines: readonly number[],
-  anchors: AnchorFormatter,
-): AnchorReport {
-  const idxs = [...new Set(touched)].sort((a, b) => a - b);
-  return formatMutationAnchors(
-    splitLines(before),
-    splitLines(newText),
-    idxs,
-    anchors,
-    "Updated anchors:",
-    new Set(contextLines),
-  );
-}
-
 /** Call header with total/per-kind operation counts and the result's diff counts. */
 function editHeader(args: EditParams, theme: Theme, counts?: DiffCounts): string {
   let t = theme.fg("toolTitle", theme.bold("edit "));
@@ -319,7 +286,7 @@ export function makeEditOverride(
   config: HashlineEditConfig,
   fusion?: ActionFusionExecutor,
 ) {
-  // Schema, verification, recovery, and returned anchors use the registered configuration.
+  // Schema, verification, and recovery use the registered configuration.
   const { hashLen, shiftRadius } = config;
   const parameters = createEditSchema(fusion !== undefined, hashLen);
 
@@ -327,13 +294,13 @@ export function makeEditOverride(
     name: "edit" as const,
     label: "edit",
     description:
-      "Edit file lines by LINE#HASH anchors checked against the current file. Returns fresh anchors for changed lines. On anchor failure, shows current context and recovery candidates; nothing is retried automatically.",
+      "Edit file lines by LINE#HASH anchors checked against the current file. On anchor failure, shows current context and recovery candidates; nothing is retried automatically.",
     promptSnippet: "Edit file lines using verified anchors",
     promptGuidelines: [
       MUTATION_TOOL_GUIDELINE,
       "Batch all edits to one file in a single edit call; all its anchors are checked against one snapshot.",
       "Use copy/move for unchanged whole-line transfers; use body edits when text or indentation must change.",
-      "Reuse anchors while their line number and content are unchanged; inserts and deletes shift later lines, so use the edit's Updated anchors or re-read shifted lines.",
+      "Reuse anchors while their line number and content are unchanged; read or grep changed or shifted lines before editing them again.",
       "On edit anchor failure, inspect the recovery candidates before retrying or re-reading.",
       ...(fusion ? ACTION_FUSION_GUIDELINES : []),
     ],
@@ -402,14 +369,6 @@ function runHashline(
 
     return {
       text: result.text,
-      anchors: () =>
-        formatUpdatedAnchors(
-          currentText,
-          result.text,
-          result.touchedLines,
-          result.contextLines,
-          anchorFormatter,
-        ),
     };
   });
 }

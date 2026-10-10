@@ -120,10 +120,7 @@ test("edit and replace share one embedded executor and preserve mutation results
     const editOutput = editResult.content.at(-1);
     assert.ok(editOutput?.type === "text");
     assert.equal(reportOf(editResult)?.then_run?.status, "succeeded");
-    assert.match(
-      editResult.content.map((block) => (block.type === "text" ? block.text : "")).join("\n"),
-      /Updated anchors/,
-    );
+    assert.equal(editResult.content.length, 1);
     const replaceOutput = replaceResult.content.at(-1);
     assert.ok(replaceOutput?.type === "text");
     assert.equal(reportOf(replaceResult)?.then_run?.status, "succeeded");
@@ -222,7 +219,7 @@ test("cancelled calls do not mutate or run the command", async (t) => {
   }
 });
 
-test("marks anchors stale when then_run changes the target", async (t) => {
+test("command changes the target → reports changed freshness", async (t) => {
   const dir = await tempDir();
   try {
     const target = join(dir, "stale.txt");
@@ -239,14 +236,10 @@ test("marks anchors stale when then_run changes the target", async (t) => {
       thenRun: { command: "mutate target" },
       mutate: async () => {
         await writeFile(target, "after mutation\n");
-        return publishedMutation(
-          "after mutation\n",
-          {
-            content: [{ type: "text", text: "mutated" }],
-            details: undefined,
-          },
-          " ANCHOR",
-        );
+        return publishedMutation("after mutation\n", {
+          content: [{ type: "text", text: "mutated" }],
+          details: undefined,
+        });
       },
       signal: undefined,
       ctx: await ctx(dir, t),
@@ -263,7 +256,7 @@ test("marks anchors stale when then_run changes the target", async (t) => {
   }
 });
 
-test("Action Fusion omits structured anchors when target freshness is unknown", async (t) => {
+test("unreadable target after mutation → reports unknown freshness and skips the command", async (t) => {
   const dir = await tempDir();
   try {
     const missing = join(dir, "unreadable.txt");
@@ -282,14 +275,10 @@ test("Action Fusion omits structured anchors when target freshness is unknown", 
         await writeFile(missing, "mutation\n");
         await rm(missing);
         await mkdir(missing);
-        return publishedMutation(
-          "mutation\n",
-          {
-            content: [{ type: "text", text: "mutated" }],
-            details: undefined,
-          },
-          " ANCHOR",
-        );
+        return publishedMutation("mutation\n", {
+          content: [{ type: "text", text: "mutated" }],
+          details: undefined,
+        });
       },
       signal: undefined,
       ctx: await ctx(dir, t),
@@ -306,7 +295,7 @@ test("Action Fusion omits structured anchors when target freshness is unknown", 
   }
 });
 
-test("edit omits Updated anchors when then_run changes the target", async (t) => {
+test("then_run changes the target → reports changed freshness", async (t) => {
   const dir = await tempDir();
   try {
     const target = join(dir, "edit-stale.txt");
@@ -634,10 +623,9 @@ test("Fusion uses commit facts when details omit or contradict publication and r
             details: details ?? {},
             facts: {},
             commit,
-            anchors: { text: " ANCHOR", omitted: 0 },
           }),
         });
-        assert.deepEqual(result.content[0], { type: "text", text: " ANCHOR" });
+        assert.equal(result.content.length, 1);
         for (const [key, value] of Object.entries(details ?? {}))
           assert.deepEqual(Reflect.get(result.details, key), value);
         assert.equal(reportOf(result)?.publication, "NOT_PUBLISHED");

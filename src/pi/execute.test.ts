@@ -105,52 +105,62 @@ test("edit execute: multiple ops in one call", async () => {
   });
 });
 
-test("edit result returns Updated anchors that chain the next edit without a re-read", async () => {
-  await withDir(async (dir) => {
-    const f = join(dir, "f.txt");
-    const text = "a\nb\nc\n";
-    await writeFile(f, text);
-    const edit = makeEditOverride(dir, DEFAULT_CONFIG);
-    // first edit (model cites the read anchor for line 1)
-    const r1: any = await call(edit, {
-      path: "f.txt",
-      edits: [{ op: "replace", anchor: h(text, 1), body: ["A"] }],
-    });
-    assert.equal(r1.isError, undefined);
-    const out: string = r1.content[0].text;
-    assert.match(out, /Updated anchors/);
-    assert.doesNotMatch(out, /│/);
-    // second edit chains on the anchor returned by the first edit — no read in between
-    const r2: any = await call(edit, {
-      path: "f.txt",
-      edits: [{ op: "replace", anchor: anchorLine(out, 1), body: ["AA"] }],
-    });
-    assert.equal(r2.isError, undefined);
-    assert.equal(await readFile(f, "utf-8"), "AA\nb\nc\n");
-  });
-});
-
-test("edit result anchors cover an inserted block (chain an edit inside it)", async () => {
-  await withDir(async (dir) => {
-    const f = join(dir, "f.txt");
-    const text = "a\nb\n";
-    await writeFile(f, text);
-    const edit = makeEditOverride(dir, DEFAULT_CONFIG);
-    const r1: any = await call(edit, {
-      path: "f.txt",
-      edits: [{ op: "insert_after", anchor: h(text, 2), body: ["c", "d", "e"] }],
-    });
-    assert.equal(r1.isError, undefined);
-    const out: string = r1.content[0].text;
-    // line 4 (d, one of the inserted lines) must be anchored in the result
-    const a4 = anchorLine(out, 4);
-    const r2: any = await call(edit, {
-      path: "f.txt",
-      edits: [{ op: "replace", anchor: a4, body: ["DD"] }],
-    });
-    assert.equal(r2.isError, undefined);
-    assert.equal(await readFile(f, "utf-8"), "a\nb\nc\nDD\ne\n");
-  });
+test("successful mutation → returns one report without anchor payload", async (t) => {
+  for (const tool of ["edit", "replace", "write"] as const) {
+    for (const count of [1, 3000]) {
+      await t.test(`${tool}: ${count} changed lines`, async () =>
+        withDir(async (dir) => {
+          const path = "f.txt";
+          const before = "old\n".repeat(count);
+          const after = "new\n".repeat(count);
+          await writeFile(join(dir, path), before);
+          const inspection = await callTool(makeReadOverride(dir, DEFAULT_CONFIG), {
+            path,
+            limit: count,
+          });
+          assert.equal(inspection.content[0].type, "text");
+          const rows = inspection.content[0].text;
+          const fixture =
+            tool === "edit"
+              ? {
+                  instance: makeEditOverride(dir, DEFAULT_CONFIG),
+                  params: {
+                    path,
+                    edits: [
+                      {
+                        op: "replace",
+                        anchor: anchorLine(rows, 1),
+                        end: anchorLine(rows, count),
+                        body: Array.from({ length: count }, () => "new"),
+                      },
+                    ],
+                  },
+                }
+              : tool === "replace"
+                ? {
+                    instance: makeReplaceTool(dir, DEFAULT_CONFIG),
+                    params: { path, replacements: [{ find: "old", replace: "new" }] },
+                  }
+                : {
+                    instance: makeWriteOverride(dir),
+                    params: { path, mode: "overwrite", content: after },
+                  };
+          const result = await callTool(fixture.instance, fixture.params);
+          assert.equal(result.isError, undefined);
+          assert.equal(await readFile(join(dir, path), "utf8"), after);
+          assert.equal(result.content.length, 1);
+          assert.equal(result.content[0].type, "text");
+          assert.deepEqual(JSON.parse(result.content[0].text), {
+            tool,
+            path,
+            publication: "PUBLISHED",
+            ...(tool === "replace" ? { matches: count } : {}),
+          });
+          if (tool !== "write") assert.match(result.details.displayDiff, /new/);
+        }),
+      );
+    }
+  }
 });
 
 test("unrelated external change does NOT block an edit on a stable line", async () => {
@@ -500,17 +510,16 @@ test("blank edit bodies preserve a real blank line for every body-bearing operat
     }
   }));
 
-test("explicit delete removes an inclusive range and returns its successor anchor", async () =>
+test("explicit delete → removes an inclusive range", async () =>
   withDir(async (dir) => {
     const original = "a\nb\nc\n";
     const file = join(dir, "delete_range.txt");
     await writeFile(file, original);
-    const result = await call(makeEditOverride(dir, DEFAULT_CONFIG), {
+    await call(makeEditOverride(dir, DEFAULT_CONFIG), {
       path: file,
       edits: [{ op: "delete", anchor: h(original, 1), end: h(original, 2) }],
     });
     assert.equal(await readFile(file, "utf8"), "c\n");
-    assert.match(result.content[0].text, /1#[0-9A-Z]+│c/);
   }));
 
 test("local and full-file recovery return copyable anchors without changing the rejected batch", async () =>
@@ -680,11 +689,6 @@ test("failed commands preserve mutation results and stay out of all main card re
       assert.equal("isError" in result, false);
       assert.equal(result.details.actionFusion?.command, "failed");
       assert.equal(result.details.actionFusion?.publication, "PUBLISHED");
-      if (path !== "write.txt") {
-        const mutation = result.content[0];
-        assert.ok(mutation.type === "text");
-        assert.match(mutation.text, /^\d+#[0-9A-Z]+/m);
-      }
       const last = result.content.at(-1);
       assert.ok(last?.type === "text");
       assert.equal(reportOf(result)?.then_run?.status, "failed");
@@ -1027,35 +1031,6 @@ test("failed batches return more than forty checks and mappings when byte budget
     assert.equal(await readFile(file, "utf8"), before);
   }));
 
-test("compact edit anchors retain only untouched deletion successors in mixed batches", async () =>
-  withDir(async (dir) => {
-    const before = "a\nb\nc\nd\ne\nf\ng\n";
-    const file = join(dir, "mixed.txt");
-    await writeFile(file, before);
-    const edit = makeEditOverride(dir, DEFAULT_CONFIG);
-    const result = await call(edit, {
-      path: file,
-      edits: [
-        { op: "delete", anchor: h(before, 6) },
-        { op: "replace", anchor: h(before, 4), body: ["D"] },
-        { op: "delete", anchor: h(before, 3) },
-        { op: "replace", anchor: h(before, 1), body: ["A", "X"] },
-      ],
-    });
-    const after = "A\nX\nb\nD\ne\ng\n";
-    assert.equal(await readFile(file, "utf8"), after);
-    const output = result.content[0].text;
-    assert.deepEqual(
-      output.split("\n").filter((line: string) => /^\d+#/.test(line)),
-      [h(after, 1), h(after, 2), h(after, 4), `${h(after, 6)}│g`],
-    );
-    await call(edit, {
-      path: file,
-      edits: [{ op: "replace", anchor: anchorLine(output, 6), body: ["G"] }],
-    });
-    assert.equal(await readFile(file, "utf8"), "A\nX\nb\nD\ne\nG\n");
-  }));
-
 test("unique candidate content is independent of oversized neighboring rows", async () =>
   withDir(async (dir) => {
     const original = "header\ntarget\ntail\n";
@@ -1104,16 +1079,15 @@ test("standalone CR replacements remain visible in diffs and exact in patches", 
     }
   }));
 
-test("deletion successors and unique candidate rows display CR without altering anchors", async () =>
+test("shifted unique candidate → displays standalone CR without altering its anchor", async () =>
   withDir(async (dir) => {
     const file = join(dir, "cr.txt");
     const before = "remove\na\rb\n";
     await writeFile(file, before);
-    const result = await call(makeEditOverride(dir, DEFAULT_CONFIG), {
+    await call(makeEditOverride(dir, DEFAULT_CONFIG), {
       path: file,
       edits: [{ op: "delete", anchor: h(before, 1) }],
     });
-    assert.ok(result.content[0].text.includes(`${h("a\rb\n", 1)}│a␍b`));
     assert.equal(await readFile(file, "utf8"), "a\rb\n");
     const report = failureReport(
       await call(makeEditOverride(dir, DEFAULT_CONFIG), {
@@ -1321,7 +1295,7 @@ test("ambiguous failure lists and neighborhoods select the same first eight cand
     assert.equal(await readFile(join(dir, "candidates.txt"), "utf8"), text);
   }));
 
-test("edit verification and returned anchors use the supplied hash length", async () =>
+test("edit verification → uses the supplied hash length", async () =>
   withDir(async (dir) => {
     const edit = makeEditOverride(dir, { ...DEFAULT_CONFIG, hashLen: 6 });
     await writeFile(join(dir, "registered.txt"), "before\n");
@@ -1335,11 +1309,11 @@ test("edit verification and returned anchors use the supplied hash length", asyn
         },
       ],
     });
-    assert.equal(anchorLine(result.content[0].text, 1), `1#${computeLineHash(1, "after", 6)}`);
+    assert.equal(result.isError, undefined);
     assert.equal(await readFile(join(dir, "registered.txt"), "utf8"), "after\n");
   }));
 
-test("copy/move through read anchors → publish bound bytes and return reusable destination anchors", async () =>
+test("copy/move through read anchors → publish bytes bound to the read revision", async () =>
   withDir(async (dir) => {
     const path = "transfer.txt";
     const file = join(dir, path);
@@ -1366,18 +1340,6 @@ test("copy/move through read anchors → publish bound bytes and return reusable
       assert.equal(result.details.publication, "PUBLISHED");
       assert.equal(result.details.publishedRevision, byteRevision(bytes));
       assert.equal(result.details.observedRevision, result.details.publishedRevision);
-      const output = result.content
-        .filter((block) => block.type === "text")
-        .map((block) => block.text)
-        .join("\n");
-      const next: Awaited<ReturnType<typeof edit.execute>> = await callTool(edit, {
-        path,
-        edits: [
-          { op: "replace", anchor: anchorLine(output, op === "copy" ? 5 : 3), body: ["CHANGED"] },
-        ],
-      });
-      assert.equal(next.details.baseRevision, result.details.publishedRevision);
-      assert.equal(await readFile(file, "utf8"), expected.replace("D\nA\r\n", "D\nCHANGED\r\n"));
     }
   }));
 

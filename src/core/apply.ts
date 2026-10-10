@@ -22,7 +22,7 @@
  *
  * Other strict semantics:
  * - Operation ranges must not overlap (including the same insertion point).
- * - Byte-identical output succeeds with changed=false and no updated anchors.
+ * - Byte-identical output succeeds with changed=false.
  *
  * @module pi-hashline-edit/core
  */
@@ -51,10 +51,6 @@ type SpanOp = { readonly lo: number; readonly hi: number } & (
   | { readonly kind: "body"; readonly newLines: readonly string[] }
   | { readonly kind: "capture"; readonly sourceLo: number; readonly sourceHi: number }
 );
-
-function producedLineCount(op: SpanOp): number {
-  return op.kind === "body" ? op.newLines.length : op.sourceHi - op.sourceLo;
-}
 
 /**
  * Verify an anchor against the live content; on mismatch, attempt shifted
@@ -261,11 +257,9 @@ function translateEdit(
 }
 
 /**
- * Apply edits to `text`. Anchors are verified against the current content; on
- * success `touchedLines` gives the 0-based indices of the new-file lines this
- * edit produced. On any anchor mismatch, all failures (with shifted recovery)
- * are collected and returned together — nothing is written. Every failure includes
- * per-input anchor checks.
+ * Apply edits to `text`. Anchors are verified against the current content.
+ * On any anchor mismatch, all failures (with shifted recovery) are collected
+ * and returned together. Every failure includes per-input anchor checks.
  *
  * @param text        current full file text
  * @param edits       validated edit operations; each body element is one logical line
@@ -387,37 +381,5 @@ export function applyEdits(
             : ""),
       )
       .join("");
-  if (newText === text) {
-    return { ok: true, text, changed: false, touchedLines: [], contextLines: [] };
-  }
-
-  // touchedLines: new-file indices worth re-anchoring — each produced line,
-  // and for a pure delete the line that shifted into the gap (so the model
-  // gets a fresh anchor for the shifted region).
-  const touched: number[] = [];
-  const contextLines = new Set<number>();
-  let delta = 0;
-  for (const op of sorted) {
-    const newLo = op.lo + delta;
-    const count = producedLineCount(op);
-    if (count > 0) {
-      for (let i = 0; i < count; i++) {
-        touched.push(newLo + i);
-        // An adjacent replacement may supply the deletion successor itself.
-        contextLines.delete(newLo + i);
-      }
-    } else if (op.hi > op.lo && newLo < result.length) {
-      touched.push(newLo);
-      contextLines.add(newLo);
-    }
-    delta += count - (op.hi - op.lo);
-  }
-
-  return {
-    ok: true,
-    text: newText,
-    changed: true,
-    touchedLines: touched,
-    contextLines: [...contextLines],
-  };
+  return { ok: true, text: newText, changed: newText !== text };
 }

@@ -1,5 +1,5 @@
 import { rejectsArgument, rejectsArguments } from "./argument-error.testing.ts";
-/** Tool-level replace contracts: byte preservation, matching, failures and fresh-anchor chaining. */
+/** Tool-level replace contracts: byte preservation, matching, and failures. */
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp, rm, readFile, writeFile } from "node:fs/promises";
@@ -7,7 +7,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { initTheme, type Theme } from "@earendil-works/pi-coding-agent";
 import { makeReplaceTool } from "./replace-tool.ts";
-import { makeEditOverride } from "./edit-tool.ts";
 import { validateToolArguments } from "@earendil-works/pi-ai";
 import { callTool } from "./tool-call.testing.ts";
 import { createActionFusionExecutor } from "./action-fusion.ts";
@@ -24,13 +23,6 @@ async function withDir<T>(fn: (dir: string) => Promise<T>): Promise<T> {
 }
 
 const call = (tool: any, params: any) => callTool(tool, params, { toolCallId: "0" });
-
-/** Extract a `LINE#HASH` anchor for `line` from a result text block. */
-function anchorLine(block: string, line: number) {
-  const m = new RegExp(`^${line}#([0-9A-Z]+)(?:│|$)`, "m").exec(block);
-  if (!m) throw new Error(`line ${line} anchor not found in block`);
-  return `${line}#${m[1]}`;
-}
 
 const stubTheme = { fg: (_k: string, s: string) => s, bold: (s: string) => s } as Theme;
 
@@ -437,60 +429,15 @@ test("replace: returns details.diff (string) + patch + firstChangedLine", async 
   });
 });
 
-test("replace: returns fresh anchors for the changed region", async () => {
+test("multiline replacement → preserves the surrounding file text", async () => {
   await withDir(async (dir) => {
     const f = join(dir, "f.txt");
     await writeFile(f, "a\nb\nc\n");
-    const r: any = await call(makeReplaceTool(dir, DEFAULT_CONFIG), {
-      path: "f.txt",
-      replacements: [{ find: "b", replace: "B" }],
-    });
-    const out: string = r.content[0].text;
-    assert.match(out, /Updated anchors/);
-    // line 2 now holds "B"; its anchor must be present and correct
-    const a2 = anchorLine(out, 2);
-    assert.match(a2, /^2#[0-9A-Z]{2,8}$/);
-    assert.match(out, new RegExp(`^${a2}$`, "m"));
-    assert.doesNotMatch(out, /│B/);
-  });
-});
-
-test("replace: changed-region anchor chains a subsequent hashline edit without a re-read", async () => {
-  await withDir(async (dir) => {
-    const f = join(dir, "f.txt");
-    await writeFile(f, "old old old\n");
-    const replace = makeReplaceTool(dir, DEFAULT_CONFIG);
-    const r1: any = await call(replace, {
-      path: "f.txt",
-      replacements: [{ find: "old", replace: "new" }],
-    });
-    const out: string = r1.content[0].text;
-    // line 1 is the changed line; chain an edit on its returned anchor
-    const a1 = anchorLine(out, 1);
-    const edit = makeEditOverride(dir, DEFAULT_CONFIG);
-    const r2: any = await call(edit, {
-      path: "f.txt",
-      edits: [{ op: "replace", anchor: a1, body: ["NEW NEW NEW"] }],
-    });
-    assert.equal(r2.isError, undefined);
-    assert.equal(await readFile(f, "utf-8"), "NEW NEW NEW\n");
-  });
-});
-
-test("replace: multiline replacement (changes line count) still reports a correct span", async () => {
-  await withDir(async (dir) => {
-    const f = join(dir, "f.txt");
-    await writeFile(f, "a\nb\nc\n");
-    // replace "b" with two lines → line count grows; changed region must cover the insertion
-    const r: any = await call(makeReplaceTool(dir, DEFAULT_CONFIG), {
+    await call(makeReplaceTool(dir, DEFAULT_CONFIG), {
       path: "f.txt",
       replacements: [{ find: "b", replace: "B1\nB2" }],
     });
     assert.equal(await readFile(f, "utf-8"), "a\nB1\nB2\nc\n");
-    const out: string = r.content[0].text;
-    // the two inserted/changed lines (2 and 3) should both be anchored
-    assert.doesNotThrow(() => anchorLine(out, 2));
-    assert.doesNotThrow(() => anchorLine(out, 3));
   });
 });
 
@@ -508,7 +455,7 @@ test("replace header retains the rule count when a long path wraps", () => {
   assert.match(header.render(80).join("\n"), /2\s+rules/);
 });
 
-test("replacement batches use one snapshot and return anchors for the final content", async () =>
+test("replacement batches → evaluate every rule against one snapshot", async () =>
   withDir(async (dir) => {
     const file = join(dir, "batch.txt");
     const tool = makeReplaceTool(dir, DEFAULT_CONFIG);
@@ -525,11 +472,6 @@ test("replacement batches use one snapshot and return anchors for the final cont
     assert.equal(await readFile(file, "utf8"), "\uFEFFbar\r\nbaz\nbar");
     assert.equal(reportOf(result)?.matches, 3);
     assert.match(result.details.diff, /^\+2 baz/m);
-    await call(makeEditOverride(dir, DEFAULT_CONFIG), {
-      path: file,
-      edits: [{ op: "replace", anchor: anchorLine(result.content[0].text, 2), body: ["chained"] }],
-    });
-    assert.equal(await readFile(file, "utf8"), "\uFEFFbar\r\nchained\nbar");
   }));
 
 test("invalid batches reject every change and never run a fused command", async () =>
@@ -723,11 +665,7 @@ test("successful batches run one command against the complete result", async () 
     assert.ok(result.details.actionFusion);
     assert.equal(result.details.actionFusion.command, "succeeded");
     assert.equal(result.details.actionFusion.freshness, "unchanged");
-    const command = result.content[1];
-    assert.ok(command.type === "text");
-    assert.match(command.text, /checked/);
-    assert.ok(result.content[0].type === "text");
-    assert.match(result.content[0].text, /Updated anchors/);
+    assert.equal(reportOf(result)?.then_run?.output, "checked");
   }));
 
 test("regex captures and zero-width insertions use logical offsets without consuming CRLF bytes", async () =>

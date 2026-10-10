@@ -61,7 +61,7 @@ test("registered tools retain their configuration when another tool set is regis
 
     for (const { tools, config, expectedGrepLines } of registrations) {
       const { hashLen, shiftRadius, read, grep, replace } = config;
-      for (const name of ["read", "grep", "replace", "edit"] as const) {
+      for (const name of ["read", "grep", "edit"] as const) {
         await t.test(`${name} retains the registered hash length ${hashLen}`, async () => {
           const tool = tools.get(name);
           assert.ok(tool);
@@ -70,7 +70,6 @@ test("registered tools retain their configuration when another tool set is regis
           const params = {
             read: { path },
             grep: { path, pattern: "before", literal: true },
-            replace: { path, replacements: [{ find: "before", replace: "after" }] },
             edit: {
               path,
               edits: [
@@ -83,9 +82,13 @@ test("registered tools retain their configuration when another tool set is regis
             },
           }[name];
           const result = await callTool(tool, params);
-          const expected = name === "read" || name === "grep" ? "before" : "after";
-          const anchor = `1#${computeLineHash(1, expected, hashLen)}`;
-          assert.match(result.content[0].text, new RegExp(`^${anchor}(?:│|$)`, "m"));
+          const expected = name === "edit" ? "after" : "before";
+          if (name === "edit") {
+            assert.equal(result.isError, undefined);
+          } else {
+            const anchor = `1#${computeLineHash(1, expected, hashLen)}`;
+            assert.match(result.content[0].text, new RegExp(`^${anchor}(?:│|$)`, "m"));
+          }
           assert.equal(await readFile(join(directory, path), "utf8"), `${expected}\n`);
         });
       }

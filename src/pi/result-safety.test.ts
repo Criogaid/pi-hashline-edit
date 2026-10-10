@@ -18,7 +18,6 @@ import { CommandNotRun, decodeReport, reportOf } from "./report.ts";
 import { REREAD } from "./report-schema.ts";
 import { callTool, createToolContext as ctx } from "./tool-call.testing.ts";
 import { DEFAULT_CONFIG } from "./config.ts";
-import { publishedMutation } from "./mutation-outcome.testing.ts";
 
 const text = (result: Pick<AgentToolResult<unknown>, "content">): string =>
   result.content.map((block) => (block.type === "text" ? block.text : "")).join("\n");
@@ -164,58 +163,44 @@ test("progress callback failures preserve publication and do not prevent the com
   }
 });
 
-test("standalone and Fusion finalizers use commit freshness with or without anchors", async (t) => {
+test("standalone and Fusion finalizers → take freshness from commit facts", async (t) => {
   const dir = await mkdtemp(join(tmpdir(), "hashline-finalizer-"));
   try {
     for (const publication of ["PUBLISHED", "NOT_PUBLISHED"] as const) {
       for (const observedRevision of ["published", "external"]) {
-        for (const anchors of [" ANCHOR", undefined]) {
-          const mutation = {
-            details: {
-              publication: "UNKNOWN",
-              publishedRevision: "ignored",
-              observedRevision: "ignored",
-            },
-            facts: {},
-            commit: {
-              publication,
-              publishedRevision: "published",
-              observedRevision,
-              created: false,
-            },
-            anchors: anchors ? { text: anchors, omitted: 0 } : undefined,
-          } satisfies MutationOutcome<object>;
-          const fresh = observedRevision === "published";
-          const observation = commitFreshness(mutation.commit);
-          assert.equal(observation.freshness, fresh ? "unchanged" : "changed");
-          const standalone = finalizeMutation("edit", "file", mutation, observation);
-          const fused = await createActionFusionExecutor()({
-            tool: "edit",
-            displayPath: "file",
-            toolCallId: "no-command",
-            absolutePath: join(dir, "file"),
-            thenRun: undefined,
-            mutate: async () => mutation,
-            signal: undefined,
-            ctx: await ctx(dir, t),
-          });
-          assert.deepEqual(fused.content, standalone.content);
-          assert.equal(standalone.details.publication, "UNKNOWN");
-          assert.equal(reportOf(standalone)?.publication, publication);
-          assert.equal(reportOf(fused)?.publication, publication);
-          assert.equal(reportOf(standalone)?.freshness, fresh ? undefined : "changed");
-          if (fresh && anchors)
-            assert.equal(
-              standalone.content[0].type === "text" && standalone.content[0].text,
-              anchors,
-            );
-          else assert.doesNotMatch(text(standalone), /ANCHOR/);
-          assert.deepEqual(mutation.details, {
+        const mutation = {
+          details: {
             publication: "UNKNOWN",
             publishedRevision: "ignored",
             observedRevision: "ignored",
-          });
-        }
+          },
+          facts: {},
+          commit: { publication, publishedRevision: "published", observedRevision, created: false },
+        } satisfies MutationOutcome<object>;
+        const fresh = observedRevision === "published";
+        const observation = commitFreshness(mutation.commit);
+        assert.equal(observation.freshness, fresh ? "unchanged" : "changed");
+        const standalone = finalizeMutation("edit", "file", mutation, observation);
+        const fused = await createActionFusionExecutor()({
+          tool: "edit",
+          displayPath: "file",
+          toolCallId: "no-command",
+          absolutePath: join(dir, "file"),
+          thenRun: undefined,
+          mutate: async () => mutation,
+          signal: undefined,
+          ctx: await ctx(dir, t),
+        });
+        assert.deepEqual(fused.content, standalone.content);
+        assert.equal(standalone.details.publication, "UNKNOWN");
+        assert.equal(reportOf(standalone)?.publication, publication);
+        assert.equal(reportOf(fused)?.publication, publication);
+        assert.equal(reportOf(standalone)?.freshness, fresh ? undefined : "changed");
+        assert.deepEqual(mutation.details, {
+          publication: "UNKNOWN",
+          publishedRevision: "ignored",
+          observedRevision: "ignored",
+        });
       }
     }
   } finally {
@@ -223,68 +208,10 @@ test("standalone and Fusion finalizers use commit freshness with or without anch
   }
 });
 
-test("mutation anchor output and aggregate anchor diagnostics have byte budgets", async (t) => {
+test("aggregate anchor diagnostics → respect their byte budgets", async (t) => {
   const dir = await mkdtemp(join(tmpdir(), "hashline-budget-"));
   try {
     const path = join(dir, "long.txt");
-    const long = "界".repeat(100000);
-    const changedLines = [long, ...Array.from({ length: 79 }, (_, index) => `changed ${index}`)];
-    for (const name of ["edit", "replace"]) {
-      await writeFile(path, "before\n");
-      const result =
-        name === "edit"
-          ? await invoke(
-              makeEditOverride(dir, DEFAULT_CONFIG),
-              name,
-              { path, edits: [{ op: "append", body: changedLines }] },
-              undefined,
-              undefined,
-              await ctx(dir, t),
-            )
-          : await invoke(
-              makeReplaceTool(dir, DEFAULT_CONFIG),
-              name,
-              { path, replacements: [{ find: "before", replace: changedLines.join("\n") }] },
-              undefined,
-              undefined,
-              await ctx(dir, t),
-            );
-      const output = text(result);
-      const firstLine = name === "edit" ? 2 : 1;
-      assert.deepEqual(
-        output.match(/^\d+#[0-9A-Z]+$/gm),
-        changedLines.map((line, index) => {
-          const position = firstLine + index;
-          return `${position}#${computeLineHash(position, line, 4)}`;
-        }),
-      );
-      assert.doesNotMatch(output, /omitted|truncated|│/i);
-      assert.equal(
-        await readFile(path, "utf8"),
-        (name === "edit" ? "before\n" : "") + changedLines.join("\n") + "\n",
-      );
-      await writeFile(path, `remove\n${long}\n`);
-      const deleted =
-        name === "edit"
-          ? await invoke(
-              makeEditOverride(dir, DEFAULT_CONFIG),
-              name,
-              { path, edits: [{ op: "delete", anchor: `1#${computeLineHash(1, "remove", 4)}` }] },
-              undefined,
-              undefined,
-              await ctx(dir, t),
-            )
-          : await invoke(
-              makeReplaceTool(dir, DEFAULT_CONFIG),
-              name,
-              { path, replacements: [{ find: "remove\n", replace: "" }] },
-              undefined,
-              undefined,
-              await ctx(dir, t),
-            );
-      assert.equal(reportOf(deleted)?.omittedAnchors, 1);
-      assert.doesNotMatch(text(deleted), /^\d+#[0-9A-Z]+/m);
-    }
     await writeFile(path, "current\n");
     const failure = await invoke(
       makeEditOverride(dir, DEFAULT_CONFIG),
@@ -474,7 +401,7 @@ test("Fusion skips the command when a replacement produces unencodable text", as
   }
 });
 
-test("shared result building preserves publication and appends anchors only to the summary", () => {
+test("result generation failure → preserves publication and cause", () => {
   for (const publication of ["NOT_PUBLISHED", "PUBLISHED", "UNKNOWN"] as const) {
     const cause = new Error("render failed");
     assert.throws(
@@ -489,21 +416,6 @@ test("shared result building preserves publication and appends anchors only to t
         error.cause === cause,
     );
   }
-  const result = {
-    content: [
-      { type: "text" as const, text: "summary" },
-      { type: "text" as const, text: "command" },
-    ],
-    details: {},
-  };
-  const outcome = publishedMutation("saved", result, " ANCHOR");
-  const fresh = finalizeMutation("edit", "file", outcome, { freshness: "unchanged" });
-  assert.equal(fresh.content[0].type === "text" && fresh.content[0].text, " ANCHOR");
-  const stale = finalizeMutation("edit", "file", outcome, { freshness: "changed" });
-  assert.equal(stale.content.length, 1);
-  assert.equal(reportOf(stale)?.freshness, "changed");
-  assert.equal(reportOf(stale)?.next, REREAD);
-  assert.equal(result.content[0].text, "summary");
 });
 
 type Fusion = Parameters<typeof makeWriteOverride>[1];
@@ -622,204 +534,6 @@ test("no-op Fusion still detects external changes and reports command failures",
         );
       }
     }
-  } finally {
-    await rm(dir, { recursive: true, force: true });
-  }
-});
-
-test("mutation anchors omit unchanged positions across distant changes", async (t) => {
-  const dir = await mkdtemp(join(tmpdir(), "hashline-anchor-delta-"));
-  try {
-    const before = Array.from({ length: 100 }, (_, index) => `row ${index + 1}`);
-    const after = [...before];
-    after[0] = "changed first";
-    after[99] = "changed last";
-    for (const name of ["edit", "replace"]) {
-      const path = join(dir, `${name}.txt`);
-      await writeFile(path, before.join("\r\n") + "\r\n");
-      const result =
-        name === "edit"
-          ? await invoke(
-              makeEditOverride(dir, DEFAULT_CONFIG),
-              name,
-              {
-                path,
-                edits: [
-                  {
-                    op: "replace",
-                    anchor: `1#${computeLineHash(1, before[0], 4)}`,
-                    end: `100#${computeLineHash(100, before[99], 4)}`,
-                    body: after,
-                  },
-                ],
-              },
-              undefined,
-              undefined,
-              await ctx(dir, t),
-            )
-          : await invoke(
-              makeReplaceTool(dir, DEFAULT_CONFIG),
-              name,
-              {
-                path,
-                replacements: [
-                  { find: before[0] + "\r\n", replace: after[0] + "\r\n" },
-                  { find: before[99], replace: after[99] },
-                ],
-              },
-              undefined,
-              undefined,
-              await ctx(dir, t),
-            );
-      const returned = [...text(result).matchAll(/^(\d+#[0-9A-Z]+)/gm)].map((match) => match[1]);
-      assert.deepEqual(returned, [
-        `1#${computeLineHash(1, after[0], 4)}`,
-        `100#${computeLineHash(100, after[99], 4)}`,
-      ]);
-      assert.doesNotMatch(text(result), /omitted/);
-      // An omitted stable row keeps its old anchor; a changed row uses the returned anchor.
-      await invoke(
-        makeEditOverride(dir, DEFAULT_CONFIG),
-        "chain",
-        {
-          path,
-          edits: [
-            {
-              op: "replace",
-              anchor: `50#${computeLineHash(50, before[49], 4)}`,
-              body: ["stable anchor reused"],
-            },
-            { op: "replace", anchor: returned[1], body: ["fresh anchor reused"] },
-          ],
-        },
-        undefined,
-        undefined,
-        await ctx(dir, t),
-      );
-      const final = (await readFile(path, "utf8")).split("\r\n");
-      assert.equal(final[49], "stable anchor reused");
-      assert.equal(final[99], "fresh anchor reused");
-    }
-  } finally {
-    await rm(dir, { recursive: true, force: true });
-  }
-});
-
-test("mutation anchors retain a deletion successor but omit stable rows and deleted EOF", async (t) => {
-  const dir = await mkdtemp(join(tmpdir(), "hashline-anchor-delete-"));
-  try {
-    for (const name of ["edit", "replace"]) {
-      for (const atEnd of [false, true]) {
-        for (const ending of ["\n", "\r\n"]) {
-          const path = join(dir, `${name}.txt`);
-          const lines = atEnd ? ["a", "c", "remove"] : ["a", "remove", "c", "d"];
-          await writeFile(path, lines.join(ending) + ending);
-          const line = atEnd ? 3 : 2;
-          const result =
-            name === "edit"
-              ? await invoke(
-                  makeEditOverride(dir, DEFAULT_CONFIG),
-                  name,
-                  {
-                    path,
-                    edits: [
-                      { op: "delete", anchor: `${line}#${computeLineHash(line, "remove", 4)}` },
-                    ],
-                  },
-                  undefined,
-                  undefined,
-                  await ctx(dir, t),
-                )
-              : await invoke(
-                  makeReplaceTool(dir, DEFAULT_CONFIG),
-                  name,
-                  { path, replacements: [{ find: "remove\n", replace: "" }] },
-                  undefined,
-                  undefined,
-                  await ctx(dir, t),
-                );
-          const rows = text(result)
-            .split("\n")
-            .filter((row) => /^\d+#/.test(row));
-          assert.deepEqual(rows, atEnd ? [] : [`2#${computeLineHash(2, "c", 4)}│c`]);
-          assert.deepEqual(
-            await readFile(path),
-            Buffer.from(lines.filter((_, index) => index !== line - 1).join(ending) + ending),
-          );
-        }
-      }
-    }
-  } finally {
-    await rm(dir, { recursive: true, force: true });
-  }
-});
-
-test("mutation anchors retain deletion successor even when deleted line content matches the successor", async (t) => {
-  const dir = await mkdtemp(join(tmpdir(), "hashline-anchor-matching-delete-"));
-  try {
-    const path = join(dir, "edit.txt");
-    const lines = ["a", "duplicate", "duplicate", "d"];
-    await writeFile(path, lines.join("\n") + "\n");
-    const tool = makeEditOverride(dir, DEFAULT_CONFIG);
-    const result = await invoke(
-      tool,
-      "edit",
-      {
-        path,
-        edits: [{ op: "delete", anchor: `2#${computeLineHash(2, "duplicate", 4)}` }],
-      },
-      undefined,
-      undefined,
-      await ctx(dir, t),
-    );
-    const rows = text(result)
-      .split("\n")
-      .filter((row) => /^\d+#/.test(row));
-    assert.deepEqual(rows, [`2#${computeLineHash(2, "duplicate", 4)}│duplicate`]);
-  } finally {
-    await rm(dir, { recursive: true, force: true });
-  }
-});
-
-test("oversized deletion successors do not suppress later editable anchors", async (t) => {
-  const dir = await mkdtemp(join(tmpdir(), "hashline-skip-long-anchor-"));
-  try {
-    const path = join(dir, "fixture.txt");
-    const long = "x".repeat(MAX_BLOCK_BYTES + 1);
-    await writeFile(path, `remove\n${long}\nold\n`);
-    const tool = makeEditOverride(dir, DEFAULT_CONFIG);
-    const result = await invoke(
-      tool,
-      "skip",
-      {
-        path,
-        edits: [
-          { op: "delete", anchor: `1#${computeLineHash(1, "remove", 4)}` },
-          { op: "replace", anchor: `3#${computeLineHash(3, "old", 4)}`, body: ["new"] },
-        ],
-      },
-      undefined,
-      undefined,
-      await ctx(dir, t),
-    );
-    const output = text(result);
-    assert.doesNotMatch(output, /^1#[0-9A-Z]+/m);
-    const anchor = output.match(/^2#[0-9A-Z]+$/m)?.[0];
-    assert.equal(anchor, `2#${computeLineHash(2, "new", 4)}`);
-    assert.equal(reportOf(result)?.omittedAnchors, 1);
-    assert.ok(
-      Buffer.byteLength(result.content[0].type === "text" ? result.content[0].text : "") <=
-        MAX_BLOCK_BYTES,
-    );
-    await invoke(
-      tool,
-      "retry",
-      { path, edits: [{ op: "replace", anchor, body: ["verified"] }] },
-      undefined,
-      undefined,
-      await ctx(dir, t),
-    );
-    assert.equal(await readFile(path, "utf8"), `${long}\nverified\n`);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

@@ -66,7 +66,7 @@ test("published post-processing failure → skips command and preserves publicat
     assert.equal(await readFile(target, "utf8"), "content\n");
   }));
 
-test("command fails and modifies the target → reports changed freshness with no usable anchors", async (t) =>
+test("command fails and modifies the target → reports changed freshness and command failure", async (t) =>
   withTemp(async (dir) => {
     const target = join(dir, "failed.txt");
     const fusion = createActionFusionExecutor(async () => {
@@ -81,10 +81,7 @@ test("command fails and modifies the target → reports changed freshness with n
       thenRun: { command: "check" },
       mutate: async () => {
         await writeFile(target, "mutation\n");
-        return {
-          ...mutation("mutation\n"),
-          anchors: { text: "Updated anchors: 1#AB", omitted: 0 },
-        };
+        return mutation("mutation\n");
       },
       signal: undefined,
       ctx: await createToolContext(dir, t),
@@ -164,11 +161,10 @@ test("first command fails → releases the queue for the next mutation", async (
     assert.equal(await readFile(target, "utf8"), "second\n");
   }));
 
-test("command succeeds on an unchanged target → finalizes anchors and retains completed progress", async (t) =>
+test("command succeeds on an unchanged target → retains the result and completed progress", async (t) =>
   withTemp(async (dir) => {
     const target = join(dir, "finalize.txt");
     const progress: ActionFusionProgress[] = [];
-    const partials: string[] = [];
     const fusion = createActionFusionExecutor(
       async () => ({ status: "succeeded", output: "command finished" }),
       (event) => progress.push(event),
@@ -183,17 +179,12 @@ test("command succeeds on an unchanged target → finalizes anchors and retains 
       ctx: await createToolContext(dir, t),
       mutate: async () => {
         await writeFile(target, "saved\n");
-        return { ...mutation("saved\n"), anchors: { text: " ANCHOR", omitted: 0 } };
+        return mutation("saved\n");
       },
-      onUpdate: (update) =>
-        partials.push(
-          update.content.map((block) => (block.type === "text" ? block.text : "")).join("\n"),
-        ),
     });
-    assert.deepEqual(completed.content[0], { type: "text", text: " ANCHOR" });
+    assert.equal(completed.content.length, 1);
     assert.equal(reportOf(completed)?.then_run?.status, "succeeded");
     assert.equal(reportOf(completed)?.then_run?.output, "command finished");
-    assert.ok(partials.every((text) => !text.includes("ANCHOR")));
     assert.equal(progress.filter((event) => event.command === "succeeded").length, 1);
     assert.equal(progress.at(-1)?.publication, "PUBLISHED");
     assert.equal(progress.at(-1)?.freshness, "unchanged");

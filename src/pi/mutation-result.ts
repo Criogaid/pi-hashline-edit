@@ -6,9 +6,8 @@ import {
   type MutationVersions,
 } from "./file-commit.ts";
 import { generateDiffString, generateUnifiedPatch } from "@earendil-works/pi-coding-agent";
-import { displayCarriageReturns, type AnchorFormatter } from "./anchor-format.ts";
+import { displayCarriageReturns } from "./anchor-format.ts";
 import { normalizeLineEndings } from "../core/lines.ts";
-import { MAX_BLOCK_BYTES } from "./budgets.ts";
 import type { CommandStatus, PublicationStatus, Report } from "./report-schema.ts";
 import { causeOf, reportResult, type ReportDetails } from "./report.ts";
 
@@ -52,13 +51,6 @@ export function postProcessMutation<T>(publication: PublicationStatus, build: ()
   }
 }
 
-/** Updated anchor rows and how many changed positions did not fit their budget. */
-export interface AnchorReport {
-  /** The heading and rows; empty when no changed position remains. */
-  readonly text: string;
-  readonly omitted: number;
-}
-
 /** The facts a mutation tool states about its own outcome. */
 export type MutationFacts = Pick<Report, "matches" | "created">;
 
@@ -68,8 +60,6 @@ export interface MutationOutcome<TDetails> {
   readonly commit: CommitResult;
   readonly details: TDetails;
   readonly facts: MutationFacts;
-  /** Fresh anchor report for the committed text; absent for tools that never report anchors. */
-  readonly anchors?: AnchorReport;
 }
 
 /** What Action Fusion states about the command; it never restates file state. */
@@ -80,15 +70,11 @@ export interface CommandFacts {
   readonly progressError?: unknown;
 }
 
-/**
- * Build the mutation's result from its facts: the anchor rows are the payload
- * only while the target is fresh; otherwise freshness states the target, and
- * the report's `next` asks for a re-read. Command facts come from Fusion.
- */
+/** Build the mutation report from commit, freshness, and command facts; the TUI uses its diff details. */
 export function finalizeMutation<TDetails extends object>(
   tool: string,
   path: string,
-  { commit, details, facts, anchors }: MutationOutcome<TDetails>,
+  { commit, details, facts }: MutationOutcome<TDetails>,
   observation: FreshnessObservation,
   command?: CommandFacts,
 ): AgentToolResult<TDetails & ReportDetails> {
@@ -98,7 +84,6 @@ export function finalizeMutation<TDetails extends object>(
     path,
     publication: commit.publication,
     ...facts,
-    omittedAnchors: fresh && anchors?.omitted ? anchors.omitted : undefined,
     freshness: fresh ? undefined : observation.freshness,
     freshnessError: causeOf(observation.error),
     then_run: command
@@ -106,40 +91,5 @@ export function finalizeMutation<TDetails extends object>(
       : undefined,
     progressError: causeOf(command?.progressError),
   };
-  const payload =
-    fresh && anchors?.text ? [{ type: "text" as const, text: anchors.text }] : undefined;
-  return reportResult(report, payload, details);
-}
-
-/** Return compact changed-position anchors; selected context rows retain full content within the byte budget. */
-export function formatMutationAnchors(
-  beforeLines: readonly string[],
-  lines: readonly string[],
-  indices: Iterable<number>,
-  anchors: AnchorFormatter,
-  heading: string,
-  contentIndices?: ReadonlySet<number>,
-): AnchorReport {
-  const prefix = `${heading}\n`;
-  const rows: string[] = [];
-  let bytes = Buffer.byteLength(prefix);
-  let omitted = 0;
-  for (const index of indices) {
-    const content = lines[index];
-    // Compare source content, not short hashes: a collision must not suppress a changed row.
-    // Deletion successors (contentIndices) shifted into this position and must not be skipped.
-    if (beforeLines[index] === content && !contentIndices?.has(index)) continue;
-    const row = contentIndices?.has(index)
-      ? anchors.row(index + 1, content)
-      : anchors.token(index + 1, content);
-    // Rows that do not fit are omitted whole; later rows that fit are still returned.
-    const rowBytes = Buffer.byteLength(row) + (rows.length ? 1 : 0);
-    if (bytes + rowBytes > MAX_BLOCK_BYTES) {
-      omitted++;
-      continue;
-    }
-    rows.push(row);
-    bytes += rowBytes;
-  }
-  return { text: rows.length ? `${prefix}${rows.join("\n")}` : "", omitted };
+  return reportResult(report, [], details);
 }

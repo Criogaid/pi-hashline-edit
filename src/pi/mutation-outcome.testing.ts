@@ -6,7 +6,6 @@ import type { MutationOutcome } from "./mutation-result.ts";
 export function publishedMutation<T extends object | undefined>(
   content: string,
   result: AgentToolResult<T>,
-  anchors?: string,
 ): MutationOutcome<T extends object ? T : object> {
   const revision = byteRevision(content);
   return {
@@ -18,6 +17,5 @@ export function publishedMutation<T extends object | undefined>(
       observedRevision: revision,
       created: false,
     },
-    anchors: anchors === undefined ? undefined : { text: anchors, omitted: 0 },
   };
 }

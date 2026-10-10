@@ -110,10 +110,7 @@ export type ApplyFailure =
     };
 
 /**
- * Apply result. On success, `touchedLines` lists 0-based NEW-file indices to
- * re-anchor. `contextLines` identifies deletion successors among those lines;
- * callers retain their content while compacting anchors for produced rows.
- * Byte-identical output succeeds with changed=false and empty anchor lists.
+ * Apply result. Byte-identical output succeeds with changed=false.
  * On failure, `failure` is either the collected set of anchor failures
  * (each with recovery) or a range error, plus per-input anchor checks.
  * Nothing is written on failure.
@@ -123,7 +120,5 @@ export type ApplyResult =
       readonly ok: true;
       readonly text: string;
       readonly changed: boolean;
-      readonly touchedLines: readonly number[];
-      readonly contextLines: readonly number[];
     }
   | { readonly ok: false; readonly failure: ApplyFailure };

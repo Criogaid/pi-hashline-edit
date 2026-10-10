@@ -1068,16 +1068,12 @@ test("tools share physical lines and anchors across text representations", async
       assert.match(edit.details.diff, /^\+2 new/m);
       assert.ok(!edit.details.diff.includes("\r"));
       if (before.includes("a\rb")) assert.ok(edit.details.patch.includes(" a\rb\n"));
-      const editedRead = await call(makeReadOverride(directory, DEFAULT_CONFIG), { path: file });
-      assert.equal(rows(edit)[0], rows(editedRead)[1].split("│")[0]);
       const replaced = await call(makeReplaceTool(directory, DEFAULT_CONFIG), {
         path: file,
         replacements: [{ find: "new", replace: "next" }],
       });
       assert.equal(await readFile(file, "utf8"), before.replace("old", "next"));
       assert.equal(replaced.details.firstChangedLine, 2);
-      const replacedRead = await call(makeReadOverride(directory, DEFAULT_CONFIG), { path: file });
-      assert.equal(rows(replaced)[0], rows(replacedRead)[1].split("│")[0]);
     }
   } finally {
     await rm(directory, { recursive: true, force: true });
