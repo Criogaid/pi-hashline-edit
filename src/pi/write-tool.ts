@@ -9,6 +9,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import {
   ACTION_FUSION_GUIDELINES,
+  withThenRunDescription,
   withThenRunSchema,
   type ThenRunInput,
   type ActionFusionDetails,
@@ -60,8 +61,10 @@ export function makeWriteOverride(
   return {
     name: "write" as const,
     label: "write",
-    description:
+    description: withThenRunDescription(
       "Write a whole file exactly as supplied, including its line endings. For partial changes to an existing file, prefer edit or replace. Choose create for a new file or overwrite for an existing file. Creates missing parent directories.",
+      fusion !== undefined,
+    ),
     promptSnippet: "Write complete file content to a path",
     promptGuidelines: [...(fusion ? ACTION_FUSION_GUIDELINES : [])],
     parameters,

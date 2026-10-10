@@ -52,7 +52,7 @@ const MAX_BASH_TIMEOUT_SECONDS = 2_147_483_647 / 1_000;
 
 export const ACTION_FUSION_GUIDELINES = [
   "Before each file mutation, identify its next command.",
-  "Prefer then_run when the next command is known, authorized, and ready after the mutation succeeds.",
+  "then_run is a parameter of edit, replace, and write, not a separate tool; prefer it when the next command is known, authorized, and ready after the mutation succeeds.",
   "When several edits are prerequisites, attach then_run to the last one.",
   "Run the command separately if it depends on the mutation result, needs approval, or awaits a reload.",
   "Use platform-appropriate commands; avoid Unix-only paths like /tmp on Windows.",
@@ -104,6 +104,13 @@ export function withThenRunSchema<P extends TProperties>(
     : schema;
 }
 export type ThenRunInput = NonNullable<Static<ReturnType<typeof createThenRunSchema>>>;
+
+/** Name then_run in a mutation tool's description when Action Fusion is enabled. */
+export function withThenRunDescription(description: string, actionFusion: boolean): string {
+  return actionFusion
+    ? `${description} To run the next command, such as tests or a build, after this call succeeds, set then_run instead of making a separate bash call.`
+    : description;
+}
 
 /** Keep command state independent of its diagnostic text and of file publication. */
 export interface CommandOutcome {

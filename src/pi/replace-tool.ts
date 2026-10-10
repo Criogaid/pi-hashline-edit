@@ -35,7 +35,12 @@ import { applyReplacements, buildRegex } from "../core/replace.ts";
 import { REPLACEMENTS_SCHEMA, REGEX_FLAGS_PATTERN } from "../core/replace-schema.ts";
 import { runRegexReplacements } from "./replace-regex.ts";
 import { unwritableTextError } from "../core/text.ts";
-import { ACTION_FUSION_GUIDELINES, withThenRunSchema, type ThenRunInput } from "./action-fusion.ts";
+import {
+  ACTION_FUSION_GUIDELINES,
+  withThenRunDescription,
+  withThenRunSchema,
+  type ThenRunInput,
+} from "./action-fusion.ts";
 import type { HashlineEditConfig } from "./config.ts";
 import {
   formatDiffCounts,
@@ -122,8 +127,10 @@ export function makeReplaceTool(
   return {
     name: "replace" as const,
     label: "replace",
-    description:
+    description: withThenRunDescription(
       "Replace every match of one or more literal or JavaScript-regex rules in a file. Rules swap only their matched fragments in one call, without line anchors; for inserting, deleting, or rewriting whole lines, prefer edit. Overlapping matches or a rule with no match reject the whole call. Returns a mutation report.",
+      fusion !== undefined,
+    ),
     promptSnippet: "Replace matching text across a file",
     promptGuidelines: [...(fusion ? ACTION_FUSION_GUIDELINES : [])],
     parameters,

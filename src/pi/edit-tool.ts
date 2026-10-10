@@ -23,7 +23,12 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import type { AgentToolResult, AgentToolUpdateCallback } from "@earendil-works/pi-agent-core";
 import { Type, type Static } from "typebox";
-import { ACTION_FUSION_GUIDELINES, withThenRunSchema, type ThenRunInput } from "./action-fusion.ts";
+import {
+  ACTION_FUSION_GUIDELINES,
+  withThenRunDescription,
+  withThenRunSchema,
+  type ThenRunInput,
+} from "./action-fusion.ts";
 import { applyEdits } from "../core/apply.ts";
 import { unwritableTextError } from "../core/text.ts";
 import { EDIT_ANCHOR_FIELDS, type Anchor, type Edit } from "../core/types.ts";
@@ -79,7 +84,7 @@ function buildEditSchema(hashLen: number) {
   const transferFields = {
     op: Type.Union([Type.Literal("copy"), Type.Literal("move")], {
       description:
-        "Reuse original lines without changing text or indentation; move also removes the source.",
+        "Reuse original lines without changing text or indentation; move also removes the source. Give exactly one destination: before or after.",
     }),
     anchor: requiredAnchor,
     end: optionalEnd,
@@ -294,8 +299,10 @@ export function makeEditOverride(
   return {
     name: "edit" as const,
     label: "edit",
-    description:
+    description: withThenRunDescription(
       "Edit file lines by LINE#HASH anchors checked against the current file. Each operation replaces whole lines: for the same change in several places, or a small edit inside one long line, prefer replace. On anchor failure, shows current context and recovery candidates; nothing is retried automatically.",
+      fusion !== undefined,
+    ),
     promptSnippet: "Edit file lines using verified anchors",
     promptGuidelines: [
       "Batch all edits to one file in a single edit call; all its anchors are checked against one snapshot.",
