@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { assertRgSucceeded, resolveIgnoreCase, type RunText } from "./rg-process.ts";
+import { HashlineError } from "../core/errors.ts";
 
 const lineModes = { literal: false, multiline: false } as const;
 
@@ -59,7 +60,11 @@ test("smart-case probe propagates parser errors and rejects unknown output", asy
   const failed: RunText = async () => ({ code: 2, stdout: "", stderr: "regex parse error" });
   await assert.rejects(
     resolveIgnoreCase("rg", ["("], lineModes, undefined, undefined, failed),
-    /regex parse error/,
+    (error: unknown) =>
+      error instanceof HashlineError &&
+      error.errorCode === "RIPGREP_FAILED" &&
+      error.facts?.exitCode === 2 &&
+      error.cause === "regex parse error",
   );
 
   const unexpected: RunText = async () => ({ code: 0, stdout: "unexpected\n", stderr: "" });
@@ -85,10 +90,17 @@ test("search exit status accepts no matches and preserves failure diagnostics", 
   for (const code of [0, 1]) assert.doesNotThrow(() => assertRgSucceeded({ code, stderr: "" }));
   assert.throws(
     () => assertRgSucceeded({ code: 2, stderr: "  regex parse error\n" }),
-    /^Error: regex parse error$/,
+    (error: unknown) =>
+      error instanceof HashlineError &&
+      error.errorCode === "RIPGREP_FAILED" &&
+      error.facts?.exitCode === 2 &&
+      error.cause === "regex parse error",
   );
   assert.throws(
     () => assertRgSucceeded({ code: null, stderr: "" }),
-    /ripgrep exited with code null/,
+    (error: unknown) =>
+      error instanceof HashlineError &&
+      error.errorCode === "RIPGREP_FAILED" &&
+      error.facts?.exitCode === null,
   );
 });

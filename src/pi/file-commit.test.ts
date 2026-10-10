@@ -28,6 +28,7 @@ import {
 import { createActionFusionExecutor } from "./action-fusion.ts";
 import { makeWriteOverride } from "./write-tool.ts";
 import { callTool } from "./tool-call.testing.ts";
+import { reportOf } from "./report.ts";
 
 async function withTemp<T>(run: (dir: string) => Promise<T>): Promise<T> {
   const dir = await mkdtemp(join(tmpdir(), "hashline-commit-"));
@@ -110,7 +111,10 @@ test("create never overwrites an existing target and expectedRevision remains st
     );
     await assert.rejects(
       commitFile(target, "replacement\n", { mode: "overwrite", expectedRevision: "stale" }),
-      /expectedRevision/,
+      (error: unknown) =>
+        error instanceof FileMutationError &&
+        error.errorCode === "FILE_CHANGED" &&
+        error.publication === "NOT_PUBLISHED",
     );
     assert.equal(await fileRevision(target), revision);
     assert.equal(await readFile(target, "utf8"), "original\n");
@@ -229,22 +233,21 @@ test("Windows shared access failure preserves the target, skips then_run, and re
       }),
     );
     try {
-      await assert.rejects(
-        callTool(
-          tool,
-          {
-            path: target,
-            content: "replacement\n",
-            mode: "overwrite",
-            then_run: { command: "deterministic-command" },
-          },
-          { toolCallId: "shared-failure", ctx: { cwd: dir } },
-        ),
-        (error: unknown) =>
-          error instanceof Error &&
-          /File state is uncertain|No file changes were published/.test(error.message) &&
-          /Command skipped/.test(error.message),
+      const failed = await callTool(
+        tool,
+        {
+          path: target,
+          content: "replacement\n",
+          mode: "overwrite",
+          then_run: { command: "deterministic-command" },
+        },
+        { toolCallId: "shared-failure", ctx: { cwd: dir } },
       );
+      assert.equal(failed.isError, true);
+      const report = reportOf(failed);
+      assert.ok(report);
+      assert.ok(report.publication === "NOT_PUBLISHED" || report.publication === "UNKNOWN");
+      assert.equal(report.then_run?.status, "skipped");
       assert.equal(commandRuns, 0);
     } finally {
       holder.release();
@@ -279,10 +282,8 @@ test("Windows shared access failure preserves the target, skips then_run, and re
       },
       { toolCallId: "shared-retry", ctx: { cwd: dir } },
     );
-    assert.match(
-      result.content.map((item: any) => (item.type === "text" ? item.text : "")).join("\n"),
-      /then_run:succeeded/,
-    );
+    assert.equal(result.isError, undefined);
+    assert.equal(reportOf(result)?.then_run?.status, "succeeded");
     assert.equal(commandRuns, 1);
     assert.equal(await readFile(target, "utf8"), "replacement\n");
   }));
@@ -335,8 +336,10 @@ test("commit rejects lossy UTF-8 output before modifying or creating files", asy
       for (const path of [existing, missing]) {
         await assert.rejects(
           commitFile(path, content, { mode: path === existing ? "overwrite" : "create" }),
-          (error: any) =>
-            error.publication === "NOT_PUBLISHED" && /INVALID_UNICODE/.test(error.message),
+          (error: unknown) =>
+            error instanceof FileMutationError &&
+            error.publication === "NOT_PUBLISHED" &&
+            error.errorCode === "INVALID_UNICODE",
         );
       }
     }
@@ -374,7 +377,10 @@ test("identical commits preserve the file and still enforce mode, revision, and 
     await assert.rejects(commitFile(target, content, { mode: "create" }), /already exists/);
     await assert.rejects(
       commitFile(target, content, { mode: "overwrite", expectedRevision: "stale" }),
-      /expectedRevision/,
+      (error: unknown) =>
+        error instanceof FileMutationError &&
+        error.errorCode === "FILE_CHANGED" &&
+        error.publication === "NOT_PUBLISHED",
     );
     await assert.rejects(
       commitFile(target, content, { mode: "overwrite", signal: AbortSignal.abort() }),
@@ -409,7 +415,7 @@ test("no-op commit with knownBeforeRevision validates disk revision against exte
         error instanceof FileMutationError &&
         error.stage === "prepare" &&
         error.publication === "NOT_PUBLISHED" &&
-        /expectedRevision/.test(error.message),
+        error.errorCode === "FILE_CHANGED",
     );
     // Disk content must remain untouched by the rejected commit.
     assert.equal(await readFile(target, "utf8"), "line 1\nmodified line 2\n");
@@ -426,7 +432,7 @@ test("no-op commit with knownBeforeRevision validates disk revision against exte
         error instanceof FileMutationError &&
         error.stage === "prepare" &&
         error.publication === "NOT_PUBLISHED" &&
-        /expectedRevision/.test(error.message),
+        error.errorCode === "FILE_CHANGED",
     );
 
     // Without expectedRevision, commitFile recognizes disk has changed and publishes the content.

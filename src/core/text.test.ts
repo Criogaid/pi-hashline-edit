@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createUtf8Decoder, decodeEditableText, decodeUtf8 } from "./text.ts";
+import { createUtf8Decoder, decodeEditableText, decodeUtf8, Utf8DecodingError } from "./text.ts";
 import { HashlineError, TEXT_ERROR_MESSAGES } from "./errors.ts";
 
 test("decodeUtf8 rejects malformed input instead of replacing bytes", () => {
@@ -39,11 +39,12 @@ test("lossy decoding replaces malformed bytes and flushes incomplete sequences a
   assert.equal(decode(), "�");
 });
 
-test("strict decoding retains the TextDecoder error as the unsupported encoding cause", () => {
+test("strict decoding rejects malformed sequences and incomplete EOF → one encoding classification", () => {
   const isEncodingError = (error: unknown) =>
-    error instanceof Error &&
+    error instanceof Utf8DecodingError &&
+    error.errorCode === "UNSUPPORTED_ENCODING" &&
     error.message === TEXT_ERROR_MESSAGES.UNSUPPORTED_ENCODING &&
-    error.cause instanceof TypeError;
+    error.cause === undefined;
   assert.throws(() => createUtf8Decoder("strict")(Uint8Array.from([0xff])), isEncodingError);
   const decode = createUtf8Decoder("strict");
   assert.equal(decode(Uint8Array.from([0xf0, 0x9f]), true), "");

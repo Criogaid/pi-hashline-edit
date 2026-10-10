@@ -128,7 +128,7 @@ test("known edit operations with empty bodies → report the actionable issue on
         assert.equal(result.issues[0].field, "edits[0].body");
         assert.match(result.issues[0].reason, /empty/);
         assert.match(
-          result.issues[0].reason,
+          result.issues[0].fix ?? "",
           op === "replace" ? /delete/ : /supply at least one line/,
         );
         assert.equal(result.schemaLimited, undefined);
@@ -388,7 +388,7 @@ test("one field violates independent constraints → combine its reasons without
     (error: unknown) => {
       const result = argumentError(error);
       assert.equal(result.issues.length, 1);
-      return rejectsArgument("edits[0].anchor", /safe integer[\s\S]*hash length mismatch/)(error);
+      return rejectsArgument("edits[0].anchor", /safe integer[\s\S]*hash characters/)(error);
     },
   );
   await assert.rejects(
@@ -412,7 +412,7 @@ test("copy/move destination tokens → reject unsafe positions and wrong hash le
     for (const side of ["before", "after"]) {
       for (const [token, reason] of [
         [`${Number.MAX_SAFE_INTEGER + 1}#${anchorHash}`, /safe integer/],
-        ["1#A", /hash length mismatch/],
+        ["1#A", /has 1 hash characters/],
       ] as const) {
         await assert.rejects(
           callTool(tool, {

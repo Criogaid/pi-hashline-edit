@@ -1,12 +1,5 @@
 import { rejectsArgument, rejectsArguments } from "./argument-error.testing.ts";
-/**
- * pi integration tests for the `replace` tool: literal replaceAll, regex with
- * capture groups, flags, 0-match / invalid-pattern
- * failures (signaled by throwing — pi's failure contract), diff + fresh-anchor
- * return, and chaining a hashline `edit` on an anchor returned by `replace`.
- *
- * Failures are signaled by throwing (see edit-tool.ts); tests use assert.rejects.
- */
+/** Tool-level replace contracts: byte preservation, matching, failures and fresh-anchor chaining. */
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp, rm, readFile, writeFile } from "node:fs/promises";
@@ -19,6 +12,7 @@ import { validateToolArguments } from "@earendil-works/pi-ai";
 import { callTool } from "./tool-call.testing.ts";
 import { createActionFusionExecutor } from "./action-fusion.ts";
 import { DEFAULT_CONFIG } from "./config.ts";
+import { reportOf } from "./report.ts";
 
 async function withDir<T>(fn: (dir: string) => Promise<T>): Promise<T> {
   const dir = await mkdtemp(join(tmpdir(), "hl-replace-"));
@@ -117,17 +111,14 @@ test("replace rejects unwritable text and invalid regex before reading a missing
     const valid = { path: file, replacements: [{ find: "x", replace: "y", regex: true }] };
     assert.equal(tool.prepareArguments(valid), valid);
     for (const [rule, expected] of [
-      [
-        { find: "x", replace: "\0" },
-        rejectsArgument("replacements[0].replace", /UNSUPPORTED_TEXT:/),
-      ],
+      [{ find: "x", replace: "\0" }, rejectsArgument("replacements[0].replace", /NUL/)],
       [
         { find: "x", replace: "\ud800" },
-        rejectsArgument("replacements[0].replace", /INVALID_UNICODE:/),
+        rejectsArgument("replacements[0].replace", /losslessly.*UTF-8/),
       ],
       [
         { find: "(", replace: "x", regex: true },
-        rejectsArgument("replacements[0].find", /invalid regex/),
+        rejectsArgument("replacements[0].find", /Invalid regular expression/i),
       ],
     ] as const) {
       await assert.rejects(callTool(tool, { path: file, replacements: [rule] }), expected);
@@ -153,7 +144,7 @@ test("replace literal: replaces all occurrences", async () => {
     });
     assert.equal(r.isError, undefined);
     assert.equal(await readFile(f, "utf-8"), "qux bar qux baz qux\n");
-    assert.match(r.content[0].text, /3 matches/);
+    assert.equal(reportOf(r)?.matches, 3);
   });
 });
 
@@ -165,7 +156,7 @@ test("literal multiline replace matches LF and CRLF while retaining local separa
       path: "mixed.txt",
       replacements: [{ find: "old\none", replace: "NEW\nX" }],
     });
-    assert.match(result.content[0].text, /2 matches/);
+    assert.equal(reportOf(result)?.matches, 2);
     assert.equal(await readFile(file, "utf8"), "\uFEFFhead\r\nNEW\r\nX\r\nmid\nNEW\nX\nend\r\n");
     await call(makeReplaceTool(dir, DEFAULT_CONFIG), {
       path: "mixed.txt",
@@ -198,7 +189,8 @@ test("literal replacement uses one LF view and preserves raw bytes across query 
         replacements: [{ find, replace: find }],
       });
       assert.equal(await readFile(file, "utf8"), before);
-      assert.match(result.content[0].text, /no net change/);
+      assert.equal(reportOf(result)?.matches, 1);
+      assert.equal(reportOf(result)?.publication, "NOT_PUBLISHED");
     }
     for (const [before, find, replacement, expected] of [
       ["a\r\nb", "a", "A\nextra", "A\r\nextra\r\nb"],
@@ -229,16 +221,15 @@ test("mixed literal and regex batches share raw offsets after CRLF normalization
     });
     assert.equal(await readFile(file, "utf8"), "😀\r\nA\r\nB\r\nc!");
     const before = await readFile(file, "utf8");
-    await assert.rejects(
-      call(makeReplaceTool(dir, DEFAULT_CONFIG), {
-        path: file,
-        replacements: [
-          { find: "A\nB", replace: "x" },
-          { find: "\\nB", replace: "y", regex: true },
-        ],
-      }),
-      /overlap/,
-    );
+    const failed = await call(makeReplaceTool(dir, DEFAULT_CONFIG), {
+      path: file,
+      replacements: [
+        { find: "A\nB", replace: "x" },
+        { find: "\\nB", replace: "y", regex: true },
+      ],
+    });
+    assert.equal(failed.isError, true);
+    assert.equal(reportOf(failed)?.error, "OVERLAPPING_MATCHES");
     assert.equal(await readFile(file, "utf8"), before);
   }));
 
@@ -277,18 +268,14 @@ test("replace aborts catastrophic regex without blocking the event loop or publi
     const timer = setTimeout(() => controller.abort(), 100);
     const start = performance.now();
     try {
-      await assert.rejects(
-        makeReplaceTool(dir, DEFAULT_CONFIG).execute(
-          "abort",
-          { path: file, replacements: [{ find: "^(a+)+$", replace: "x", regex: true }] },
-          controller.signal,
-          undefined,
-          { cwd: dir } as Parameters<ReturnType<typeof makeReplaceTool>["execute"]>[4],
-        ),
-        (error: unknown) =>
-          error instanceof Error &&
-          error.message === `Operation aborted before apply; ${file} was not changed.`,
+      const failed = await callTool(
+        makeReplaceTool(dir, DEFAULT_CONFIG),
+        { path: file, replacements: [{ find: "^(a+)+$", replace: "x", regex: true }] },
+        { toolCallId: "abort", signal: controller.signal, ctx: { cwd: dir } },
       );
+      assert.equal(failed.isError, true);
+      assert.equal(reportOf(failed)?.error, "OPERATION_ABORTED");
+      assert.equal(reportOf(failed)?.publication, "NOT_PUBLISHED");
       assert.ok(performance.now() - start < 2000);
       assert.equal(await readFile(file, "utf8"), before);
     } finally {
@@ -302,15 +289,14 @@ test("replace times out catastrophic regex at the configured limit without publi
     const before = `${"a".repeat(35)}!`;
     await writeFile(file, before);
     const config = { ...DEFAULT_CONFIG, replace: { regexTimeoutMs: 1_000 } };
-    await assert.rejects(
-      call(makeReplaceTool(dir, config), {
-        path: file,
-        replacements: [{ find: "^(a+)+$", replace: "x", regex: true }],
-      }),
-      (error: unknown) =>
-        error instanceof Error &&
-        error.message === `Replace ${file}: regex evaluation timed out after 1000ms`,
-    );
+    const failed = await call(makeReplaceTool(dir, config), {
+      path: file,
+      replacements: [{ find: "^(a+)+$", replace: "x", regex: true }],
+    });
+    assert.equal(failed.isError, true);
+    assert.equal(reportOf(failed)?.error, "REGEX_TIMEOUT");
+    assert.equal(reportOf(failed)?.timeoutMs, config.replace.regexTimeoutMs);
+    assert.equal(reportOf(failed)?.publication, "NOT_PUBLISHED");
     assert.equal(await readFile(file, "utf8"), before);
   });
 });
@@ -353,17 +339,17 @@ test("replace regex: dotall flag makes . match newlines", async () => {
   });
 });
 
-test("replace: 0 matches throws", async () => {
+test("replace finds no matches → returns failure and leaves file untouched", async () => {
   await withDir(async (dir) => {
     const f = join(dir, "f.txt");
     await writeFile(f, "a\nb\n");
-    await assert.rejects(
-      call(makeReplaceTool(dir, DEFAULT_CONFIG), {
-        path: "f.txt",
-        replacements: [{ find: "zzz", replace: "y" }],
-      }),
-      /no matches/,
-    );
+    const failed = await call(makeReplaceTool(dir, DEFAULT_CONFIG), {
+      path: "f.txt",
+      replacements: [{ find: "zzz", replace: "y" }],
+    });
+    assert.equal(failed.isError, true);
+    assert.equal(reportOf(failed)?.error, "NO_MATCH");
+    assert.equal(reportOf(failed)?.rule, 0);
     assert.equal(await readFile(f, "utf-8"), "a\nb\n", "file untouched on 0-match failure");
   });
 });
@@ -389,7 +375,7 @@ test("replace: handles large match counts without an arbitrary cap", async () =>
       path: "f.txt",
       replacements: [{ find: "a", replace: "b" }],
     });
-    assert.match(result.content[0].text, /Replaced f\.txt \(2500 matches\)\./);
+    assert.equal(reportOf(result)?.matches, 2500);
     assert.equal(await readFile(f, "utf-8"), "b\n".repeat(2500));
   });
 });
@@ -402,7 +388,7 @@ test("replace: invalid regex throws a friendly message", async () => {
         path: "f.txt",
         replacements: [{ find: "(unclosed", replace: "x", regex: true }],
       }),
-      /invalid regex/,
+      /Invalid regular expression/i,
     );
   });
 });
@@ -431,7 +417,9 @@ test("replace: count-but-no-net-change does not rewrite and reports it", async (
     });
     assert.equal(r.isError, undefined);
     assert.equal(await readFile(f, "utf-8"), "xx\n");
-    assert.match(r.content[0].text, /no net change/);
+    assert.equal(reportOf(r)?.publication, "NOT_PUBLISHED");
+    assert.equal(reportOf(r)?.matches, 2);
+    assert.equal(r.details.diff, "");
   });
 });
 
@@ -535,7 +523,7 @@ test("replacement batches use one snapshot and return anchors for the final cont
     await writeFile(file, "\uFEFFfoo\r\nbar\nfoo");
     const result = await call(tool, args);
     assert.equal(await readFile(file, "utf8"), "\uFEFFbar\r\nbaz\nbar");
-    assert.match(result.content[0].text, /3 matches/);
+    assert.equal(reportOf(result)?.matches, 3);
     assert.match(result.details.diff, /^\+2 baz/m);
     await call(makeEditOverride(dir, DEFAULT_CONFIG), {
       path: file,
@@ -561,23 +549,15 @@ test("invalid batches reject every change and never run a fused command", async 
     const first = { find: "bar", replace: "changed" };
     const cases = [
       [
-        /then_run:skipped/,
-        [
-          { replacements: [first, { find: "missing", replace: "x" }] },
-          { replacements: [first, { find: "bar foo", replace: "x" }] },
-          { replacements: [first, { find: "bar", replace: "x" }] },
-        ],
-      ],
-      [
-        rejectsArgument("replacements[1].find", /invalid regex/),
+        rejectsArgument("replacements[1].find", /Invalid regular expression/i),
         [{ replacements: [first, { find: "(", replace: "x", regex: true }] }],
       ],
       [
-        rejectsArgument("replacements[1].replace", /UNSUPPORTED_TEXT: NUL/),
+        rejectsArgument("replacements[1].replace", /NUL/),
         [{ replacements: [first, { find: "foo", replace: "\0" }] }],
       ],
       [
-        rejectsArgument("replacements[1].replace", /INVALID_UNICODE:/),
+        rejectsArgument("replacements[1].replace", /losslessly.*UTF-8/),
         [{ replacements: [first, { find: "foo", replace: "\ud800" }] }],
       ],
       [
@@ -592,6 +572,22 @@ test("invalid batches reject every change and never run a fused command", async 
         ],
       ],
     ] as const;
+    for (const [rule, code] of [
+      [{ find: "missing", replace: "x" }, "NO_MATCH"],
+      [{ find: "bar foo", replace: "x" }, "OVERLAPPING_MATCHES"],
+      [{ find: "bar", replace: "x" }, "OVERLAPPING_MATCHES"],
+    ] as const) {
+      const failed = await callTool(
+        tool,
+        { path: file, replacements: [first, rule], then_run: { command: "check" } },
+        { ctx: { cwd: dir } },
+      );
+      assert.equal(failed.isError, true);
+      assert.equal(reportOf(failed)?.error, code);
+      assert.equal(reportOf(failed)?.then_run?.status, "skipped");
+      assert.equal(reportOf(failed)?.publication, "NOT_PUBLISHED");
+      assert.equal(await readFile(file, "utf8"), before);
+    }
     for (const [expected, inputs] of cases) {
       for (const args of inputs) {
         await assert.rejects(
@@ -641,21 +637,23 @@ test("adjacent matches and zero-width boundaries have deterministic batch semant
         await call(tool, args);
         assert.equal(await readFile(file, "utf8"), "X!");
       } else {
-        await assert.rejects(call(tool, args), /overlap/);
+        const failed = await call(tool, args);
+        assert.equal(failed.isError, true);
+        assert.equal(reportOf(failed)?.error, "OVERLAPPING_MATCHES");
         assert.equal(await readFile(file, "utf8"), "ab");
       }
     }
     await writeFile(file, "ab");
-    await assert.rejects(
-      call(tool, {
-        path: file,
-        replacements: [
-          { find: "^", replace: "x", regex: true },
-          { find: "(?=a)", replace: "y", regex: true },
-        ],
-      }),
-      /overlap/,
-    );
+    const failed = await call(tool, {
+      path: file,
+      replacements: [
+        { find: "^", replace: "x", regex: true },
+        { find: "(?=a)", replace: "y", regex: true },
+      ],
+    });
+    assert.equal(failed.isError, true);
+    assert.equal(reportOf(failed)?.error, "OVERLAPPING_MATCHES");
+    assert.equal(await readFile(file, "utf8"), "ab");
   }));
 
 test("regex templates agree with native replacement in single and snapshot batch modes", async () =>

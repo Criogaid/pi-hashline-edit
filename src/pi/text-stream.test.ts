@@ -10,6 +10,8 @@ import { splitLines } from "../core/lines.ts";
 import { isUtf8 } from "node:buffer";
 import { readFile } from "node:fs/promises";
 import { truncateSync } from "node:fs";
+import { Utf8DecodingError } from "../core/text.ts";
+import { HashlineError } from "../core/errors.ts";
 
 async function withFile(run: (path: string) => Promise<void>) {
   const directory = await mkdtemp(join(tmpdir(), "hashline-stream-"));
@@ -101,7 +103,7 @@ test("streamed validation checks the entire file and gives NUL precedence over m
         (number) => number === 1,
         () => {},
       ),
-      /UNSUPPORTED_ENCODING/,
+      (error: unknown) => error instanceof Utf8DecodingError,
     );
     await writeFile(
       path,
@@ -116,7 +118,7 @@ test("streamed reads propagate cancellation", async () =>
     const controller = new AbortController();
     await assert.rejects(
       scanTextFile(path, () => controller.abort(), controller.signal),
-      { message: "Operation aborted" },
+      (error: unknown) => error instanceof HashlineError && error.errorCode === "OPERATION_ABORTED",
     );
   }));
 
@@ -146,7 +148,10 @@ test("lossy decoding reports invalid UTF-8 across chunk boundaries and preserves
     assert.equal(stats.hasCrLf, true);
     assert.deepEqual(lines, splitLines(source.toString("utf8")));
     assert.equal(hash.digest("hex"), byteRevision(source));
-    await assert.rejects(scanTextFile(path), /UNSUPPORTED_ENCODING/);
+    await assert.rejects(
+      scanTextFile(path),
+      (error: unknown) => error instanceof Utf8DecodingError,
+    );
   }));
 
 test("strict scans read all bytes but stop emitting text after a decoding error", async () =>
@@ -168,7 +173,7 @@ test("strict scans read all bytes but stop emitting text after a decoding error"
         undefined,
         (bytes) => scanned.push(bytes),
       ),
-      /UNSUPPORTED_ENCODING/,
+      (error: unknown) => error instanceof Utf8DecodingError,
     );
     assert.equal(emitted.join(""), prefix.toString("utf8"));
     assert.deepEqual(Buffer.concat(scanned), source);
@@ -302,7 +307,7 @@ test("valid file truncated across a pending UTF-8 sequence → scans report a ch
         (error: unknown) => {
           assert.ok(error instanceof Error);
           assert.match(error.message, /File changed/);
-          assert.doesNotMatch(error.message, /UNSUPPORTED_ENCODING/);
+          assert.ok(!(error instanceof Utf8DecodingError));
           return true;
         },
       );

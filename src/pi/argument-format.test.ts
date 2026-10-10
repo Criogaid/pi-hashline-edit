@@ -118,8 +118,8 @@ test("a reason contains an oversized anchor → keep its cause and recovery inst
       assert.equal(result.issues.length, 1);
       assert.equal(result.issues[0].field, "edits[0].anchor");
       assert.match(result.issues[0].reason, /^line number/);
-      assert.match(result.issues[0].reason, /Diagnostics truncated/);
-      assert.match(result.issues[0].reason, /copy a complete.*latest tool result/);
+      assert.match(result.issues[0].fix ?? "", /Copy a complete.*latest tool result/);
+      assert.doesNotMatch(result.issues[0].reason, /Read|grep|Copy/);
       return true;
     },
   );

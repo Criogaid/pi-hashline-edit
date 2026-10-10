@@ -90,7 +90,7 @@ for (const entry of ["direct", "codemode"] as const) {
         .filter((block) => block.type === "text")
         .map((block) => block.text)
         .join("\n");
-      assert.match(output, /then_run:succeeded[\s\S]*AFTER_WRITE/);
+      assert.match(output, /"then_run":\s*\{\s*"status":\s*"succeeded"[\s\S]*AFTER_WRITE/);
     }
   });
 }

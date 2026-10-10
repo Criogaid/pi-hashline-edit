@@ -6,7 +6,17 @@ import { createJiti } from "../../node_modules/@earendil-works/pi-coding-agent/d
 import { VIRTUAL_MODULES } from "../../node_modules/@earendil-works/pi-coding-agent/dist/core/extensions/virtual-modules.js";
 
 export async function loadInstalledExtension(entry: string): Promise<ExtensionFactory> {
-  assert.throws(() => createRequire(entry).resolve("typebox/type"), { code: "MODULE_NOT_FOUND" });
+  const require = createRequire(entry);
+  assert.throws(() => require.resolve("@earendil-works/pi-coding-agent"), {
+    code: "MODULE_NOT_FOUND",
+  });
+  assert.ok(
+    require
+      .resolve("typebox/type")
+      .startsWith(
+        require.resolve("@criogaid/pi-hashline-edit/package.json").split("node_modules")[0],
+      ),
+  );
   const jiti = createJiti(import.meta.url, {
     moduleCache: false,
     virtualModules: VIRTUAL_MODULES,

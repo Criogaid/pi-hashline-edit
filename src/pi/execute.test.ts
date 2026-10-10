@@ -1,4 +1,4 @@
-import { rejectsArgument, rejectsArguments } from "./argument-error.testing.ts";
+import { argumentError, rejectsArgument, rejectsArguments } from "./argument-error.testing.ts";
 /** Tool-level edit and shared mutation workflow tests. */
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -19,6 +19,9 @@ import { byteRevision } from "./file-commit.ts";
 import { callTool } from "./tool-call.testing.ts";
 import { DEFAULT_CONFIG } from "./config.ts";
 import { formatKiB, MAX_BLOCK_BYTES, MAX_RECOVERY_CANDIDATE_BYTES } from "./budgets.ts";
+import { reportOf } from "./report.ts";
+import type { Report } from "./report-schema.ts";
+import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 
 async function withDir<T>(fn: (dir: string) => Promise<T>): Promise<T> {
   const dir = await mkdtemp(join(tmpdir(), "hl-"));
@@ -42,6 +45,13 @@ function anchorLine(block: string, line: number) {
   const m = new RegExp(`^${line}#([0-9A-Z]+)(?:│|$)`, "m").exec(block);
   if (!m) throw new Error(`line ${line} anchor not found in block`);
   return `${line}#${m[1]}`;
+}
+
+function failureReport(result: AgentToolResult<unknown> & { isError?: boolean }): Report {
+  assert.equal(result.isError, true);
+  const report = reportOf(result);
+  assert.ok(report?.error);
+  return report;
 }
 
 test("edit execute: a file without a final newline stays byte-exact", async () => {
@@ -165,13 +175,14 @@ test("edit on a line that changed externally → anchor mismatch", async () => {
     const text = "a\nb\nc\n";
     await writeFile(f, text);
     await writeFile(f, "a\nBCHANGED\nc\n"); // line 2 changed
-    await assert.rejects(
-      call(makeEditOverride(dir, DEFAULT_CONFIG), {
+    const report = failureReport(
+      await call(makeEditOverride(dir, DEFAULT_CONFIG), {
         path: "f.txt",
         edits: [{ op: "replace", anchor: h(text, 2), body: ["x"] }],
       }),
-      /anchor|re-read/i,
     );
+    assert.equal(report.error, "ANCHOR_MISMATCH");
+    assert.equal(await readFile(f, "utf8"), "a\nBCHANGED\nc\n");
   });
 });
 
@@ -185,19 +196,16 @@ test("unresolved observations require target confirmation before retrying a move
       ["one", "two", "three", "four", "changed", "six", "new marker", "eight"].join("\n") + "\n",
     );
     const edit = makeEditOverride(dir, DEFAULT_CONFIG);
-    await assert.rejects(
-      call(edit, {
+    const report = failureReport(
+      await call(edit, {
         path: "recover.txt",
         edits: [{ op: "replace", anchor: h(observed, 5), body: ["updated"] }],
       }),
-      (error: Error) => {
-        assert.match(error.message, /Anchor mismatch: 1 unresolved/);
-        assert.match(error.message, /No changes written/);
-        assert.match(error.message, /Before reusing.*anchor, confirm.*intended target/);
-        assert.match(error.message, /^5#[0-9A-Z]+│changed$/m);
-        return true;
-      },
     );
+    assert.equal(report.error, "ANCHOR_MISMATCH");
+    assert.equal(report.publication, "NOT_PUBLISHED");
+    assert.match(report.next ?? "", /Before reusing.*anchor, confirm.*intended target/);
+    assert.match(report.failures?.[0].observed ?? "", /^5#[0-9A-Z]+│changed$/);
     const read = await call(makeReadOverride(dir, DEFAULT_CONFIG), { path: "recover.txt" });
     const retryAnchor = anchorLine(read.content[0].text, 7);
     await call(edit, {
@@ -214,13 +222,14 @@ test("unresolved observations require target confirmation before retrying a move
 test("edit execute: no read before edit → anchor verification fails", async () => {
   await withDir(async (dir) => {
     await writeFile(join(dir, "f.txt"), "a\nb\n");
-    await assert.rejects(
-      call(makeEditOverride(dir, DEFAULT_CONFIG), {
+    const report = failureReport(
+      await call(makeEditOverride(dir, DEFAULT_CONFIG), {
         path: "f.txt",
         edits: [{ op: "replace", anchor: "1#XXXX", body: ["A"] }],
       }),
-      /anchor|re-read/i,
     );
+    assert.equal(report.error, "ANCHOR_MISMATCH");
+    assert.equal(await readFile(join(dir, "f.txt"), "utf8"), "a\nb\n");
   });
 });
 
@@ -462,8 +471,9 @@ test("mixed empty-body batches name every rejected edit without publishing or ru
         { ctx: { cwd: dir } },
       ),
       (error: Error) => {
-        rejectsArgument("edits[1].body", /\[""\]/)(error);
-        rejectsArgument("edits[3].body", /delete/)(error);
+        const issues = argumentError(error).issues;
+        assert.match(issues.find((issue) => issue.field === "edits[1].body")?.fix ?? "", /\[""\]/);
+        assert.match(issues.find((issue) => issue.field === "edits[3].body")?.fix ?? "", /delete/);
         return true;
       },
     );
@@ -511,28 +521,20 @@ test("local and full-file recovery return copyable anchors without changing the 
       const prefix = "prefix\n".repeat(prefixLines);
       await writeFile(join(dir, "shift.txt"), prefix + original);
       let replacement = "";
-      await assert.rejects(
-        call(edit, {
+      const report = failureReport(
+        await call(edit, {
           path: "shift.txt",
           edits: [{ op: "replace", anchor: h(original, 2), body: ["B"] }],
         }),
-        (error: Error) => {
-          replacement =
-            new RegExp(`^(${prefixLines + 2}#[0-9A-Z]+)│b$`, "m").exec(error.message)?.[1] ?? "";
-          assert.match(error.message, /confirm.*intended target/);
-          assert.match(
-            error.message,
-            prefixLines === 1 ? /Search: local.*outside.*not checked/ : /Search: full file/,
-          );
-          assert.doesNotMatch(
-            error.message,
-            prefixLines === 1 ? /Search: full file/ : /Search: local/,
-          );
-          assert.doesNotMatch(error.message, /neighborhoods/);
-          assert.equal((error.message.match(/^\d+#[0-9A-Z]+│/gm) ?? []).length, 1);
-          return replacement !== "";
-        },
       );
+      const failure = report.failures?.[0];
+      assert.ok(failure);
+      replacement = failure.candidate ?? "";
+      assert.equal(replacement, h(prefix + original, prefixLines + 2));
+      assert.equal(failure.content, "b");
+      assert.equal(failure.search, prefixLines === 1 ? "local window" : "full file");
+      assert.match(report.next ?? "", /confirm.*intended target/);
+      assert.equal(report.candidateNeighborhoods, undefined);
       assert.equal(await readFile(join(dir, "shift.txt"), "utf8"), prefix + original);
       await call(edit, {
         path: "shift.txt",
@@ -548,21 +550,18 @@ test("shifted-anchor recovery keeps the read fallback for oversized candidates",
     const original = `a\n${oversized}\n`;
     await writeFile(join(dir, "shift-large.txt"), `prefix\n${original}`);
     const edit = makeEditOverride(dir, DEFAULT_CONFIG);
-    await assert.rejects(
-      call(edit, {
+    const report = failureReport(
+      await call(edit, {
         path: "shift-large.txt",
         edits: [{ op: "replace", anchor: h(original, 2), body: ["B"] }],
       }),
-      (error: Error) => {
-        assert.match(
-          error.message,
-          new RegExp(`Candidate.*exceeds ${formatKiB(MAX_RECOVERY_CANDIDATE_BYTES)}`),
-        );
-        assert.match(error.message, /use read or grep/);
-        assert.doesNotMatch(error.message, new RegExp(`│x{${oversized.length}}`));
-        return true;
-      },
     );
+    assert.match(
+      report.failures?.[0].contentOmitted ?? "",
+      new RegExp(`exceeds ${formatKiB(MAX_RECOVERY_CANDIDATE_BYTES)}`),
+    );
+    assert.match(report.next ?? "", /use read or grep/);
+    assert.equal(report.failures?.[0].content, undefined);
   }));
 
 test("failed commands preserve mutation results and stay out of all main card renderers", async () =>
@@ -688,7 +687,8 @@ test("failed commands preserve mutation results and stay out of all main card re
       }
       const last = result.content.at(-1);
       assert.ok(last?.type === "text");
-      assert.match(last.text, /then_run:failed[\s\S]*command-only diagnostic/);
+      assert.equal(reportOf(result)?.then_run?.status, "failed");
+      assert.match(reportOf(result)?.then_run?.output ?? "", /command-only diagnostic/);
       if (path !== "write.txt")
         assert.equal(typeof ("diff" in result.details ? result.details.diff : undefined), "string");
       assert.doesNotMatch(rendered, /command-only diagnostic|then_run:failed/);
@@ -705,43 +705,36 @@ test("text tools reject malformed UTF-8 and NUL bytes without rewriting source b
     const target = join(dir, "invalid-utf8.txt");
     const original = Buffer.from([0x61, 0x0a, 0xc3, 0x28, 0x0a]);
     await writeFile(target, original);
-    await assert.rejects(
-      call(makeReadOverride(dir, DEFAULT_CONFIG), { path: "invalid-utf8.txt" }),
-      /UNSUPPORTED_ENCODING/,
-    );
-    await assert.rejects(
-      call(makeEditOverride(dir, DEFAULT_CONFIG), {
-        path: "invalid-utf8.txt",
-        edits: [{ op: "append", body: ["x"] }],
-      }),
-      /UNSUPPORTED_ENCODING/,
-    );
-    await assert.rejects(
-      call(makeReplaceTool(dir, DEFAULT_CONFIG), {
-        path: "invalid-utf8.txt",
-        replacements: [{ find: "a", replace: "b" }],
-      }),
-      /UNSUPPORTED_ENCODING/,
-    );
+    for (const [tool, args] of [
+      [makeReadOverride(dir, DEFAULT_CONFIG), { path: "invalid-utf8.txt" }],
+      [
+        makeEditOverride(dir, DEFAULT_CONFIG),
+        { path: "invalid-utf8.txt", edits: [{ op: "append", body: ["x"] }] },
+      ],
+      [
+        makeReplaceTool(dir, DEFAULT_CONFIG),
+        { path: "invalid-utf8.txt", replacements: [{ find: "a", replace: "b" }] },
+      ],
+    ] as const) {
+      assert.equal(failureReport(await call(tool, args)).error, "UNSUPPORTED_ENCODING");
+    }
     assert.deepEqual(await readFile(target), original);
 
     const nulTarget = join(dir, "nul.txt");
     const nulOriginal = Buffer.from([0x61, 0x00, 0x62]);
     await writeFile(nulTarget, nulOriginal);
-    await assert.rejects(
-      call(makeEditOverride(dir, DEFAULT_CONFIG), {
-        path: "nul.txt",
-        edits: [{ op: "append", body: ["x"] }],
-      }),
-      /UNSUPPORTED_TEXT/,
-    );
-    await assert.rejects(
-      call(makeReplaceTool(dir, DEFAULT_CONFIG), {
-        path: "nul.txt",
-        replacements: [{ find: "a", replace: "b" }],
-      }),
-      /UNSUPPORTED_TEXT/,
-    );
+    for (const [tool, args] of [
+      [
+        makeEditOverride(dir, DEFAULT_CONFIG),
+        { path: "nul.txt", edits: [{ op: "append", body: ["x"] }] },
+      ],
+      [
+        makeReplaceTool(dir, DEFAULT_CONFIG),
+        { path: "nul.txt", replacements: [{ find: "a", replace: "b" }] },
+      ],
+    ] as const) {
+      assert.equal(failureReport(await call(tool, args)).error, "UNSUPPORTED_TEXT");
+    }
     assert.deepEqual(await readFile(nulTarget), nulOriginal);
 
     const nativeRead: any = await call(makeReadOverride(dir, DEFAULT_CONFIG), { path: "nul.txt" });
@@ -749,9 +742,9 @@ test("text tools reject malformed UTF-8 and NUL bytes without rewriting source b
 
     const utf16Target = join(dir, "utf16.txt");
     await writeFile(utf16Target, Buffer.from([0xff, 0xfe, 0x49, 0x6c]));
-    await assert.rejects(
-      call(makeReadOverride(dir, DEFAULT_CONFIG), { path: "utf16.txt" }),
-      /UNSUPPORTED_ENCODING/,
+    assert.equal(
+      failureReport(await call(makeReadOverride(dir, DEFAULT_CONFIG), { path: "utf16.txt" })).error,
+      "UNSUPPORTED_ENCODING",
     );
   }));
 
@@ -778,8 +771,8 @@ test("edit rejects unwritable body lines before reading a missing target", async
     const valid = { path: target, edits: [{ op: "append" as const, body: ["ok"] }] };
     assert.equal(edit.prepareArguments(valid), valid);
     for (const [line, expected] of [
-      ["bad\0", rejectsArgument("edits[0].body[1]", /UNSUPPORTED_TEXT:/)],
-      ["\ud800", rejectsArgument("edits[0].body[1]", /INVALID_UNICODE:/)],
+      ["bad\0", rejectsArgument("edits[0].body[1]", /NUL/)],
+      ["\ud800", rejectsArgument("edits[0].body[1]", /losslessly.*UTF-8/)],
     ] as const) {
       await assert.rejects(
         call(edit, { path: target, edits: [{ op: "append", body: ["ok", line] }] }),
@@ -819,7 +812,7 @@ test("edit and replace reject NUL arguments without rewriting source bytes", asy
         path: "output.txt",
         edits: [{ op: "append", body: ["bad\0text"] }],
       }),
-      /UNSUPPORTED_TEXT/,
+      rejectsArgument("edits[0].body[0]", /NUL/),
     );
     assert.deepEqual(await readFile(target), original);
     await assert.rejects(
@@ -827,7 +820,7 @@ test("edit and replace reject NUL arguments without rewriting source bytes", asy
         path: "output.txt",
         replacements: [{ find: "before", replace: "bad\0text" }],
       }),
-      /UNSUPPORTED_TEXT/,
+      rejectsArgument("replacements[0].replace", /NUL/),
     );
     assert.deepEqual(await readFile(target), original);
   }));
@@ -849,9 +842,8 @@ test("failed edits expose input status and candidate code for a verified fused r
     const stale = h(original.join("\n"), 5);
     const stable = h(before, 12);
     const candidate = h(before, 6);
-    let message = "";
-    await assert.rejects(
-      callTool(
+    const report = failureReport(
+      await callTool(
         edit,
         {
           path: file,
@@ -863,19 +855,15 @@ test("failed edits expose input status and candidate code for a verified fused r
         },
         { toolCallId: "failed", ctx: { cwd: dir } },
       ),
-      (error: Error) => {
-        message = error.message;
-        return true;
-      },
     );
-    assert.match(message, /then_run:skipped/);
-    assert.ok(message.includes(`op 0 / anchor / ${stale} / mismatched`));
-    assert.ok(message.includes(`op 1 / anchor / ${stable} / matched`));
-    assert.ok(message.includes(`checksum-matching candidate ${candidate}.`));
-    assert.equal(message.split(`${candidate}│${original[4]}`).length - 1, 1);
-    assert.doesNotMatch(message, /0 omitted|Limits:/);
-    assert.doesNotMatch(message, /neighborhoods|Current-file context/);
-    assert.equal((message.match(/^\d+#[0-9A-Z]+│/gm) ?? []).length, 1);
+    assert.equal(report.then_run?.status, "skipped");
+    assert.deepEqual(report.matched, ["edits[1].anchor"]);
+    assert.equal(report.failures?.[0].field, "edits[0].anchor");
+    assert.equal(report.failures?.[0].cited, stale);
+    assert.equal(report.failures?.[0].candidate, candidate);
+    assert.equal(report.failures?.[0].content, original[4]);
+    assert.equal(report.candidateNeighborhoods, undefined);
+    assert.equal(report.omittedFailures, undefined);
     assert.equal(await readFile(file, "utf8"), before);
     assert.equal(commands, 0);
     await callTool(
@@ -883,7 +871,11 @@ test("failed edits expose input status and candidate code for a verified fused r
       {
         path: file,
         edits: [
-          { op: "insert_after", anchor: anchorLine(message, 6), body: ["const hashLen = 4;"] },
+          {
+            op: "insert_after",
+            anchor: report.failures![0].candidate!,
+            body: ["const hashLen = 4;"],
+          },
           { op: "replace", anchor: stable, body: ["changed"] },
         ],
         then_run: { command: "check" },
@@ -908,28 +900,25 @@ test("ambiguous candidates include distinguishing neighborhoods for a verified r
     const file = join(dir, "ambiguous.txt");
     await writeFile(file, before);
     const edit = makeEditOverride(dir, DEFAULT_CONFIG);
-    let context = "";
-    await assert.rejects(
-      call(edit, {
+    const report = failureReport(
+      await call(edit, {
         path: file,
         edits: [
           { op: "replace", anchor: h("header\n  return value;\n", 2), body: ["  return updated;"] },
         ],
       }),
-      (error: Error) => {
-        assert.match(error.message, /ambiguous checksum matches/);
-        assert.match(error.message, /Search: local.*outside.*not checked/);
-        assert.ok(error.message.includes(`"${h(before, 5)}" / "${h(before, 15)}"`));
-        context = error.message.split("Ambiguous-candidate neighborhoods")[1];
-        assert.ok(context);
-        assert.match(context, /@@ candidate-neighborhood lines 2-8 @@/);
-        assert.match(context, /@@ candidate-neighborhood lines 12-18 @@/);
-        assert.ok(context.includes(`${h(before, 4)}│function primary() {`));
-        assert.ok(context.includes(`${h(before, 14)}│function secondary() {`));
-        assert.equal(anchorLine(context, 5), h(before, 5));
-        return true;
-      },
     );
+    assert.equal(report.failures?.[0].result, "ambiguous");
+    assert.equal(report.failures?.[0].search, "local window");
+    assert.deepEqual(report.failures?.[0].candidates, [h(before, 5), h(before, 15)]);
+    assert.deepEqual(
+      report.candidateNeighborhoods?.map((group) => group.lines),
+      ["2-8", "12-18"],
+    );
+    const context = report.candidateNeighborhoods?.flatMap((group) => group.rows).join("\n") ?? "";
+    assert.ok(context.includes(`${h(before, 4)}│function primary() {`));
+    assert.ok(context.includes(`${h(before, 14)}│function secondary() {`));
+    assert.equal(anchorLine(context, 5), h(before, 5));
     assert.equal(await readFile(file, "utf8"), before);
     await call(edit, {
       path: file,
@@ -958,47 +947,49 @@ test("schema-invalid bodies omit anchor checks; subsequent retries revalidate", 
           }),
           (error: Error) => {
             rejectsArguments("edit")(error);
-            assert.doesNotMatch(error.message, /Input-anchor checks|\/ matched|\/ mismatched/);
+            const report = argumentError(error);
+            assert.equal(report.matched, undefined);
+            assert.equal(report.failures, undefined);
             return true;
           },
         );
         assert.equal(await readFile(file, "utf8"), before);
       }
     }
-    await assert.rejects(
-      call(edit, {
+    const rejected = failureReport(
+      await call(edit, {
         path: file,
         edits: [
           { op: "replace", anchor: stable, body: ["A"] },
           { op: "delete", anchor: h(before, 2), end: "3#ZZZZ" },
         ],
       }),
-      (error: Error) => {
-        assert.ok(error.message.includes(`op 0 / anchor / ${stable} / matched`));
-        assert.match(error.message, /op 1 \/ end \/ 3#ZZZZ \/ mismatched/);
-        assert.match(error.message, /Retries verify every anchor again/);
-        return true;
-      },
     );
+    assert.deepEqual(rejected.matched, ["edits[0].anchor", "edits[1].anchor"]);
+    assert.equal(rejected.failures?.[0].field, "edits[1].end");
+    assert.equal(rejected.failures?.[0].cited, "3#ZZZZ");
+    assert.match(rejected.next ?? "", /Retries verify every anchor again/);
     assert.equal(await readFile(file, "utf8"), before);
     await writeFile(file, "changed\nb\nc\n");
-    await assert.rejects(
-      call(edit, {
+    const retry = failureReport(
+      await call(edit, {
         path: file,
         edits: [
           { op: "replace", anchor: stable, body: ["A"] },
           { op: "replace", anchor: "3#ZZZZ", body: ["B"] },
         ],
       }),
-      (error: Error) => {
-        assert.ok(error.message.includes(`op 0 / anchor / ${stable} / mismatched`));
-        return true;
-      },
     );
+    assert.ok(
+      retry.failures?.some(
+        (failure) => failure.field === "edits[0].anchor" && failure.cited === stable,
+      ),
+    );
+    assert.equal(retry.matched, undefined);
     assert.equal(await readFile(file, "utf8"), "changed\nb\nc\n");
   }));
 
-test("single-operation anchor failures omit the redundant Input-anchor checks table", async () =>
+test("single-operation anchor failures omit redundant matched-anchor facts", async () =>
   withDir(async (dir) => {
     const file = join(dir, "single.txt");
     await writeFile(file, "line1\nline2\nline3\n");
@@ -1007,11 +998,9 @@ test("single-operation anchor failures omit the redundant Input-anchor checks ta
       { op: "replace", anchor: "1#XXXX", body: ["new"] },
       { op: "replace", anchor: "1#XXXX", end: "2#YYYY", body: ["new"] },
     ]) {
-      await assert.rejects(call(edit, { path: file, edits: [operation] }), (error: Error) => {
-        assert.match(error.message, /Anchor mismatch/);
-        assert.doesNotMatch(error.message, /Input-anchor checks/);
-        return true;
-      });
+      const report = failureReport(await call(edit, { path: file, edits: [operation] }));
+      assert.equal(report.error, "ANCHOR_MISMATCH");
+      assert.equal(report.matched, undefined);
     }
   }));
 
@@ -1026,23 +1015,15 @@ test("failed batches return more than forty checks and mappings when byte budget
       anchor: h(original, 2),
       body: ["changed"],
     }));
-    await assert.rejects(
-      call(makeEditOverride(dir, DEFAULT_CONFIG), { path: file, edits }),
-      (error: Error) => {
-        assert.doesNotMatch(
-          error.message,
-          /truncated|failure details omitted|Anchor checks: \d+\/\d+/,
-        );
-        assert.equal(
-          (error.message.match(/^op \d+ \/ anchor \/ .* \/ mismatched$/gm) ?? []).length,
-          45,
-        );
-        assert.equal((error.message.match(/checksum-matching candidate/g) ?? []).length, 45);
-        assert.equal((error.message.match(/^3#[0-9A-Z]+│target$/gm) ?? []).length, 1);
-        assert.doesNotMatch(error.message, /\/ matched/);
-        return true;
-      },
+    const report = failureReport(
+      await call(makeEditOverride(dir, DEFAULT_CONFIG), { path: file, edits }),
     );
+    assert.equal(report.failures?.length, 45);
+    assert.equal(report.omittedFailures, undefined);
+    assert.equal(report.omittedMatched, undefined);
+    assert.equal(report.matched, undefined);
+    assert.ok(report.failures?.every((failure) => failure.candidate === h(before, 3)));
+    assert.equal(report.failures?.filter((failure) => failure.content === "target").length, 1);
     assert.equal(await readFile(file, "utf8"), before);
   }));
 
@@ -1081,20 +1062,18 @@ test("unique candidate content is independent of oversized neighboring rows", as
     const before = `header\n${"x".repeat(MAX_BLOCK_BYTES + 1)}\ntarget\ntail\n`;
     const file = join(dir, "fallback.txt");
     await writeFile(file, before);
-    let candidate = "";
-    await assert.rejects(
-      call(makeEditOverride(dir, DEFAULT_CONFIG), {
+    const report = failureReport(
+      await call(makeEditOverride(dir, DEFAULT_CONFIG), {
         path: file,
         edits: [{ op: "replace", anchor: h(original, 2), body: ["updated"] }],
       }),
-      (error: Error) => {
-        candidate = anchorLine(error.message, 3);
-        assert.equal((error.message.match(/^3#[0-9A-Z]+│target$/gm) ?? []).length, 1);
-        assert.doesNotMatch(error.message, /neighborhoods|truncated/);
-        assert.equal((error.message.match(/^\d+#[0-9A-Z]+│/gm) ?? []).length, 1);
-        return true;
-      },
     );
+    const candidate = report.failures?.[0].candidate;
+    assert.ok(candidate);
+    assert.equal(candidate, h(before, 3));
+    assert.equal(report.failures?.[0].content, "target");
+    assert.equal(report.candidateNeighborhoods, undefined);
+    assert.equal(report.omittedFailures, undefined);
     assert.equal(await readFile(file, "utf8"), before);
     await call(makeEditOverride(dir, DEFAULT_CONFIG), {
       path: file,
@@ -1136,17 +1115,14 @@ test("deletion successors and unique candidate rows display CR without altering 
     });
     assert.ok(result.content[0].text.includes(`${h("a\rb\n", 1)}│a␍b`));
     assert.equal(await readFile(file, "utf8"), "a\rb\n");
-    await assert.rejects(
-      call(makeEditOverride(dir, DEFAULT_CONFIG), {
+    const report = failureReport(
+      await call(makeEditOverride(dir, DEFAULT_CONFIG), {
         path: file,
         edits: [{ op: "delete", anchor: h(before, 2) }],
       }),
-      (error: Error) => {
-        assert.ok(error.message.includes(`${h("a\rb\n", 1)}│a␍b`));
-        assert.ok(!error.message.includes("\r"));
-        return true;
-      },
     );
+    assert.equal(report.failures?.[0].candidate, h("a\rb\n", 1));
+    assert.equal(report.failures?.[0].content, "a␍b");
   }));
 
 test("edit tool rejects non-array formats Pi cannot convert", async () =>
@@ -1186,10 +1162,14 @@ test("edit receives multiple wrong-length anchors → reports each location with
     };
 
     await assert.rejects(call(edit, args), (error: Error) => {
-      assert.match(error.message, /Anchor hash length mismatch/);
       rejectsArgument("edits[0].end")(error);
       rejectsArgument("edits[1].anchor")(error);
-      assert.equal(error.message.match(/read or grep/gi)?.length, 1);
+      const issues = argumentError(error).issues;
+      assert.deepEqual(
+        issues.map((issue) => issue.field),
+        ["edits[0].end", "edits[1].anchor"],
+      );
+      assert.equal(issues.filter((issue) => issue.fix?.includes("Read or grep")).length, 1);
       assert.ok(error.message.includes(short));
       assert.match(error.message, new RegExp(`${hashLen - 2} hash characters`));
       assert.match(error.message, new RegExp(`hashLen.*${hashLen}`));
@@ -1246,29 +1226,25 @@ test("unresolved snapshot rows support direct retry and revalidate after further
     const current = observed.replace("old", "pending");
     await writeFile(file, current);
     const edit = makeEditOverride(dir, DEFAULT_CONFIG);
-    let diagnostic = "";
-    await assert.rejects(
-      call(edit, {
+    const report = failureReport(
+      await call(edit, {
         path: "recover.txt",
         edits: [{ op: "replace", anchor: h(observed, 2), body: ["target = new"] }],
       }),
-      (error: Error) => {
-        diagnostic = error.message;
-        assert.match(diagnostic, /^2#[0-9A-Z]+│target = pending$/m);
-        return true;
-      },
     );
+    const diagnostic = report.failures?.[0].observed ?? "";
+    assert.match(diagnostic, /^2#[0-9A-Z]+│target = pending$/);
     assert.deepEqual(await readFile(file), Buffer.from(current));
     const retryAnchor = anchorLine(diagnostic, 2);
     const changedAgain = current.replace("pending", "other");
     await writeFile(file, changedAgain);
-    await assert.rejects(
-      call(edit, {
+    const retry = failureReport(
+      await call(edit, {
         path: "recover.txt",
         edits: [{ op: "replace", anchor: retryAnchor, body: ["target = new"] }],
       }),
-      /Anchor mismatch/,
     );
+    assert.equal(retry.error, "ANCHOR_MISMATCH");
     assert.deepEqual(await readFile(file), Buffer.from(changedAgain));
     await writeFile(file, current);
     await call(edit, {
@@ -1286,13 +1262,19 @@ test("unresolved oversized and out-of-range rows require more context without pa
     await writeFile(file, current);
     const edit = makeEditOverride(dir, DEFAULT_CONFIG);
     for (const anchor of [h("old\n", 1), "99#XXXX"]) {
-      await assert.rejects(
-        call(edit, { path: "recover.txt", edits: [{ op: "replace", anchor, body: ["new"] }] }),
-        (error: Error) => {
-          assert.match(error.message, /read or grep/);
-          assert.doesNotMatch(error.message, /^\d+#[0-9A-Z]+│/m);
-          return true;
-        },
+      const report = failureReport(
+        await call(edit, {
+          path: "recover.txt",
+          edits: [{ op: "replace", anchor, body: ["new"] }],
+        }),
+      );
+      assert.match(report.next ?? "", /read or grep/);
+      assert.equal(report.failures?.[0].observed, undefined);
+      assert.equal(
+        report.failures?.[0].observedOmitted,
+        anchor.startsWith("99#")
+          ? "cited line is out of range"
+          : `row exceeds ${formatKiB(MAX_RECOVERY_CANDIDATE_BYTES)}`,
       );
       assert.deepEqual(await readFile(file), Buffer.from(current));
     }
@@ -1321,26 +1303,21 @@ test("ambiguous failure lists and neighborhoods select the same first eight cand
     const text = lines.join("\n");
     await writeFile(join(dir, "candidates.txt"), text);
     const tool = makeEditOverride(dir, DEFAULT_CONFIG);
-    await assert.rejects(
-      call(tool, {
+    const report = failureReport(
+      await call(tool, {
         path: "candidates.txt",
         edits: [{ op: "delete", anchor: `200#${computeLineHash(200, "target", 4)}` }],
       }),
-      (error: Error) => {
-        const list = error.message
-          .split("\n")
-          .find((line) => line.includes("ambiguous checksum matches:"));
-        assert.ok(list);
-        assert.match(list, /1 more candidates omitted/);
-        for (const position of positions.slice(0, 8)) {
-          const anchor = h(text, position);
-          assert.ok(list.includes(`"${anchor}"`));
-          assert.ok(error.message.includes(`${anchor}│target`));
-        }
-        assert.ok(!error.message.includes(h(text, 84)));
-        return true;
-      },
     );
+    assert.equal(report.failures?.[0].omittedCandidates, 1);
+    assert.deepEqual(
+      report.failures?.[0].candidates,
+      positions.slice(0, 8).map((position) => h(text, position)),
+    );
+    const rows = report.candidateNeighborhoods?.flatMap((group) => group.rows) ?? [];
+    for (const position of positions.slice(0, 8))
+      assert.ok(rows.includes(`${h(text, position)}│target`));
+    assert.ok(!JSON.stringify(report).includes(h(text, 84)));
     assert.equal(await readFile(join(dir, "candidates.txt"), "utf8"), text);
   }));
 
@@ -1417,8 +1394,8 @@ test("copy/move stale destination → report its field and skip publication and 
     });
     const edit = makeEditOverride(dir, DEFAULT_CONFIG, fusion);
     for (const op of ["copy", "move"] as const) {
-      await assert.rejects(
-        callTool(edit, {
+      const report = failureReport(
+        await callTool(edit, {
           path: file,
           edits: [
             { op, anchor: h(current, 1), after: h(original, 3) },
@@ -1426,13 +1403,11 @@ test("copy/move stale destination → report its field and skip publication and 
           ],
           then_run: { command: "check" },
         }),
-        (error: unknown) => {
-          assert(error instanceof Error);
-          assert.match(error.message, /op 0 \/ after \/ .*mismatched/);
-          assert.match(error.message, /then_run:skipped/);
-          return true;
-        },
       );
+      assert.equal(report.failures?.[0].field, "edits[0].after");
+      assert.equal(report.failures?.[0].cited, h(original, 3));
+      assert.equal(report.then_run?.status, "skipped");
+      assert.equal(report.publication, "NOT_PUBLISHED");
       assert.equal(await readFile(file, "utf8"), current);
       assert.equal(commands, 0);
     }

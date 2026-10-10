@@ -8,18 +8,17 @@ import { causeOf } from "../pi/report.ts";
 const timeoutMs = 10_000;
 const validRules = [{ find: "safe", replace: "changed", regex: true }];
 
-test("worker boundary: invalid incoming data → rejects before replacement", {
-  timeout: timeoutMs,
-}, async (t) => {
+test("worker boundary: invalid incoming data → rejects before replacement", async (t) => {
   for (const workerData of [
     { source: "safe", rules: [] },
     { source: "safe", rules: [{ ...validRules[0], foreign: true }] },
     { source: "safe", rules: validRules, foreign: true },
   ]) {
-    await t.test(JSON.stringify(workerData), async () => {
+    await t.test(JSON.stringify(workerData), { timeout: timeoutMs }, async (t) => {
       const worker = new Worker(new URL("../pi/replace-worker.mjs", import.meta.url), {
         workerData,
       });
+      t.after(() => worker.terminate());
       try {
         const reply = await new Promise<unknown>((resolve, reject) => {
           worker.once("message", resolve);
@@ -37,9 +36,7 @@ test("worker boundary: invalid incoming data → rejects before replacement", {
   }
 });
 
-test("worker boundary: malformed external reply → rejects its result and facts", {
-  timeout: timeoutMs,
-}, async (t) => {
+test("worker boundary: malformed external reply → rejects its result and facts", async (t) => {
   for (const reply of [
     { result: { text: 123, count: 1 } },
     { result: { text: "changed", count: 0 } },
@@ -51,7 +48,7 @@ test("worker boundary: malformed external reply → rejects its result and facts
     { error: { code: "foreign", message: "failure" } },
     { error: { code: "NO_MATCH", message: "failure", facts: { rule: 0, foreign: true } } },
   ]) {
-    await t.test(JSON.stringify(reply), async (t) => {
+    await t.test(JSON.stringify(reply), { timeout: timeoutMs }, async (t) => {
       const emit = Worker.prototype.emit;
       t.mock.method(
         Worker.prototype,
