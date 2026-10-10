@@ -307,7 +307,7 @@ export function makeEditOverride(
     promptGuidelines: [
       "Batch all edits to one file in a single edit call; all its anchors are checked against one snapshot.",
       "Use copy/move for unchanged whole-line transfers; use body edits when text or indentation must change.",
-      "Reuse anchors while their line number and content are unchanged; read or grep changed or shifted lines before editing them again.",
+      "Do not re-read a file just to refresh anchors: anchors stay valid while their line number and content are unchanged. Re-read or grep only the lines an edit changed or shifted.",
       "On edit anchor failure, inspect the recovery candidates before retrying or re-reading.",
       ...(fusion ? ACTION_FUSION_GUIDELINES : []),
     ],
