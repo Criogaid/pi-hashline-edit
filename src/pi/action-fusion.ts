@@ -111,7 +111,7 @@ export type ThenRunInput = NonNullable<Static<ReturnType<typeof createThenRunSch
 /** Name then_run in a mutation tool's description when Action Fusion is enabled. */
 export function withThenRunDescription(description: string, actionFusion: boolean): string {
   return actionFusion
-    ? `${description} If a command such as tests, a typecheck, or a build should run right after this change, set then_run instead of calling bash separately, unless the command needs the user's approval, depends on this call's result, or must wait for a reload.`
+    ? `${description} If a command such as tests, a typecheck, or a build should run right after this change, set then_run instead of calling bash separately, unless the command needs the user's approval, depends on this call's result, must wait for a reload, or checks several changes sent in the same response; run that check once with bash after them.`
     : description;
 }
 
