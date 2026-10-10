@@ -15,7 +15,6 @@ import {
 } from "./action-fusion.ts";
 import { commitFile, type CommitResult } from "./file-commit.ts";
 import { executeMutation, type ActionFusionExecutor } from "./mutation-runner.ts";
-import { MUTATION_TOOL_GUIDELINE } from "./tool-prompts.ts";
 import { throwIfCancelled } from "./error-text.ts";
 import { createArgumentPreparer } from "./argument-validation.ts";
 import { defaultOutputBudgets, type OutputBudgetProvider } from "./budgets.ts";
@@ -62,9 +61,9 @@ export function makeWriteOverride(
     name: "write" as const,
     label: "write",
     description:
-      "Write a whole file exactly as supplied, including its line endings. Choose create for a new file or overwrite for an existing file. Creates missing parent directories.",
+      "Write a whole file exactly as supplied, including its line endings. For partial changes to an existing file, prefer edit or replace. Choose create for a new file or overwrite for an existing file. Creates missing parent directories.",
     promptSnippet: "Write complete file content to a path",
-    promptGuidelines: [MUTATION_TOOL_GUIDELINE, ...(fusion ? ACTION_FUSION_GUIDELINES : [])],
+    promptGuidelines: [...(fusion ? ACTION_FUSION_GUIDELINES : [])],
     parameters,
     prepareArguments: createArgumentPreparer(
       "write",

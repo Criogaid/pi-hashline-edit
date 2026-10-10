@@ -50,7 +50,6 @@ import {
   type MutationTarget,
   type TextMutationDetails,
 } from "./mutation-runner.ts";
-import { MUTATION_TOOL_GUIDELINE } from "./tool-prompts.ts";
 import { errorMessage } from "../core/errors.ts";
 import { defaultOutputBudgets, type OutputBudgetProvider } from "./budgets.ts";
 import { cancellationError } from "./error-text.ts";
@@ -124,9 +123,9 @@ export function makeReplaceTool(
     name: "replace" as const,
     label: "replace",
     description:
-      "Replace every match of one or more literal or JavaScript-regex rules in a file. Overlapping matches or a rule with no match reject the whole call. Returns a mutation report.",
+      "Replace every match of one or more literal or JavaScript-regex rules in a file. Rules swap only their matched fragments in one call, without line anchors; for inserting, deleting, or rewriting whole lines, prefer edit. Overlapping matches or a rule with no match reject the whole call. Returns a mutation report.",
     promptSnippet: "Replace matching text across a file",
-    promptGuidelines: [MUTATION_TOOL_GUIDELINE, ...(fusion ? ACTION_FUSION_GUIDELINES : [])],
+    promptGuidelines: [...(fusion ? ACTION_FUSION_GUIDELINES : [])],
     parameters,
     prepareArguments: createArgumentPreparer("replace", parameters, checkReplaceArguments, budgets),
     renderShell: "default" as const,

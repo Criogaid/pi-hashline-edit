@@ -44,7 +44,6 @@ import {
   type MutationTarget,
   type TextMutationDetails,
 } from "./mutation-runner.ts";
-import { MUTATION_TOOL_GUIDELINE } from "./tool-prompts.ts";
 import {
   argumentItems,
   createArgumentPreparer,
@@ -296,10 +295,9 @@ export function makeEditOverride(
     name: "edit" as const,
     label: "edit",
     description:
-      "Edit file lines by LINE#HASH anchors checked against the current file. On anchor failure, shows current context and recovery candidates; nothing is retried automatically.",
+      "Edit file lines by LINE#HASH anchors checked against the current file. Each operation replaces whole lines: for the same change in several places, or a small edit inside one long line, prefer replace. On anchor failure, shows current context and recovery candidates; nothing is retried automatically.",
     promptSnippet: "Edit file lines using verified anchors",
     promptGuidelines: [
-      MUTATION_TOOL_GUIDELINE,
       "Batch all edits to one file in a single edit call; all its anchors are checked against one snapshot.",
       "Use copy/move for unchanged whole-line transfers; use body edits when text or indentation must change.",
       "Reuse anchors while their line number and content are unchanged; read or grep changed or shifted lines before editing them again.",
