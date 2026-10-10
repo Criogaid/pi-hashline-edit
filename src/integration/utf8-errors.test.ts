@@ -9,6 +9,7 @@ import { makeEditOverride } from "../pi/edit-tool.ts";
 import { makeReplaceTool } from "../pi/replace-tool.ts";
 import { byteRevision } from "../pi/file-commit.ts";
 import { callTool } from "../pi/tool-call.testing.ts";
+import { expectToolFailure } from "../pi/report-failure.testing.ts";
 
 const SIZE_TEST_TIMEOUT_MS = 60_000;
 
@@ -33,12 +34,10 @@ test("valid UTF-8 exceeding the runtime string limit → mutations retain the si
         tool.name === "edit"
           ? { path, edits: [{ op: "append", body: ["tail"] }] }
           : { path, replacements: [{ find: "中文", replace: "汉字" }] };
-      await assert.rejects(callTool(tool, args), (error: unknown) => {
-        assert.ok(error instanceof Error);
-        assert.doesNotMatch(error.message, /UNSUPPORTED_ENCODING/);
-        assert.ok(error.cause instanceof Error && "code" in error.cause);
-        assert.equal(error.cause.code, "ERR_STRING_TOO_LONG");
-        return true;
+      await expectToolFailure(callTool(tool, args), "FILESYSTEM_ERROR", (report) => {
+        assert.doesNotMatch(JSON.stringify(report), /UNSUPPORTED_ENCODING/);
+        assert.equal(report.cause?.code, "ERR_STRING_TOO_LONG");
+        assert.equal(report.publication, "NOT_PUBLISHED");
       });
       assert.equal(byteRevision(await readFile(path)), originalRevision);
     });

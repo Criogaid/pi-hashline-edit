@@ -5,6 +5,7 @@ import { test } from "node:test";
 import type { ToolCall } from "@earendil-works/pi-ai";
 import { loadInstalledExtension } from "../testing/extension-loader.testing.ts";
 import { openTestSession, responseStream, SESSION_TIMEOUT_MS } from "../testing/session.testing.ts";
+import { decodeReport } from "../pi/report.ts";
 
 test("packed extension completes file, worker, command, and context operations", {
   timeout: SESSION_TIMEOUT_MS,
@@ -79,9 +80,13 @@ test("packed extension completes file, worker, command, and context operations",
       }),
     () => call("log-read", "read", { path: "build.log" }),
     () => {
-      const tag = /\[result (r[0-9a-f]{5})\]/.exec(text("log-read"));
+      const tag = result("log-read")
+        .content.map((block) =>
+          block.type === "text" ? decodeReport(block.text)?.resultId : undefined,
+        )
+        .find((id) => id !== undefined);
       assert.ok(tag);
-      return call("forget", "forget", { ids: [tag[1]] });
+      return call("forget", "forget", { ids: [tag] });
     },
   ];
   let next = 0;
@@ -94,7 +99,9 @@ test("packed extension completes file, worker, command, and context operations",
     assert.ok(forgotten?.role === "toolResult");
     assert.equal(forgotten.content.length, 1);
     assert.doesNotMatch(JSON.stringify(forgotten.content), /PACKAGE_LOG_CONTENT/);
-    assert.match(JSON.stringify(forgotten.content), /forgotten/);
+    const receipt = forgotten.content[0];
+    assert.ok(receipt.type === "text");
+    assert.equal(decodeReport(receipt.text)?.contentForgotten, true);
     return responseStream(model, {
       content: [{ type: "text", text: "Done." }],
       stopReason: "stop",
@@ -104,7 +111,13 @@ test("packed extension completes file, worker, command, and context operations",
   assert.equal(session.agent.state.errorMessage, undefined);
   assert.equal(next, actions.length + 1);
   for (const id of ["write", "read", "grep", "edit", "replace", "forget"]) result(id);
-  assert.match(text("write"), /then_run:succeeded[\s\S]*PACKAGE_COMMAND_OK/);
+  const command = result("write")
+    .content.map((block) =>
+      block.type === "text" ? decodeReport(block.text)?.then_run : undefined,
+    )
+    .find((facts) => facts !== undefined);
+  assert.equal(command?.status, "succeeded");
+  assert.match(command?.output ?? "", /PACKAGE_COMMAND_OK/);
   assert.equal(await readFile(join(cwd, "fixture.txt"), "utf8"), "edited after\nkeep\n");
   assert.equal(await readFile(join(cwd, "build.log"), "utf8"), "PACKAGE_LOG_CONTENT ".repeat(200));
 });

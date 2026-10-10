@@ -11,7 +11,8 @@ import { createActionFusionExecutor } from "../pi/action-fusion.ts";
 import { DEFAULT_CONFIG } from "../pi/config.ts";
 import { makeEditOverride } from "../pi/edit-tool.ts";
 import { byteRevision, commitFile, FileMutationError } from "../pi/file-commit.ts";
-import { reportOf } from "../pi/report.ts";
+import { describeFailure, reportOf } from "../pi/report.ts";
+import { expectToolFailure } from "../pi/report-failure.testing.ts";
 import { REREAD } from "../pi/report-schema.ts";
 import { makeReplaceTool } from "../pi/replace-tool.ts";
 import { callTool, createToolContext } from "../pi/tool-call.testing.ts";
@@ -188,14 +189,14 @@ for (const observation of [1, 2]) {
         assert.equal(result.details.publication, "PUBLISHED");
         assert.equal(result.details.actionFusion.publication, "PUBLISHED");
         assert.equal(result.details.actionFusion.command, "skipped");
-        assert.ok(text(result).includes("[then_run:skipped]"));
-        assert.ok(
-          text(result).includes(
-            disturbance === "I/O failure"
-              ? READ_FAILURE.message
-              : "target content changed after the fused mutation",
-          ),
-        );
+        const report = reportOf(result);
+        assert.equal(report?.then_run?.status, "skipped");
+        assert.equal(report?.freshness, disturbance === "I/O failure" ? "unknown" : "changed");
+        if (disturbance === "I/O failure") {
+          assert.equal(report?.freshnessError?.message, READ_FAILURE.message);
+          assert.equal(report?.freshnessError?.code, "EIO");
+        }
+        assert.equal(report?.next, REREAD);
         assert.doesNotMatch(text(result), /retry the tool/);
         await assertTarget(path, PUBLISHED, disturbance);
       });
@@ -291,7 +292,11 @@ test("concurrent change during pre-publication revision read → rejects without
             (error: unknown) => {
               assert.ok(error instanceof FileMutationError);
               assert.equal(error.publication, "NOT_PUBLISHED");
-              assert.match(error.message, /File changed during read; retry the tool/);
+              assert.equal(error.errorCode, "FILE_CHANGED");
+              assert.equal(
+                describeFailure("write", error, { mutation: true }).next,
+                "Retry the call.",
+              );
               return true;
             },
           );
@@ -317,7 +322,7 @@ test("concurrent change during editable snapshot read → skips Fusion with NOT_
     "append",
     () => true,
     async () => {
-      await assert.rejects(
+      await expectToolFailure(
         callTool(
           makeEditOverride(directory, DEFAULT_CONFIG, fusion),
           {
@@ -327,11 +332,11 @@ test("concurrent change during editable snapshot read → skips Fusion with NOT_
           },
           { ctx },
         ),
-        (error: unknown) => {
-          assert.ok(error instanceof Error && "publication" in error);
-          assert.equal(error.publication, "NOT_PUBLISHED");
-          assert.match(error.message, /File changed during read; retry the tool/);
-          return true;
+        "FILE_CHANGED",
+        (report) => {
+          assert.equal(report.publication, "NOT_PUBLISHED");
+          assert.equal(report.then_run?.status, "skipped");
+          assert.equal(report.next, "Retry the call.");
         },
       );
     },

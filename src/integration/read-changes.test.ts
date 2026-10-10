@@ -11,6 +11,7 @@ import { makeGrepOverrideWithBackend } from "../pi/grep-tool.ts";
 import { makeReadOverride } from "../pi/read-tool.ts";
 import { callTool } from "../pi/tool-call.testing.ts";
 import { withFileRead } from "../pi/file-read.ts";
+import { expectToolFailure } from "../pi/report-failure.testing.ts";
 
 const CHUNK_BYTES = 64 * 1024;
 
@@ -47,12 +48,14 @@ test("read or CRLF search snapshot truncated across a UTF-8 sequence → reports
       try {
         const args =
           tool.name === "read" ? { path, limit: 1 } : { path, pattern: "head", literal: true };
-        await assert.rejects(callTool(tool, args), (error: unknown) => {
-          assert.ok(error instanceof Error);
-          assert.match(error.message, /File changed/);
-          assert.doesNotMatch(error.message, /UNSUPPORTED_ENCODING|Invalid UTF-8/);
-          return true;
-        });
+        await expectToolFailure(
+          callTool(tool, args),
+          tool.name === "read" ? "FILE_CHANGED" : "SEARCH_INCOMPLETE",
+          (report) => {
+            assert.match(JSON.stringify(report), /File changed/);
+            assert.doesNotMatch(JSON.stringify(report), /UNSUPPORTED_ENCODING|Invalid UTF-8/);
+          },
+        );
         const current = await readFile(path);
         assert.equal(isUtf8(current), true);
         assert.deepEqual(current, source.subarray(0, CHUNK_BYTES - 1));

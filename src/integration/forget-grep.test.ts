@@ -14,6 +14,7 @@ import {
   toolResponse,
   toolResult,
 } from "../pi/forget.testing.ts";
+import { reportOf } from "../pi/report.ts";
 
 for (const encoding of ["UTF-8", "invalid UTF-8"] as const) {
   test(`real grep of ${encoding} logs then forget → matched content is absent from the next request`, {
@@ -59,9 +60,10 @@ for (const encoding of ["UTF-8", "invalid UTF-8"] as const) {
     assert.ok(receipt.type === "text" && !receipt.text.includes("needle"));
     assert.ok(receipt.type === "text" && !receipt.text.includes("search.log"));
     const displayReceipt = `grep /needle/ · ${rows.length} matches in 1 file`;
-    assert.deepEqual(f.rawResult("forget-call").details, {
+    assert.partialDeepStrictEqual(f.rawResult("forget-call").details, {
       forgotten: [{ id, receipt: displayReceipt }],
     });
+    assert.deepEqual(reportOf(f.rawResult("forget-call"))?.forgotten, [id]);
     assert.ok(f.renderForgetCard().includes(displayReceipt));
   });
 }
@@ -92,7 +94,10 @@ test("real grep reaches its limit across files → forget card reports the retur
   const id = taggedResultId(toolResult(f.requests[1], "search"));
   assert.ok(id);
   const receipt = `grep /needle | backup/ · ${limit} matches in ${paths.length} files · limit reached`;
-  assert.deepEqual(f.rawResult("forget-call").details, { forgotten: [{ id, receipt }] });
+  assert.partialDeepStrictEqual(f.rawResult("forget-call").details, {
+    forgotten: [{ id, receipt }],
+  });
+  assert.deepEqual(reportOf(f.rawResult("forget-call"))?.forgotten, [id]);
   assert.ok(f.renderForgetCard().includes(receipt));
   assertForgotten(toolResult(f.requests[2], "search"), id);
 });
@@ -133,7 +138,7 @@ for (const outputMode of [undefined, "content", null, "files", "count"] as const
       .filter((block) => block.type === "text")
       .map((block) => block.text)
       .join("\n");
-    assert.equal([...text.matchAll(/\[result r[0-9a-f]{5}\]/g)].length, eligible ? 1 : 0);
+    assert.equal([...text.matchAll(/"resultId": "r[0-9a-f]{5}"/g)].length, eligible ? 1 : 0);
     if (eligible) {
       const id = taggedResultId(original);
       assert.ok(id);

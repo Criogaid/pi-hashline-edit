@@ -8,6 +8,8 @@ import registerHashline from "../index.ts";
 import { computeLineHash } from "../core/hash.ts";
 import { callTool } from "../pi/tool-call.testing.ts";
 import { DEFAULT_CONFIG, type HashlineEditConfig } from "../pi/config.ts";
+import { reportOf } from "../pi/report.ts";
+import { expectToolFailure } from "../pi/report-failure.testing.ts";
 
 test("registered tools retain their configuration when another tool set is registered", async (t) => {
   const directory = await mkdtemp(join(tmpdir(), "hashline-config-registration-"));
@@ -94,14 +96,16 @@ test("registered tools retain their configuration when another tool set is regis
         const path = `${hashLen}-recovery.txt`;
         const text = "changed\ntarget\n";
         await writeFile(join(directory, path), text);
-        await assert.rejects(
+        await expectToolFailure(
           callTool(tool, {
             path,
             edits: [{ op: "delete", anchor: `1#${computeLineHash(1, "target", hashLen)}` }],
           }),
-          shiftRadius === 0
-            ? /no checksum-matching candidate found/
-            : /checksum-matching candidate 2#/,
+          "ANCHOR_MISMATCH",
+          (report) => {
+            assert.equal(report.failures?.[0].result, shiftRadius === 0 ? "unresolved" : "shifted");
+            if (shiftRadius !== 0) assert.match(report.failures?.[0].candidate ?? "", /^2#/);
+          },
         );
         assert.equal(await readFile(join(directory, path), "utf8"), text);
       });
@@ -130,14 +134,15 @@ test("registered tools retain their configuration when another tool set is regis
           await writeFile(join(directory, path), `${wide}\n`);
           const bounded = await callTool(tool, { path });
           if (read.maxKiB === 1) {
-            assert.match(bounded.content[0].text, /line 1 exceeds 1 KiB/);
+            assert.deepEqual(reportOf(bounded)?.lineTooLong, { line: 1, limit: "1 KiB" });
             assert.equal(bounded.details.truncation.maxBytes, 1024);
             assert.equal(bounded.details.truncation.outputBytes, 0);
           } else {
             assert.ok(
               bounded.content[0].text.includes(`1#${computeLineHash(1, wide, hashLen)}│${wide}`),
             );
-            assert.equal(bounded.details, undefined);
+            assert.equal(reportOf(bounded)?.truncatedAt, undefined);
+            assert.equal(reportOf(bounded)?.pagination, undefined);
           }
         },
       );
@@ -170,10 +175,7 @@ test("registered tools retain their configuration when another tool set is regis
                 `${line}#${computeLineHash(line, lines[line - 1], hashLen)}│${lines[line - 1]}`,
             ),
           );
-          assert.match(
-            result.content[0].text,
-            new RegExp(`${grep.defaultLimit} matches limit reached`),
-          );
+          assert.equal(reportOf(result)?.matchLimit, grep.defaultLimit);
         },
       );
 
@@ -185,15 +187,16 @@ test("registered tools retain their configuration when another tool set is regis
           const path = `${hashLen}-replace-settings.txt`;
           const original = `${"a".repeat(35)}!`;
           await writeFile(join(directory, path), original);
-          await assert.rejects(
+          await expectToolFailure(
             callTool(tool, {
               path,
               replacements: [{ find: "^(a+)+$", replace: "changed", regex: true }],
             }),
-            (error: unknown) =>
-              error instanceof Error &&
-              error.message ===
-                `Replace ${path}: regex evaluation timed out after ${replace.regexTimeoutMs}ms`,
+            "REGEX_TIMEOUT",
+            (report) => {
+              assert.equal(report.timeoutMs, replace.regexTimeoutMs);
+              assert.equal(report.publication, "NOT_PUBLISHED");
+            },
           );
           assert.equal(await readFile(join(directory, path), "utf8"), original);
         },
