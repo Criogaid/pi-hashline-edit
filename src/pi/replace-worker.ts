@@ -1,20 +1,13 @@
 import { parentPort, workerData } from "node:worker_threads";
 import { applyReplacements } from "../core/replace.ts";
-import { errorMessage, HashlineError } from "../core/errors.ts";
+import { HashlineError } from "../core/errors.ts";
+import { decodeWorkerRequest, workerFailure } from "./replace-worker-contract.ts";
 
-// Errors cross the thread boundary as their code, message, and facts; an unclassified one as its cause text.
 try {
-  const { source, rules } = workerData;
-  parentPort!.postMessage({ result: applyReplacements(source, rules) });
+  const request = decodeWorkerRequest(workerData);
+  if (!request)
+    throw new HashlineError("REGEX_WORKER_FAILED", "Regex worker received invalid request data.");
+  parentPort!.postMessage({ result: applyReplacements(request.source, request.rules) });
 } catch (error) {
-  parentPort!.postMessage({
-    error:
-      error instanceof HashlineError
-        ? { code: error.errorCode, message: error.message, facts: error.facts }
-        : {
-            code: "REGEX_WORKER_FAILED",
-            message: "Regex evaluation failed.",
-            cause: errorMessage(error),
-          },
-  });
+  parentPort!.postMessage(workerFailure(error));
 }

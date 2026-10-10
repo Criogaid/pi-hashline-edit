@@ -8,12 +8,8 @@ import {
 import { findSortedRangeConflict } from "./ranges.ts";
 import { HashlineError } from "./errors.ts";
 
-export interface Replacement {
-  find: string;
-  replace: string;
-  regex?: boolean;
-  flags?: string;
-}
+import type { Replacement } from "./replace-schema.ts";
+export type { Replacement } from "./replace-schema.ts";
 
 /**
  * Both matcher modes operate on the shared LF view. Flag characters are validated by the tool

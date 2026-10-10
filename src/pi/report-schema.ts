@@ -10,7 +10,7 @@
  * renders a report for the model; render.ts renders the same object for the TUI.
  *
  * Types derive from these schemas. src/core imports only types from this module,
- * so the regex worker, which runs core without Pi's loader, never loads TypeBox.
+ * so engines stay independent of Pi. The worker loads TypeBox at its data boundary.
  *
  * @module pi-hashline-edit/pi
  */
