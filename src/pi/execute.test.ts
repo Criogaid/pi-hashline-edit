@@ -18,7 +18,7 @@ import { splitLines } from "../core/lines.ts";
 import { byteRevision } from "./file-commit.ts";
 import { callTool } from "./tool-call.testing.ts";
 import { DEFAULT_CONFIG } from "./config.ts";
-import { formatKiB, MAX_BLOCK_BYTES, MAX_RECOVERY_CANDIDATE_BYTES } from "./budgets.ts";
+import { formatKiB, DEFAULT_OUTPUT_BUDGETS } from "./budgets.ts";
 import { reportOf } from "./report.ts";
 import type { Report } from "./report-schema.ts";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
@@ -555,7 +555,7 @@ test("local and full-file recovery return copyable anchors without changing the 
 
 test("shifted-anchor recovery keeps the read fallback for oversized candidates", async () =>
   withDir(async (dir) => {
-    const oversized = "x".repeat(MAX_RECOVERY_CANDIDATE_BYTES);
+    const oversized = "x".repeat(DEFAULT_OUTPUT_BUDGETS.fieldBytes);
     const original = `a\n${oversized}\n`;
     await writeFile(join(dir, "shift-large.txt"), `prefix\n${original}`);
     const edit = makeEditOverride(dir, DEFAULT_CONFIG);
@@ -567,7 +567,7 @@ test("shifted-anchor recovery keeps the read fallback for oversized candidates",
     );
     assert.match(
       report.failures?.[0].contentOmitted ?? "",
-      new RegExp(`exceeds ${formatKiB(MAX_RECOVERY_CANDIDATE_BYTES)}`),
+      new RegExp(`exceeds ${formatKiB(DEFAULT_OUTPUT_BUDGETS.fieldBytes)}`),
     );
     assert.match(report.next ?? "", /use read or grep/);
     assert.equal(report.failures?.[0].content, undefined);
@@ -1034,7 +1034,7 @@ test("failed batches return more than forty checks and mappings when byte budget
 test("unique candidate content is independent of oversized neighboring rows", async () =>
   withDir(async (dir) => {
     const original = "header\ntarget\ntail\n";
-    const before = `header\n${"x".repeat(MAX_BLOCK_BYTES + 1)}\ntarget\ntail\n`;
+    const before = `header\n${"x".repeat(DEFAULT_OUTPUT_BUDGETS.blockBytes + 1)}\ntarget\ntail\n`;
     const file = join(dir, "fallback.txt");
     await writeFile(file, before);
     const report = failureReport(
@@ -1232,7 +1232,7 @@ test("unresolved oversized and out-of-range rows require more context without pa
   await withDir(async (dir) => {
     const file = join(dir, "recover.txt");
     const current =
-      "界".repeat(Math.ceil(MAX_RECOVERY_CANDIDATE_BYTES / Buffer.byteLength("界"))) + "\n";
+      "界".repeat(Math.ceil(DEFAULT_OUTPUT_BUDGETS.fieldBytes / Buffer.byteLength("界"))) + "\n";
     await writeFile(file, current);
     const edit = makeEditOverride(dir, DEFAULT_CONFIG);
     for (const anchor of [h("old\n", 1), "99#XXXX"]) {
@@ -1248,7 +1248,7 @@ test("unresolved oversized and out-of-range rows require more context without pa
         report.failures?.[0].observedOmitted,
         anchor.startsWith("99#")
           ? "cited line is out of range"
-          : `row exceeds ${formatKiB(MAX_RECOVERY_CANDIDATE_BYTES)}`,
+          : `row exceeds ${formatKiB(DEFAULT_OUTPUT_BUDGETS.fieldBytes)}`,
       );
       assert.deepEqual(await readFile(file), Buffer.from(current));
     }

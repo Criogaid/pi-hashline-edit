@@ -3,7 +3,7 @@ import { test } from "node:test";
 import { computeLineHash } from "../core/hash.ts";
 import { applyEdits } from "../core/apply.ts";
 import type { AnchorFailure, Edit } from "../core/types.ts";
-import { formatKiB, MAX_BLOCK_BYTES, MAX_RECOVERY_CANDIDATE_BYTES } from "./budgets.ts";
+import { formatKiB, DEFAULT_OUTPUT_BUDGETS } from "./budgets.ts";
 import { DEFAULT_CONFIG } from "./config.ts";
 import { createAnchorFormatter } from "./anchor-format.ts";
 import { ambiguousCandidateNeighborhoods, describeEditFailure } from "./failure-context.ts";
@@ -99,13 +99,16 @@ test("more than eight ambiguous candidates → context uses the same candidate p
 });
 
 test("neighborhood exceeds byte budget → whole rows and explicit omission counts", () => {
-  const exact = "x".repeat(MAX_BLOCK_BYTES - Buffer.byteLength("1#XXXX│\n"));
+  const exact = "x".repeat(DEFAULT_OUTPUT_BUDGETS.blockBytes - Buffer.byteLength("1#XXXX│\n"));
   const cases = [
     { lines: [exact, "target", "last"], shown: [1], omitted: 2 },
     { lines: ["界".repeat(6000), "target", "last"], shown: [2, 3], omitted: 1 },
     { lines: ["short", "界".repeat(6000), "target", "last"], shown: [1, 3, 4], omitted: 1 },
     {
-      lines: ["x".repeat(MAX_RECOVERY_CANDIDATE_BYTES), "y".repeat(MAX_RECOVERY_CANDIDATE_BYTES)],
+      lines: [
+        "x".repeat(DEFAULT_OUTPUT_BUDGETS.fieldBytes),
+        "y".repeat(DEFAULT_OUTPUT_BUDGETS.fieldBytes),
+      ],
       shown: [],
       omitted: 2,
     },
@@ -118,7 +121,7 @@ test("neighborhood exceeds byte budget → whole rows and explicit omission coun
     assert.equal(result.facts.omittedNeighborhoodRows, omitted);
     assert.ok(
       Buffer.byteLength(rows(result).join("\n") + (rows(result).length ? "\n" : "")) <=
-        MAX_BLOCK_BYTES,
+        DEFAULT_OUTPUT_BUDGETS.blockBytes,
     );
     for (const position of shown)
       assert.ok(
@@ -132,7 +135,7 @@ test("neighborhood exceeds byte budget → whole rows and explicit omission coun
 test("candidate complete row at its byte limit → kept exactly or omitted whole", () => {
   for (const extra of [0, 1]) {
     const candidate = "x".repeat(
-      MAX_RECOVERY_CANDIDATE_BYTES - Buffer.byteLength("2#XXXXXX│") + extra,
+      DEFAULT_OUTPUT_BUDGETS.fieldBytes - Buffer.byteLength("2#XXXXXX│") + extra,
     );
     const lines = ["prefix", candidate, "tail", "other"];
     const result = neighborhoods(lines.join("\n"), [ambiguous(lines, [2, 4], 6)], 6);
@@ -143,7 +146,7 @@ test("candidate complete row at its byte limit → kept exactly or omitted whole
 });
 
 test("unique candidate inside ambiguous context exceeds limit → context cannot bypass its row limit", () => {
-  const lines = ["prefix", "x".repeat(MAX_RECOVERY_CANDIDATE_BYTES), "match", "match"];
+  const lines = ["prefix", "x".repeat(DEFAULT_OUTPUT_BUDGETS.fieldBytes), "match", "match"];
   const result = neighborhoods(lines.join("\n"), [
     ambiguous(lines, [3, 4]),
     failure({
@@ -158,11 +161,16 @@ test("unique candidate inside ambiguous context exceeds limit → context cannot
 });
 
 test("remaining context budget cannot fit an intermediate row → retain shorter later rows", () => {
-  const lines = ["x".repeat(MAX_BLOCK_BYTES - 100), "y".repeat(200), "target", "other"];
+  const lines = [
+    "x".repeat(DEFAULT_OUTPUT_BUDGETS.blockBytes - 100),
+    "y".repeat(200),
+    "target",
+    "other",
+  ];
   const result = neighborhoods(lines.join("\n"), [ambiguous(lines, [3, 4])]);
   assert.deepEqual([...result.shownLines], [1, 3, 4]);
   assert.equal(result.facts.omittedNeighborhoodRows, 1);
-  assert.ok(Buffer.byteLength(rows(result).join("\n") + "\n") <= MAX_BLOCK_BYTES);
+  assert.ok(Buffer.byteLength(rows(result).join("\n") + "\n") <= DEFAULT_OUTPUT_BUDGETS.blockBytes);
 });
 
 function rejectedEdit(text: string, edits: Edit[], shiftRadius = 0) {
@@ -182,11 +190,11 @@ const oldAnchor = { line: 1, hash: computeLineHash(1, "old", DEFAULT_CONFIG.hash
 
 test("multiple unresolved anchors and candidate context → one recovery survives omitted facts", () => {
   const cases = [
-    ...[2, MAX_BLOCK_BYTES].map((count) => ({
+    ...[2, DEFAULT_OUTPUT_BUDGETS.blockBytes].map((count) => ({
       text: "current\n",
       edits: Array.from({ length: count }, (): Edit => ({ op: "delete", start: oldAnchor })),
       radius: 0,
-      omitted: count === MAX_BLOCK_BYTES,
+      omitted: count === DEFAULT_OUTPUT_BUDGETS.blockBytes,
     })),
     {
       text: "current\nold\n",
@@ -218,10 +226,16 @@ test("multiple unresolved anchors and candidate context → one recovery survive
 test("failure list exceeds budget → omitted anchors are never reported as matched", () => {
   const { report } = rejectedEdit(
     "current\n",
-    Array.from({ length: MAX_BLOCK_BYTES }, () => ({ op: "delete", start: oldAnchor })),
+    Array.from({ length: DEFAULT_OUTPUT_BUDGETS.blockBytes }, () => ({
+      op: "delete",
+      start: oldAnchor,
+    })),
   );
   assert.ok(report.failures && report.failures.length > 0);
-  assert.equal(report.failures.length + (report.omittedFailures ?? 0), MAX_BLOCK_BYTES);
+  assert.equal(
+    report.failures.length + (report.omittedFailures ?? 0),
+    DEFAULT_OUTPUT_BUDGETS.blockBytes,
+  );
   assert.equal(report.matched, undefined);
   assert.ok(report.failures.every((entry) => entry.result === "unresolved"));
 });
@@ -249,11 +263,11 @@ test("reversed ranges and overlapping edits → original reason and unpublished 
 });
 
 test("unresolved row out of range or oversized → omission facts contain no recovery instructions", () => {
-  const text = "x".repeat(MAX_RECOVERY_CANDIDATE_BYTES) + "\n";
+  const text = "x".repeat(DEFAULT_OUTPUT_BUDGETS.fieldBytes) + "\n";
   const cases = [
     {
       start: oldAnchor,
-      reason: new RegExp(`row exceeds ${formatKiB(MAX_RECOVERY_CANDIDATE_BYTES)}`),
+      reason: new RegExp(`row exceeds ${formatKiB(DEFAULT_OUTPUT_BUDGETS.fieldBytes)}`),
     },
     { start: { ...oldAnchor, line: 2 }, reason: /cited line is out of range/ },
   ];

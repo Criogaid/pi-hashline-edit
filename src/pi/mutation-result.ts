@@ -10,6 +10,7 @@ import { displayCarriageReturns } from "./anchor-format.ts";
 import { normalizeLineEndings } from "../core/lines.ts";
 import type { CommandStatus, PublicationStatus, Report } from "./report-schema.ts";
 import { causeOf, reportResult, type ReportDetails } from "./report.ts";
+import { DEFAULT_OUTPUT_BUDGETS, type OutputBudgets } from "./budgets.ts";
 
 /** Keep byte-faithful diff/patch data and a separate preview of the shared logical text. */
 export function generateMutationDetails(
@@ -77,6 +78,7 @@ export function finalizeMutation<TDetails extends object>(
   { commit, details, facts }: MutationOutcome<TDetails>,
   observation: FreshnessObservation,
   command?: CommandFacts,
+  budget: OutputBudgets = DEFAULT_OUTPUT_BUDGETS,
 ): AgentToolResult<TDetails & ReportDetails> {
   const fresh = observation.freshness === "unchanged";
   const report: Report = {
@@ -85,11 +87,11 @@ export function finalizeMutation<TDetails extends object>(
     publication: commit.publication,
     ...facts,
     freshness: fresh ? undefined : observation.freshness,
-    freshnessError: causeOf(observation.error),
+    freshnessError: causeOf(observation.error, budget.fieldBytes),
     then_run: command
       ? { status: command.status, ...(command.output ? { output: command.output } : {}) }
       : undefined,
-    progressError: causeOf(command?.progressError),
+    progressError: causeOf(command?.progressError, budget.fieldBytes),
   };
   return reportResult(report, [], details);
 }

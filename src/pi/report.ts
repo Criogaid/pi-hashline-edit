@@ -21,6 +21,7 @@ import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import { Value } from "typebox/value";
 import { errorMessage, errnoCode, filesystemErrorCode, HashlineError } from "../core/errors.ts";
 import { boundedText, causeOf } from "./report-cause.ts";
+import { DEFAULT_OUTPUT_BUDGETS, type OutputBudgets } from "./budgets.ts";
 export { boundedText, causeOf } from "./report-cause.ts";
 import { cancellationError } from "./error-text.ts";
 import { FileMutationError } from "./file-commit.ts";
@@ -130,6 +131,7 @@ export interface FailureContext {
   /** Mutation tools report `publication` and `stage` on every failure. */
   readonly mutation?: boolean;
   readonly signal?: AbortSignal;
+  readonly budget?: OutputBudgets;
 }
 
 /**
@@ -187,6 +189,7 @@ export function describeFailure(tool: string, caught: unknown, context: FailureC
     error = error.error;
   }
   const failure = classify(error, context.signal);
+  const budget = context.budget ?? DEFAULT_OUTPUT_BUDGETS;
   const publication = context.mutation
     ? failure instanceof FileMutationError
       ? failure.publication
@@ -203,8 +206,8 @@ export function describeFailure(tool: string, caught: unknown, context: FailureC
     path: context.path as Report["path"],
     publication,
     stage,
-    message: boundedText(failure.message),
-    cause: causeOf(failure.cause),
+    message: boundedText(failure.message, budget.fieldBytes),
+    cause: causeOf(failure.cause, budget.fieldBytes),
     ...failure.facts,
     then_run: command ? { status: command.status } : undefined,
     progressError: command?.progressError,

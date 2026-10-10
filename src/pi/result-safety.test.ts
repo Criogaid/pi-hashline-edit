@@ -7,7 +7,7 @@ import { writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { MAX_BLOCK_BYTES } from "./budgets.ts";
+import { DEFAULT_OUTPUT_BUDGETS } from "./budgets.ts";
 import { createActionFusionExecutor } from "./action-fusion.ts";
 import { makeReplaceTool } from "./replace-tool.ts";
 import { makeWriteOverride } from "./write-tool.ts";
@@ -36,7 +36,9 @@ function assertFailureByteBudgets(message: string): void {
   assert.ok(report);
   assert.equal(report.error, "ANCHOR_MISMATCH");
   assert.ok(report.failures && report.failures.length > 0);
-  assert.ok(Buffer.byteLength(JSON.stringify(report.failures)) <= MAX_BLOCK_BYTES);
+  assert.ok(
+    Buffer.byteLength(JSON.stringify(report.failures)) <= DEFAULT_OUTPUT_BUDGETS.blockBytes,
+  );
   assert.equal(report.failures.length + (report.omittedFailures ?? 0), 1000);
   assert.ok(report.omittedFailures);
   assert.equal(report.matched, undefined);
@@ -45,7 +47,7 @@ function assertFailureByteBudgets(message: string): void {
   if (report.candidateNeighborhoods) {
     const rows = report.candidateNeighborhoods.flatMap((group) => group.rows);
     assert.ok(rows.length > 0);
-    assert.ok(Buffer.byteLength(rows.join("\n")) + 1 <= MAX_BLOCK_BYTES);
+    assert.ok(Buffer.byteLength(rows.join("\n")) + 1 <= DEFAULT_OUTPUT_BUDGETS.blockBytes);
   }
 }
 

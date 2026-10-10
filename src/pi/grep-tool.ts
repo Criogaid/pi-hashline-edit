@@ -37,6 +37,7 @@ import { throwIfCancelled } from "./error-text.ts";
 import { reportResult, runTool, type ReportDetails } from "./report.ts";
 import type { HashlineEditConfig } from "./config.ts";
 import { createArgumentPreparer } from "./argument-validation.ts";
+import { defaultOutputBudgets, type OutputBudgetProvider } from "./budgets.ts";
 
 /** Grep parameters; descriptions state the configured defaults. */
 function createGrepSchema({ defaultLimit, defaultContext }: HashlineEditConfig["grep"]) {
@@ -120,8 +121,12 @@ type GrepTool = ToolDefinition<
 const GREP_CARD_SHOWN = new Set(["resultId"]);
 
 /** Build the production grep override (a ToolDefinition fragment for registerTool). */
-export function makeGrepOverride(cwd: string, config: HashlineEditConfig) {
-  return makeGrepOverrideWithBackend(cwd, config, {});
+export function makeGrepOverride(
+  cwd: string,
+  config: HashlineEditConfig,
+  budgets: OutputBudgetProvider = defaultOutputBudgets,
+) {
+  return makeGrepOverrideWithBackend(cwd, config, {}, budgets);
 }
 
 /** @internal — build a grep override with deterministic process backends for tests. */
@@ -129,6 +134,7 @@ export function makeGrepOverrideWithBackend(
   cwd: string,
   config: HashlineEditConfig,
   overrides: Partial<GrepBackend>,
+  budgets: OutputBudgetProvider = defaultOutputBudgets,
 ) {
   const { hashLen } = config;
   const grepSchema = createGrepSchema(config.grep);
@@ -155,7 +161,7 @@ export function makeGrepOverrideWithBackend(
       "Copy grep anchors directly into edit; read the full line before rewriting from a partial preview.",
     ],
     parameters: grepSchema,
-    prepareArguments: createArgumentPreparer("grep", grepSchema),
+    prepareArguments: createArgumentPreparer("grep", grepSchema, undefined, budgets),
 
     renderShell: "default" as const,
 
@@ -206,7 +212,8 @@ export function makeGrepOverrideWithBackend(
       signal: AbortSignal | undefined,
       _onUpdate: Parameters<GrepTool["execute"]>[3],
     ) {
-      return runTool("grep", { path: params.path, signal }, async () => {
+      const budget = budgets();
+      return runTool("grep", { path: params.path, signal, budget }, async () => {
         throwIfCancelled(signal);
         const anchors = createAnchorFormatter(hashLen);
         const warnings: string[] = [];
@@ -276,7 +283,8 @@ export function makeGrepOverrideWithBackend(
 
         const report = { tool: "grep", path: params.path };
         if (raw.length === 0) {
-          if (warnings.length) throw searchIncompleteError("No matches confirmed.", warnings);
+          if (warnings.length)
+            throw searchIncompleteError("No matches confirmed.", warnings, budget);
           return reportResult({ ...report, matches: 0, files: 0 });
         }
 
@@ -289,6 +297,7 @@ export function makeGrepOverrideWithBackend(
           signal,
           warnings,
           searchSnapshots: result.snapshots,
+          budget,
         });
         const { payload, facts } = assembleGrepOutput({
           formatted,
@@ -296,6 +305,7 @@ export function makeGrepOverrideWithBackend(
           outputMode,
           matchLimitReached,
           effectiveLimit,
+          budget,
         });
         const parts = {
           report: { ...report, ...facts },

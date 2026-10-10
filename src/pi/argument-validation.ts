@@ -10,6 +10,7 @@ import { ObjectOptions, Type, type Static, type TObject, type TSchema } from "ty
 import { errorMessage } from "../core/errors.ts";
 import { diagnoseArguments } from "./argument-diagnostics.ts";
 import { formatArgumentError } from "./argument-error.ts";
+import { defaultOutputBudgets, type OutputBudgetProvider } from "./budgets.ts";
 import type { ArgumentIssue } from "./report-schema.ts";
 
 /** Report one semantic issue: what is wrong (a fact), and how to correct it when the fact alone does not say. */
@@ -25,6 +26,7 @@ export function createArgumentPreparer<T extends TObject>(
   name: string,
   parameters: T,
   check?: CheckArguments,
+  budgets: OutputBudgetProvider = defaultOutputBudgets,
 ): (args: unknown) => Static<T> {
   const validate = (schema: TSchema, args: unknown): unknown =>
     validateToolArguments(
@@ -71,6 +73,7 @@ export function createArgumentPreparer<T extends TObject>(
             [{ field: "$", reason: errorMessage(schemaFailure) }],
             undefined,
             false,
+            budgets(),
           ),
           { cause: schemaFailure },
         );
@@ -88,7 +91,7 @@ export function createArgumentPreparer<T extends TObject>(
         ? result.issues
         : [{ field: "$", reason: errorMessage(schemaFailure) }];
     if (schemaFailure !== undefined || result.issues.length > 0) {
-      throw new Error(formatArgumentError(name, reported, checked, result.limited), {
+      throw new Error(formatArgumentError(name, reported, checked, result.limited, budgets()), {
         cause: schemaFailure,
       });
     }

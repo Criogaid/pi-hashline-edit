@@ -4,7 +4,7 @@
  * raises it before execution, so it travels as the thrown message only.
  * The JSON is never truncated; whole issues or the argument copy are omitted.
  */
-import { MAX_BLOCK_BYTES } from "./budgets.ts";
+import { DEFAULT_OUTPUT_BUDGETS, type OutputBudgets } from "./budgets.ts";
 import { boundedText, renderReport, type Report } from "./report.ts";
 import type { ArgumentIssue } from "./report-schema.ts";
 
@@ -32,18 +32,19 @@ export function formatArgumentError(
   issues: readonly ArgumentIssue[],
   prepared: unknown,
   schemaLimited: boolean,
+  budget: OutputBudgets = DEFAULT_OUTPUT_BUDGETS,
 ): string {
   const boundedIssues = issues.map(({ field, reason, fix }) => ({
     field,
-    reason: boundedText(reason),
-    ...(fix === undefined ? {} : { fix: boundedText(fix) }),
+    reason: boundedText(reason, budget.fieldBytes),
+    ...(fix === undefined ? {} : { fix: boundedText(fix, budget.fieldBytes) }),
   }));
   const base: Report = {
     error: "INVALID_ARGUMENTS",
     tool,
     ...(schemaLimited ? { schemaLimited: true as const } : {}),
   };
-  const fits = (text: string) => Buffer.byteLength(text) <= MAX_BLOCK_BYTES;
+  const fits = (text: string) => Buffer.byteLength(text) <= budget.blockBytes;
   let argumentsCopy: unknown;
   let argumentsAvailable = false;
   try {

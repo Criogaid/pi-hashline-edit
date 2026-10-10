@@ -1,10 +1,10 @@
-import { truncateHead, formatSize, DEFAULT_MAX_BYTES } from "@earendil-works/pi-coding-agent";
+import { truncateHead, formatSize } from "@earendil-works/pi-coding-agent";
 import { DiagnosticBuffer } from "./diagnostic-buffer.ts";
 import { createHash } from "node:crypto";
 import { createAnchorFormatter, displayCarriageReturns, plainRow } from "./anchor-format.ts";
 import { fileReadWarning, type RgMatch, type SearchFileSnapshot } from "./grep-search.ts";
 import { scanTextFile, scanTextLines } from "./text-stream.ts";
-import { GREP_MAX_LINE_LENGTH, MAX_SEARCH_DIAGNOSTIC_BYTES } from "./budgets.ts";
+import { DEFAULT_OUTPUT_BUDGETS, type OutputBudgets } from "./budgets.ts";
 import { searchChangedError } from "./error-text.ts";
 import { HashlineError } from "../core/errors.ts";
 import { serializePath } from "./path.ts";
@@ -27,8 +27,8 @@ export function parseFileHeader(line: string): { path: string; summary: string }
 }
 
 /** Distinct search diagnostics within their budget, keeping opening context and the final cause. */
-function searchDiagnostics(warnings: readonly string[]): string {
-  const diagnostics = new DiagnosticBuffer(MAX_SEARCH_DIAGNOSTIC_BYTES);
+function searchDiagnostics(warnings: readonly string[], budget: OutputBudgets): string {
+  const diagnostics = new DiagnosticBuffer(budget.fieldBytes);
   for (const warning of new Set(warnings)) diagnostics.append(`${warning}\n`);
   return diagnostics.toString().trimEnd();
 }
@@ -37,18 +37,24 @@ function searchDiagnostics(warnings: readonly string[]): string {
 export function searchIncompleteError(
   message: string,
   warnings: readonly string[],
+  budget: OutputBudgets = DEFAULT_OUTPUT_BUDGETS,
 ): HashlineError<"SEARCH_INCOMPLETE"> {
   return new HashlineError("SEARCH_INCOMPLETE", message, {
-    facts: { diagnostics: searchDiagnostics(warnings) },
+    facts: { diagnostics: searchDiagnostics(warnings, budget) },
   });
 }
 
-function previewLine(text: string, column = 0): { text: string; wasTruncated: boolean } {
-  if (text.length <= GREP_MAX_LINE_LENGTH) return { text, wasTruncated: false };
-  let start = Math.max(0, Math.min(column - GREP_PREVIEW_LEAD, text.length - GREP_MAX_LINE_LENGTH));
+function previewLine(
+  text: string,
+  column = 0,
+  maxUnits: number,
+): { text: string; wasTruncated: boolean } {
+  if (text.length <= maxUnits) return { text, wasTruncated: false };
+  const lead = Math.min(GREP_PREVIEW_LEAD, Math.floor(maxUnits / 5));
+  let start = Math.max(0, Math.min(column - lead, text.length - maxUnits));
   // Slice at UTF-16 boundaries without splitting an astral character.
   if (start > 0 && /[\uDC00-\uDFFF]/.test(text[start])) start++;
-  let end = Math.min(text.length, start + GREP_MAX_LINE_LENGTH);
+  let end = Math.min(text.length, start + maxUnits);
   if (end < text.length && /[\uDC00-\uDFFF]/.test(text[end])) end--;
   return {
     text: `[partial, columns ${start + 1}-${end}] ${start ? "…" : ""}${text.slice(start, end)}${end < text.length ? "…" : ""}`,
@@ -65,10 +71,21 @@ interface FormatMatchesOptions {
   signal?: AbortSignal;
   warnings: string[];
   searchSnapshots: ReadonlyMap<string, SearchFileSnapshot>;
+  budget?: OutputBudgets;
 }
 
 export async function formatMatches(options: FormatMatchesOptions) {
-  const { cwd, raw, outputMode, context, anchors, signal, warnings, searchSnapshots } = options;
+  const {
+    cwd,
+    raw,
+    outputMode,
+    context,
+    anchors,
+    signal,
+    warnings,
+    searchSnapshots,
+    budget = DEFAULT_OUTPUT_BUDGETS,
+  } = options;
   const byFile = new Map<string, RgMatch[]>();
   for (const match of raw) {
     const lines = byFile.get(match.filePath) ?? [];
@@ -148,6 +165,7 @@ export async function formatMatches(options: FormatMatchesOptions) {
                   const { text: display, wasTruncated } = previewLine(
                     displayCarriageReturns(line.text),
                     columns.get(line.number),
+                    budget.grepPreviewUnits,
                   );
                   if (wasTruncated) linesTruncated = true;
                   rows.push(
@@ -234,21 +252,30 @@ interface AssembleGrepOutputOptions {
   outputMode: "content" | "files" | "count";
   matchLimitReached: boolean;
   effectiveLimit: number;
+  budget?: OutputBudgets;
 }
 
-/** Join the payload within Pi's output limit and state each limit, omission, and diagnostic once. */
+/** Join the payload within the call's byte budget and state each limit, omission, and diagnostic once. */
 export function assembleGrepOutput(options: AssembleGrepOutputOptions): {
   payload: string;
   facts: GrepFacts;
 } {
-  const { formatted, warnings, outputMode, matchLimitReached, effectiveLimit } = options;
+  const {
+    formatted,
+    warnings,
+    outputMode,
+    matchLimitReached,
+    effectiveLimit,
+    budget = DEFAULT_OUTPUT_BUDGETS,
+  } = options;
   const { blocks, linesTruncated, invalidUtf8, matches, files } = formatted;
 
   if (!blocks.length && warnings.length) {
-    throw searchIncompleteError("No matches could be displayed.", warnings);
+    throw searchIncompleteError("No matches could be displayed.", warnings, budget);
   }
   const truncation = truncateHead(blocks.join(outputMode === "content" ? "\n\n" : "\n"), {
-    maxBytes: DEFAULT_MAX_BYTES,
+    maxBytes: budget.grepBytes,
+    maxLines: Number.MAX_SAFE_INTEGER,
   });
   return {
     payload: truncation.content,
@@ -256,10 +283,10 @@ export function assembleGrepOutput(options: AssembleGrepOutputOptions): {
       matches,
       files,
       matchLimit: matchLimitReached ? effectiveLimit : undefined,
-      outputLimit: truncation.truncated ? formatSize(DEFAULT_MAX_BYTES) : undefined,
-      linePreviewLimit: linesTruncated ? GREP_MAX_LINE_LENGTH : undefined,
+      outputLimit: truncation.truncated ? formatSize(budget.grepBytes) : undefined,
+      linePreviewLimit: linesTruncated ? budget.grepPreviewUnits : undefined,
       invalidUtf8: invalidUtf8.length ? invalidUtf8 : undefined,
-      diagnostics: warnings.length ? searchDiagnostics(warnings) : undefined,
+      diagnostics: warnings.length ? searchDiagnostics(warnings, budget) : undefined,
     },
   };
 }

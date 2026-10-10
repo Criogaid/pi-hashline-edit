@@ -31,7 +31,7 @@ import { type ForgetReceiptDetails, readReceipt, withResultTag } from "./forget-
 import { POSITIVE_SAFE_INTEGER } from "./schema.ts";
 import { throwIfCancelled } from "./error-text.ts";
 import { runTool, type Report, type ReportDetails } from "./report.ts";
-import { formatKiB } from "./budgets.ts";
+import { defaultOutputBudgets, formatKiB, type OutputBudgetProvider } from "./budgets.ts";
 import type { HashlineEditConfig } from "./config.ts";
 import { createArgumentPreparer } from "./argument-validation.ts";
 
@@ -115,13 +115,13 @@ function renderReadBody(raw: string, path: string, theme: Theme): string {
 export function makeReadOverride(
   cwd: string,
   config: HashlineEditConfig,
+  budgets: OutputBudgetProvider = defaultOutputBudgets,
 ): ToolDefinition<
   ReturnType<typeof createReadToolDefinition>["parameters"],
   ReadDetails | undefined
 > {
   const { hashLen } = config;
   const { defaultLimit } = config.read;
-  const maxBytes = config.read.maxKiB * 1024;
   const builtin = createReadToolDefinition(cwd);
   // A TypeBox object, not a spread of Pi's plain JSON schema: argument diagnostics pick
   // single fields from it, which needs TypeBox's own schema kinds.
@@ -155,7 +155,7 @@ export function makeReadOverride(
       "For large files, pass read offset and limit to read only the relevant section.",
     ],
     parameters: parameters as typeof builtin.parameters,
-    prepareArguments: createArgumentPreparer("read", parameters),
+    prepareArguments: createArgumentPreparer("read", parameters, undefined, budgets),
     renderShell: "default" as const,
 
     renderCall: builtin.renderCall,
@@ -189,7 +189,10 @@ export function makeReadOverride(
       onUpdate: AgentToolUpdateCallback<ReadToolDetails | undefined> | undefined,
       ctx: ExtensionToolContext,
     ) {
-      return runTool("read", { path: params.path, signal }, async () => {
+      const budget = budgets();
+      const maxBytes =
+        config.read.maxKiB === undefined ? budget.readBytes : config.read.maxKiB * 1024;
+      return runTool("read", { path: params.path, signal, budget }, async () => {
         throwIfCancelled(signal);
         const offset = params.offset ?? DEFAULT_OFFSET;
         const limit = params.limit ?? defaultLimit;

@@ -18,6 +18,7 @@ import { executeMutation, type ActionFusionExecutor } from "./mutation-runner.ts
 import { MUTATION_TOOL_GUIDELINE } from "./tool-prompts.ts";
 import { throwIfCancelled } from "./error-text.ts";
 import { createArgumentPreparer } from "./argument-validation.ts";
+import { defaultOutputBudgets, type OutputBudgetProvider } from "./budgets.ts";
 import { unwritableTextError } from "../core/text.ts";
 import { reportLines, renderToolError } from "./render.ts";
 import type { ReportDetails } from "./report.ts";
@@ -50,7 +51,11 @@ type WriteRenderContext = Parameters<
   NonNullable<ReturnType<typeof createWriteToolDefinition>["renderCall"]>
 >[2];
 
-export function makeWriteOverride(cwd: string, fusion?: ActionFusionExecutor) {
+export function makeWriteOverride(
+  cwd: string,
+  fusion?: ActionFusionExecutor,
+  budgets: OutputBudgetProvider = defaultOutputBudgets,
+) {
   const parameters = createWriteSchema(fusion !== undefined);
   const builtin = createWriteToolDefinition(cwd);
   return {
@@ -61,11 +66,16 @@ export function makeWriteOverride(cwd: string, fusion?: ActionFusionExecutor) {
     promptSnippet: "Write complete file content to a path",
     promptGuidelines: [MUTATION_TOOL_GUIDELINE, ...(fusion ? ACTION_FUSION_GUIDELINES : [])],
     parameters,
-    prepareArguments: createArgumentPreparer("write", parameters, (args, report) => {
-      const content = (args as { content?: unknown } | null)?.content;
-      const unwritable = typeof content === "string" ? unwritableTextError(content) : undefined;
-      if (unwritable) report("content", unwritable.message);
-    }),
+    prepareArguments: createArgumentPreparer(
+      "write",
+      parameters,
+      (args, report) => {
+        const content = (args as { content?: unknown } | null)?.content;
+        const unwritable = typeof content === "string" ? unwritableTextError(content) : undefined;
+        if (unwritable) report("content", unwritable.message);
+      },
+      budgets,
+    ),
     renderShell: "default" as const,
     renderCall(args: WriteParams, theme: Theme, context: WriteRenderContext) {
       return builtin.renderCall!(args, theme, context);
@@ -94,6 +104,7 @@ export function makeWriteOverride(cwd: string, fusion?: ActionFusionExecutor) {
           tool: "write",
           cwd,
           fusion,
+          budgets,
           async run(mutationParams, { absolutePath, displayPath, signal }) {
             throwIfCancelled(signal);
             const commit = await commitFile(absolutePath, mutationParams.content, {

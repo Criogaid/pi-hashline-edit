@@ -52,6 +52,7 @@ import {
 } from "./mutation-runner.ts";
 import { MUTATION_TOOL_GUIDELINE } from "./tool-prompts.ts";
 import { errorMessage } from "../core/errors.ts";
+import { defaultOutputBudgets, type OutputBudgetProvider } from "./budgets.ts";
 import { cancellationError } from "./error-text.ts";
 import {
   argumentItems,
@@ -116,6 +117,7 @@ export function makeReplaceTool(
   cwd: string,
   config: HashlineEditConfig,
   fusion?: ActionFusionExecutor,
+  budgets: OutputBudgetProvider = defaultOutputBudgets,
 ) {
   const parameters = createReplaceSchema(fusion !== undefined);
   return {
@@ -126,7 +128,7 @@ export function makeReplaceTool(
     promptSnippet: "Replace matching text across a file",
     promptGuidelines: [MUTATION_TOOL_GUIDELINE, ...(fusion ? ACTION_FUSION_GUIDELINES : [])],
     parameters,
-    prepareArguments: createArgumentPreparer("replace", parameters, checkReplaceArguments),
+    prepareArguments: createArgumentPreparer("replace", parameters, checkReplaceArguments, budgets),
     renderShell: "default" as const,
 
     renderCall(args: ReplaceParams, theme: Theme, context: ReplaceRenderContext) {
@@ -154,6 +156,7 @@ export function makeReplaceTool(
           tool: "replace",
           cwd,
           fusion,
+          budgets,
           run: (mutationParams, target) => runReplace(target, mutationParams.replacements, config),
         },
         { toolCallId, params, signal, onUpdate, ctx },

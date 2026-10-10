@@ -32,7 +32,7 @@ import {
   resolveIgnoreCase,
   runRg,
 } from "../pi/rg-process.ts";
-import { GREP_MAX_LINE_LENGTH } from "../pi/budgets.ts";
+import { DEFAULT_OUTPUT_BUDGETS } from "../pi/budgets.ts";
 import { runRgTextView } from "../pi/rg-text-view.ts";
 import { computeLineHash } from "../core/hash.ts";
 import { callTool } from "../pi/tool-call.testing.ts";
@@ -1106,10 +1106,10 @@ test("long-line previews preserve full-line anchors across literal and Rust rege
       assert.equal(Buffer.from(row).toString("utf8"), row);
       assert.ok(
         output.includes(
-          `3#${computeLineHash(3, context, 4)}│[partial, columns 1-${GREP_MAX_LINE_LENGTH - 1}]`,
+          `3#${computeLineHash(3, context, 4)}│[partial, columns 1-${DEFAULT_OUTPUT_BUDGETS.grepPreviewUnits - 1}]`,
         ),
       );
-      assert.equal(reportOf(result)?.linePreviewLimit, GREP_MAX_LINE_LENGTH);
+      assert.equal(reportOf(result)?.linePreviewLimit, DEFAULT_OUTPUT_BUDGETS.grepPreviewUnits);
     }
   } finally {
     await rm(directory, { recursive: true, force: true });

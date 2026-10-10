@@ -1,25 +1,47 @@
 /**
- * Fixed model-facing output budgets.
- *
- * README "Output budgets" documents each value; change both together. Result
- * and notice text derive their size wording from these constants. Budgets that
- * users can configure (read line and byte limits, grep line limit) live in the
- * settings schema in config.ts; Pi's own total-output limit stays with Pi.
- *
- * @module pi-hashline-edit/pi
+ * Model-facing byte budgets. README "Output budgets" documents this policy.
+ * The context window is a capacity hint, not a tokenizer or remaining-context counter.
+ * This module also loads in the replacement worker; keep it free of Pi runtime imports.
  */
 
-/** grep line preview, in UTF-16 units, excluding its partial-line label. */
-export const GREP_MAX_LINE_LENGTH = 500;
+const BYTES_PER_CONTEXT_TOKEN = 1;
+const BLOCK_SHARE = 4;
+const FIELD_SHARE = 4;
+const UTF16_PREVIEW_BYTES = 4;
+// Keep JSON envelopes and diagnostic omission markers usable for tiny declared windows.
+const MIN_BLOCK_BYTES = 512;
+const MIN_FIELD_BYTES = 128;
 
-/** Each diagnostic block: an argument error or a report fact list. */
-export const MAX_BLOCK_BYTES = 16 * 1024;
-/** One free-text field of an error record (a message or argument reason): leave room for the envelope. */
-export const MAX_ERROR_TEXT_BYTES = MAX_BLOCK_BYTES / 4;
-/** One recovery-candidate or cited row inside a failure diagnostic. */
-export const MAX_RECOVERY_CANDIDATE_BYTES = 4 * 1024;
-/** grep search diagnostics appended to a result. */
-export const MAX_SEARCH_DIAGNOSTIC_BYTES = 4 * 1024;
+const fallbackBudgets = {
+  readBytes: 256 * 1024,
+  grepBytes: 50 * 1024,
+  blockBytes: 16 * 1024,
+  fieldBytes: 4 * 1024,
+  grepPreviewUnits: 500,
+};
+export const DEFAULT_OUTPUT_BUDGETS = Object.freeze(fallbackBudgets);
+export type OutputBudgets = typeof DEFAULT_OUTPUT_BUDGETS;
+export type OutputBudgetProvider = () => OutputBudgets;
+
+/** Unknown or invalid capacity uses the bounded defaults; each returned budget is immutable. */
+export function outputBudgetsFor(contextWindow: number | undefined): OutputBudgets {
+  if (contextWindow === undefined || !Number.isSafeInteger(contextWindow) || contextWindow <= 0) {
+    return DEFAULT_OUTPUT_BUDGETS;
+  }
+  const contentBytes = contextWindow * BYTES_PER_CONTEXT_TOKEN;
+  const blockBytes = Math.max(MIN_BLOCK_BYTES, Math.floor(contentBytes / BLOCK_SHARE));
+  const fieldBytes = Math.max(MIN_FIELD_BYTES, Math.floor(blockBytes / FIELD_SHARE));
+  return Object.freeze({
+    readBytes: contentBytes,
+    grepBytes: contentBytes,
+    blockBytes,
+    fieldBytes,
+    grepPreviewUnits: Math.floor(fieldBytes / UTF16_PREVIEW_BYTES),
+  });
+}
+
+/** Standalone tool factories have no session model until a provider is supplied. */
+export const defaultOutputBudgets: OutputBudgetProvider = () => DEFAULT_OUTPUT_BUDGETS;
 
 /** Size wording for notices, e.g. `16 KiB`. */
 export function formatKiB(bytes: number): string {

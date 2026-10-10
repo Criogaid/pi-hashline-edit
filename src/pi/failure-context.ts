@@ -20,7 +20,7 @@ import { splitLines } from "../core/lines.ts";
 import type { Anchor, AnchorFailure, ApplyFailure } from "../core/types.ts";
 import { mergeRanges } from "../core/ranges.ts";
 import { HashlineError } from "../core/errors.ts";
-import { formatKiB, MAX_BLOCK_BYTES, MAX_RECOVERY_CANDIDATE_BYTES } from "./budgets.ts";
+import { DEFAULT_OUTPUT_BUDGETS, formatKiB, type OutputBudgets } from "./budgets.ts";
 import { boundedFacts } from "./report.ts";
 import type { AnchorFailureFact, ErrorFacts } from "./report-schema.ts";
 
@@ -43,6 +43,7 @@ function collectContextRows(
   centers: readonly number[],
   anchors: AnchorFormatter,
   candidateLines: ReadonlySet<number>,
+  budget: OutputBudgets,
 ) {
   const windows = mergeRanges(
     centers.map((center) => {
@@ -62,8 +63,8 @@ function collectContextRows(
       const text = anchors.row(line, lines[line - 1]);
       const rowBytes = Buffer.byteLength(text, "utf8");
       // Neighborhoods must not bypass the standalone candidate's complete-row limit.
-      if (candidateLines.has(line) && rowBytes > MAX_RECOVERY_CANDIDATE_BYTES) continue;
-      if (bytes + rowBytes + 1 > MAX_BLOCK_BYTES) continue;
+      if (candidateLines.has(line) && rowBytes > budget.fieldBytes) continue;
+      if (bytes + rowBytes + 1 > budget.blockBytes) continue;
       rows.push({ line, text });
       bytes += rowBytes + 1;
     }
@@ -98,6 +99,7 @@ export function ambiguousCandidateNeighborhoods(
   currentText: string,
   failures: readonly AnchorFailure[],
   anchors: AnchorFormatter,
+  budget: OutputBudgets = DEFAULT_OUTPUT_BUDGETS,
 ): {
   facts: Pick<MismatchFacts, "candidateNeighborhoods" | "omittedNeighborhoodRows">;
   shownLines: ReadonlySet<number>;
@@ -118,6 +120,7 @@ export function ambiguousCandidateNeighborhoods(
     centers,
     anchors,
     candidateLines,
+    budget,
   );
   return {
     facts: {
@@ -129,7 +132,6 @@ export function ambiguousCandidateNeighborhoods(
 }
 
 const RESULT = { found: "shifted", ambiguous: "ambiguous", none: "unresolved" } as const;
-const ROW_TOO_LARGE = `row exceeds ${formatKiB(MAX_RECOVERY_CANDIDATE_BYTES)}`;
 
 /** One failure entry: what was cited, then what the search found or what the cited line holds. */
 function failureEntry(
@@ -137,7 +139,9 @@ function failureEntry(
   snapshot: Snapshot,
   currentLines: readonly string[],
   shownLines: Set<number>,
+  budget: OutputBudgets,
 ): AnchorFailureFact {
+  const rowTooLarge = `row exceeds ${formatKiB(budget.fieldBytes)}`;
   const entry: { -readonly [K in keyof AnchorFailureFact]: AnchorFailureFact[K] } = {
     field: `edits[${f.opIndex}].${f.which}`,
     op: f.op,
@@ -155,13 +159,12 @@ function failureEntry(
       // The row budget matches the neighborhoods'; the anchor itself is already `candidate`.
       if (
         content !== undefined &&
-        Buffer.byteLength(snapshot.anchors.row(newLine, content), "utf8") <=
-          MAX_RECOVERY_CANDIDATE_BYTES
+        Buffer.byteLength(snapshot.anchors.row(newLine, content), "utf8") <= budget.fieldBytes
       ) {
         entry.content = displayCarriageReturns(content);
         shownLines.add(newLine);
       } else {
-        entry.contentOmitted = ROW_TOO_LARGE;
+        entry.contentOmitted = rowTooLarge;
       }
       break;
     }
@@ -177,8 +180,8 @@ function failureEntry(
     case "none": {
       const row = f.current === null ? null : snapshot.anchors.row(f.cited.line, f.current.content);
       if (row === null) entry.observedOmitted = "cited line is out of range";
-      else if (Buffer.byteLength(row, "utf8") <= MAX_RECOVERY_CANDIDATE_BYTES) entry.observed = row;
-      else entry.observedOmitted = ROW_TOO_LARGE;
+      else if (Buffer.byteLength(row, "utf8") <= budget.fieldBytes) entry.observed = row;
+      else entry.observedOmitted = rowTooLarge;
       break;
     }
   }
@@ -191,12 +194,13 @@ function failureEntry(
  */
 function matchedAnchorFacts(
   failure: ApplyFailure,
+  budget: OutputBudgets,
 ): Pick<MismatchFacts, "matched" | "omittedMatched"> {
   const { kept, omitted } = boundedFacts(
     failure.checks
       .filter((check) => check.status === "matched")
       .map((check) => `edits[${check.opIndex}].${check.which}`),
-    MAX_BLOCK_BYTES,
+    budget.blockBytes,
   );
   return kept.length || omitted
     ? { matched: kept, ...(omitted ? { omittedMatched: omitted } : {}) }
@@ -208,8 +212,9 @@ export function describeEditFailure(
   failure: ApplyFailure,
   snapshot: Snapshot,
   isBatch: boolean,
+  budget: OutputBudgets = DEFAULT_OUTPUT_BUDGETS,
 ): HashlineError<"ANCHOR_MISMATCH" | "INVALID_RANGE" | "OVERLAPPING_EDITS"> {
-  const matched = isBatch ? matchedAnchorFacts(failure) : {};
+  const matched = isBatch ? matchedAnchorFacts(failure, budget) : {};
   if (failure.kind === "range")
     return new HashlineError(failure.code, failure.message, { facts: matched });
 
@@ -217,12 +222,13 @@ export function describeEditFailure(
     snapshot.currentText,
     failure.failures,
     snapshot.anchors,
+    budget,
   );
   const currentLines = splitLines(snapshot.currentText);
   const shownLines = new Set(neighborhoods.shownLines);
   const { kept, omitted } = boundedFacts(
-    failure.failures.map((f) => failureEntry(f, snapshot, currentLines, shownLines)),
-    MAX_BLOCK_BYTES,
+    failure.failures.map((f) => failureEntry(f, snapshot, currentLines, shownLines, budget)),
+    budget.blockBytes,
   );
   return new HashlineError("ANCHOR_MISMATCH", "Anchors did not match the current file.", {
     facts: {

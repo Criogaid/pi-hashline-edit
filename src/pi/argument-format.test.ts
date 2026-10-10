@@ -8,7 +8,7 @@ import { makeGrepOverride } from "./grep-tool.ts";
 import { makeWriteOverride } from "./write-tool.ts";
 import { makeReplaceTool } from "./replace-tool.ts";
 import { DEFAULT_CONFIG } from "./config.ts";
-import { MAX_BLOCK_BYTES } from "./budgets.ts";
+import { DEFAULT_OUTPUT_BUDGETS } from "./budgets.ts";
 import { callTool } from "./tool-call.testing.ts";
 import { argumentError } from "./argument-error.testing.ts";
 
@@ -89,12 +89,18 @@ test("Pi prepares a singleton operation → semantic and schema paths resolve to
 });
 
 test("JSON diagnostics exceed the budget → retain whole opening and closing issues and label omissions", async () => {
-  const edits = Array.from({ length: MAX_BLOCK_BYTES }, () => ({ op: "append", body: [] }));
+  const edits = Array.from({ length: DEFAULT_OUTPUT_BUDGETS.blockBytes }, () => ({
+    op: "append",
+    body: [],
+  }));
   await assert.rejects(
     callTool(makeEditOverride(cwd, DEFAULT_CONFIG), { path: "", edits }),
     (error: unknown) => {
       const result = argumentError(error);
-      assert.ok(error instanceof Error && Buffer.byteLength(error.message) <= MAX_BLOCK_BYTES);
+      assert.ok(
+        error instanceof Error &&
+          Buffer.byteLength(error.message) <= DEFAULT_OUTPUT_BUDGETS.blockBytes,
+      );
       assert.equal(result.issues[0].field, "edits[0].body");
       assert.equal(result.issues.at(-1)?.field, "path");
       assert.equal(result.argumentsOmitted, true);
@@ -106,7 +112,7 @@ test("JSON diagnostics exceed the budget → retain whole opening and closing is
 });
 
 test("a reason contains an oversized anchor → keep its cause and recovery instruction inside valid JSON", async () => {
-  const anchor = `${"9".repeat(MAX_BLOCK_BYTES)}#${"A".repeat(DEFAULT_CONFIG.hashLen)}`;
+  const anchor = `${"9".repeat(DEFAULT_OUTPUT_BUDGETS.blockBytes)}#${"A".repeat(DEFAULT_CONFIG.hashLen)}`;
   await assert.rejects(
     callTool(makeEditOverride(cwd, DEFAULT_CONFIG), {
       path: "unused",
@@ -114,7 +120,10 @@ test("a reason contains an oversized anchor → keep its cause and recovery inst
     }),
     (error: unknown) => {
       const result = argumentError(error);
-      assert.ok(error instanceof Error && Buffer.byteLength(error.message) <= MAX_BLOCK_BYTES);
+      assert.ok(
+        error instanceof Error &&
+          Buffer.byteLength(error.message) <= DEFAULT_OUTPUT_BUDGETS.blockBytes,
+      );
       assert.equal(result.issues.length, 1);
       assert.equal(result.issues[0].field, "edits[0].anchor");
       assert.match(result.issues[0].reason, /^line number/);
@@ -167,11 +176,14 @@ test("a property path exceeds the JSON budget → omit the whole issue and keep 
   await assert.rejects(
     callTool(makeReadOverride(cwd, DEFAULT_CONFIG), {
       path: "",
-      ['"中🙂'.repeat(MAX_BLOCK_BYTES)]: true,
+      ['"中🙂'.repeat(DEFAULT_OUTPUT_BUDGETS.blockBytes)]: true,
     }),
     (error: unknown) => {
       const result = argumentError(error);
-      assert.ok(error instanceof Error && Buffer.byteLength(error.message) <= MAX_BLOCK_BYTES);
+      assert.ok(
+        error instanceof Error &&
+          Buffer.byteLength(error.message) <= DEFAULT_OUTPUT_BUDGETS.blockBytes,
+      );
       assert.equal(result.issues.length, 1);
       assert.equal(result.issues[0].field, "path");
       assert.equal(result.omittedIssues, 1);
@@ -184,12 +196,15 @@ test("a property path exceeds the JSON budget → omit the whole issue and keep 
 test("the argument copy uses escaping and multibyte text → count serialized bytes before omitting it", async () => {
   await assert.rejects(
     callTool(makeReadOverride(cwd, DEFAULT_CONFIG), {
-      path: '"中🙂'.repeat(MAX_BLOCK_BYTES),
+      path: '"中🙂'.repeat(DEFAULT_OUTPUT_BUDGETS.blockBytes),
       limit: 0,
     }),
     (error: unknown) => {
       const result = argumentError(error);
-      assert.ok(error instanceof Error && Buffer.byteLength(error.message) <= MAX_BLOCK_BYTES);
+      assert.ok(
+        error instanceof Error &&
+          Buffer.byteLength(error.message) <= DEFAULT_OUTPUT_BUDGETS.blockBytes,
+      );
       assert.equal(result.issues.length, 1);
       assert.equal(result.issues[0].field, "limit");
       assert.equal(result.argumentsOmitted, true);

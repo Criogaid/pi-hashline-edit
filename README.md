@@ -122,7 +122,7 @@ Fields appear in this order and are omitted when they do not apply. Each has one
 | `tool`, `path` | Tool | The tool and the call's `path` argument as supplied; a grep call may name several. |
 | `publication` | Commit layer | Mutation tools only: `NOT_PUBLISHED`, `PUBLISHED`, or `UNKNOWN`. On success, `NOT_PUBLISHED` means no net change. See [Publication](#publication). |
 | `stage` | Commit layer | Failures of mutation tools only: `prepare`, `commit`, or `post_process`. |
-| `message` | Throwing layer | What the failing step found, in its own words; never advice, and never a restatement of a deeper failure. Up to 4 KiB. |
+| `message` | Throwing layer | What the failing step found, in its own words; never advice, and never a restatement of a deeper failure. Uses the [text-field budget](#output-budgets). |
 | `cause` | Throwing layer | The failure beneath that step: `error` (our code) or `code` (Node's errno), its own `message`, and nested `cause` or `errors`. Cause chains and distinct aggregate branches are retained; cyclic and repeated native errors are skipped. |
 | Code facts | Code | The facts of the error code, listed below. |
 | `pagination`, `truncatedAt`, `lineTooLong` | `read` | Rows shown and the next `offset` when more remain; the byte budget that stopped output; a first row too long to return. |
@@ -213,7 +213,7 @@ Collapsed cards use the shared bounded preview. Expanding shows all retained iss
 
 Within an edit operation, omit an optional `end` when no range is needed. `end: null` remains a schema error, including when other arguments are invalid.
 
-Argument diagnostics share the 16 KiB block budget in [`budgets.ts`](src/pi/budgets.ts) and remain valid JSON at that limit. An oversized or unavailable argument copy is omitted with `argumentsOmitted: true`. Oversized reports keep whole opening and closing issues and report their omitted count in `omittedIssues`; an oversized field path is omitted whole. Each reason and fix has a 4 KiB budget and retains its opening and final cause with an omission notice. `schemaLimited: true` means a native diagnostic allowance was reached, so additional issues may remain. Invalid arguments prevent execution. Filesystem access, anchor verification, regex probing by ripgrep, and forget eligibility remain subsequent checks that require valid arguments.
+Argument diagnostics share the [diagnostic-block budget](#output-budgets) in [`budgets.ts`](src/pi/budgets.ts) and remain valid JSON at that limit. An oversized or unavailable argument copy is omitted with `argumentsOmitted: true`. Oversized reports keep whole opening and closing issues and report their omitted count in `omittedIssues`; an oversized field path is omitted whole. Each reason and fix uses the text-field budget and retains its opening and final cause with an omission notice. `schemaLimited: true` means a native diagnostic allowance was reached, so additional issues may remain. Invalid arguments prevent execution. Filesystem access, anchor verification, regex probing by ripgrep, and forget eligibility remain subsequent checks that require valid arguments.
 
 ### Edit operations
 
@@ -282,9 +282,9 @@ inspect the result and resubmit.
 ```
 
 - Candidates are found by hashing each line's current content with the **cited** line number; each returned anchor uses the candidate's actual line number, so a failure shows both the `cited` and current positions. Its `result` is `shifted`, `ambiguous`, or `unresolved`, and its `search` is `local window` (lines outside it were not checked) or `full file`. A unique local candidate does not establish uniqueness across the file, because matches outside the window were not checked.
-- A unique candidate gives its new anchor in `candidate` and that line's complete `content` once, without a neighborhood. A row over 4 KiB omits the content in full, stated in `contentOmitted`.
+- A unique candidate gives its new anchor in `candidate` and that line's complete `content` once, without a neighborhood. A row over the [text-field budget](#output-budgets) omits the content in full, stated in `contentOmitted`.
 - An ambiguous failure lists `candidates` (and `omittedCandidates`). Their `candidateNeighborhoods` come from the same snapshot, are clipped to file boundaries, merged, and emitted in ascending line order within byte budgets, each with its `lines` range and `rows`. Their rows are observations, not suggested targets; a candidate row already shown there is not repeated in the failure.
-- With no candidate, `observed` holds the current cited row as a complete `LINE#HASH│content` observation within the 4 KiB row limit. Oversized and out-of-range rows are reported in `observedOmitted` without content.
+- With no candidate, `observed` holds the current cited row as a complete `LINE#HASH│content` observation within the text-field budget. Oversized and out-of-range rows are reported in `observedOmitted` without content.
 
 Each part of a rejection states its facts once. `message` states that anchors did not match, and `failures` gives each outcome; `publication: "NOT_PUBLISHED"` states that the batch wrote nothing, for range and overlap rejections too. Every `matched` entry is a checksum check in this snapshot. The report's `next` covers every anchor failure: confirm that a candidate or observed anchor is the intended target before reusing it, and use `read` or `grep` for omitted rows, out-of-range lines, or more context. Every submitted anchor is verified again on retry.
 
@@ -325,7 +325,7 @@ Original `foo bar` becomes `bar baz`; inserted text is not searched again. All r
 
 ### Read
 
-Required: non-empty `path`. Optional: positive safe-integer `offset` (1-based; default 1) and positive safe-integer `limit` (default 500 lines, set by `read.defaultLimit`). Fractions, zero, negative values, and unknown fields are rejected. Returned text is capped at 256 KiB by default (`read.maxKiB`); oversized rows are not returned as partial editable lines. Files without a final newline are identified in the header. Content delegated to Pi's built-in read is displayed without interpreting source text as hashline anchors.
+Required: non-empty `path`. Optional: positive safe-integer `offset` (1-based; default 1) and positive safe-integer `limit` (default 500 lines, set by `read.defaultLimit`). Fractions, zero, negative values, and unknown fields are rejected. The [model-capacity budget](#output-budgets) caps returned text unless `read.maxKiB` sets an explicit cap; oversized rows are not returned as partial editable lines. Files without a final newline are identified in the header. Content delegated to Pi's built-in read is displayed without interpreting source text as hashline anchors.
 
 When the line limit or the byte budget leaves more content, the report's `pagination` (also in `details.pagination`) gives the 1-based `start`, inclusive `end`, `totalLines`, and `nextOffset`, and `next` says to continue from `nextOffset`. This applies to default and explicit limits. Reads reaching EOF omit pagination. A byte-limited read also states the budget in `truncatedAt` and keeps its truncation metadata in `details.truncation`; a first row too large to return is `lineTooLong`, with no rows.
 
@@ -357,11 +357,11 @@ Files with invalid UTF-8 and no NUL remain searchable as raw bytes, without CRLF
 
 All output modes verify invalid UTF-8 results against the source's pre-search byte revision and the complete raw-byte match spans reported by ripgrep, including the part of a multiline match omitted by `limit`. The tool keeps fixed-size byte digests and verifies them with a bounded scan; different malformed bytes cannot be accepted merely because both display as the same replacement character. Content output retains its complete-file byte revision check for valid UTF-8 as well. A detected mismatch reports `FILE_CHANGED` (`File changed during search.`).
 
-Search diagnostics are preserved even when a result limit stops ripgrep. Readable, confirmed matches remain available with the diagnostics in the report's `diagnostics` and `details.incomplete: true`; `matches`, `files`, and counts then cover only confirmed matches. If no results can be returned, the tool reports `SEARCH_INCOMPLETE` with the diagnostics in `diagnostics`, rather than claiming there are no matches. Search diagnostics have a separate 4 KiB display budget. Ripgrep stderr and batch aggregation each retain up to 64 KiB. All three limits preserve opening context and the final cause where lines fit, and explicitly mark omitted middle text. The shared implementation is [`DiagnosticBuffer`](src/pi/diagnostic-buffer.ts); limits live in [`budgets.ts`](src/pi/budgets.ts) and [`rg-process.ts`](src/pi/rg-process.ts).
+Search diagnostics are preserved even when a result limit stops ripgrep. Readable, confirmed matches remain available with the diagnostics in the report's `diagnostics` and `details.incomplete: true`; `matches`, `files`, and counts then cover only confirmed matches. If no results can be returned, the tool reports `SEARCH_INCOMPLETE` with the diagnostics in `diagnostics`, rather than claiming there are no matches. Search diagnostics use the [text-field budget](#output-budgets). Ripgrep stderr and batch aggregation each retain up to 64 KiB as process resource limits. These buffers preserve opening context and the final cause and explicitly mark omitted middle text. The shared implementation is [`DiagnosticBuffer`](src/pi/diagnostic-buffer.ts); limits live in [`budgets.ts`](src/pi/budgets.ts) and [`rg-process.ts`](src/pi/rg-process.ts).
 
 Cards render the [report](#reports); expanding reveals every retained fact. These display limits do not shorten the tool result sent to the model.
 
-Long lines show a labeled partial preview of up to 500 UTF-16 units near a reported match column when available; context-only lines and matches without a recorded column show their beginning. Labels report 1-based UTF-16 column ranges, and slicing preserves surrogate pairs. The anchor hashes the entire current line, not the preview; use `read` before reconstructing a line from its content.
+Long lines show a labeled partial preview within the [model-capacity preview allowance](#output-budgets), measured in UTF-16 units, near a reported match column when available; context-only lines and matches without a recorded column show their beginning. Labels report 1-based UTF-16 column ranges, and slicing preserves surrogate pairs. The anchor hashes the entire current line, not the preview; use `read` before reconstructing a line from its content.
 
 ### Replace
 
@@ -422,7 +422,7 @@ Add `hashlineEdit` to Pi's global settings (`~/.pi/agent/settings.json` by defau
     "forget": false,
     "hashLen": 4,
     "shiftRadius": 15,
-    "read": { "defaultLimit": 500, "maxKiB": 256 },
+    "read": { "defaultLimit": 500 },
     "grep": { "defaultLimit": 100, "defaultContext": 0 },
     "replace": { "regexTimeoutMs": 5000 }
   }
@@ -439,7 +439,7 @@ Top-level settings control shared behavior; each group configures one tool.
 | `hashLen` | `4` | Integer checksum length, 2–8 characters. `edit` accepts only anchors of this length; anchors produced under another setting must be read again. |
 | `shiftRadius` | `15` | Integer first-pass recovery-search radius, 0–100 lines. With no local candidates, recovery searches the rest of the file; `0` disables both searches. |
 | `read.defaultLimit` | `500` | Lines returned when a call omits `limit`; positive safe integer. |
-| `read.maxKiB` | `256` | Anchored text returned per call, 1–4096 KiB. Calls cannot raise it. |
+| `read.maxKiB` | Model capacity | Optional explicit anchored-text cap, 1–4096 KiB. Omit for automatic sizing; invalid values also select automatic sizing. Calls cannot raise an explicit cap. |
 | `grep.defaultLimit` | `100` | Matching lines returned when a call omits `limit`; positive safe integer. |
 | `grep.defaultContext` | `0` | Context lines shown when a call omits `context`, 0–20. |
 | `replace.regexTimeoutMs` | `5000` | Time limit for one regex batch, 1000–300000 ms, including worker startup. |
@@ -526,21 +526,34 @@ An existing UTF-8 BOM stays at byte zero through first-line replacement/deletion
 
 ### Output budgets
 
-These limits bound model context, not file size. Each omission is a counted or named report fact, and the report's `next` directs the caller to read more.
+These byte limits scale with the selected model's declared `contextWindow`, independently of remaining context. Pi does not expose a universal exact tokenizer or a separate maximum-input field. The policy therefore uses capacity to choose byte allowances; it does not guarantee that a whole conversation, multiple tool results, or codemode's combined output fits a model request. `maxTokens` is an output limit and is not used.
+
+[`budgets.ts`](src/pi/budgets.ts) defines the calculation. For a known positive safe-integer capacity `N`:
+
+| Allowance | Calculation |
+| --- | --- |
+| Content (`B`) | `N` bytes, one byte per declared context token |
+| Diagnostic block (`D`) | `max(512, floor(B / 4))` bytes |
+| Text field / candidate row (`F`) | `max(128, floor(D / 4))` bytes |
+| Grep preview (`P`) | `floor(F / 4)` UTF-16 units, excluding the partial-line label |
+
+The two minimums leave room for JSON envelopes and diagnostic omission markers. For example, a 65,536-token model gets 64 KiB content, 16 KiB blocks, 4 KiB fields, and 1,024-unit previews; a 1,048,576-token model gets 1 MiB content, 256 KiB blocks, 64 KiB fields, and 16,384-unit previews. Unknown or invalid capacity uses bounded defaults: read 256 KiB, grep 50 KiB, blocks 16 KiB, fields 4 KiB, previews 500 units. A virtual model uses its declared selection limit; an undeclared limit uses these defaults.
+
+[`model-budgets.ts`](src/pi/model-budgets.ts) owns one lazy cache per extension instance. The first use calculates it; repeated calls reuse the immutable snapshot. A changed provider, model id, or declared capacity triggers calculation on the next use. Selection events bind Pi's live model getter without calculating. Each execution captures its budget before asynchronous work, including waiting for mutation queues. Argument rejections use the same provider before execution. These are local metadata reads, with no context-usage, provider, or tokenizer request.
 
 | Output | Limit |
 | --- | --- |
-| `read` | Default 500 rows (`read.defaultLimit`), overridable with `limit`; 256 KiB of anchored text (`read.maxKiB`). No partial anchor rows. An oversized single row directs the caller to inspect chunks with `bash` or make a known text change with `replace`; reducing `limit` cannot split a physical line. |
-| `grep` | Default 100 matching lines (`grep.defaultLimit`), overridable; up to 500 UTF-16 units per partial line preview, plus labels and Pi's total output limits. Match previews use rg byte offsets; hashes use full content. The report's `diagnostics` have a separate 4 KiB budget. |
-| `forget` tag | With `forget` enabled: direct `read` and content-mode `grep` text results of 2 KiB or more, and image reads. Successful codemode outputs containing a successful read or content-mode grep call use the same threshold and are forgotten as one result; nested results are not tagged. |
-| Report `message` | 4 KiB, preserving the opening and the final cause with an omission notice; each `message` within `cause` has the same budget. |
-| Argument errors | 16 KiB of valid JSON for combined tool-specific and schema issues; omit the argument copy before omitting whole issues and label both omissions. Each reason and fix has a 4 KiB budget preserving opening/closing text. Pi's schema error allowance applies separately within each top-level field. |
-| Anchor `failures` | 16 KiB of compact JSON, with no fixed failure-count limit; leading entries are kept whole and the rest counted in `omittedFailures`. Unique candidates include complete rows up to 4 KiB, and ambiguous failures list up to eight candidates each. Unresolved anchors show the current cited row when it fits; oversized or out-of-range rows require a fresh `read` or `grep`. |
-| Anchor `matched` | Independent 16 KiB, with no fixed entry-count limit. Omitted entries are counted in `omittedMatched` and are not implied matched. |
-| `candidateNeighborhoods` | 16 KiB of complete anchored row text, lowest-line first; no fixed row-count limit. Uses the same first eight candidates per failure as the failure lists. Each listed candidate row is limited to 4 KiB. Rows exceeding either limit are omitted in full and counted in `omittedNeighborhoodRows`; later rows that fit are still returned, with gaps reflected in the `lines` ranges. |
-| `forget` `available` ids | 16 KiB; omitted ids are counted in `omittedAvailable`. |
+| `read` | Default 500 rows (`read.defaultLimit`), overridable with `limit`; `B` bytes of anchored text unless an explicit `read.maxKiB` overrides it. No partial anchor rows. An oversized single row directs the caller to inspect chunks with `bash` or make a known text change with `replace`; reducing `limit` cannot split a physical line. |
+| `grep` | Default 100 matching lines (`grep.defaultLimit`), overridable; `B` payload bytes and `P` UTF-16 units per preview. The match limit controls matching rows, with no extra fixed total-row cap. Hashes and revision checks use full content. Diagnostics have a separate `F` byte allowance. |
+| `forget` tag | With `forget` enabled: direct `read` and content-mode `grep` text results of 2 KiB or more, and image reads. Successful codemode outputs containing a successful read or content-mode grep call use the same threshold and are forgotten as one result; nested results are not tagged. This eligibility threshold stays fixed. |
+| Report `message` | `F` bytes, preserving the opening and the final cause with an omission notice; each `message` within `cause` has the same allowance. Worker replies transport full failures; the receiving tool applies its captured allowance. |
+| Argument errors | `D` bytes of valid JSON for combined tool-specific and schema issues; omit the argument copy before omitting whole issues and label both omissions. Each reason and fix uses `F` bytes. Pi's schema error allowance applies separately within each top-level field. |
+| Anchor `failures` | `D` bytes of compact JSON, with no fixed failure-count limit; leading entries are kept whole and the rest counted in `omittedFailures`. Unique candidates include complete rows up to `F` bytes, and ambiguous failures list up to eight candidates each. Unresolved anchors show the current cited row when it fits; oversized or out-of-range rows require a fresh `read` or `grep`. |
+| Anchor `matched` | Independent `D` bytes, with no fixed entry-count limit. Omitted entries are counted in `omittedMatched` and are not implied matched. |
+| `candidateNeighborhoods` | `D` bytes of complete anchored row text, lowest-line first; no fixed row-count limit. Uses the same first eight candidates per failure as the failure lists. Each listed candidate row is limited to `F` bytes. Rows exceeding either limit are omitted in full and counted in `omittedNeighborhoodRows`; later rows that fit are still returned, with gaps reflected in the `lines` ranges. |
+| `forget` `available` ids | `D` bytes; omitted ids are counted in `omittedAvailable`. |
 
-The fact lists have independent budgets; a report can exceed 16 KiB in total. `next` is outside every budget. Limits apply to the report; core failure results retain every input-anchor check.
+The fact lists have independent allowances; a report can exceed `D` bytes in total. `next` is outside every budget. Each omission is a counted or named report fact. Limits apply to the report; core failure results retain every input-anchor check. Native image/NUL reads, Bash command output, process buffers, and TUI collapsed previews retain their owners' limits.
 
 ### Publication
 

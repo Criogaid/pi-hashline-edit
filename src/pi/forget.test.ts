@@ -3,9 +3,8 @@ import assert from "node:assert/strict";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
-import { FORGET_MIN_BYTES } from "./budgets.ts";
+import { DEFAULT_OUTPUT_BUDGETS, FORGET_MIN_BYTES } from "./budgets.ts";
 import { withResultTag } from "./forget-tool.ts";
-import { DEFAULT_CONFIG } from "./config.ts";
 import {
   assertForgotten,
   finish,
@@ -139,7 +138,7 @@ for (const mode of ["pagination", "byte truncation"] as const) {
   }, async (t) => {
     const f = await openForgetSession(t);
     const path = join(f.cwd, "build.log");
-    const maxReadBytes = DEFAULT_CONFIG.read.maxKiB * 1024;
+    const maxReadBytes = DEFAULT_OUTPUT_BUDGETS.readBytes;
     const trailingLine = mode === "byte truncation" ? "y".repeat(maxReadBytes) : "next page";
     await writeFile(path, `skip this line\n${LOG_BODY}${trailingLine}\n`);
     const read = f.read("read-log");

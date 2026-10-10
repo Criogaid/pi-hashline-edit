@@ -35,7 +35,7 @@ test("defaults come from the settings schema", () => {
     forget: false,
     hashLen: 4,
     shiftRadius: 15,
-    read: { defaultLimit: 500, maxKiB: 256 },
+    read: { defaultLimit: 500, maxKiB: undefined },
     grep: { defaultLimit: 100, defaultContext: 0 },
     replace: { regexTimeoutMs: 5_000 },
   });

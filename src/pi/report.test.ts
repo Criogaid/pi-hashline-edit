@@ -13,7 +13,7 @@ import {
   describeFailure,
   renderReport,
 } from "./report.ts";
-import { MAX_ERROR_TEXT_BYTES } from "./budgets.ts";
+import { DEFAULT_OUTPUT_BUDGETS } from "./budgets.ts";
 
 const text = (value: string) => ({ type: "text" as const, text: value });
 function displayed(result: Parameters<typeof renderToolError>[0]) {
@@ -112,12 +112,14 @@ test("wide and repeated cause graph with a cycle → retains every distinct fail
 });
 
 test("oversized cause message → retains opening and terminal text within the message budget", () => {
-  const cause = causeOf(new Error(`opening${"\u0000".repeat(MAX_ERROR_TEXT_BYTES * 2)}terminal`));
+  const cause = causeOf(
+    new Error(`opening${"\u0000".repeat(DEFAULT_OUTPUT_BUDGETS.fieldBytes * 2)}terminal`),
+  );
   assert.ok(cause);
   assert.match(cause.message, /^opening/);
   assert.match(cause.message, /terminal$/);
   assert.match(cause.message, /omitted/i);
-  assert.ok(Buffer.byteLength(cause.message) <= MAX_ERROR_TEXT_BYTES);
+  assert.ok(Buffer.byteLength(cause.message) <= DEFAULT_OUTPUT_BUDGETS.fieldBytes);
 });
 
 test("native filesystem failure → reports its diagnostic once without a synthetic cause", () => {

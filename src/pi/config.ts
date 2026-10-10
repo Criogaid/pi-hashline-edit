@@ -53,7 +53,13 @@ export const configSchema = Type.Object({
       500,
       "Lines returned when limit is omitted.",
     ),
-    maxKiB: integerSetting(integerRange(1, 4096), 256, "Anchored text returned per call, in KiB."),
+    maxKiB: Type.Optional(
+      Type.Number({
+        ...integerRange(1, 4096),
+        description:
+          "Explicit anchored-text byte cap in KiB; omitted uses the selected model capacity.",
+      }),
+    ),
   }),
   grep: Type.Object({
     defaultLimit: integerSetting(
@@ -95,7 +101,9 @@ function resolveSetting<T extends TSchema>(schema: T, value: unknown): Static<T>
       ]),
     ) as Static<T>;
   }
-  return (Value.Check(schema, value) ? value : Value.Create(schema)) as Static<T>;
+  return (
+    Value.Check(schema, value) ? value : Type.IsOptional(schema) ? undefined : Value.Create(schema)
+  ) as Static<T>;
 }
 
 export const DEFAULT_CONFIG: HashlineEditConfig = resolveSetting(configSchema, {});

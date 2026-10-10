@@ -32,7 +32,12 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { Type, type Static } from "typebox";
-import { FORGET_MIN_BYTES, formatKiB, MAX_BLOCK_BYTES } from "./budgets.ts";
+import {
+  defaultOutputBudgets,
+  FORGET_MIN_BYTES,
+  formatKiB,
+  type OutputBudgetProvider,
+} from "./budgets.ts";
 import { renderToolError } from "./render.ts";
 import {
   boundedFacts,
@@ -161,7 +166,10 @@ type ForgetParams = Static<typeof forgetSchema>;
 type ForgetDetails = { forgotten?: { id: string; receipt?: string }[] } & Partial<ReportDetails>;
 
 /** Register the forget tool and the context hooks that apply it. */
-export function registerForgetTool(pi: ExtensionAPI): void {
+export function registerForgetTool(
+  pi: ExtensionAPI,
+  budgets: OutputBudgetProvider = defaultOutputBudgets,
+): void {
   // Tagged results of the batch the current response is the first to see, by id.
   let forgettable = new Map<string, { toolCallId: string; receipt?: string }>();
   // Results named by forget during the current response, applied at its turn_end.
@@ -284,7 +292,7 @@ export function registerForgetTool(pi: ExtensionAPI): void {
       "Right after inspection output with a resultId, call forget with that id if you will not need any of its content again; put facts you still need in note. A codemode resultId forgets the entire script output. Results from earlier steps cannot be forgotten.",
     ],
     parameters: forgetSchema,
-    prepareArguments: createArgumentPreparer("forget", forgetSchema),
+    prepareArguments: createArgumentPreparer("forget", forgetSchema, undefined, budgets),
     renderShell: "default" as const,
     renderCall(args: ForgetParams, theme: Theme) {
       let text =
@@ -311,10 +319,11 @@ export function registerForgetTool(pi: ExtensionAPI): void {
       );
     },
     async execute(_toolCallId: string, params: ForgetParams) {
-      return runTool("forget", {}, async () => {
+      const budget = budgets();
+      return runTool("forget", { budget }, async () => {
         const unknown = params.ids.filter((id) => !forgettable.has(id));
         if (unknown.length > 0) {
-          const available = boundedFacts([...forgettable.keys()], MAX_BLOCK_BYTES);
+          const available = boundedFacts([...forgettable.keys()], budget.blockBytes);
           throw new HashlineError(
             "NOT_FORGETTABLE",
             "Only tagged inspection results from the previous step can be forgotten.",

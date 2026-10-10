@@ -13,7 +13,7 @@ import {
   type ErrorFacts,
   type Cause,
 } from "./report-schema.ts";
-import { boundedText, causeOf, restoreCause } from "./report-cause.ts";
+import { causeOf, restoreCause } from "./report-cause.ts";
 
 const RESULT_SCHEMA = Type.Object(
   {
@@ -62,16 +62,16 @@ export function decodeWorkerReply(value: unknown): WorkerReply | undefined {
   }
 }
 
-/** Encode the throwing step and its underlying failures independently. */
+/** Transport full failures; the receiving tool applies its model-budget snapshot. */
 export function workerFailure(caught: unknown): WorkerFailure {
   if (caught instanceof HashlineError) {
     // Its constructor enforced the code/facts relationship before crossing the boundary.
     return {
       error: {
         code: caught.errorCode,
-        message: boundedText(caught.message),
+        message: caught.message,
         ...(caught.facts === undefined ? {} : { facts: caught.facts }),
-        ...(caught.cause === undefined ? {} : { cause: causeOf(caught.cause) }),
+        ...(caught.cause === undefined ? {} : { cause: causeOf(caught.cause, Infinity) }),
       },
     } as WorkerFailure;
   }
@@ -79,7 +79,7 @@ export function workerFailure(caught: unknown): WorkerFailure {
     error: {
       code: "REGEX_WORKER_FAILED",
       message: "Regex evaluation failed.",
-      cause: causeOf(caught),
+      cause: causeOf(caught, Infinity),
     },
   };
 }

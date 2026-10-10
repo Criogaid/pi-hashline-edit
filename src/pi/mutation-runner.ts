@@ -36,6 +36,7 @@ import {
 import { canonicalPath } from "./path.ts";
 import { throwIfCancelled } from "./error-text.ts";
 import { runTool, type ReportDetails } from "./report.ts";
+import { defaultOutputBudgets, type OutputBudgetProvider, type OutputBudgets } from "./budgets.ts";
 
 export type ActionFusionExecutor = ReturnType<typeof createActionFusionExecutor>;
 
@@ -50,12 +51,14 @@ export interface MutationTarget {
   /** The caller-supplied path, used in reports and diffs. */
   readonly displayPath: string;
   readonly signal: AbortSignal | undefined;
+  readonly budget: OutputBudgets;
 }
 
 export interface MutationToolSpec<TParams extends { path: string }, TDetails> {
   readonly tool: MutationToolName;
   readonly cwd: string;
   readonly fusion: ActionFusionExecutor | undefined;
+  readonly budgets?: OutputBudgetProvider;
   /** Perform the mutation. Runs inside the file mutation queue. */
   run(params: TParams, target: MutationTarget): Promise<MutationOutcome<TDetails>>;
 }
@@ -78,29 +81,42 @@ export async function executeMutation<TParams extends { path: string }, TDetails
   const { toolCallId, signal, onUpdate, ctx } = call;
   const { then_run, ...mutationParams } = call.params;
   const displayPath = mutationParams.path;
-  const result = await runTool(tool, { path: displayPath, mutation: true, signal }, async () => {
-    const absolutePath = canonicalPath(cwd, displayPath);
-    const target: MutationTarget = { absolutePath, displayPath, signal };
-    const mutate = (): Promise<MutationOutcome<TDetails>> =>
-      withFileMutationQueue(absolutePath, () =>
-        spec.run(mutationParams as unknown as TParams, target),
-      );
-    if (!fusion) {
-      const outcome = await mutate();
-      return finalizeMutation(tool, displayPath, outcome, commitFreshness(outcome.commit));
-    }
-    return fusion({
-      toolCallId,
-      tool,
-      displayPath,
-      absolutePath,
-      thenRun: then_run,
-      mutate,
-      signal,
-      ctx,
-      onUpdate,
-    });
-  });
+  const budget = (spec.budgets ?? defaultOutputBudgets)();
+  const result = await runTool(
+    tool,
+    { path: displayPath, mutation: true, signal, budget },
+    async () => {
+      const absolutePath = canonicalPath(cwd, displayPath);
+      const target: MutationTarget = { absolutePath, displayPath, signal, budget };
+      const mutate = (): Promise<MutationOutcome<TDetails>> =>
+        withFileMutationQueue(absolutePath, () =>
+          spec.run(mutationParams as unknown as TParams, target),
+        );
+      if (!fusion) {
+        const outcome = await mutate();
+        return finalizeMutation(
+          tool,
+          displayPath,
+          outcome,
+          commitFreshness(outcome.commit),
+          undefined,
+          budget,
+        );
+      }
+      return fusion({
+        toolCallId,
+        tool,
+        displayPath,
+        absolutePath,
+        thenRun: then_run,
+        budget,
+        mutate,
+        signal,
+        ctx,
+        onUpdate,
+      });
+    },
+  );
   return result as AgentToolResult<TDetails & Partial<ReportDetails>>;
 }
 

@@ -36,6 +36,7 @@ import { finalizeMutation, type CommandFacts, type MutationOutcome } from "./mut
 import { errorMessage } from "../core/errors.ts";
 import { throwIfCancelled } from "./error-text.ts";
 import { causeOf, CommandNotRun, type ReportDetails } from "./report.ts";
+import { DEFAULT_OUTPUT_BUDGETS, type OutputBudgets } from "./budgets.ts";
 import type {
   ActionFusionProgress,
   CommandStatus,
@@ -217,6 +218,7 @@ export function createActionFusionExecutor(
     displayPath,
     absolutePath,
     thenRun,
+    budget = DEFAULT_OUTPUT_BUDGETS,
     mutate,
     signal,
     ctx,
@@ -228,6 +230,7 @@ export function createActionFusionExecutor(
     displayPath: string;
     absolutePath: string;
     thenRun: ThenRunInput | undefined;
+    budget?: OutputBudgets;
     mutate: () => Promise<MutationOutcome<TDetails>>;
     signal: AbortSignal | undefined;
     ctx: ExtensionToolContext;
@@ -283,7 +286,7 @@ export function createActionFusionExecutor(
     /** A mutation that did not complete keeps its own failure; Fusion adds only the command status. */
     const notRun = (error: unknown, command: "skipped" | "cancelled") => {
       report(command, publicationOf(error), "unknown");
-      return new CommandNotRun(error, command, causeOf(progressFailure));
+      return new CommandNotRun(error, command, causeOf(progressFailure, budget.fieldBytes));
     };
     report("waiting", "NOT_PUBLISHED", "unknown");
     let terminate: boolean | undefined;
@@ -313,6 +316,7 @@ export function createActionFusionExecutor(
           outcome,
           observation,
           command && { ...command, progressError: progressFailure },
+          budget,
         );
         const actionFusion: ActionFusionDetails = {
           publication,

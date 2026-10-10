@@ -15,6 +15,7 @@
 import type { ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import type { TSchema } from "typebox";
 import { loadConfig } from "./pi/config.ts";
+import { registerModelBudgets } from "./pi/model-budgets.ts";
 import { makeEditOverride } from "./pi/edit-tool.ts";
 import { makeReadOverride } from "./pi/read-tool.ts";
 import { makeGrepOverride } from "./pi/grep-tool.ts";
@@ -33,6 +34,7 @@ export default function (pi: ExtensionAPI) {
   // `enabled: false` leaves the extension fully inert — pi's built-in
   // read/edit/grep/replace/write stay in place, as if this package were not installed.
   if (config.enabled) {
+    const budgets = registerModelBudgets(pi);
     const reportProgress = registerFusionCards(pi);
     const fusion = config.actionFusion
       ? createActionFusionExecutor(undefined, reportProgress)
@@ -40,12 +42,12 @@ export default function (pi: ExtensionAPI) {
     const registerMutation = <TParams extends TSchema, TDetails>(
       tool: ToolDefinition<TParams, TDetails>,
     ) => pi.registerTool(fusion ? withMutationStatus(tool) : tool);
-    registerMutation(makeWriteOverride(cwd, fusion));
-    registerMutation(makeEditOverride(cwd, config, fusion));
-    registerMutation(makeReplaceTool(cwd, config, fusion));
+    registerMutation(makeWriteOverride(cwd, fusion, budgets));
+    registerMutation(makeEditOverride(cwd, config, fusion, budgets));
+    registerMutation(makeReplaceTool(cwd, config, fusion, budgets));
 
-    pi.registerTool(makeReadOverride(cwd, config));
-    pi.registerTool(makeGrepOverride(cwd, config));
-    if (config.forget) registerForgetTool(pi);
+    pi.registerTool(makeReadOverride(cwd, config, budgets));
+    pi.registerTool(makeGrepOverride(cwd, config, budgets));
+    if (config.forget) registerForgetTool(pi, budgets);
   }
 }

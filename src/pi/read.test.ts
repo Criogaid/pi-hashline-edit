@@ -11,11 +11,11 @@ import { makeReadOverride } from "./read-tool.ts";
 import { computeLineHash } from "../core/hash.ts";
 import { callTool } from "./tool-call.testing.ts";
 import { DEFAULT_CONFIG } from "./config.ts";
-import { FORGET_MIN_BYTES, formatKiB } from "./budgets.ts";
+import { DEFAULT_OUTPUT_BUDGETS, FORGET_MIN_BYTES, formatKiB } from "./budgets.ts";
 import { taggedResultId } from "./forget.testing.ts";
 import { reportOf } from "./report.ts";
 
-const DEFAULT_READ_MAX_BYTES = DEFAULT_CONFIG.read.maxKiB * 1024;
+const DEFAULT_READ_MAX_BYTES = DEFAULT_OUTPUT_BUDGETS.readBytes;
 
 async function withDir<T>(fn: (dir: string) => Promise<T>): Promise<T> {
   const dir = await mkdtemp(join(tmpdir(), "hl-"));

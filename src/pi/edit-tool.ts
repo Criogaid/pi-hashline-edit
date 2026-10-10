@@ -36,6 +36,7 @@ import {
   type DiffCounts,
 } from "./render.ts";
 import { describeEditFailure } from "./failure-context.ts";
+import { defaultOutputBudgets, type OutputBudgetProvider } from "./budgets.ts";
 import {
   executeMutation,
   runTextMutation,
@@ -285,6 +286,7 @@ export function makeEditOverride(
   cwd: string,
   config: HashlineEditConfig,
   fusion?: ActionFusionExecutor,
+  budgets: OutputBudgetProvider = defaultOutputBudgets,
 ) {
   // Schema, verification, and recovery use the registered configuration.
   const { hashLen, shiftRadius } = config;
@@ -305,8 +307,11 @@ export function makeEditOverride(
       ...(fusion ? ACTION_FUSION_GUIDELINES : []),
     ],
     parameters,
-    prepareArguments: createArgumentPreparer("edit", parameters, (args, report) =>
-      checkEditArguments(args, hashLen, report),
+    prepareArguments: createArgumentPreparer(
+      "edit",
+      parameters,
+      (args, report) => checkEditArguments(args, hashLen, report),
+      budgets,
     ),
     renderShell: "default" as const,
 
@@ -335,6 +340,7 @@ export function makeEditOverride(
           tool: "edit",
           cwd,
           fusion,
+          budgets,
           run: (mutationParams, target) =>
             runHashline(target, mutationParams.edits, hashLen, shiftRadius),
         },
@@ -364,6 +370,7 @@ function runHashline(
         result.failure,
         { currentText, anchors: anchorFormatter },
         translated.length > 1,
+        target.budget,
       );
     }
 
