@@ -6,7 +6,14 @@ import { theme } from "../../node_modules/@earendil-works/pi-coding-agent/dist/m
 import { HashlineError } from "../core/errors.ts";
 import { formatArgumentError } from "./argument-error.ts";
 import { renderToolError } from "./render.ts";
-import { causeOf, decodeReport, failureResult, reportOf } from "./report.ts";
+import {
+  causeOf,
+  decodeReport,
+  failureResult,
+  reportOf,
+  describeFailure,
+  renderReport,
+} from "./report.ts";
 import { MAX_CAUSE_BYTES } from "./budgets.ts";
 import { REPORT_VERSION } from "./report-schema.ts";
 
@@ -149,4 +156,15 @@ test("report-contract: external cause exceeds graph limits → rejects it before
     cause,
   };
   assert.equal(decodeReport(JSON.stringify(value)), undefined);
+});
+
+test("native filesystem failure without a nested cause → preserves errno and original diagnostic", () => {
+  for (const code of ["EACCES", "ELOOP", "ENOTDIR"]) {
+    const native = Object.assign(new Error(`${code}: cannot inspect source`), { code });
+    const report = describeFailure("grep", native, { path: "source" });
+    assert.equal(report.error, "FILESYSTEM_ERROR");
+    assert.equal(report.cause?.code, code);
+    assert.equal(report.cause?.message, native.message);
+    assert.equal(renderReport(report).split(native.message).length - 1, 1);
+  }
 });

@@ -139,6 +139,8 @@ Fields appear in this order and are omitted when they do not apply. Each has one
 | `forgotten`, `resultId`, `forgetScope`, `contentForgotten` | `forget` | See [Forget](#forget). |
 | `next` | Derived | The single recovery instruction, always last. Absent when nothing needs doing beyond the facts. |
 
+Native failures are classified at the tool boundary; their original errno, message and nested causes remain in `cause`. The boundary's `message` identifies the native operation failure.
+
 `next` is derived from the facts, never written by a throw site: once a mutation reached or may have reached the file (`PUBLISHED` or `UNKNOWN`), it says not to repeat the change and to read the file first, whatever the code; otherwise a failure's `next` is its code's recovery, or one of the alternatives the code defines. A success's `next` follows its first fact that needs one, in this order: `freshness` (read the file before further edits — the same sentence a published failure ends with), `omittedAnchors`, `lineTooLong`, `pagination`, `matchLimit`, `outputLimit`, `linePreviewLimit`, `contentForgotten`.
 
 The codes, their facts (`?` marks optional ones), and their recovery are defined once in [`report-schema.ts`](src/pi/report-schema.ts):

@@ -218,11 +218,8 @@ function classify(error: unknown, signal: AbortSignal | undefined): HashlineErro
   if (error instanceof HashlineError) return error;
   // Pi's native tools and Node report cancellation with their own errors.
   if (signal?.aborted) return cancellationError();
-  // The native layer threw: its message describes its own step.
   const code: ErrorCode = filesystemErrorCode(error) ?? "UNCLASSIFIED";
-  return new HashlineError(code, errorMessage(error), {
-    cause: error instanceof Error ? error.cause : undefined,
-  });
+  return new HashlineError(code, "Native tool operation failed.", { cause: error });
 }
 
 /** The recovery of a failure: publication first, then the throw site's alternative or the code's default. */
