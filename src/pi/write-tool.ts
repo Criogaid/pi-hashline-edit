@@ -62,7 +62,7 @@ export function makeWriteOverride(
     name: "write" as const,
     label: "write",
     description: withThenRunDescription(
-      "Write a whole file exactly as supplied, including its line endings. For partial changes to an existing file, prefer edit or replace. Choose create for a new file or overwrite for an existing file. Creates missing parent directories.",
+      "Write a whole file exactly as supplied, including its line endings. Do not use write for partial changes to an existing file; use edit or replace. Choose create for a new file or overwrite for an existing file. Creates missing parent directories.",
       fusion !== undefined,
     ),
     promptSnippet: "Write complete file content to a path",

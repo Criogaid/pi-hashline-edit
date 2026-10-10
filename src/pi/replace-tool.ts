@@ -128,7 +128,7 @@ export function makeReplaceTool(
     name: "replace" as const,
     label: "replace",
     description: withThenRunDescription(
-      "Replace every match of one or more literal or JavaScript-regex rules in a file. Rules swap only their matched fragments in one call, without line anchors; for inserting, deleting, or rewriting whole lines, prefer edit. Overlapping matches or a rule with no match reject the whole call. Returns a mutation report.",
+      "Replace every match of one or more literal or JavaScript-regex rules in a file. Rules swap only their matched fragments in one call, without line anchors. Use edit instead for inserting, deleting, or rewriting whole lines. Overlapping matches or a rule with no match reject the whole call. Returns a mutation report.",
       fusion !== undefined,
     ),
     promptSnippet: "Replace matching text across a file",

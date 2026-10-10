@@ -300,7 +300,7 @@ export function makeEditOverride(
     name: "edit" as const,
     label: "edit",
     description: withThenRunDescription(
-      "Edit file lines by LINE#HASH anchors checked against the current file. Each operation replaces whole lines: for the same change in several places, or a small edit inside one long line, prefer replace. On anchor failure, shows current context and recovery candidates; nothing is retried automatically.",
+      "Edit file lines by LINE#HASH anchors checked against the current file. Each operation replaces whole lines. Use replace instead when the same change repeats in several places, or when only a fragment of a long line changes. On anchor failure, shows current context and recovery candidates; nothing is retried automatically.",
       fusion !== undefined,
     ),
     promptSnippet: "Edit file lines using verified anchors",
