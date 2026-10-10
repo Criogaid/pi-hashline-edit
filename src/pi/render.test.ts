@@ -37,7 +37,13 @@ import { openTestSession } from "../testing/session.testing.ts";
 
 const versions = { publishedRevision: "r", observedRevision: "r" };
 const mutationDetails = (actionFusion?: ActionFusionDetails) => ({
-  ...generateMutationDetails("a.txt", "same\n", "same\n", versions, "PUBLISHED"),
+  ...generateMutationDetails("a.txt", "old\n", "new\n", versions, "PUBLISHED"),
+  report: {
+    tool: "edit",
+    path: "a.txt",
+    publication: actionFusion?.publication,
+    freshness: actionFusion?.freshness === "unchanged" ? undefined : actionFusion?.freshness,
+  },
   actionFusion,
 });
 
@@ -156,9 +162,9 @@ test("mutation card owns stale-anchor notices without internal status", () => {
     context,
   );
   const output = card.render(160).join("\n");
-  assert.match(output, /Edit saved/);
+  assert.match(output, /new/);
   assert.doesNotMatch(output, /publication=|freshness=/);
-  assert.match(output, /Anchors are stale: target changed/);
+  assert.match(stripVTControlCharacters(output), /freshness: changed/);
   assert.doesNotMatch(output, /command diagnostic/);
   assert.ok(output.includes(theme.getBgAnsi("toolSuccessBg")));
 });
@@ -183,7 +189,7 @@ test("mutation card omits status when then_run was not requested", () => {
     context,
   );
   const output = card.render(160).join("\n");
-  assert.match(output, /Edited a\.txt/);
+  assert.match(output, /new/);
   assert.doesNotMatch(output, /publication=|freshness=/);
   tool.renderCall!(args, theme, context);
   tool.renderResult!(
@@ -200,7 +206,7 @@ test("mutation card omits status when then_run was not requested", () => {
     context,
   );
   const staleOutput = card.render(160).join("\n");
-  assert.match(staleOutput, /Anchors are stale: target changed/);
+  assert.match(stripVTControlCharacters(staleOutput), /freshness: changed/);
   assert.doesNotMatch(staleOutput, /publication=|freshness=/);
 });
 
@@ -312,8 +318,6 @@ test("withMutationStatus renderResult initializes mutationShell defensively", ()
 
 test("grep renders anchored and plain groups with shared width and folded indentation", () => {
   initTheme("dark");
-  const notice =
-    "[Invalid UTF-8: replacement characters shown; plain line numbers cannot be used as edit anchors]";
   const raw = [
     "valid.ts · 2 matches",
     "9#ABCD│  alpha",
@@ -322,7 +326,6 @@ test("grep renders anchored and plain groups with shared width and folded indent
     "invalid.txt · 2 matches",
     "100│\tbad �",
     "7│\t\tother",
-    notice,
   ].join("\n");
   assert.deepEqual(toDisplayLines(raw, theme), [
     theme.fg("success", "valid.ts") + theme.fg("dim", " · 2 matches"),
@@ -332,7 +335,6 @@ test("grep renders anchored and plain groups with shared width and folded indent
     theme.fg("success", "invalid.txt") + theme.fg("dim", " · 2 matches"),
     theme.fg("dim", "   100: ") + theme.fg("dim", "›") + " " + theme.fg("toolOutput", "bad �"),
     theme.fg("dim", "     7: ") + theme.fg("dim", "›") + " " + theme.fg("toolOutput", "\tother"),
-    theme.fg("warning", notice),
   ]);
 });
 
@@ -581,7 +583,7 @@ test("command changes or removes the target → completed mutation stays success
     renderResult(result, { isPartial: false, expanded: false }, theme, context);
     const output = card.render(160).join("\n");
     assert.ok(output.includes(theme.getBgAnsi("toolSuccessBg")));
-    assert.match(output, new RegExp(`Anchors are stale: target ${disturbance}`));
+    assert.match(stripVTControlCharacters(output), new RegExp(`freshness: ${disturbance}`));
     if (disturbance === "changed")
       assert.equal(await readFile(target, "utf8"), "command changed the file\n");
     else await assert.rejects(readFile(target), { code: "ENOENT" });

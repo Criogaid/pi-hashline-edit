@@ -18,6 +18,8 @@ import { computeLineHash } from "../core/hash.ts";
 import { callTool } from "./tool-call.testing.ts";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import type { ActionFusionProgress } from "./action-fusion.ts";
+import { reportOf } from "./report.ts";
+import { expectToolFailure } from "./report-failure.testing.ts";
 
 test("mutation cards use Fusion by default and explicit false removes command support", async () => {
   const dir = await mkdtemp(join(tmpdir(), "hashline-registration-"));
@@ -120,7 +122,11 @@ test("mutation cards use Fusion by default and explicit false removes command su
         ctx: { cwd: dir },
       });
       assert.equal(result.details.actionFusion.command, "failed");
-      assert.match(result.content[1].text, /File changes are saved|No file changes were published/);
+      assert.equal(
+        reportOf(result)?.publication,
+        name === "replace" ? "NOT_PUBLISHED" : "PUBLISHED",
+      );
+      assert.equal(reportOf(result)?.then_run?.status, "failed");
       assert.ok(frames[0].output.includes(theme.getBgAnsi("toolPendingBg")));
       const running = frames.find((frame) => frame.command === "running")!;
       assert.ok(running, `${name} should emit running progress`);
@@ -147,7 +153,7 @@ test("mutation cards use Fusion by default and explicit false removes command su
       }
       if (name === "replace") {
         assert.equal(running.publication, "NOT_PUBLISHED");
-        assert.match(running.output, /no net change/);
+        assert.match(running.output, /No net change/);
       }
       card.updateResult({ ...result, isError: false });
       assert.ok(card.render(100).join("\n").includes(theme.getBgAnsi("toolSuccessBg")));
@@ -174,53 +180,40 @@ test("mutation cards use Fusion by default and explicit false removes command su
         { requestRender() {} } as any,
         dir,
       );
-      await assert.rejects(
-        tool.execute(
-          `${name}-bad`,
-          invalid,
-          undefined,
-          (update: any) => {
-            failedCard.updateResult({ ...update, isError: false }, true);
-          },
-          { cwd: dir },
-        ),
-        (error: Error) => {
-          failedCard.updateResult({
-            content: [{ type: "text", text: error.message }],
-            isError: true,
-          });
-          const output = failedCard.render(100).join("\n");
-          assert.ok(
-            output.includes(theme.getBgAnsi("toolErrorBg")),
-            `${name} mutation failure should turn red`,
-          );
-          assert.ok(!output.includes(theme.getBgAnsi("toolPendingBg")));
-          failedCard.setExpanded(true);
-          const expandedError = failedCard.render(400).join("\n");
-          for (const line of error.message.split("\n")) {
-            assert.ok(expandedError.includes(line), `${name} hid a failure diagnostic`);
-          }
-          assert.match(output, name === "write" ? /does not exist/ : /Error reading/);
-          const entry = entries.find(
-            (entry) =>
-              entry.customType === "hashline-then-run" && entry.data.toolCallId === `${name}-bad`,
-          );
-          const commandOutput = renderers
-            .get(entry.customType)(entry, { expanded: true }, theme)
-            .render(160)
-            .join("\n");
-          assert.match(
-            commandOutput,
-            /skipped[\s\S]*Not run because the mutation did not complete/,
-          );
-          assert.doesNotMatch(
-            commandOutput,
-            /Error reading|does not exist|publication=|freshness=/,
-          );
-          assert.ok(!commandOutput.includes(theme.getBgAnsi("toolErrorBg")));
-          return true;
-        },
+      const failed = await tool.execute(
+        `${name}-bad`,
+        invalid,
+        undefined,
+        (update: AgentToolResult<unknown>) =>
+          failedCard.updateResult({ ...update, isError: false }, true),
+        { cwd: dir },
       );
+      assert.equal(failed.isError, true);
+      const report = reportOf(failed);
+      assert.equal(report?.error, "PATH_NOT_FOUND");
+      failedCard.updateResult(failed);
+      const output = failedCard.render(100).join("\n");
+      assert.ok(
+        output.includes(theme.getBgAnsi("toolErrorBg")),
+        `${name} mutation failure should turn red`,
+      );
+      assert.ok(!output.includes(theme.getBgAnsi("toolPendingBg")));
+      failedCard.setExpanded(true);
+      const expandedError = failedCard.render(400).join("\n");
+      assert.ok(expandedError.includes(report?.message ?? ""));
+      if (report?.cause?.message) assert.ok(expandedError.includes(report.cause.message));
+      assert.match(output, /PATH_NOT_FOUND/);
+      const entry = entries.find(
+        (entry) =>
+          entry.customType === "hashline-then-run" && entry.data.toolCallId === `${name}-bad`,
+      );
+      const commandOutput = renderers
+        .get(entry.customType)(entry, { expanded: true }, theme)
+        .render(160)
+        .join("\n");
+      assert.match(commandOutput, /skipped[\s\S]*Not run.*mutation did not complete/);
+      assert.doesNotMatch(commandOutput, /Error reading|does not exist|publication=|freshness=/);
+      assert.ok(!commandOutput.includes(theme.getBgAnsi("toolErrorBg")));
     }
     assert.deepEqual(
       entries.map((entry) => entry.data.command),
@@ -229,7 +222,9 @@ test("mutation cards use Fusion by default and explicit false removes command su
     assert.ok(
       entries.every(
         (entry) =>
-          !("publication" in entry.data) && !("freshness" in entry.data) && !("path" in entry.data),
+          !("publication" in entry.data) &&
+          !("path" in entry.data) &&
+          ["unchanged", "changed", "missing", "unknown"].includes(entry.data.freshness),
       ),
     );
     await writeFile(join(dir, "stale.txt"), "header\ntarget\n");
@@ -248,32 +243,29 @@ test("mutation cards use Fusion by default and explicit false removes command su
       { requestRender() {} } as any,
       dir,
     );
-    await assert.rejects(
-      edit.execute(
-        "stale",
-        stale,
-        undefined,
-        (update: any) => staleCard.updateResult({ ...update, isError: false }, true),
-        { cwd: dir },
-      ),
-      (error: Error) => {
-        assert.match(error.message, /checksum-matching candidate/);
-        staleCard.updateResult({ content: [{ type: "text", text: error.message }], isError: true });
-        assert.match(staleCard.render(160).join("\n"), /Anchor mismatch/);
-        const entry = entries.find(
-          (entry) => entry.customType === "hashline-then-run" && entry.data.toolCallId === "stale",
-        );
-        const commandOutput = renderers
-          .get(entry.customType)(entry, { expanded: true }, theme)
-          .render(160)
-          .join("\n");
-        assert.match(commandOutput, /skipped/);
-        assert.doesNotMatch(
-          commandOutput,
-          /Anchor mismatch|candidate|Input-anchor|publication=|freshness=/,
-        );
-        return true;
-      },
+    const failed = await edit.execute(
+      "stale",
+      stale,
+      undefined,
+      (update: AgentToolResult<unknown>) =>
+        staleCard.updateResult({ ...update, isError: false }, true),
+      { cwd: dir },
+    );
+    assert.equal(failed.isError, true);
+    assert.equal(reportOf(failed)?.failures?.[0].result, "shifted");
+    staleCard.updateResult(failed);
+    assert.match(staleCard.render(160).join("\n"), /ANCHOR_MISMATCH/);
+    const entry = entries.find(
+      (entry) => entry.customType === "hashline-then-run" && entry.data.toolCallId === "stale",
+    );
+    const commandOutput = renderers
+      .get(entry.customType)(entry, { expanded: true }, theme)
+      .render(160)
+      .join("\n");
+    assert.match(commandOutput, /skipped/);
+    assert.doesNotMatch(
+      commandOutput,
+      /ANCHOR_MISMATCH|candidate|Input-anchor|publication=|freshness=/,
     );
     assert.equal(await readFile(join(dir, "stale.txt"), "utf8"), "header\ntarget\n");
     await writeFile(
@@ -370,9 +362,9 @@ test("loaded configuration controls hash length and recovery radius", async () =
     await mkdir(join(dir, ".pi"));
     await writeFile(join(dir, "configured.txt"), text);
     for (const [hashLen, shiftRadius, expected] of [
-      [6, 0, /no checksum-matching candidate found/],
-      [6, 1, /checksum-matching candidate 2#/],
-      [8, 3, /ambiguous checksum matches/],
+      [6, 0, "unresolved"],
+      [6, 1, "shifted"],
+      [8, 3, "ambiguous"],
     ] as const) {
       await writeFile(
         join(dir, ".pi", "settings.json"),
@@ -381,12 +373,16 @@ test("loaded configuration controls hash length and recovery radius", async () =
       const config = loadConfig(dir);
       const read = await call(makeReadOverride(dir, config), { path: "configured.txt" });
       assert.equal(anchorLine(read.content[0].text, 1).split("#")[1].length, hashLen);
-      await assert.rejects(
+      await expectToolFailure(
         call(makeEditOverride(dir, config), {
           path: "configured.txt",
           edits: [{ op: "delete", anchor: `1#${computeLineHash(1, "target", hashLen)}` }],
         }),
-        expected,
+        "ANCHOR_MISMATCH",
+        (report) => {
+          assert.equal(report.failures?.[0].result, expected);
+          if (expected === "shifted") assert.match(report.failures?.[0].candidate ?? "", /^2#/);
+        },
       );
       assert.equal(await readFile(join(dir, "configured.txt"), "utf8"), text);
     }
@@ -404,7 +400,7 @@ test("configured read defaults bound omitted limits and returned bytes", async (
     await writeFile(join(dir, "short.txt"), "a\nb\nc\n");
     const paged = await call(read, { path: "short.txt" });
     assert.deepEqual(paged.details.pagination, { start: 1, end: 2, totalLines: 3, nextOffset: 3 });
-    assert.match(paged.content[0].text, /offset 3/);
+    assert.match(reportOf(paged)?.next ?? "", /offset.*pagination\.nextOffset/);
     assert.match(paged.content[0].text, /^2#[0-9A-Z]+│b$/m);
     assert.doesNotMatch(paged.content[0].text, /^3#/m);
     const explicit = await call(read, { path: "short.txt", limit: 3 });

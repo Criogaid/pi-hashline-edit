@@ -24,6 +24,8 @@ import { callTool } from "./tool-call.testing.ts";
 import { DEFAULT_CONFIG } from "./config.ts";
 import { FORGET_MIN_BYTES } from "./budgets.ts";
 import { taggedResultId } from "./forget.testing.ts";
+import { reportOf } from "./report.ts";
+import { expectToolFailure } from "./report-failure.testing.ts";
 
 type FakeOptions = {
   lines?: string[];
@@ -135,7 +137,7 @@ test("configured grep defaults drive descriptions, match limits, and context", a
     const defaults = await call(tool, { path: file, pattern: "needle", literal: true });
     assert.deepEqual(rows(defaults), [1, 2, 3, 4].map(expectedRow));
     assert.match(text(defaults), /configured\.txt · 1 match\n/);
-    assert.match(text(defaults), /1 matches limit reached/);
+    assert.equal(reportOf(defaults)?.matchLimit, config.grep.defaultLimit);
 
     const explicit = await call(tool, {
       path: file,
@@ -268,19 +270,21 @@ test("case and multiline options select only their matching ripgrep flags", asyn
 test("grep points wildcard paths to glob without changing ordinary missing-path errors", async () => {
   await withDir(async (dir) => {
     const tool = makeGrepOverrideWithBackend(dir, DEFAULT_CONFIG, fakeBackend().backend);
-    await assert.rejects(
+    await expectToolFailure(
       call(tool, { literal: true, pattern: "value", path: "src/fusion-card*" }),
-      (error: Error) => {
-        assert.match(error.message, /Path not found:.*fusion-card\*/);
-        assert.match(error.message, /directory.*path/);
-        assert.match(error.message, /wildcard.*glob/);
-        return true;
+      "PATH_NOT_FOUND",
+      (report) => {
+        assert.equal(report.path, "src/fusion-card*");
+        assert.match(report.next ?? "", /directory.*path.*wildcard.*glob/);
       },
     );
-    await assert.rejects(
+    await expectToolFailure(
       call(tool, { literal: true, pattern: "value", path: "src/missing" }),
-      (error: Error) =>
-        error.message.endsWith("src\\missing") || error.message.endsWith("src/missing"),
+      "PATH_NOT_FOUND",
+      (report) => {
+        assert.equal(report.path, "src/missing");
+        assert.equal(report.next, "Check the path.");
+      },
     );
   });
 });
@@ -344,12 +348,12 @@ test("grep rejects a file changed between a match and anchor formatting", async 
         return result;
       },
     };
-    await assert.rejects(
+    await expectToolFailure(
       call(makeGrepOverrideWithBackend(dir, DEFAULT_CONFIG, backend), {
         literal: true,
         pattern: "needle",
       }),
-      /File changed during search/,
+      "FILE_CHANGED",
     );
   });
 });
@@ -366,13 +370,13 @@ test("grep rejects matches missing from the current file before anchoring contex
         return fake.backend.search(...args);
       },
     };
-    await assert.rejects(
+    await expectToolFailure(
       call(makeGrepOverrideWithBackend(dir, DEFAULT_CONFIG, backend), {
         literal: true,
         pattern: "needle",
         context: 2,
       }),
-      /File changed during search/,
+      "FILE_CHANGED",
     );
   }));
 
@@ -401,14 +405,14 @@ test("multiline grep rejects a zero-width match beyond the current EOF", async (
       },
     };
     for (const outputMode of ["content", "files", "count"]) {
-      await assert.rejects(
+      await expectToolFailure(
         call(makeGrepOverrideWithBackend(dir, DEFAULT_CONFIG, backend), {
           pattern: "(?m)^",
           multiline: true,
           literal: false,
           outputMode,
         }),
-        /File changed during search/,
+        "FILE_CHANGED",
       );
     }
   }));
@@ -430,14 +434,14 @@ test("multiline grep rejects spans beyond a truncated file", async () => {
         }),
       ],
     });
-    await assert.rejects(
+    await expectToolFailure(
       call(makeGrepOverrideWithBackend(dir, DEFAULT_CONFIG, fake.backend), {
         pattern: "alpha\\nbeta",
         path: file,
         literal: false,
         multiline: true,
       }),
-      /File changed during search/,
+      "FILE_CHANGED",
     );
   });
 });
@@ -454,13 +458,13 @@ test("grep rejects changed context even when the matched line stays the same", a
         return result;
       },
     };
-    await assert.rejects(
+    await expectToolFailure(
       call(makeGrepOverrideWithBackend(dir, DEFAULT_CONFIG, backend), {
         literal: true,
         pattern: "needle",
         context: 1,
       }),
-      /File changed during search/,
+      "FILE_CHANGED",
     );
   });
 });
@@ -580,7 +584,9 @@ test("passes output flags and formats files and counts", async () => {
       pattern: "foo",
       outputMode: "count",
     });
-    assert.equal(text(count), "a.ts: 1\nb.ts: 1\nTotal: 2 matches in 2 files");
+    assert.equal(text(count), "a.ts: 1\nb.ts: 1");
+    assert.equal(reportOf(count)?.matches, 2);
+    assert.equal(reportOf(count)?.files, 2);
   });
 });
 
@@ -597,12 +603,12 @@ for (const diagnosticLineCount of [0, 80]) {
     const fake = fakeBackend({ validation: { code: 2, stderr: diagnostic } });
     const tool = makeGrepOverrideWithBackend(process.cwd(), DEFAULT_CONFIG, fake.backend);
     const args = { pattern: "(", literal: false };
-    let errorText = "";
-    await assert.rejects(callTool(tool, args), (error: unknown) => {
-      assert.ok(error instanceof Error);
-      errorText = error.message;
-      return true;
-    });
+    const failure: Awaited<ReturnType<typeof tool.execute>> = await callTool(tool, args);
+    assert.equal(failure.isError, true);
+    const errorText = failure.content
+      .filter((block) => block.type === "text")
+      .map((block) => block.text)
+      .join("\n");
 
     const render = (expanded: boolean) =>
       tool
@@ -630,7 +636,7 @@ for (const diagnosticLineCount of [0, 80]) {
 
     const collapsed = render(false);
     const expanded = render(true);
-    for (const line of errorText.split("\n")) {
+    for (const line of diagnostic.split("\n")) {
       assert.ok(expanded.includes(line), `Expanded error omitted ${JSON.stringify(line)}`);
       if (!diagnosticLineCount) {
         assert.ok(collapsed.includes(line), `Collapsed error omitted ${JSON.stringify(line)}`);
@@ -688,9 +694,8 @@ test("limit counts matched lines and stops the fake runner", async () => {
       limit,
     });
     assert.match(text(result), /1#[0-9A-Z]+│alpha beta/);
-    assert.match(text(result), new RegExp(`${limit} matches limit reached`));
-    assert.match(text(result), new RegExp(`limit=${limit * 2}`));
-    assert.match(text(result), /refine pattern/);
+    assert.equal(reportOf(result)?.matchLimit, limit);
+    assert.match(reportOf(result)?.next ?? "", /limit.*refine.*pattern/);
   });
 });
 
@@ -737,8 +742,9 @@ test("regex probe outcomes allow search or stop it with diagnostics", async () =
         assert.equal(fake.calls.length, 1);
         assert.ok(!fake.calls[0].request.matcher.includes("--fixed-strings"));
       } else {
-        await assert.rejects(result, {
-          message: validation.stderr || `ripgrep exited with code ${validation.code}`,
+        await expectToolFailure(result, "RIPGREP_FAILED", (report) => {
+          assert.equal(report.exitCode, validation.code);
+          assert.equal(report.cause?.message, validation.stderr || undefined);
         });
         assert.equal(fake.calls.length, 0);
       }
@@ -754,11 +760,14 @@ test("invalid regex strings and arrays fail before search with explicit literal 
         validation: { code: 2, stderr: fakeValidationDiagnostic },
       });
       const tool = makeGrepOverrideWithBackend(dir, DEFAULT_CONFIG, fake.backend);
-      await assert.rejects(call(tool, { pattern, literal: false }), (error: Error) => {
-        assert.ok(error.message.includes(fakeValidationDiagnostic));
-        assert.match(error.message, /literal:true/);
-        return true;
-      });
+      await expectToolFailure(
+        call(tool, { pattern, literal: false }),
+        "INVALID_REGEX",
+        (report) => {
+          assert.equal(report.cause?.message, fakeValidationDiagnostic);
+          assert.match(report.next ?? "", /literal.*true/);
+        },
+      );
       assert.equal(fake.probes.length, 1);
       assert.deepEqual(fake.probes[0][1], typeof pattern === "string" ? [pattern] : pattern);
       assert.equal(fake.calls.length, 0);
@@ -772,13 +781,17 @@ test("unsupported regex syntax reports the Rust dialect hint before search", asy
         validation: { code: 2, stderr: "regex parse error:\nerror: unsupported syntax" },
       });
       const tool = makeGrepOverrideWithBackend(dir, DEFAULT_CONFIG, fake.backend);
-      await assert.rejects(call(tool, { pattern, literal: false }), (error: Error) => {
-        assert.match(error.message, /regex parse error/);
-        assert.match(error.message, /no lookaround or backreferences/);
-        assert.match(error.message, /rewrite.*pattern/);
-        assert.match(error.message, /use replace/);
-        return true;
-      });
+      await expectToolFailure(
+        call(tool, { pattern, literal: false }),
+        "INVALID_REGEX",
+        (report) => {
+          assert.match(report.cause?.message ?? "", /regex parse error/);
+          assert.match(
+            report.next ?? "",
+            /Rewrite.*pattern.*lookaround or backreferences.*replace/,
+          );
+        },
+      );
       assert.equal(fake.probes.length, 1);
       assert.equal(fake.calls.length, 0);
     }
@@ -817,7 +830,7 @@ test("grep forwards whole queries and applies resolved case mode to searches", a
       assert.equal(matcher.includes("--ignore-case"), resolvedIgnoreCase);
       assert.equal(matcher.includes("--case-sensitive"), !resolvedIgnoreCase);
       if (resolvedIgnoreCase) assert.match(text(result), /FOO alpha/);
-      else assert.equal(text(result), "No matches found");
+      else assert.equal(reportOf(result)?.matches, 0);
     }
   });
 });
@@ -827,7 +840,7 @@ test("OR pattern arrays are not limited by the former AND filter", async () => {
     const fake = fakeBackend();
     const tool = makeGrepOverrideWithBackend(dir, DEFAULT_CONFIG, fake.backend);
     const patterns = Array.from({ length: 17 }, (_, index) => `pattern${index}`);
-    assert.equal(text(await call(tool, { literal: true, pattern: patterns })), "No matches found");
+    assert.equal(reportOf(await call(tool, { literal: true, pattern: patterns }))?.matches, 0);
     assert.deepEqual(
       fake.calls[0].request.matcher.flatMap((arg, index, args) =>
         args[index - 1] === "-e" ? [arg] : [],
@@ -847,11 +860,11 @@ test("rejects empty patterns while allowing wildcard, literal, and empty-line se
     }
     assert.equal(fake.calls.length, 0);
     for (const pattern of [".*", "^.+$", ".?"]) {
-      assert.equal(text(await call(tool, { pattern, literal: false })), "No matches found");
+      assert.equal(reportOf(await call(tool, { pattern, literal: false }))?.matches, 0);
     }
 
-    assert.equal(text(await call(tool, { pattern: ".*", literal: true })), "No matches found");
-    assert.equal(text(await call(tool, { pattern: "^$", literal: false })), "No matches found");
+    assert.equal(reportOf(await call(tool, { pattern: ".*", literal: true }))?.matches, 0);
+    assert.equal(reportOf(await call(tool, { pattern: "^$", literal: false }))?.matches, 0);
     assert.equal(fake.calls.length, 5);
     assert.equal(fake.probes.length, 4);
   });
@@ -862,7 +875,7 @@ test("grep accepts nonempty whitespace literals", async () => {
     const fake = fakeBackend();
     const tool = makeGrepOverrideWithBackend(dir, DEFAULT_CONFIG, fake.backend);
     for (const pattern of ["  ", "\t", ["word", " "]]) {
-      assert.equal(text(await call(tool, { pattern, literal: true })), "No matches found");
+      assert.equal(reportOf(await call(tool, { pattern, literal: true }))?.matches, 0);
     }
     assert.equal(fake.calls.length, 3);
   });
@@ -871,32 +884,36 @@ test("grep accepts nonempty whitespace literals", async () => {
 test("reports empty output and ripgrep execution failures", async () => {
   await withDir(async (dir) => {
     const empty = fakeBackend({ code: 1 });
-    assert.equal(
-      text(
-        await call(makeGrepOverrideWithBackend(dir, DEFAULT_CONFIG, empty.backend), {
-          literal: true,
-          pattern: "missing",
-        }),
-      ),
-      "No matches found",
-    );
+    const noMatches = await call(makeGrepOverrideWithBackend(dir, DEFAULT_CONFIG, empty.backend), {
+      literal: true,
+      pattern: "missing",
+    });
+    assert.equal(noMatches.isError, undefined);
+    assert.equal(reportOf(noMatches)?.matches, 0);
+    assert.equal(reportOf(noMatches)?.files, 0);
 
     const failed = fakeBackend({ code: 2, stderr: "bad regex" });
-    await assert.rejects(
+    await expectToolFailure(
       call(makeGrepOverrideWithBackend(dir, DEFAULT_CONFIG, failed.backend), {
         pattern: "[",
         literal: false,
       }),
-      /bad regex/,
+      "SEARCH_INCOMPLETE",
+      (report) => {
+        assert.match(report.diagnostics ?? "", /bad regex/);
+      },
     );
 
     const rejected = fakeBackend({ error: new Error("spawn failed") });
-    await assert.rejects(
+    await expectToolFailure(
       call(makeGrepOverrideWithBackend(dir, DEFAULT_CONFIG, rejected.backend), {
         literal: true,
         pattern: "x",
       }),
-      /spawn failed/,
+      "UNCLASSIFIED",
+      (report) => {
+        assert.match(report.cause?.message ?? "", /spawn failed/);
+      },
     );
   });
 });
@@ -906,24 +923,24 @@ test("rejects calls aborted before or during rg execution", async () => {
     const alreadyAborted = fakeBackend();
     const first = new AbortController();
     first.abort();
-    await assert.rejects(
+    await expectToolFailure(
       call(
         makeGrepOverrideWithBackend(dir, DEFAULT_CONFIG, alreadyAborted.backend),
         { literal: true, pattern: ["x", "y"] },
         first.signal,
       ),
-      /Operation aborted/,
+      "OPERATION_ABORTED",
     );
 
     const controller = new AbortController();
     const interrupted = fakeBackend({ onRun: () => controller.abort() });
-    await assert.rejects(
+    await expectToolFailure(
       call(
         makeGrepOverrideWithBackend(dir, DEFAULT_CONFIG, interrupted.backend),
         { literal: true, pattern: ["x", "y"] },
         controller.signal,
       ),
-      /Operation aborted/,
+      "OPERATION_ABORTED",
     );
   });
 });
@@ -993,9 +1010,9 @@ test("grep previews invalid UTF-8 without anchors and skips NUL hits that requir
       context: 1,
     });
     assert.match(text(result), /1│a\n2│�\(/);
-    assert.match(text(result), /Invalid UTF-8.*cannot.*edit anchors/);
+    assert.deepEqual(reportOf(result)?.invalidUtf8, ["invalid.txt"]);
     assert.doesNotMatch(text(result), /\d+#/);
-    assert.equal(result.details?.incomplete, undefined);
+    assert.equal(reportOf(result)?.diagnostics, undefined);
     assert.deepEqual(await readFile(invalid), source);
 
     const binary = join(dir, "nul.txt");
@@ -1013,7 +1030,8 @@ test("grep previews invalid UTF-8 without anchors and skips NUL hits that requir
         makeGrepOverrideWithBackend(dir, DEFAULT_CONFIG, binaryBackend.backend),
         { literal: true, pattern: "a", path: binary, outputMode, multiline },
       );
-      assert.equal(text(skipped), "No matches found");
+      assert.equal(reportOf(skipped)?.matches, 0);
+      assert.equal(skipped.isError, undefined);
     }
     assert.deepEqual(await readFile(binary), binarySource);
   });
@@ -1039,11 +1057,9 @@ test("single-line files and count modes do not reread a matched file after it di
         path: file,
         outputMode,
       });
-      assert.equal(
-        text(result),
-        outputMode === "files" ? "listed.txt" : "listed.txt: 1\nTotal: 1 match in 1 file",
-      );
-      assert.equal(result.details, undefined);
+      assert.equal(text(result), outputMode === "files" ? "listed.txt" : "listed.txt: 1");
+      assert.equal(reportOf(result)?.matches, 1);
+      assert.equal(reportOf(result)?.diagnostics, undefined);
       assert.equal(fake.calls.length, 1);
       await assert.rejects(readFile(file), { code: "ENOENT" });
     }
@@ -1076,9 +1092,11 @@ test("partial searches retain matches and surface stderr across output modes", a
           },
         );
         assert.match(text(result), /found\.txt/);
-        assert.match(text(result), /Search incomplete/);
-        assert.match(text(result), /unreadable\.txt: Permission denied/);
-        assert.equal(result.details.incomplete, true);
+        assert.ok(reportOf(result)?.diagnostics);
+        assert.match(
+          JSON.stringify(reportOf(result)?.diagnostics),
+          /unreadable\.txt: Permission denied/,
+        );
         assert.equal(
           result.details.forgetReceipt,
           outputMode === "content" && limit >= rows.length
@@ -1088,12 +1106,15 @@ test("partial searches retain matches and surface stderr across output modes", a
       }
     }
     const fake = fakeBackend({ code: 2, stderr: "Permission denied" });
-    await assert.rejects(
+    await expectToolFailure(
       call(makeGrepOverrideWithBackend(dir, DEFAULT_CONFIG, fake.backend), {
         literal: true,
         pattern: "needle",
       }),
-      /No matches confirmed.*Search incomplete/s,
+      "SEARCH_INCOMPLETE",
+      (report) => {
+        assert.match(JSON.stringify(report.diagnostics), /Permission denied/);
+      },
     );
   });
 });
@@ -1120,9 +1141,7 @@ test("first-match revision read errors retain results from other files", async (
     });
     assert.match(text(result), /good\.txt · 1 match/);
     assert.doesNotMatch(text(result), /gone\.txt · 1 match/);
-    assert.match(text(result), /Search incomplete/);
-    assert.match(text(result), /Could not read.*gone\.txt/);
-    assert.equal(result.details.incomplete, true);
+    assert.match(JSON.stringify(reportOf(result)?.diagnostics), /gone\.txt/);
   }));
 
 test("failed result reads report incomplete coverage while retaining readable files", async () => {
@@ -1147,8 +1166,7 @@ test("failed result reads report incomplete coverage while retaining readable fi
     );
     assert.match(text(result), /good\.txt · 1 match/);
     assert.doesNotMatch(text(result), /gone\.txt · 1 match/);
-    assert.match(text(result), /Search incomplete/);
-    assert.match(text(result), /Could not read.*gone\.txt/);
+    assert.match(JSON.stringify(reportOf(result)?.diagnostics), /gone\.txt/);
   });
 });
 
@@ -1177,7 +1195,7 @@ test("explicit-file glob listing warnings retain confirmed matches", async () =>
       { literal: true, pattern: "needle", path: file, glob: "*.txt" },
     );
     assert.match(text(listing), /1#[0-9A-Z]+│needle/);
-    assert.match(text(listing), /Search incomplete/);
+    assert.match(reportOf(listing)?.diagnostics ?? "", /directory: Permission denied/);
   });
 });
 
@@ -1230,12 +1248,12 @@ test("fatal format errors stop workers from starting new file reads after reject
     syncBuiltinESMExports();
     try {
       const fake = fakeBackend({ lines: events });
-      await assert.rejects(
+      await expectToolFailure(
         call(makeGrepOverrideWithBackend(dir, DEFAULT_CONFIG, fake.backend), {
           literal: true,
           pattern: "needle",
         }),
-        /File changed during search/,
+        "FILE_CHANGED",
       );
       const atRejection = started;
       assert.ok(atRejection > 60, "expected to observe format-stage streams");
@@ -1289,13 +1307,13 @@ test("scope inspection fails for access or traversal reasons → grep preserves 
       try {
         const fake = fakeBackend();
         const tool = makeGrepOverrideWithBackend(dir, DEFAULT_CONFIG, fake.backend);
-        await assert.rejects(
+        await expectToolFailure(
           callTool(tool, { path, pattern: "needle", literal: true }),
-          (error: unknown) => {
-            assert.ok(error instanceof Error && "code" in error);
-            assert.equal(error.code, code);
-            assert.doesNotMatch(error.message, /Path not found/);
-            return true;
+          "FILESYSTEM_ERROR",
+          (report) => {
+            assert.equal(report.cause?.code, code);
+            assert.equal(report.cause?.message, failure.message);
+            assert.doesNotMatch(report.message ?? "", /Path not found/);
           },
         );
         assert.equal(fake.calls.length, 0);
