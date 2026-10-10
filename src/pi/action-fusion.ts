@@ -52,9 +52,7 @@ const MAX_BASH_TIMEOUT_SECONDS = 2_147_483_647 / 1_000;
 
 export const ACTION_FUSION_GUIDELINES = [
   "Before each file mutation, identify its next command.",
-  "then_run is a parameter of edit, replace, and write, not a separate tool; prefer it when the next command is known, authorized, and ready after the mutation succeeds.",
-  "When several edits are prerequisites, attach then_run to the last one.",
-  "Run the command separately if it depends on the mutation result, needs approval, or awaits a reload.",
+  "then_run is a parameter of edit, replace, and write, not a separate tool. When the next command is known, put it in then_run of the last mutation in the series. Use bash separately only if the command needs the user's approval, reads output of the mutation, or must wait for a reload.",
   "Use platform-appropriate commands; avoid Unix-only paths like /tmp on Windows.",
   "Check the command outcome before claiming validation passed.",
 ];
@@ -108,7 +106,7 @@ export type ThenRunInput = NonNullable<Static<ReturnType<typeof createThenRunSch
 /** Name then_run in a mutation tool's description when Action Fusion is enabled. */
 export function withThenRunDescription(description: string, actionFusion: boolean): string {
   return actionFusion
-    ? `${description} To run the next command, such as tests or a build, after this call succeeds, set then_run instead of making a separate bash call.`
+    ? `${description} When a command such as tests, a typecheck, or a build will follow this change, put it in then_run instead of a separate bash call.`
     : description;
 }
 
