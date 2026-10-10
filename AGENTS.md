@@ -23,7 +23,7 @@ pi 扩展 `@criogaid/pi-hashline-edit`，注册入口为 `src/index.ts`。
 - `edit` 的空正文行是实际逻辑行；末尾空行需要终止符才能保留时补上终止符，BOM-only 单行除外。非空末行保留原有最终换行状态。
 - Use the shared CRLF-to-LF view for valid UTF-8 in `read/grep/edit/replace`; standalone CR and literal source escapes remain content. Map mutation offsets back to the original bytes; `write` uses the supplied full content and line endings exactly.
 - Skip NUL-containing files silently in `grep`. Search invalid UTF-8 as raw bytes and display plain preview rows without edit anchors; verify the pre-search source revision and complete raw match spans in every output mode, even when the output limit omits part of a span. Preserve full byte revision checks for both preview and anchored content.
-- Render reports through `src/pi/render.ts` from structured `details.report` only when its owned block survives in final content. Preserve hook content and order; use the strict codec for text-only replay and retain all raw content when ownership is ambiguous. Use `src/pi/diagnostic-buffer.ts` for bounded stderr and search diagnostics.
+- Render failure reports through `src/pi/render.ts` from structured `details.report` only when its owned block survives in final content. Preserve hook content and order; use the strict codec for text-only replay and retain all raw content when ownership is ambiguous. Use `src/pi/diagnostic-buffer.ts` for bounded stderr and search diagnostics.
 - 行 hash 是可碰撞的位置相关 checksum。恢复候选由调用方重新提交验证；range 验证边界见 README。
 - `edit/replace` 提交绑定实际读取字节的 revision。工具结果使用 `publishedRevision`；Action Fusion 以 mutation 返回的 `publishedRevision` 为 freshness 基线。
 - 保留提交阶段与 `NOT_PUBLISHED` / `PUBLISHED` / `UNKNOWN` 状态，分别报告文件发布结果和后续命令结果。
@@ -67,7 +67,7 @@ pi 扩展 `@criogaid/pi-hashline-edit`，注册入口为 `src/index.ts`。
 
 - 格式：`npm run format:check`（自动格式化为 `npm run format`）。
 - 类型：`npm run typecheck`。
-- 单文件测试：`node --test src/pi/execute.test.ts`（按需替换路径）。
+- Targeted tests: `npm test -- --test-name-pattern "<regex>"`; use the same option with `npm run test:integration`. Keep the npm runner isolation; do not invoke `node --test` directly.
 - core 和 pi 测试：`npm test`。
 - 真实后端集成：`npm run test:integration`；组合运行用 `npm run test:all`。
 
