@@ -158,13 +158,61 @@ test("report-contract: external cause exceeds graph limits → rejects it before
   assert.equal(decodeReport(JSON.stringify(value)), undefined);
 });
 
-test("native filesystem failure without a nested cause → preserves errno and original diagnostic", () => {
+test("native filesystem failure → reports its diagnostic once without a synthetic cause", () => {
   for (const code of ["EACCES", "ELOOP", "ENOTDIR"]) {
-    const native = Object.assign(new Error(`${code}: cannot inspect source`), { code });
-    const report = describeFailure("grep", native, { path: "source" });
-    assert.equal(report.error, "FILESYSTEM_ERROR");
-    assert.equal(report.cause?.code, code);
-    assert.equal(report.cause?.message, native.message);
-    assert.equal(renderReport(report).split(native.message).length - 1, 1);
+    for (const message of [`${code}: cannot inspect source`, "cannot inspect source"]) {
+      const native = Object.assign(new Error(message), { code });
+      const report = describeFailure("grep", native, { path: "source" });
+      assert.equal(report.error, "FILESYSTEM_ERROR");
+      assert.equal(report.cause, undefined);
+      assert.match(report.message ?? "", new RegExp(code));
+      assert.ok(report.message?.includes(message));
+      assert.equal(renderReport(report).split(message).length - 1, 1);
+    }
   }
+});
+
+test("report-contract: current reports → serialize facts without a protocol marker", () => {
+  const report = { tool: "write", publication: "PUBLISHED", created: true } satisfies Parameters<
+    typeof renderReport
+  >[0];
+  assert.deepEqual(JSON.parse(renderReport(report)), report);
+});
+
+test("report-contract: saved marked reports → retain live and text-only rendering with surrounding hook text", () => {
+  const original = failureResult({
+    tool: "write",
+    error: "TARGET_EXISTS",
+    message: "Target exists.",
+  });
+  const marked = JSON.stringify({ $hashline: REPORT_VERSION, ...original.details.report }, null, 2);
+  for (const details of [original.details, undefined]) {
+    const result = {
+      ...original,
+      details,
+      content: [text("hook prefix"), text(marked), text("hook suffix")],
+    };
+    assert.equal(reportOf(result)?.error, "TARGET_EXISTS");
+    const shown = displayed(result);
+    assert.match(shown, /hook prefix/);
+    assert.match(shown, /Target exists/);
+    assert.match(shown, /hook suffix/);
+    assert.doesNotMatch(shown, /\"\$hashline\"/);
+  }
+});
+
+test("report-contract: native failure with an independent cause → retains the underlying diagnostic", () => {
+  const underlying = Object.assign(new Error("disk read failed"), { code: "EIO" });
+  const native = new Error("cannot inspect source", { cause: underlying });
+  const report = describeFailure("read", native, { path: "source" });
+  assert.equal(report.message, native.message);
+  assert.equal(report.cause?.message, underlying.message);
+  assert.equal(report.cause?.code, "EIO");
+});
+
+test("report-contract: unmarked success JSON → decodes as data without claiming an unrelated content block", () => {
+  const report = { tool: "grep", matches: 1 };
+  const serialized = renderReport(report);
+  assert.deepEqual(decodeReport(serialized), report);
+  assert.equal(reportOf({ content: [text(serialized)] }), undefined);
 });

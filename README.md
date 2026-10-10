@@ -84,11 +84,10 @@ Valid UTF-8 text inspection and matching uses one logical representation: CRLF b
 
 Every result of every tool (`read`, `grep`, `edit`, `replace`, `write`, and `forget`) states its facts in one **report**: a single JSON object, the only form the plugin uses for facts the model reads. A successful result is the tool's content payload (anchored `read` rows, `grep` rows, `Updated anchors:` rows) followed by its report; the report is omitted when it would state nothing beyond `tool` and `path`. A failure — including argument rejection, filesystem errors, cancellation, and a mutation failure under Action Fusion — is the report alone, returned as an error result.
 
-Reports serialized to text carry `$hashline: 1`, defined by `REPORT_VERSION` in [`report-schema.ts`](src/pi/report-schema.ts). The wire schemas accept only registered tools and the `codemode` output tag, reject unknown fields, and require the facts associated with each error code. Internal reports omit the transport marker. Progress updates remain separate: Fusion sends command progress and publication in details, with no final anchor payload. Their type derives from `ACTION_FUSION_PROGRESS_SCHEMA`; saved command cards validate a closed projection on restore. Malformed snapshots are ignored, while historical cards lacking freshness or mutation-completion facts retain their unknown state.
+Reports serialize only their facts, without a protocol marker. The closed wire schemas in [`report-schema.ts`](src/pi/report-schema.ts) accept only registered tools and the `codemode` output tag, reject unknown fields, and require the facts associated with each error code. Text-only recognition accepts failures and forget tags; live results identify their report by matching the final content to `details.report`. Previously saved reports carrying `$hashline: 1` remain readable. Progress updates remain separate: Fusion sends command progress and publication in details, with no final anchor payload. Their type derives from `ACTION_FUSION_PROGRESS_SCHEMA`; saved command cards validate a closed projection on restore. Malformed snapshots are ignored, while historical cards lacking freshness or mutation-completion facts retain their unknown state.
 
 ```json
 {
-  "$hashline": 1,
   "error": "ANCHOR_MISMATCH",
   "tool": "edit",
   "path": "src/foo.ts",
@@ -112,7 +111,6 @@ A successful edit whose `then_run` command failed, after its `Updated anchors:` 
 
 ```json
 {
-  "$hashline": 1,
   "tool": "edit",
   "path": "src/foo.ts",
   "publication": "PUBLISHED",
@@ -139,7 +137,7 @@ Fields appear in this order and are omitted when they do not apply. Each has one
 | `forgotten`, `resultId`, `forgetScope`, `contentForgotten` | `forget` | See [Forget](#forget). |
 | `next` | Derived | The single recovery instruction, always last. Absent when nothing needs doing beyond the facts. |
 
-Native failures are classified at the tool boundary; their original errno, message and nested causes remain in `cause`. The boundary's `message` identifies the native operation failure.
+Native failures are classified at the tool boundary and state their original diagnostic directly in `message`. An errno absent from that diagnostic is prefixed once. Only an actual underlying `Error.cause` becomes structured `cause`; the boundary does not add a generic message or wrap the same failure again.
 
 `next` is derived from the facts, never written by a throw site: once a mutation reached or may have reached the file (`PUBLISHED` or `UNKNOWN`), it says not to repeat the change and to read the file first, whatever the code; otherwise a failure's `next` is its code's recovery, or one of the alternatives the code defines. A success's `next` follows its first fact that needs one, in this order: `freshness` (read the file before further edits — the same sentence a published failure ends with), `omittedAnchors`, `lineTooLong`, `pagination`, `matchLimit`, `outputLimit`, `linePreviewLimit`, `contentForgotten`.
 
@@ -189,7 +187,6 @@ An argument rejection is an `INVALID_ARGUMENTS` report. In place of `message`, i
 
 ```json
 {
-  "$hashline": 1,
   "error": "INVALID_ARGUMENTS",
   "tool": "edit",
   "issues": [

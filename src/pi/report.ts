@@ -20,7 +20,7 @@
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import { Value } from "typebox/value";
 import type { TSchema } from "typebox";
-import { errorMessage, filesystemErrorCode, HashlineError } from "../core/errors.ts";
+import { errorMessage, errnoCode, filesystemErrorCode, HashlineError } from "../core/errors.ts";
 import { boundedText, causeOf, boundedCauseData } from "./report-cause.ts";
 export { boundedText, causeOf } from "./report-cause.ts";
 import { cancellationError } from "./error-text.ts";
@@ -32,7 +32,6 @@ import {
   REPORT_SCHEMA,
   LEGACY_REPORT_SCHEMA,
   WIRE_REPORT_SCHEMA,
-  REPORT_VERSION,
   type Cause,
   type CommandStatus,
   type ErrorCode,
@@ -58,11 +57,7 @@ export function reportEntries(report: Report): [string, unknown][] {
 
 /** Serialize a report: one JSON object, fields in schema order. The only model-facing form. */
 export function renderReport(report: Report): string {
-  return JSON.stringify(
-    { $hashline: REPORT_VERSION, ...Object.fromEntries(reportEntries(report)) },
-    null,
-    2,
-  );
+  return JSON.stringify(Object.fromEntries(reportEntries(report)), null, 2);
 }
 
 /** The final-result boundary also accepts structured metadata modified by tool_result hooks. */
@@ -83,12 +78,10 @@ function checkReportData(schema: TSchema, value: unknown): boolean {
   }
 }
 
-/**
- * Recognize a serialized report where no structured copy exists: argument
- * rejections, which Pi raises before execution and transports as text only,
- * and the model-visible content forget edits. Other text is not ours.
- */
-export function decodeReport(text: string): Report | undefined {
+/** Validate current and saved marked reports without deciding ownership of a content block. */
+function decodeReportRecord(
+  text: string,
+): { report: Report; source: "facts" | "marked" } | undefined {
   if (!text.startsWith("{")) return undefined;
   let value: unknown;
   try {
@@ -96,15 +89,18 @@ export function decodeReport(text: string): Report | undefined {
   } catch {
     return undefined;
   }
-  // Dynamic schema arrays validate at runtime; WireReport retains the mapped code types.
   if (checkReportData(WIRE_REPORT_SCHEMA, value)) {
-    const { $hashline: _version, ...report } = value as import("./report-schema.ts").WireReport;
-    return report;
+    return { report: value as import("./report-schema.ts").WireReport, source: "facts" };
   }
-  if (!checkReportData(LEGACY_REPORT_SCHEMA, value) || typeof value !== "object" || value === null)
-    return undefined;
-  // Legacy identity is limited to actual failures and saved forget tags.
-  return "error" in value || "resultId" in value ? (value as Report) : undefined;
+  if (!checkReportData(LEGACY_REPORT_SCHEMA, value)) return undefined;
+  // Marked reports already saved in sessions remain readable; new reports carry only facts.
+  const { $hashline: _version, ...report } = value as import("./report-schema.ts").LegacyWireReport;
+  return { report, source: "marked" };
+}
+
+/** Decode a closed report record; content ownership is checked separately by reportBlock. */
+export function decodeReport(text: string): Report | undefined {
+  return decodeReportRecord(text)?.report;
 }
 
 /** One identifiable block in final content; hook replacements and ambiguous copies retain raw text. */
@@ -114,7 +110,7 @@ export function reportBlock(result: {
 }): { index: number; report: Report } | undefined {
   const details = result.details as Partial<ReportDetails> | undefined;
   const live = details?.report;
-  if (live !== undefined && !checkReportData(LEGACY_REPORT_SCHEMA, live)) return undefined;
+  if (live !== undefined && !checkReportData(WIRE_REPORT_SCHEMA, live)) return undefined;
   let expected: string | undefined;
   if (live) {
     try {
@@ -127,9 +123,15 @@ export function reportBlock(result: {
   }
   const candidates = (result.content ?? []).flatMap((block, index) => {
     if (block.type !== "text") return [];
-    if (live) return block.text === expected ? [{ index, report: live }] : [];
-    const report = decodeReport(block.text);
-    return report ? [{ index, report }] : [];
+    if (live && block.text === expected) return [{ index, report: live }];
+    const decoded = decodeReportRecord(block.text);
+    if (!decoded) return [];
+    const { report, source } = decoded;
+    if (live) return renderReport(report) === expected ? [{ index, report: live }] : [];
+    // Unmarked success JSON alone does not identify this tool's output.
+    return source === "marked" || report.error !== undefined || report.resultId !== undefined
+      ? [{ index, report }]
+      : [];
   });
   return candidates.length === 1 ? candidates[0] : undefined;
 }
@@ -219,7 +221,12 @@ function classify(error: unknown, signal: AbortSignal | undefined): HashlineErro
   // Pi's native tools and Node report cancellation with their own errors.
   if (signal?.aborted) return cancellationError();
   const code: ErrorCode = filesystemErrorCode(error) ?? "UNCLASSIFIED";
-  return new HashlineError(code, "Native tool operation failed.", { cause: error });
+  const diagnostic = errorMessage(error);
+  const errno = errnoCode(error);
+  const message = errno && !diagnostic.includes(errno) ? `${errno}: ${diagnostic}` : diagnostic;
+  return new HashlineError(code, message, {
+    cause: error instanceof Error ? error.cause : undefined,
+  });
 }
 
 /** The recovery of a failure: publication first, then the throw site's alternative or the code's default. */

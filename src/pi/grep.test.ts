@@ -912,7 +912,7 @@ test("reports empty output and ripgrep execution failures", async () => {
       }),
       "UNCLASSIFIED",
       (report) => {
-        assert.match(report.cause?.message ?? "", /spawn failed/);
+        assert.match(report.message ?? "", /spawn failed/);
       },
     );
   });
@@ -1311,8 +1311,8 @@ test("scope inspection fails for access or traversal reasons → grep preserves 
           callTool(tool, { path, pattern: "needle", literal: true }),
           "FILESYSTEM_ERROR",
           (report) => {
-            assert.equal(report.cause?.code, code);
-            assert.equal(report.cause?.message, failure.message);
+            assert.equal(report.message, failure.message);
+            assert.equal(report.cause, undefined);
             assert.doesNotMatch(report.message ?? "", /Path not found/);
           },
         );

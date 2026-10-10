@@ -36,7 +36,8 @@ test("valid UTF-8 exceeding the runtime string limit → mutations retain the si
           : { path, replacements: [{ find: "中文", replace: "汉字" }] };
       await expectToolFailure(callTool(tool, args), "FILESYSTEM_ERROR", (report) => {
         assert.doesNotMatch(JSON.stringify(report), /UNSUPPORTED_ENCODING/);
-        assert.equal(report.cause?.code, "ERR_STRING_TOO_LONG");
+        assert.match(report.message ?? "", /ERR_STRING_TOO_LONG/);
+        assert.equal(report.cause, undefined);
         assert.equal(report.publication, "NOT_PUBLISHED");
       });
       assert.equal(byteRevision(await readFile(path)), originalRevision);

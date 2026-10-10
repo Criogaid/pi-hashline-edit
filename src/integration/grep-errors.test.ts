@@ -42,7 +42,8 @@ for (const condition of ["permission denied", "symlink loop"] as const) {
       "FILESYSTEM_ERROR",
       (report) => {
         assert.doesNotMatch(report.message ?? "", /Path not found/);
-        assert.equal(report.cause?.code, code);
+        assert.ok(report.message?.includes(code));
+        assert.equal(report.cause, undefined);
       },
     );
   });
