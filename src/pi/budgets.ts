@@ -11,6 +11,11 @@ const UTF16_PREVIEW_BYTES = 4;
 // Keep JSON envelopes and diagnostic omission markers usable for tiny declared windows.
 const MIN_BLOCK_BYTES = 512;
 const MIN_FIELD_BYTES = 128;
+// Model-derived content budgets never exceed the explicit read cap's ceiling; config.ts
+// reuses this constant for the read.maxKiB range, so automatic sizing may approach but
+// not surpass what a user could configure, keeping one absolute bound per call.
+export const MAX_CONTENT_KIB = 4096;
+const MAX_CONTENT_BYTES = MAX_CONTENT_KIB * 1024;
 
 const fallbackBudgets = {
   readBytes: 256 * 1024,
@@ -28,7 +33,7 @@ export function outputBudgetsFor(contextWindow: number | undefined): OutputBudge
   if (contextWindow === undefined || !Number.isSafeInteger(contextWindow) || contextWindow <= 0) {
     return DEFAULT_OUTPUT_BUDGETS;
   }
-  const contentBytes = contextWindow * BYTES_PER_CONTEXT_TOKEN;
+  const contentBytes = Math.min(contextWindow * BYTES_PER_CONTEXT_TOKEN, MAX_CONTENT_BYTES);
   const blockBytes = Math.max(MIN_BLOCK_BYTES, Math.floor(contentBytes / BLOCK_SHARE));
   const fieldBytes = Math.max(MIN_FIELD_BYTES, Math.floor(blockBytes / FIELD_SHARE));
   return Object.freeze({

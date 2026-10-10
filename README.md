@@ -439,7 +439,7 @@ Top-level settings control shared behavior; each group configures one tool.
 | `hashLen` | `4` | Integer checksum length, 2–8 characters. `edit` accepts only anchors of this length; anchors produced under another setting must be read again. |
 | `shiftRadius` | `15` | Integer first-pass recovery-search radius, 0–100 lines. With no local candidates, recovery searches the rest of the file; `0` disables both searches. |
 | `read.defaultLimit` | `500` | Lines returned when a call omits `limit`; positive safe integer. |
-| `read.maxKiB` | Model capacity | Optional explicit anchored-text cap, 1–4096 KiB. Omit for automatic sizing; invalid values also select automatic sizing. Calls cannot raise an explicit cap. |
+| `read.maxKiB` | Model capacity | Optional explicit anchored-text cap, 1–4096 KiB. Omit for automatic sizing; invalid values also select automatic sizing, which never exceeds this 4,096 KiB ceiling. Calls cannot raise an explicit cap. |
 | `grep.defaultLimit` | `100` | Matching lines returned when a call omits `limit`; positive safe integer. |
 | `grep.defaultContext` | `0` | Context lines shown when a call omits `context`, 0–20. |
 | `replace.regexTimeoutMs` | `5000` | Time limit for one regex batch, 1000–300000 ms, including worker startup. |
@@ -537,7 +537,7 @@ These byte limits scale with the selected model's declared `contextWindow`, inde
 | Text field / candidate row (`F`) | `max(128, floor(D / 4))` bytes |
 | Grep preview (`P`) | `floor(F / 4)` UTF-16 units, excluding the partial-line label |
 
-The two minimums leave room for JSON envelopes and diagnostic omission markers. For example, a 65,536-token model gets 64 KiB content, 16 KiB blocks, 4 KiB fields, and 1,024-unit previews; a 1,048,576-token model gets 1 MiB content, 256 KiB blocks, 64 KiB fields, and 16,384-unit previews. Unknown or invalid capacity uses bounded defaults: read 256 KiB, grep 50 KiB, blocks 16 KiB, fields 4 KiB, previews 500 units. A virtual model uses its declared selection limit; an undeclared limit uses these defaults.
+The two minimums leave room for JSON envelopes and diagnostic omission markers. For example, a 65,536-token model gets 64 KiB content, 16 KiB blocks, 4 KiB fields, and 1,024-unit previews; a 1,048,576-token model gets 1 MiB content, 256 KiB blocks, 64 KiB fields, and 16,384-unit previews. Content allowances (`B`) are additionally capped at the same 4,096 KiB ceiling an explicit `read.maxKiB` can set, so automatic sizing never exceeds what a user could configure. Unknown or invalid capacity uses bounded defaults: read 256 KiB, grep 50 KiB, blocks 16 KiB, fields 4 KiB, previews 500 units. A virtual model uses its declared selection limit; an undeclared limit uses these defaults.
 
 [`model-budgets.ts`](src/pi/model-budgets.ts) owns one lazy cache per extension instance. The first use calculates it; repeated calls reuse the immutable snapshot. A changed provider, model id, or declared capacity triggers calculation on the next use. Selection events bind Pi's live model getter without calculating. Each execution captures its budget before asynchronous work, including waiting for mutation queues. Argument rejections use the same provider before execution. These are local metadata reads, with no context-usage, provider, or tokenizer request.
 

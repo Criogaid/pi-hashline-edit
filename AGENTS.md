@@ -31,7 +31,7 @@ pi 扩展 `@criogaid/pi-hashline-edit`，注册入口为 `src/index.ts`。
 - Action Fusion 通过 `ctx.executeTool("bash", ...)` 调用会话中的 Bash，遵循 override、`tool_call` 和 `tool_result` 钩子；以最终会话结果判定命令状态并向父结果传递 `terminate`，命令失败不回滚已发布文件。
 - 配置字段为 `hashlineEdit`。项目 `.pi/settings.json` 的该字段整体替换全局字段；每个设置项单独校验，缺失或非法时回退默认值。类型、范围和默认值只在 `src/pi/config.ts` 的 schema 中定义。全局路径通过 `getAgentDir()` 获取。
 - 工具在注册时接收解析后的配置并在生命周期内保持不变；修改配置需要 reload。
-- Define output sizing in `src/pi/budgets.ts` and cache it per extension in `src/pi/model-budgets.ts`; derive byte allowances only from the selected model's declared capacity, never remaining context. Share the provider with preparation, capture an immutable snapshot before each execution's asynchronous work, and keep explicit `read.maxKiB` as the read cap. Bound worker failures only in the receiving tool.
+- Define output sizing in `src/pi/budgets.ts` and cache it per extension in `src/pi/model-budgets.ts`; derive byte allowances only from the selected model's declared capacity, never remaining context. Share the provider with preparation, capture an immutable snapshot before each execution's asynchronous work, and keep explicit `read.maxKiB` as the read cap; model-derived content budgets share the `MAX_CONTENT_KIB` ceiling the explicit range also uses. Bound worker failures only in the receiving tool.
 
 ## 编码约定
 

@@ -13,6 +13,7 @@ import { Type, type Static, type TSchema } from "typebox";
 import { Value } from "typebox/value";
 import { HASH_LEN_MAX, HASH_LEN_MIN } from "../core/hash.ts";
 import { GREP_CONTEXT_RANGE, integerRange, POSITIVE_SAFE_INTEGER } from "./schema.ts";
+import { MAX_CONTENT_KIB } from "./budgets.ts";
 
 function integerSetting(
   range: ReturnType<typeof integerRange>,
@@ -55,7 +56,7 @@ export const configSchema = Type.Object({
     ),
     maxKiB: Type.Optional(
       Type.Number({
-        ...integerRange(1, 4096),
+        ...integerRange(1, MAX_CONTENT_KIB),
         description:
           "Explicit anchored-text byte cap in KiB; omitted uses the selected model capacity.",
       }),

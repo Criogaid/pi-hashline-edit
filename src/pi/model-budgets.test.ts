@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { DEFAULT_OUTPUT_BUDGETS, outputBudgetsFor } from "./budgets.ts";
+import { DEFAULT_OUTPUT_BUDGETS, MAX_CONTENT_KIB, outputBudgetsFor } from "./budgets.ts";
 import { createOutputBudgetProvider } from "./model-budgets.ts";
 
 test("unchanged model → budget calculation is lazy and reuses the immutable snapshot", () => {
@@ -33,4 +33,11 @@ test("unknown or invalid model capacity → bounded defaults are used", () => {
   for (const capacity of [undefined, 0, -1, NaN, Infinity, 2.5]) {
     assert.equal(outputBudgetsFor(capacity), DEFAULT_OUTPUT_BUDGETS);
   }
+});
+
+test("declared capacity beyond the explicit ceiling → content budgets cap at read.maxKiB's maximum", () => {
+  const capped = outputBudgetsFor(MAX_CONTENT_KIB * 1024 + 1);
+  assert.equal(capped.readBytes, MAX_CONTENT_KIB * 1024);
+  assert.equal(capped.grepBytes, MAX_CONTENT_KIB * 1024);
+  assert.equal(capped.blockBytes, (MAX_CONTENT_KIB * 1024) / 4);
 });
