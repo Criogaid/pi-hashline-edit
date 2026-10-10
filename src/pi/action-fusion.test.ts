@@ -13,7 +13,8 @@ import type { ActionFusionProgress, CommandOutcome } from "./action-fusion.ts";
 import { ACTION_FUSION_GUIDELINES, createActionFusionExecutor } from "./action-fusion.ts";
 import { byteRevision, FileMutationError } from "./file-commit.ts";
 import { DEFAULT_CONFIG } from "./config.ts";
-import { REREAD } from "./report-schema.ts";
+import { ACTION_FUSION_PROGRESS_SCHEMA, REREAD } from "./report-schema.ts";
+import { Value } from "typebox/value";
 import { CommandNotRun, describeFailure, renderReport, reportOf } from "./report.ts";
 import { publishedMutation } from "./mutation-outcome.testing.ts";
 
@@ -405,6 +406,8 @@ test("all mutation tools forward command progress before completion in RPC mode"
       updates.length = 0;
       await writeFile(join(dir, "progress.txt"), "before\n");
       await run();
+      for (const update of updates)
+        assert.equal(Value.Check(ACTION_FUSION_PROGRESS_SCHEMA, update.details.actionFusion), true);
       assert.deepEqual(
         events.map((event) => event.command),
         ["waiting", "waiting", "running", "running", "succeeded"],

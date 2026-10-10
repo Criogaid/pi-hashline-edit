@@ -36,7 +36,13 @@ import { finalizeMutation, type CommandFacts, type MutationOutcome } from "./mut
 import { errorMessage } from "../core/errors.ts";
 import { throwIfCancelled } from "./error-text.ts";
 import { causeOf, CommandNotRun, type ReportDetails } from "./report.ts";
-import type { CommandStatus, Freshness, PublicationStatus } from "./report-schema.ts";
+import type {
+  ActionFusionProgress,
+  CommandStatus,
+  Freshness,
+  PublicationStatus,
+} from "./report-schema.ts";
+export type { ActionFusionProgress } from "./report-schema.ts";
 
 const MILLISECONDS_PER_SECOND = 1_000;
 
@@ -56,19 +62,6 @@ export interface ActionFusionDetails {
   publication: PublicationStatus;
   command: CommandStatus | "not_requested";
   freshness: Freshness;
-}
-
-export interface ActionFusionProgress extends Omit<ActionFusionDetails, "command"> {
-  toolCallId: string;
-  path: string;
-  commandText: string;
-  command: CommandStatus | "waiting" | "running";
-  /** Command output or command execution errors only. */
-  output: string;
-  /** True only after mutation execution and result generation both succeed. */
-  mutationCompleted: boolean;
-  /** Present once a command with an explicit timeout starts; refreshed during silent execution. */
-  timing?: { readonly timeoutSeconds: number; readonly remainingSeconds: number };
 }
 
 type ProgressReporter = (progress: ActionFusionProgress, ctx: ExtensionToolContext) => void;

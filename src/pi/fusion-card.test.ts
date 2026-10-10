@@ -168,3 +168,25 @@ test("timed command cards show remaining seconds only while actively running", (
   restored.restore();
   assert.doesNotMatch(restored.card(h.entries[0]).render(160).join("\n"), /remaining/);
 });
+
+test("invalid persisted command snapshots → do not replace valid progress or become executable cards", () => {
+  const original = harness();
+  original.report(waiting);
+  const initial = original.entries[0];
+  for (const invalid of [
+    { ...initial.data, command: "not-a-command-status" },
+    { ...initial.data, freshness: "fresh" },
+    { ...initial.data, mutationCompleted: "yes" },
+    { ...initial.data, timing: { timeoutSeconds: -1, remainingSeconds: 2 } },
+    { ...initial.data, timing: { timeoutSeconds: 3, remainingSeconds: "2" } },
+    { ...initial.data, foreign: true },
+  ]) {
+    const malformed = { ...initial, data: invalid };
+    const resumed = harness([initial, { ...malformed, customType: "hashline-then-run-result" }]);
+    resumed.restore();
+    assert.equal(resumed.card(malformed), undefined);
+    const shown = resumed.card(initial).render(160).join("\n");
+    assert.match(shown, /interrupted \(final status unknown\)/);
+    assert.doesNotMatch(shown, /not-a-command-status|remaining/);
+  }
+});

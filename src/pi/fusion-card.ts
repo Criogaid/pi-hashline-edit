@@ -12,17 +12,30 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import { createBashToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Box, Container, Text, type Component } from "@earendil-works/pi-tui";
-import type { TSchema } from "typebox";
+import { Type, type Static, type TSchema } from "typebox";
+import { Value } from "typebox/value";
+import { ACTION_FUSION_PROGRESS_SCHEMA } from "./report-schema.ts";
 import type { ActionFusionProgress } from "./action-fusion.ts";
 import type { MutationRenderState } from "./render.ts";
 
 const CARD_TYPE = "hashline-then-run";
 const RESULT_TYPE = "hashline-then-run-result";
 
-type CommandCardData = Pick<
-  ActionFusionProgress,
-  "toolCallId" | "commandText" | "command" | "output" | "timing" | "mutationCompleted" | "freshness"
->;
+const CARD_PROPERTIES = ACTION_FUSION_PROGRESS_SCHEMA.properties;
+const COMMAND_CARD_SCHEMA = Type.Object(
+  {
+    toolCallId: CARD_PROPERTIES.toolCallId,
+    commandText: CARD_PROPERTIES.commandText,
+    command: CARD_PROPERTIES.command,
+    output: CARD_PROPERTIES.output,
+    timing: CARD_PROPERTIES.timing,
+    // Historical transcript cards predate the two facts used to explain skipped commands.
+    mutationCompleted: Type.Optional(CARD_PROPERTIES.mutationCompleted),
+    freshness: Type.Optional(CARD_PROPERTIES.freshness),
+  },
+  { additionalProperties: false },
+);
+type CommandCardData = Static<typeof COMMAND_CARD_SCHEMA>;
 
 function commandCardData({
   toolCallId,
@@ -58,7 +71,7 @@ function notRunReason(card: CommandCardData): string | undefined {
   if (card.command === "cancelled" && !card.output) return "Not run: cancelled.";
   if (card.command !== "skipped") return undefined;
   // Cards saved before these facts were recorded carry neither and show no reason.
-  const { mutationCompleted, freshness } = card as Partial<CommandCardData>;
+  const { mutationCompleted, freshness } = card;
   if (mutationCompleted === undefined) return undefined;
   if (!mutationCompleted) return "Not run: the mutation did not complete.";
   return freshness === undefined || freshness === "unchanged"
@@ -83,15 +96,8 @@ export function registerFusionCards(pi: ExtensionAPI) {
         (entry.customType !== CARD_TYPE && entry.customType !== RESULT_TYPE)
       )
         continue;
-      const data = entry.data as ActionFusionProgress | undefined;
-      if (
-        data &&
-        typeof data.toolCallId === "string" &&
-        typeof data.commandText === "string" &&
-        typeof data.output === "string"
-      ) {
-        states.set(data.toolCallId, commandCardData(data));
-      }
+      const data = entry.data;
+      if (Value.Check(COMMAND_CARD_SCHEMA, data)) states.set(data.toolCallId, data);
     }
   };
   pi.on("session_start", (_event, ctx) => restore(ctx));
@@ -99,7 +105,7 @@ export function registerFusionCards(pi: ExtensionAPI) {
 
   pi.registerEntryRenderer<CommandCardData>(CARD_TYPE, (entry, { expanded }, theme) => {
     const initial = entry.data;
-    if (!initial) return undefined;
+    if (!Value.Check(COMMAND_CARD_SCHEMA, initial)) return undefined;
     const statusText = new Text("", 0, 0);
     const box = new Box(1, 1);
     let call: Component | undefined;

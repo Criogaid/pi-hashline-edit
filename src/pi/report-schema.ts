@@ -76,6 +76,31 @@ export const COMMAND_STATUS_SCHEMA = Type.Union([
 ]);
 export type CommandStatus = Static<typeof COMMAND_STATUS_SCHEMA>;
 
+/** Fusion updates cross RPC and transcript boundaries before a final tool report exists. */
+export const ACTION_FUSION_PROGRESS_SCHEMA = Type.Object(
+  {
+    toolCallId: Type.String(),
+    path: Type.String(),
+    commandText: Type.String(),
+    command: Type.Union([COMMAND_STATUS_SCHEMA, Type.Literal("waiting"), Type.Literal("running")]),
+    publication: PUBLICATION_SCHEMA,
+    freshness: FRESHNESS_SCHEMA,
+    output: Type.String(),
+    mutationCompleted: Type.Boolean(),
+    timing: opt(
+      Type.Object(
+        {
+          timeoutSeconds: Type.Number({ exclusiveMinimum: 0 }),
+          remainingSeconds: Type.Integer({ minimum: 0 }),
+        },
+        { additionalProperties: false },
+      ),
+    ),
+  },
+  { additionalProperties: false },
+);
+export type ActionFusionProgress = Static<typeof ACTION_FUSION_PROGRESS_SCHEMA>;
+
 const ANCHOR_FAILURE_SCHEMA = Type.Object(
   {
     field: Type.String(),
