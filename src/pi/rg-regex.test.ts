@@ -8,7 +8,8 @@ const query = (patterns: readonly string[], multiline = false, literal = false) 
 test("grep translation selects PCRE2 for assertions requiring lookaround or backreferences", () => {
   for (const [pattern, engine] of [
     ["^a[bc]+$", "pcre2"],
-    ["\\b\\w+\\B", "default"],
+    ["\\b\\w+", "default"],
+    ["\\b\\w+\\B", "pcre2"],
     ["(?<word>a)(?:b|c)", "default"],
     ["(?i:a)(?-i:b)", "default"],
     ["a(?=b)", "pcre2"],

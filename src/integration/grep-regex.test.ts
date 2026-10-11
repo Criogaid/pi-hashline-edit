@@ -356,3 +356,36 @@ test("strict JS translation rejects rg-only syntax and non-equivalent constructs
     });
   }
 });
+
+test("zero-width assertions at LF and CRLF boundaries → match only empty physical lines", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "hl-grep-zero-width-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const path = join(directory, "fixture.txt");
+  await writeFile(path, "a\nb\r\nc\n\nd\r\n\r\nx y\n");
+  const tool = makeGrepOverrideWithBackend(directory, DEFAULT_CONFIG, {});
+  for (const [pattern, multiline] of [
+    ["^$", false],
+    ["^ *$", false],
+    ["(?<![a-z])$", false],
+    ["^(?![a-z])", false],
+    ["(?<!\\w)(?!\\w)", false],
+    ["\\B", false],
+    ["\\B", true],
+  ] as const) {
+    await t.test(`${pattern} multiline=${multiline}`, async () => {
+      const result = await callTool(tool, {
+        path,
+        pattern,
+        literal: false,
+        ignoreCase: false,
+        multiline,
+      });
+      assert.equal(result.isError, undefined, JSON.stringify(reportOf(result)));
+      const body = result.content[0];
+      assert.ok(body.type === "text");
+      const lines = [...body.text.matchAll(/^(\d+)#[0-9A-Z]+│/gm)].map((match) => Number(match[1]));
+      assert.deepEqual(lines, [4, 6]);
+      assert.equal(reportOf(result)?.matches, 2);
+    });
+  }
+});
