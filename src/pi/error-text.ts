@@ -25,11 +25,9 @@ export class FileChangedDuringReadError extends HashlineError<"FILE_CHANGED"> {
 }
 
 /**
- * A searched file no longer matches what ripgrep reported. grep binds matches to
- * the revision grep-search records when a file's first match arrives:
- * rg-line-ranges checks line counts, rg-match-bytes checks raw match spans, and
- * grep-output checks matched text and that revision. All of them report this
- * one error.
+ * A searched file no longer matches what grep matched. grep binds matches to the
+ * revision grep-search hashed while matching, and grep-output re-reads the file
+ * against it.
  */
 export function searchChangedError(): HashlineError<"FILE_CHANGED"> {
   return new HashlineError("FILE_CHANGED", "File changed during search.");

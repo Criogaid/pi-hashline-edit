@@ -1,14 +1,14 @@
 /**
- * Necessary literals for grep's candidate-file prefilter. Every JavaScript match of
- * the query, on the LF view of a file without NUL, contains at least one returned
- * literal, and that literal's text appears unchanged in the file's original bytes.
- * Native RegExp still decides every match; an unknown construct only widens the
- * candidate set, down to every file.
+ * Static analysis of grep queries: smart case, and the necessary literals of grep's
+ * candidate-file prefilter. Every JavaScript match of the query, on the LF view of a
+ * file without NUL, contains at least one returned literal, and that literal's text
+ * appears unchanged in the file's original bytes. Native RegExp still decides every
+ * match; an unknown construct only widens the candidate set, down to every file.
  *
  * @module pi-hashline-edit/core
  */
 
-import { RegExpParser, type AST } from "@eslint-community/regexpp";
+import { RegExpParser, visitRegExpAST, type AST } from "@eslint-community/regexpp";
 import { caseVariants } from "./case-fold.ts";
 import { regexSource } from "./replace.ts";
 import type { GrepQuery } from "./search.ts";
@@ -249,23 +249,47 @@ function analyzeAlternatives(alternatives: readonly AST.Alternative[], ctx: Cont
   );
 }
 
+/**
+ * Parse a pattern V8 already accepted; undefined when regexpp lacks its syntax or
+ * exceeds its own limits, which only makes an analysis less precise.
+ */
+function parse(pattern: string, literal: boolean, flags: string): AST.Pattern | undefined {
+  const source = regexSource(pattern, !literal);
+  try {
+    return new RegExpParser({ ecmaVersion: 2025 }).parsePattern(source, 0, source.length, {
+      unicode: flags.includes("u"),
+      unicodeSets: flags.includes("v"),
+    });
+  } catch (error) {
+    if (error instanceof SyntaxError || error instanceof RangeError) return undefined;
+    throw error;
+  }
+}
+
+/** Smart case over decoded characters; case-sensitive when a pattern cannot be analyzed. */
+export function smartIgnoreCase(patterns: readonly string[], literal: boolean): boolean {
+  return !patterns.some((pattern) => {
+    const parsed = parse(pattern, literal, "");
+    if (!parsed) return true;
+    let uppercase = false;
+    visitRegExpAST(parsed, {
+      onCharacterEnter({ value }) {
+        const text = String.fromCharCode(value);
+        uppercase ||= text !== text.toLowerCase();
+      },
+    });
+    return uppercase;
+  });
+}
+
 /** Literals one of which every match of the query contains, or every file when unknown. */
 export function extractPrefilter(query: GrepQuery): Prefilter {
   const unicode = query.flags.includes("u") || query.flags.includes("v");
   const ctx: Context = { ignoreCase: query.flags.includes("i"), unicode };
   const literals: Literal[] = [];
   for (const pattern of query.patterns) {
-    const source = regexSource(pattern, !query.literal);
-    let parsed: AST.Pattern;
-    try {
-      parsed = new RegExpParser({ ecmaVersion: 2025 }).parsePattern(source, 0, source.length, {
-        unicode: query.flags.includes("u"),
-        unicodeSets: query.flags.includes("v"),
-      });
-    } catch {
-      // V8 accepted the pattern at tool entry; syntax the parser lacks only widens the scan.
-      return ALL;
-    }
+    const parsed = parse(pattern, query.literal, query.flags);
+    if (!parsed) return ALL;
     const required = requiredOf(analyzeAlternatives(parsed.alternatives, ctx));
     if (!required) return ALL;
     literals.push(...required);

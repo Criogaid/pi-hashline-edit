@@ -1,8 +1,8 @@
 /**
  * Override grep: valid UTF-8 results feed edit; malformed UTF-8 uses non-editable previews.
- * grep-plan selects rg translation (rg-regex, grep-search, rg-process) or native
- * JS matching (grep-javascript, core/search). Both reuse grep-scope, grep-output,
- * and grep-render. This module owns the schema, backend wiring, and execution order.
+ * grep-search lists candidate files with rg (rg-process, core/search-analysis) and
+ * matches them with native JavaScript (core/search). grep-scope, grep-output, and
+ * grep-render complete it. This module owns the schema, backend wiring, and execution order.
  * @module pi-hashline-edit/pi
  */
 
@@ -16,18 +16,15 @@ import { createAnchorFormatter } from "./anchor-format.ts";
 import { assembleGrepOutput, formatMatches, searchIncompleteError } from "./grep-output.ts";
 import { filterExplicitFilesByGlob, toArray, resolveSearchPaths } from "./grep-scope.ts";
 import {
-  runRgSearch,
-  searchMatches,
+  searchFiles,
   type GrepBackend,
   type SearchScope,
   type SearchFileSnapshot,
 } from "./grep-search.ts";
 export type { GrepBackend } from "./grep-search.ts";
 import { toDisplayLines } from "./grep-render.ts";
-import { probeRegex, runRgPaths } from "./rg-process.ts";
-import { smartIgnoreCase } from "./rg-regex.ts";
-import { planSearch } from "./grep-plan.ts";
-import { searchJavaScript } from "./grep-javascript.ts";
+import { runRgPaths } from "./rg-process.ts";
+import { smartIgnoreCase } from "../core/search-analysis.ts";
 import { buildRegex } from "../core/replace.ts";
 import { DEFAULT_GREP_FLAGS } from "../core/search.ts";
 import { errorMessage } from "../core/errors.ts";
@@ -121,7 +118,7 @@ type GrepTool = ToolDefinition<
   GrepSchema,
   ({ incomplete?: true } & ForgetReceiptDetails & Partial<ReportDetails>) | undefined
 >;
-/** Validate JavaScript syntax once; engine selection does not reject valid patterns. */
+/** Validate JavaScript syntax once; the search never rejects a pattern V8 accepts. */
 function checkGrepArguments(args: unknown, report: ReportArgumentIssue): void {
   const { pattern, literal, flags } = (args ?? {}) as Record<string, unknown>;
   if (typeof literal !== "boolean" || (flags !== undefined && typeof flags !== "string")) return;
@@ -166,12 +163,7 @@ export function makeGrepOverrideWithBackend(
 ) {
   const { hashLen } = config;
   const grepSchema = createGrepSchema(config.grep);
-  const backend: GrepBackend = {
-    search: runRgSearch,
-    runRgPaths,
-    probeRegex,
-    ...overrides,
-  };
+  const backend: GrepBackend = { runRgPaths, ...overrides };
 
   return {
     name: "grep" as const,
@@ -255,12 +247,7 @@ export function makeGrepOverrideWithBackend(
           (params.flags === undefined ? smartIgnoreCase(patterns, literal) : flags.has("i"));
         if (ignoreCase) flags.add("i");
         else flags.delete("i");
-        const plan = await planSearch(
-          { patterns, literal, flags: [...flags].join(""), multiline },
-          rgPath,
-          backend,
-          signal,
-        );
+        const query = { patterns, literal, flags: [...flags].join(""), multiline };
         const ctx = context;
         const { searchPaths, pathInfo } = await resolveSearchPaths(cwd, params.path);
         let scope: SearchScope = {
@@ -289,26 +276,16 @@ export function makeGrepOverrideWithBackend(
                 matchLimitReached: false,
                 snapshots: new Map<string, SearchFileSnapshot>(),
               }
-            : plan.engine === "rg"
-              ? await searchMatches({
-                  backend,
-                  rgPath,
-                  scope,
-                  matchers: plan.matchers,
-                  limit: effectiveLimit,
-                  signal,
-                  warnings,
-                })
-              : await searchJavaScript({
-                  backend,
-                  rgPath,
-                  scope,
-                  query: plan.query,
-                  limit: effectiveLimit,
-                  timeoutMs: config.grep.regexTimeoutMs,
-                  signal,
-                  warnings,
-                });
+            : await searchFiles({
+                backend,
+                rgPath,
+                scope,
+                query,
+                limit: effectiveLimit,
+                timeoutMs: config.grep.regexTimeoutMs,
+                signal,
+                warnings,
+              });
         const { raw, matchLimitReached } = result;
 
         const report = { tool: "grep", path: params.path };

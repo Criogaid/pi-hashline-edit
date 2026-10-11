@@ -1,21 +1,22 @@
+/**
+ * grep's one search path: rg lists candidate files through the prefilter, and native
+ * RegExp in a bounded worker pool decides every match on each file's LF view. Each
+ * matched file keeps the revision of the bytes it was matched against.
+ *
+ * @module pi-hashline-edit/pi
+ */
 import { createHash } from "node:crypto";
+import { stat } from "node:fs/promises";
+import { availableParallelism } from "node:os";
 import { resolve } from "node:path";
-import { normalizeLineEndings } from "../core/lines.ts";
+import type { GrepQuery, SearchInput } from "../core/search.ts";
+import { extractPrefilter } from "../core/search-analysis.ts";
+import { SEARCH_RESULT_SCHEMA, type SearchResult } from "../core/search-schema.ts";
 import { scanTextFile } from "./text-stream.ts";
-import {
-  type RgRunResult,
-  matcherArgs,
-  probeRegex,
-  rgBytes,
-  rgText,
-  ripgrepFailure,
-  runRg,
-  runRgPaths,
-} from "./rg-process.ts";
-import { submatchesToLineRanges } from "./rg-line-ranges.ts";
-import { rawMatchRevision, type RawMatchRevision } from "./rg-match-bytes.ts";
+import { candidateArgs, type RgRunResult, runRgPaths } from "./rg-process.ts";
+import { withRegexWorker } from "./regex-worker.ts";
+import { invalidWorkerResult, workerReplyDecoder } from "./regex-worker-contract.ts";
 import { throwIfCancelled } from "./error-text.ts";
-import type { RgMatcher } from "./rg-regex.ts";
 
 /** Surface incomplete search diagnostics without discarding confirmed matches. */
 export function recordSearchDiagnostics(result: RgRunResult, warnings: string[]): void {
@@ -27,24 +28,11 @@ export function recordSearchDiagnostics(result: RgRunResult, warnings: string[])
   if (message) warnings.push(message);
 }
 
-export interface RgMatch {
+/** One matching physical line; column counts UTF-16 units of the LF view. */
+export interface GrepMatch {
   filePath: string;
   lineNumber: number;
-  column?: number;
-  matchedText?: string;
-  /** Shared whole-event digest: a limited row still depends on every byte in its raw match. */
-  rawMatch?: RawMatchRevision;
-}
-
-interface RgJsonEvent {
-  type: string;
-  data?: {
-    path?: Parameters<typeof rgText>[0];
-    lines?: Parameters<typeof rgBytes>[0];
-    line_number?: number;
-    absolute_offset?: number;
-    submatches?: { start: number; end: number }[];
-  };
+  column: number;
 }
 
 export interface SearchScope {
@@ -54,41 +42,9 @@ export interface SearchScope {
   searchPaths: readonly string[];
 }
 
-/** One JSONL content search, kept structured so the backend never re-parses rg arguments. */
-export interface SearchRequest {
-  readonly matcher: RgMatcher;
-  readonly scope: SearchScope;
-}
-
-/** Runs a search request and streams rg JSONL lines to `onLine`; returning false stops rg. */
-export type SearchRunner = (
-  rgPath: string,
-  request: SearchRequest,
-  signal: AbortSignal | undefined,
-  onLine: (line: string) => boolean | Promise<boolean>,
-) => Promise<RgRunResult>;
-
-/** Search the original files; --crlf in the matcher makes CRLF one line break. */
-export const runRgSearch: SearchRunner = (rgPath, { matcher, scope }, signal, onLine) =>
-  runRg(
-    rgPath,
-    [
-      ...matcherArgs(matcher),
-      "--json",
-      "--line-number",
-      ...scopeArgs(scope),
-      "--",
-      ...scope.searchPaths,
-    ],
-    signal,
-    onLine,
-  );
-
 /** @internal — injectable process boundary for deterministic tests. */
 export interface GrepBackend {
-  search: SearchRunner;
   runRgPaths: typeof runRgPaths;
-  probeRegex: typeof probeRegex;
 }
 
 /** The only place scope becomes rg flags. */
@@ -101,39 +57,11 @@ export function scopeArgs(scope: SearchScope): string[] {
   ];
 }
 
-interface SearchMatchesOptions {
-  backend: GrepBackend;
-  rgPath: string;
-  scope: SearchScope;
-  /** Scanned in order; translateQuery decides how patterns share a scan. */
-  matchers: readonly RgMatcher[];
-  limit: number;
-  signal?: AbortSignal;
-  warnings: string[];
-}
-
-/** A matched file when its first match arrived; content output re-verifies it before display. */
+/** A matched file as it was searched; output re-verifies it before display. */
 export interface SearchFileSnapshot {
   revision: string;
   validUtf8: boolean;
   totalLines: number;
-}
-
-/** Snapshot a matched file; undefined when it contains NUL and must be skipped. */
-async function scanFileSnapshot(
-  filePath: string,
-  signal?: AbortSignal,
-): Promise<SearchFileSnapshot | undefined> {
-  const hash = createHash("sha256");
-  const stats = await scanTextFile(
-    filePath,
-    undefined,
-    signal,
-    (bytes) => hash.update(bytes),
-    "lossy",
-  );
-  if (stats.hasNul) return undefined;
-  return { revision: hash.digest("hex"), validUtf8: stats.validUtf8, totalLines: stats.totalLines };
 }
 
 export function fileReadWarning(
@@ -145,109 +73,242 @@ export function fileReadWarning(
   return `Could not read ${filePath}: ${error.message}`;
 }
 
-export async function searchMatches(options: SearchMatchesOptions) {
-  const { backend, rgPath, scope, matchers, limit, signal, warnings } = options;
-  const raw: RgMatch[] = [];
-  // Every matched file is read once: NUL files are skipped, and validity decides anchors.
+/** Whole-file input of a multiline query; README's search limits link here. */
+export const MAX_MULTILINE_SEARCH_BYTES = 64 * 1024 * 1024;
+/** Line-mode requests end after a line feed once they reach this many UTF-16 units. */
+const SEARCH_CHUNK_UNITS = 4 * 1024 * 1024;
+/** A line-mode request holds whole lines, so one line may not exceed the multiline limit. */
+const MAX_SEARCH_LINE_UNITS = MAX_MULTILINE_SEARCH_BYTES;
+const MAX_SEARCH_HEAP_MB = 512;
+const MAX_SEARCH_WORKERS = 4;
+const SEARCH_WORKERS = Math.max(1, Math.min(MAX_SEARCH_WORKERS, availableParallelism() - 1));
+
+class SearchFileLimitError extends Error {
+  constructor(multiline: boolean) {
+    const limit = `${MAX_MULTILINE_SEARCH_BYTES / 1024 ** 2} MiB`;
+    super(
+      multiline
+        ? `Multiline search requires a file of at most ${limit}.`
+        : `Search requires lines of at most ${limit}.`,
+    );
+  }
+}
+
+/** A worker failure inside a file scan; it fails the search instead of becoming a read warning. */
+class WorkerFailure {
+  readonly error: unknown;
+  constructor(error: unknown) {
+    this.error = error;
+  }
+}
+
+const decodeReply = workerReplyDecoder(SEARCH_RESULT_SCHEMA);
+type Rows = SearchResult["lines"];
+type Run = (input: SearchInput) => Promise<SearchResult>;
+
+function physicalLines(text: string): number {
+  let lines = 0;
+  for (let at = text.indexOf("\n"); at !== -1; at = text.indexOf("\n", at + 1)) lines++;
+  return lines + (text && !text.endsWith("\n") ? 1 : 0);
+}
+
+/**
+ * Match one file. Without multiline each line matches alone, so requests split after a
+ * line feed; a multiline query sends the whole file. Undefined when the file has NUL.
+ */
+async function searchFile(
+  filePath: string,
+  query: GrepQuery,
+  room: () => number,
+  run: Run,
+  signal: AbortSignal,
+): Promise<{ rows: Rows; snapshot: SearchFileSnapshot } | undefined> {
+  if (query.multiline && (await stat(filePath)).size > MAX_MULTILINE_SEARCH_BYTES)
+    throw new SearchFileLimitError(true);
+  const hash = createHash("sha256");
+  const rows: Rows = [];
+  let lineOffset = 0;
+  const send = async (source: string) => {
+    const lines = physicalLines(source);
+    const limit = room() - rows.length;
+    if (lines > 0 && limit > 0) {
+      let result: SearchResult;
+      try {
+        result = await run({ source, query, limit });
+      } catch (error) {
+        throw new WorkerFailure(error);
+      }
+      if (result.totalLines !== lines || result.lines.length > limit) throw invalidWorkerResult();
+      let previous = 0;
+      for (const { lineNumber, column } of result.lines) {
+        if (lineNumber <= previous || lineNumber > lines || column > source.length)
+          throw invalidWorkerResult();
+        previous = lineNumber;
+        rows.push({ lineNumber: lineOffset + lineNumber, column });
+      }
+    }
+    lineOffset += lines;
+  };
+
+  let pending = "";
+  /** Length of pending through its last line feed. */
+  let complete = 0;
+  let bytes = 0;
+  const stats = await scanTextFile(
+    filePath,
+    async (text) => {
+      if (query.multiline) {
+        if (bytes <= MAX_MULTILINE_SEARCH_BYTES) pending += text;
+        return;
+      }
+      const lf = text.lastIndexOf("\n");
+      if (lf !== -1) complete = pending.length + lf + 1;
+      pending += text;
+      if (pending.length - complete > MAX_SEARCH_LINE_UNITS) throw new SearchFileLimitError(false);
+      if (complete >= SEARCH_CHUNK_UNITS) {
+        const source = pending.slice(0, complete);
+        pending = pending.slice(complete);
+        complete = 0;
+        await send(source);
+      }
+    },
+    signal,
+    (chunk) => {
+      bytes += chunk.length;
+      hash.update(chunk);
+    },
+    "lossy",
+  );
+  if (stats.hasNul) return undefined;
+  if (bytes > MAX_MULTILINE_SEARCH_BYTES && query.multiline) throw new SearchFileLimitError(true);
+  await send(pending);
+  return {
+    rows,
+    snapshot: {
+      revision: hash.digest("hex"),
+      validUtf8: stats.validUtf8,
+      totalLines: stats.totalLines,
+    },
+  };
+}
+
+/**
+ * Search every candidate file in scope. Paths stream from rg into a queue that at most
+ * SEARCH_WORKERS workers drain; a worker starts only when no idle one can take a path.
+ */
+export async function searchFiles(options: {
+  readonly backend: GrepBackend;
+  readonly rgPath: string;
+  readonly scope: SearchScope;
+  readonly query: GrepQuery;
+  readonly limit: number;
+  readonly timeoutMs: number;
+  readonly signal?: AbortSignal;
+  readonly warnings: string[];
+}) {
+  const { backend, rgPath, scope, query, limit, timeoutMs, signal, warnings } = options;
+  const raw: GrepMatch[] = [];
   const snapshots = new Map<string, SearchFileSnapshot>();
   let matchLimitReached = false;
-  const unreadableFiles = new Set<string>();
-  const seenMatches = new Set<string>();
-  for (const matcher of matchers) {
-    const run = await backend.search(rgPath, { matcher, scope }, signal, async (line) => {
-      if (raw.length >= limit) return false;
-      let event: RgJsonEvent;
-      try {
-        event = JSON.parse(line);
-      } catch {
-        return true;
-      }
-      if (event.type !== "match") return true;
-      const data = event.data;
-      if (
-        !data?.path ||
-        !data.lines ||
-        typeof data.line_number !== "number" ||
-        !Number.isSafeInteger(data.line_number)
-      )
-        return true;
-      const filePath = resolve(rgText(data.path));
-      if (unreadableFiles.has(filePath)) return true;
-      let snapshot = snapshots.get(filePath);
-      if (!snapshot) {
-        try {
-          snapshot = await scanFileSnapshot(filePath, signal);
-          if (!snapshot) {
-            unreadableFiles.add(filePath);
-            return true;
-          }
-          snapshots.set(filePath, snapshot);
-        } catch (error) {
-          const warning = fileReadWarning(filePath, error, signal);
-          if (!warning) throw error;
-          warnings.push(warning);
-          unreadableFiles.add(filePath);
-          return true;
-        }
-      }
-      const startLine = data.line_number;
-      const bytes = rgBytes(data.lines);
-      // Invalid UTF-8 rows have no anchors, so their exact match bytes are verified instead.
-      const rawMatch = snapshot.validUtf8
-        ? undefined
-        : rawMatchRevision(bytes, startLine, data.absolute_offset);
-      const matchedText = normalizeLineEndings(bytes.toString("utf8")).replace(/\n$/, "");
-      const addMatch = (match: RgMatch) => {
-        const matchKey = `${filePath}\0${match.lineNumber}`;
-        if (seenMatches.has(matchKey)) return true;
-        seenMatches.add(matchKey);
-        raw.push(match);
-        if (raw.length >= limit) {
-          matchLimitReached = true;
-          return false;
-        }
-        return true;
-      };
-      if (!matcher.multiline) {
-        return addMatch({
-          filePath,
-          lineNumber: startLine,
-          column: bytes.subarray(0, data.submatches?.[0]?.start ?? 0).toString("utf8").length,
-          matchedText,
-          rawMatch,
-        });
-      }
-      if (!Array.isArray(data.submatches))
-        throw ripgrepFailure("Invalid rg multiline match event.");
-      const columns = new Map<number, number>();
-      const submatches = data.submatches.length ? data.submatches : [{ start: 0, end: 0 }];
-      const ranges = submatchesToLineRanges(
-        bytes,
-        startLine,
-        submatches,
-        snapshot.totalLines,
-        columns,
-      );
-      const texts = matchedText.split("\n");
-      for (const [start, end] of ranges) {
-        for (let lineNumber = start; lineNumber < end; lineNumber++) {
-          if (
-            !addMatch({
-              filePath,
-              lineNumber,
-              column: columns.get(lineNumber),
-              matchedText: texts[lineNumber - startLine],
-              rawMatch,
-            })
-          )
-            return false;
-        }
-      }
-      return true;
+  let failure: { error: unknown } | undefined;
+  const failed = new AbortController();
+  const poolSignal = signal ? AbortSignal.any([signal, failed.signal]) : failed.signal;
+  const fail = (error: unknown) => {
+    failure ??= { error };
+    failed.abort();
+  };
+
+  const queue: string[] = [];
+  let listed = false;
+  const idle: (() => void)[] = [];
+  const space: (() => void)[] = [];
+  const stopped = () => failure !== undefined || matchLimitReached;
+  const releaseAll = () => {
+    for (const wake of idle.splice(0)) wake();
+    for (const wake of space.splice(0)) wake();
+  };
+  const next = async (): Promise<string | undefined> => {
+    while (!queue.length && !listed && !stopped())
+      await new Promise<void>((wake) => idle.push(wake));
+    space.shift()?.();
+    return stopped() ? undefined : queue.shift();
+  };
+
+  const searchPath = async (filePath: string, run: Run) => {
+    let found: Awaited<ReturnType<typeof searchFile>>;
+    try {
+      found = await searchFile(filePath, query, () => limit - raw.length, run, poolSignal);
+    } catch (error) {
+      if (error instanceof WorkerFailure) throw error.error;
+      const warning =
+        error instanceof SearchFileLimitError
+          ? `${filePath}: ${error.message}`
+          : fileReadWarning(filePath, error, poolSignal);
+      if (!warning) throw error;
+      warnings.push(warning);
+      return;
+    }
+    const room = limit - raw.length;
+    if (!found?.rows.length || room <= 0) return;
+    snapshots.set(filePath, found.snapshot);
+    for (const row of found.rows.slice(0, room)) raw.push({ ...row, filePath });
+    if (raw.length >= limit) {
+      matchLimitReached = true;
+      releaseAll();
+    }
+  };
+
+  const workers: Promise<void>[] = [];
+  const startWorker = () =>
+    withRegexWorker<SearchInput, SearchResult, void>(
+      new URL("./grep-worker.mjs", import.meta.url),
+      decodeReply,
+      timeoutMs,
+      poolSignal,
+      async (run) => {
+        for (let path = await next(); path !== undefined; path = await next())
+          await searchPath(path, run);
+      },
+      { maxOldGenerationSizeMb: MAX_SEARCH_HEAP_MB },
+    ).catch((error) => {
+      fail(error);
+      releaseAll();
     });
-    throwIfCancelled(signal);
-    recordSearchDiagnostics(run, warnings);
-    if (matchLimitReached) break;
+
+  const seen = new Set<string>();
+  try {
+    const listing = await backend.runRgPaths(
+      rgPath,
+      [
+        ...candidateArgs(extractPrefilter(query)),
+        "--null",
+        ...scopeArgs(scope),
+        "--",
+        ...scope.searchPaths,
+      ],
+      poolSignal,
+      async (path) => {
+        const filePath = resolve(path);
+        if (stopped()) return false;
+        if (seen.has(filePath)) return true;
+        seen.add(filePath);
+        queue.push(filePath);
+        if (idle.length) idle.shift()!();
+        else if (workers.length < SEARCH_WORKERS) workers.push(startWorker());
+        while (queue.length >= SEARCH_WORKERS && !stopped())
+          await new Promise<void>((wake) => space.push(wake));
+        return !stopped();
+      },
+    );
+    recordSearchDiagnostics(listing, warnings);
+  } catch (error) {
+    fail(error);
+  } finally {
+    listed = true;
+    releaseAll();
   }
-  return { raw, matchLimitReached, snapshots };
+  await Promise.all(workers);
+  throwIfCancelled(signal);
+  if (failure) throw failure.error;
+  return { raw, snapshots, matchLimitReached };
 }

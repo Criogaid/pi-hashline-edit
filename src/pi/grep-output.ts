@@ -2,13 +2,12 @@ import { truncateHead, formatSize } from "@earendil-works/pi-coding-agent";
 import { DiagnosticBuffer } from "./diagnostic-buffer.ts";
 import { createHash } from "node:crypto";
 import { createAnchorFormatter, displayCarriageReturns, plainRow } from "./anchor-format.ts";
-import { fileReadWarning, type RgMatch, type SearchFileSnapshot } from "./grep-search.ts";
+import { fileReadWarning, type GrepMatch, type SearchFileSnapshot } from "./grep-search.ts";
 import { scanTextFile, scanTextLines } from "./text-stream.ts";
 import { DEFAULT_OUTPUT_BUDGETS, type OutputBudgets } from "./budgets.ts";
 import { searchChangedError } from "./error-text.ts";
 import { HashlineError } from "../core/errors.ts";
 import { serializePath } from "./path.ts";
-import { rawMatchVerifier } from "./rg-match-bytes.ts";
 import type { Report } from "./report-schema.ts";
 
 /** UTF-16 units kept before the match column when a preview window is cut. */
@@ -64,7 +63,7 @@ function previewLine(
 
 interface FormatMatchesOptions {
   cwd: string;
-  raw: readonly RgMatch[];
+  raw: readonly GrepMatch[];
   outputMode: "content" | "files" | "count";
   context: number;
   anchors: ReturnType<typeof createAnchorFormatter>;
@@ -86,7 +85,7 @@ export async function formatMatches(options: FormatMatchesOptions) {
     searchSnapshots,
     budget = DEFAULT_OUTPUT_BUDGETS,
   } = options;
-  const byFile = new Map<string, RgMatch[]>();
+  const byFile = new Map<string, GrepMatch[]>();
   for (const match of raw) {
     const lines = byFile.get(match.filePath) ?? [];
     lines.push(match);
@@ -97,9 +96,8 @@ export async function formatMatches(options: FormatMatchesOptions) {
   const blocks: string[] = [];
   const invalidUtf8: string[] = [];
   let linesTruncated = false;
-  const fileEntries = [...byFile.entries()].filter(
-    ([, matches]) => outputMode === "content" || matches.some((match) => match.rawMatch),
-  );
+  // Every mode re-reads each matched file against the revision its matches came from.
+  const fileEntries = [...byFile.entries()];
   if (fileEntries.length) {
     const fileResults = new Array<{ block?: string; invalidUtf8?: boolean; warning?: string }>(
       fileEntries.length,
@@ -116,9 +114,6 @@ export async function formatMatches(options: FormatMatchesOptions) {
           while (!workerAbort.signal.aborted && nextIndex < fileEntries.length) {
             const current = nextIndex++;
             const [filePath, matchLines] = fileEntries[current];
-            const verifyRaw = rawMatchVerifier(
-              new Set(matchLines.flatMap((match) => (match.rawMatch ? [match.rawMatch] : []))),
-            );
             try {
               if (outputMode !== "content") {
                 const hash = createHash("sha256");
@@ -126,22 +121,15 @@ export async function formatMatches(options: FormatMatchesOptions) {
                   filePath,
                   undefined,
                   scanSignal,
-                  (bytes) => {
-                    hash.update(bytes);
-                    verifyRaw.write(bytes);
-                  },
+                  (bytes) => hash.update(bytes),
                   "lossy",
                 );
-                verifyRaw.end();
                 if (hash.digest("hex") !== searchSnapshots.get(filePath)!.revision)
                   throw searchChangedError();
                 fileResults[current] = {};
                 continue;
               }
               const columns = new Map(matchLines.map((match) => [match.lineNumber, match.column]));
-              const matchedTexts = new Map(
-                matchLines.map((match) => [match.lineNumber, match.matchedText]),
-              );
               const windowSet = new Set<number>();
               for (const { lineNumber } of matchLines) {
                 for (let n = Math.max(1, lineNumber - context); n <= lineNumber + context; n++)
@@ -157,11 +145,7 @@ export async function formatMatches(options: FormatMatchesOptions) {
                 (number) => windowSet.has(number),
                 (line) => {
                   if (line.text === undefined) return;
-                  const matchedText = matchedTexts.get(line.number);
-                  if (matchedText !== undefined && matchedText !== line.text) {
-                    throw searchChangedError();
-                  }
-                  if (matchedTexts.has(line.number)) matchedRows.add(line.number);
+                  if (columns.has(line.number)) matchedRows.add(line.number);
                   const { text: display, wasTruncated } = previewLine(
                     displayCarriageReturns(line.text),
                     columns.get(line.number),
@@ -176,14 +160,10 @@ export async function formatMatches(options: FormatMatchesOptions) {
                 },
                 {
                   signal: scanSignal,
-                  onBytes: (bytes) => {
-                    hash.update(bytes);
-                    verifyRaw.write(bytes);
-                  },
+                  onBytes: (bytes) => hash.update(bytes),
                   decoding: "lossy",
                 },
               );
-              verifyRaw.end();
               if (stats.hasNul) throw searchChangedError();
               if (matchLines.some(({ lineNumber }) => !matchedRows.has(lineNumber))) {
                 throw searchChangedError();

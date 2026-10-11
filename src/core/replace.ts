@@ -11,7 +11,7 @@ import { HashlineError } from "./errors.ts";
 import type { Replacement } from "./replace-schema.ts";
 export type { Replacement } from "./replace-schema.ts";
 
-/** JavaScript regex source on the shared LF view; literal text matches exactly. grep translates the same source. */
+/** JavaScript regex source on the shared LF view; literal text matches exactly. grep matches the same source. */
 export function regexSource(find: string, isRegex: boolean): string {
   const logical = normalizeLineEndings(find);
   return isRegex ? logical : escapeRegex(logical);

@@ -1,7 +1,7 @@
 /**
  * ripgrep process layer: spawning and cancelling rg, bounded record and
- * stderr reading, shared arguments, the matcher compile probe, and rg JSON
- * string decoding. Knows nothing about anchors or output formatting.
+ * stderr reading, shared arguments, and the candidate-file listing arguments.
+ * Knows nothing about anchors or output formatting.
  *
  * @module pi-hashline-edit/pi
  */
@@ -12,7 +12,7 @@ import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import type { Readable } from "node:stream";
 import { HashlineError } from "../core/errors.ts";
 import { throwIfCancelled } from "./error-text.ts";
-import type { RgMatcher } from "./rg-regex.ts";
+import type { Literal, Prefilter } from "../core/search-analysis.ts";
 
 export const COMMON_RG_ARGS = ["--no-config", "--color=never"];
 export const MAX_RG_RECORD_BYTES = 16 * 1024 * 1024;
@@ -41,8 +41,6 @@ function unsupportedPath(): HashlineError {
 
 /** Bounded ripgrep stderr retains the beginning and end with an omission notice. */
 export const MAX_RG_STDERR_BYTES = 64 * 1024;
-/** Probe runs read only a short stdout; more means an unexpected rg mode. */
-const MAX_RG_PROBE_OUTPUT_BYTES = 64 * 1024;
 
 interface ExitResult {
   code: number | null;
@@ -160,18 +158,6 @@ async function runDelimited(
   }
 }
 
-/** @internal — shared process boundary for JSONL searches. */
-export function runRg(
-  rgPath: string,
-  args: string[],
-  signal: AbortSignal | undefined,
-  onLine: (line: string) => boolean | Promise<boolean>,
-): Promise<RgRunResult> {
-  return runDelimited(rgPath, args, undefined, 10, signal, (record) =>
-    record.length === 0 ? true : onLine(record.toString("utf8")),
-  );
-}
-
 /** @internal — read NUL-delimited UTF-8 paths from an owned rg process. */
 export function runRgPaths(
   rgPath: string,
@@ -191,79 +177,28 @@ export function assertRgSucceeded(result: Pick<RgRunResult, "code" | "stderr">):
   if (result.code !== 0 && result.code !== 1) throw ripgrepFailure("ripgrep failed.", result);
 }
 
-interface TextRunResult {
-  code: number | null;
-  stdout: string;
-  stderr: string;
+/** A literal's characters as one rg pattern; every non-word character is a code point escape. */
+function literalPattern(literal: Literal): string {
+  const escape = (char: string) =>
+    /^[0-9A-Za-z_]$/.test(char) ? char : `\\x{${char.codePointAt(0)!.toString(16)}}`;
+  return literal
+    .map((chars) => (chars.length === 1 ? escape(chars[0]) : `[${chars.map(escape).join("")}]`))
+    .join("");
 }
 
-export type RunText = (
-  rgPath: string,
-  args: readonly string[],
-  input: Buffer,
-  signal?: AbortSignal,
-) => Promise<TextRunResult>;
-
-export const runText: RunText = async (rgPath, args, input, signal) => {
-  const process = startRg(rgPath, args, signal);
-  const chunks: Buffer[] = [];
-  let bytes = 0;
-  process.child.stdout.on("data", (chunk: Buffer) => {
-    bytes += chunk.length;
-    if (bytes <= MAX_RG_PROBE_OUTPUT_BYTES) chunks.push(chunk);
-    else process.kill();
-  });
-  process.child.stdin.end(input);
-  const result = await process.done;
-  throwIfCancelled(signal);
-  if (result.error) throw ripgrepFailure("Failed to run ripgrep.", { error: result.error });
-  if (bytes > MAX_RG_PROBE_OUTPUT_BYTES)
-    throw ripgrepFailure("Unexpected ripgrep probe output overflow.");
-  return {
-    code: result.code,
-    stderr: result.stderr,
-    stdout: Buffer.concat(chunks).toString("utf8"),
-  };
-};
-
 /**
- * A translated matcher over the original bytes: --crlf treats CRLF as one line
- * break, and case folding is already in the pattern.
+ * List candidate files: those whose original bytes contain a prefilter literal, or every
+ * file in scope. Literals never contain a line break, so line-oriented matching finds them.
  */
-export function matcherArgs({ engine, pattern, multiline }: RgMatcher): string[] {
+export function candidateArgs(prefilter: Prefilter): string[] {
+  if (prefilter.kind === "all") return [...COMMON_RG_ARGS, "--files"];
   return [
     ...COMMON_RG_ARGS,
-    `--engine=${engine}`,
-    "--crlf",
-    multiline ? "--multiline" : "--no-multiline",
+    "--files-with-matches",
+    "--engine=default",
     "--case-sensitive",
     "--encoding=none",
     "-e",
-    pattern,
+    prefilter.literals.map(literalPattern).join("|"),
   ];
-}
-
-/** Compile a matcher against empty input; any exit other than 0 or 1 means rg rejected it. */
-export async function probeRegex(
-  rgPath: string,
-  matcher: RgMatcher,
-  signal?: AbortSignal,
-): Promise<Pick<TextRunResult, "code" | "stderr">> {
-  return runText(rgPath, [...matcherArgs(matcher), "--quiet", "--", "-"], Buffer.alloc(0), signal);
-}
-
-interface RgString {
-  text?: string;
-  bytes?: string;
-}
-
-export function rgBytes(value: RgString): Buffer {
-  if (typeof value.text === "string") return Buffer.from(value.text, "utf8");
-  if (typeof value.bytes === "string") return Buffer.from(value.bytes, "base64");
-  throw ripgrepFailure("Invalid rg JSON string.");
-}
-
-export function rgText(value: RgString): string {
-  if (typeof value.text === "string") return value.text;
-  throw unsupportedPath();
 }
