@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { rgPath } from "@vscode/ripgrep";
+import { rejectsArgument } from "../pi/argument-error.testing.ts";
 import { DEFAULT_CONFIG } from "../pi/config.ts";
 import { makeGrepOverrideWithBackend } from "../pi/grep-tool.ts";
 import { reportOf } from "../pi/report.ts";
@@ -205,4 +206,45 @@ test("real grep probe compiles translated matchers on empty input and propagates
     ),
     /Operation aborted/,
   );
+});
+
+test("backreference regression: a capture spanning mixed line endings → rejected before search", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "hashline-grep-backreference-"));
+  try {
+    const path = join(dir, "mixed.txt");
+    await writeFile(path, "a\r\na\n");
+    const tool = makeGrepOverrideWithBackend(dir, DEFAULT_CONFIG, {});
+    await assert.rejects(
+      () =>
+        callTool(tool, {
+          path,
+          pattern: "(a\\n)\\1",
+          literal: false,
+          multiline: true,
+          ignoreCase: false,
+        }),
+      rejectsArgument("pattern", /line break/),
+    );
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("backreference regression: ignoreCase with an ASCII capture → does not match the Kelvin sign", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "hashline-grep-backreference-"));
+  try {
+    const path = join(dir, "casefold.txt");
+    await writeFile(path, "kK\n");
+    const tool = makeGrepOverrideWithBackend(dir, DEFAULT_CONFIG, {});
+    const result = await callTool(tool, {
+      path,
+      pattern: "(k)\\1",
+      literal: false,
+      ignoreCase: true,
+    });
+    assert.equal(result.isError, undefined, JSON.stringify(result));
+    assert.equal(reportOf(result)?.matches, 0);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 });
