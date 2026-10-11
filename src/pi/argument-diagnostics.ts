@@ -22,6 +22,12 @@ export interface ArgumentDiagnostics {
   readonly limited: boolean;
 }
 
+/** The declared object a value was projected with, and the tag field that selected it among branches. */
+interface SelectedShape {
+  readonly object: TObject;
+  readonly tag?: string;
+}
+
 /** State shared by one failure projection. */
 interface Projection {
   /** Fields a tool check already explained; their schema constraints are dropped. */
@@ -30,6 +36,8 @@ interface Projection {
   readonly applicable: Set<string>;
   /** Branch constraints that native diagnostics would split across branches. */
   readonly derived: ArgumentIssue[];
+  /** Each object path's selected shape; paths left to several branches are absent. */
+  readonly selected: Map<string, SelectedShape>;
 }
 
 function literalValues(schema: TSchema): readonly TLiteralValue[] | undefined {
@@ -108,10 +116,15 @@ function projectValueSchema(
     if (tag) {
       if (typeof value !== "object" || value === null || Array.isArray(value))
         return Type.Unknown({ type: "object" });
+      const select = (branch: TObject): TSchema => {
+        const projected = projectSchema(branch, value, path, projection);
+        projection.selected.set(path, { object: branch, tag: tag.field });
+        return projected;
+      };
       const matches = tag.branches.filter((branch) =>
         Value.Check(branch.properties[tag.field], Reflect.get(value, tag.field)),
       );
-      if (matches.length === 1) return projectSchema(matches[0], value, path, projection);
+      if (matches.length === 1) return select(matches[0]);
       if (matches.length === 0)
         return Type.Object({ [tag.field]: Type.Unknown({ enum: [...new Set(tag.choices)] }) });
       // Distinct property presence can disambiguate branches sharing a tag even
@@ -138,7 +151,7 @@ function projectValueSchema(
           shapeValue,
         ),
       );
-      if (shapes.length === 1) return projectSchema(shapes[0], value, path, projection);
+      if (shapes.length === 1) return select(shapes[0]);
       // Branches set apart only by exclusive fields (for example before/after
       // destinations) fail together when none or several are given. Validate their
       // merged shape once and state the choice as one issue, instead of each branch
@@ -162,11 +175,12 @@ function projectValueSchema(
           ),
           ObjectOptions(matches[0]),
         );
-        return projectSchema(merged, value, path, projection);
+        return select(merged);
       }
       // Otherwise project every applicable branch so semantic checks are retained, then
       // let the native engine select a shape after already-explained constraints are removed.
       const projected = matches.map((branch) => projectSchema(branch, value, path, projection));
+      projection.selected.delete(path);
       const accepted = projected.filter((branch) => Value.Check(branch, value));
       return accepted.length === 1 ? accepted[0] : Type.Union(projected);
     }
@@ -189,6 +203,7 @@ function projectValueSchema(
   projection.applicable.add(path);
   if (projection.explained.has(path)) return Type.Unknown();
   if (IsObject(schema) && typeof value === "object" && value !== null) {
+    projection.selected.set(path, { object: schema });
     const properties = Object.fromEntries(
       Object.entries(schema.properties).map(([key, child]) => [
         key,
@@ -223,13 +238,19 @@ function pointerParts(pointer: string): readonly string[] {
     .map((part) => part.replaceAll("~1", "/").replaceAll("~0", "~"));
 }
 
-function fieldPath(pointer: string, prepared: unknown, key?: string): string {
+/** The projection path of the value at `pointer`; the root is "". */
+function valuePath(pointer: string, prepared: unknown): string {
   let value = prepared;
   let path = "";
   for (const part of pointerParts(pointer)) {
     path = Array.isArray(value) ? `${path}[${part}]` : propertyPath(path, part);
     value = typeof value === "object" && value !== null ? Reflect.get(value, part) : undefined;
   }
+  return path;
+}
+
+function fieldPath(pointer: string, prepared: unknown, key?: string): string {
+  const path = valuePath(pointer, prepared);
   return (key === undefined ? path : propertyPath(path, key)) || "$";
 }
 
@@ -246,34 +267,43 @@ function explainDeclaration(schema: TSchema): string | undefined {
 }
 
 /**
- * What a missing field does, from its declarations in the objects at `parts`.
+ * What the field at `parts` does, from its declarations in every branch.
  * Choices label each value, so every branch's choices are listed together;
  * other declarations must agree, so one branch's description is never
- * attributed to another.
+ * attributed to another. An array item without its own description is
+ * explained by its array.
  */
-function fieldExplanation(
-  schema: TSchema,
-  parts: readonly string[],
-  key: string,
-): string | undefined {
+function fieldExplanation(schema: TSchema, parts: readonly string[]): string | undefined {
   const declarations = new Set<TSchema>();
   const visit = (node: TSchema, depth: number): void => {
-    if (IsUnion(node)) for (const branch of node.anyOf) visit(branch, depth);
-    else if (depth === parts.length) {
-      if (IsObject(node) && Object.hasOwn(node.properties, key))
-        declarations.add(node.properties[key]);
-    } else if (IsObject(node)) {
+    if (depth === parts.length) declarations.add(node);
+    else if (IsUnion(node)) for (const branch of node.anyOf) visit(branch, depth);
+    else if (IsObject(node)) {
       if (Object.hasOwn(node.properties, parts[depth]))
         visit(node.properties[parts[depth]], depth + 1);
-    } else if (IsArray(node)) visit(node.items, depth + 1);
+    } else if (IsArray(node))
+      visit(
+        depth + 1 === parts.length && explainDeclaration(node.items) === undefined
+          ? node
+          : node.items,
+        depth + 1,
+      );
   };
   visit(schema, 0);
+  if (declarations.size === 0) return undefined;
   const explanations = new Set([...declarations].map(explainDeclaration));
   if (explanations.has(undefined)) return undefined;
   const choices = [...declarations].every(
     (declaration) => literalValues(declaration) !== undefined,
   );
   return choices || explanations.size === 1 ? [...explanations].join(" ") : undefined;
+}
+
+/** Why a field is not allowed: the fields the selected shape declares, after the meaning of the tag that chose it. */
+function shapeExplanation({ object, tag }: SelectedShape): string {
+  const fields = `Accepted fields: ${Object.keys(object.properties).join(", ")}.`;
+  const choice = tag === undefined ? undefined : explainDeclaration(object.properties[tag]);
+  return choice === undefined ? fields : `${choice} ${fields}`;
 }
 
 /** One issue per field: distinct reasons joined, and distinct fixes joined, each in report order. */
@@ -292,10 +322,17 @@ function combineIssues(issues: readonly ArgumentIssue[]): readonly ArgumentIssue
   }));
 }
 
+/**
+ * One issue per native error. Reasons that do not say how to correct the value
+ * carry a fix derived from the declared schema: a missing field and a pattern
+ * mismatch explain the field, and a field that is not allowed explains its
+ * selected shape.
+ */
 function aggregateErrors(
   errors: readonly TLocalizedValidationError[],
   parameters: TObject,
   prepared: unknown,
+  selected: ReadonlyMap<string, SelectedShape>,
 ): readonly ArgumentIssue[] {
   const issues: ArgumentIssue[] = [];
   const add = (field: string, reason: string, fix?: string) =>
@@ -319,13 +356,23 @@ function aggregateErrors(
           add(
             fieldPath(error.instancePath, prepared, key),
             "is required",
-            fieldExplanation(parameters, parts, key),
+            fieldExplanation(parameters, [...parts, key]),
           );
         break;
       }
-      case "additionalProperties":
+      case "additionalProperties": {
+        const shape = selected.get(valuePath(error.instancePath, prepared));
+        const fix = shape && shapeExplanation(shape);
         for (const key of error.params.additionalProperties)
-          add(fieldPath(error.instancePath, prepared, key), "is not allowed");
+          add(fieldPath(error.instancePath, prepared, key), "is not allowed", fix);
+        break;
+      }
+      case "pattern":
+        add(
+          fieldPath(error.instancePath, prepared),
+          error.message,
+          fieldExplanation(parameters, pointerParts(error.instancePath)),
+        );
         break;
       case "boolean":
         add(fieldPath(error.instancePath, prepared), "is not allowed");
@@ -369,6 +416,7 @@ export function diagnoseArguments(
     explained: new Set(semanticIssues.map((issue) => issue.field)),
     applicable: new Set<string>(),
     derived: [],
+    selected: new Map(),
   };
   const projected = projectSchema(parameters, prepared, "", projection);
   const retained = combineIssues(
@@ -404,7 +452,9 @@ export function diagnoseArguments(
     issues: combineIssues([
       ...retained,
       ...projection.derived,
-      ...batches.flatMap((batch) => aggregateErrors(batch.errors, parameters, prepared)),
+      ...batches.flatMap((batch) =>
+        aggregateErrors(batch.errors, parameters, prepared, projection.selected),
+      ),
     ]),
     limited: batches.some((batch) => batch.limited),
   };
