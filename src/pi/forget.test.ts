@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { DEFAULT_OUTPUT_BUDGETS, FORGET_MIN_BYTES } from "./budgets.ts";
 import { withResultTag } from "./forget-tool.ts";
+import { reportOf } from "./report.ts";
 import {
   assertForgotten,
   finish,
@@ -231,6 +232,164 @@ for (const invalid of ["old result", "unknown result"] as const) {
     assert.ok(!f.sessionManager.getEntries().some((entry) => entry.type === "context_edit"));
   });
 }
+
+for (const scenario of [
+  "rejected batch call",
+  "split batch",
+  "already forgotten result",
+] as const) {
+  test(`forget ${scenario} → later forget sees only the remaining batch results`, {
+    timeout: SESSION_TIMEOUT_MS,
+  }, async (t) => {
+    const f = await openForgetSession(t);
+    await writeFile(join(f.cwd, "build.log"), LOG_BODY);
+    await f.prompt(
+      toolResponse(f.read("batch-first"), f.read("batch-second")),
+      (messages) => {
+        const source = scenario === "rejected batch call" ? "batch-second" : "batch-first";
+        const id = taggedResultId(toolResult(messages, source));
+        assert.ok(id);
+        const ids = scenario === "rejected batch call" ? ["r00000", id] : [id];
+        for (const source of ["batch-first", "batch-second"])
+          assert.notEqual(taggedResultId(toolResult(messages, source)), "r00000");
+        return toolResponse({
+          type: "toolCall",
+          id: "forget-first-attempt",
+          name: "forget",
+          arguments: { ids },
+        });
+      },
+      (messages) => {
+        const originals = ["batch-first", "batch-second"].map((source) =>
+          toolResult(f.requests[1], source),
+        );
+        const ids = originals.map((result) => {
+          const id = taggedResultId(result);
+          assert.ok(id);
+          return id;
+        });
+        const firstAttempt = toolResult(messages, "forget-first-attempt");
+        if (scenario === "rejected batch call") {
+          assert.equal(firstAttempt.isError, true);
+          const report = reportOf(firstAttempt);
+          assert.equal(report?.error, "NOT_FORGETTABLE");
+          assert.deepEqual(report?.ids, ["r00000"]);
+          assert.deepEqual(report?.available, ids);
+          for (const original of originals)
+            assert.deepEqual(toolResult(messages, original.toolCallId), original);
+        } else {
+          assert.equal(firstAttempt.isError, false);
+          assert.deepEqual(reportOf(firstAttempt)?.forgotten, [ids[0]]);
+          assertForgotten(toolResult(messages, "batch-first"), ids[0]);
+          assert.deepEqual(toolResult(messages, "batch-second"), originals[1]);
+        }
+        return toolResponse({
+          type: "toolCall",
+          id: "forget-second-attempt",
+          name: "forget",
+          arguments: { ids: [ids[scenario === "already forgotten result" ? 0 : 1]] },
+        });
+      },
+      finish,
+    );
+    const firstId = taggedResultId(toolResult(f.requests[1], "batch-first"));
+    const secondId = taggedResultId(toolResult(f.requests[1], "batch-second"));
+    assert.ok(firstId && secondId);
+    const after = f.requests[3];
+    const secondAttempt = toolResult(after, "forget-second-attempt");
+    if (scenario === "already forgotten result") {
+      assert.equal(secondAttempt.isError, true);
+      const report = reportOf(secondAttempt);
+      assert.equal(report?.error, "NOT_FORGETTABLE");
+      assert.deepEqual(report?.ids, [firstId]);
+      assert.deepEqual(report?.available, [secondId]);
+      assertForgotten(toolResult(after, "batch-first"), firstId);
+      assert.deepEqual(
+        toolResult(after, "batch-second"),
+        toolResult(f.requests[1], "batch-second"),
+      );
+    } else {
+      assert.equal(secondAttempt.isError, false, JSON.stringify(reportOf(secondAttempt)));
+      assert.deepEqual(reportOf(secondAttempt)?.forgotten, [secondId]);
+      assertForgotten(toolResult(after, "batch-second"), secondId);
+      if (scenario === "split batch") assertForgotten(toolResult(after, "batch-first"), firstId);
+      else
+        assert.deepEqual(
+          toolResult(after, "batch-first"),
+          toolResult(f.requests[1], "batch-first"),
+        );
+    }
+  });
+}
+
+test("forget mixed with read → the next forget is limited to the new batch", {
+  timeout: SESSION_TIMEOUT_MS,
+}, async (t) => {
+  const f = await openForgetSession(t);
+  await writeFile(join(f.cwd, "build.log"), LOG_BODY);
+  await f.prompt(
+    toolResponse(f.read("old-batch"), f.read("old-kept")),
+    (messages) => toolResponse(forgetCall(messages, "old-batch"), f.read("new-batch")),
+    (messages) => {
+      const oldId = taggedResultId(toolResult(f.requests[1], "old-batch"));
+      assert.ok(oldId);
+      const keptId = taggedResultId(toolResult(messages, "old-kept"));
+      assert.ok(keptId);
+      assert.equal(toolResult(messages, "forget-call").isError, false);
+      assertForgotten(toolResult(messages, "old-batch"), oldId);
+      assert.ok(taggedResultId(toolResult(messages, "new-batch")));
+      return toolResponse({
+        type: "toolCall",
+        id: "forget-old-batch",
+        name: "forget",
+        arguments: { ids: [oldId, keptId] },
+      });
+    },
+    finish,
+  );
+  const oldId = taggedResultId(toolResult(f.requests[1], "old-batch"));
+  const keptId = taggedResultId(toolResult(f.requests[1], "old-kept"));
+  const newId = taggedResultId(toolResult(f.requests[2], "new-batch"));
+  assert.ok(oldId && keptId && newId);
+  const rejected = toolResult(f.requests[3], "forget-old-batch");
+  assert.equal(rejected.isError, true);
+  const report = reportOf(rejected);
+  assert.equal(report?.error, "NOT_FORGETTABLE");
+  assert.deepEqual(report?.ids, [oldId, keptId]);
+  assert.deepEqual(report?.available, [newId]);
+  assertForgotten(toolResult(f.requests[3], "old-batch"), oldId);
+  assert.deepEqual(toolResult(f.requests[3], "old-kept"), toolResult(f.requests[1], "old-kept"));
+  assert.deepEqual(toolResult(f.requests[3], "new-batch"), toolResult(f.requests[2], "new-batch"));
+});
+
+test("forget after a reply without tools → the earlier batch is no longer available", {
+  timeout: SESSION_TIMEOUT_MS,
+}, async (t) => {
+  const f = await openForgetSession(t);
+  await writeFile(join(f.cwd, "build.log"), LOG_BODY);
+  await f.prompt(toolResponse(f.read("earlier-batch")), finish);
+  const original = toolResult(f.requests[1], "earlier-batch");
+  const id = taggedResultId(original);
+  assert.ok(id);
+  await f.prompt(
+    toolResponse({
+      type: "toolCall",
+      id: "forget-after-text",
+      name: "forget",
+      arguments: { ids: [id] },
+    }),
+    finish,
+  );
+  const after = f.requests.at(-1);
+  assert.ok(after);
+  const rejected = toolResult(after, "forget-after-text");
+  assert.equal(rejected.isError, true);
+  const report = reportOf(rejected);
+  assert.equal(report?.error, "NOT_FORGETTABLE");
+  assert.deepEqual(report?.ids, [id]);
+  assert.deepEqual(report?.available, []);
+  assert.deepEqual(toolResult(after, "earlier-batch"), original);
+});
 
 for (const invalid of [
   "empty ids",
