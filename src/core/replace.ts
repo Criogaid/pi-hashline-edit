@@ -11,13 +11,13 @@ import { HashlineError } from "./errors.ts";
 import type { Replacement } from "./replace-schema.ts";
 export type { Replacement } from "./replace-schema.ts";
 
-/**
 /** JavaScript regex source on the shared LF view; literal text matches exactly. grep translates the same source. */
 export function regexSource(find: string, isRegex: boolean): string {
   const logical = normalizeLineEndings(find);
   return isRegex ? logical : escapeRegex(logical);
 }
 
+/**
  * Both matcher modes operate on the shared LF view. Flag characters are validated by the tool
  * schema; replace's and grep's prepareArguments also compile regexes here before any file is read.
  */
