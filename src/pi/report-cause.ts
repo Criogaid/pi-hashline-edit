@@ -40,7 +40,7 @@ function boundedCause(data: Cause, maxBytes: number): Cause {
 }
 /** A worker reply error before schema validation; report-cause keeps its transport.
  *
- * Defined here, not in replace-worker-contract.ts, so the worker's runtime graph
+ * Defined here, not in regex-worker-contract.ts, so the worker's runtime graph
  * stays free of typebox: the contract module imports typebox to validate replies,
  * and the worker runs on plain jiti without the host's module mapping.
  */

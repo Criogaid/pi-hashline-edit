@@ -16,7 +16,8 @@ import { describeEditFailure } from "./failure-context.ts";
 import { assembleGrepOutput } from "./grep-output.ts";
 import { createOutputBudgetProvider } from "./model-budgets.ts";
 import { describeFailure, decodeReport, reportOf } from "./report.ts";
-import { decodeWorkerReply, restoreWorkerError } from "./replace-worker-contract.ts";
+import { decodeWorkerReply } from "./replace-worker-contract.ts";
+import { restoreWorkerError } from "./regex-worker-contract.ts";
 import { workerFailure } from "./report-cause.ts";
 import { callTool } from "./tool-call.testing.ts";
 
