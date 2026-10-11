@@ -76,7 +76,7 @@ export function fileReadWarning(
 /** Whole-file input of a multiline query; README's search limits link here. */
 export const MAX_MULTILINE_SEARCH_BYTES = 64 * 1024 * 1024;
 /** Line-mode requests end after a line feed once they reach this many UTF-16 units. */
-const SEARCH_CHUNK_UNITS = 4 * 1024 * 1024;
+const SEARCH_CHUNK_UNITS = 1024 * 1024;
 /** A line-mode request holds whole lines, so one line may not exceed the multiline limit. */
 const MAX_SEARCH_LINE_UNITS = MAX_MULTILINE_SEARCH_BYTES;
 const MAX_SEARCH_HEAP_MB = 512;
