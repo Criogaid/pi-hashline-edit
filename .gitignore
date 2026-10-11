@@ -6,3 +6,10 @@ node_modules/
 .DS_Store
 docs/research/
 .worktrees/
+docs/glm-lab/
+docs/glm-lab-prompt.md
+docs/glm-lab-setup.mjs
+docs/glm-run/
+docs/mermaid-preview.md
+docs/reviews/
+docs/plans/2026-09-mutation-runner-and-grep-split.md
