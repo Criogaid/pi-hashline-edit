@@ -78,17 +78,24 @@ const LINE_TERMINATORS: Ranges = [
 ];
 const NEVER = "[^\\x{0}-\\x{10ffff}]";
 const PCRE2_WORD = "[0-9A-Za-z_]";
-/** ASCII word boundaries, as JavaScript defines \b without the u flag. */
-const WORD_BOUNDARY = {
-  default: ["(?-u:\\b)", "(?-u:\\B)"],
-  pcre2: [
-    `(?:(?<=${PCRE2_WORD})(?!${PCRE2_WORD})|(?<!${PCRE2_WORD})(?=${PCRE2_WORD}))`,
-    `(?:(?<=${PCRE2_WORD})(?=${PCRE2_WORD})|(?<!${PCRE2_WORD})(?!${PCRE2_WORD}))`,
-  ],
-} as const;
 /** Logical line boundaries on original bytes, excluding the middle of CRLF. */
 const LINE_BREAKS = classBody(LINE_TERMINATORS);
 const OUTSIDE_CRLF = "(?!(?<=\\r)\\n)";
+/** ASCII word boundaries, as JavaScript defines \b without the u flag. */
+const WORD_BOUNDARY = {
+  default: "(?-u:\\b)",
+  pcre2: `(?:(?<=${PCRE2_WORD})(?!${PCRE2_WORD})|(?<!${PCRE2_WORD})(?=${PCRE2_WORD}))`,
+} as const;
+/**
+ * \B holds between two non-word characters, so it needs PCRE2 to exclude the middle
+ * of CRLF; the default engine also sees the CR of a CRLF line in line mode.
+ */
+const NOT_WORD_BOUNDARY = `(?:(?<=${PCRE2_WORD})(?=${PCRE2_WORD})|(?<!${PCRE2_WORD})(?!${PCRE2_WORD}))${OUTSIDE_CRLF}`;
+/**
+ * ripgrep's line-mode PCRE2 search strips only a CRLF terminator, so an LF-terminated
+ * line's subject keeps its LF; no match may start after it, outside the line.
+ */
+const INSIDE_LINE = "(?!(?<=\\n)\\z)";
 const LINE_ANCHORS = [
   `(?<![^${LINE_BREAKS}])${OUTSIDE_CRLF}`,
   `(?![^${LINE_BREAKS}])${OUTSIDE_CRLF}`,
@@ -398,7 +405,7 @@ function emitAssertion(node: AST.Assertion, ctx: Context): Emitted {
       return atom(ctx.multiline ? (index === 0 ? "\\A" : "\\z") : PHYSICAL_LINE_ANCHORS[index]);
     }
     case "word":
-      return atom(WORD_BOUNDARY[ctx.engine][node.negate ? 1 : 0]);
+      return atom(node.negate ? NOT_WORD_BOUNDARY : WORD_BOUNDARY[ctx.engine]);
     case "lookahead":
     case "lookbehind": {
       const marker = `${node.kind === "lookbehind" ? "<" : ""}${node.negate ? "!" : "="}`;
@@ -567,12 +574,12 @@ export function translateQuery(query: GrepQuery): RgMatcher[] {
 }
 
 function translateScan(parsed: readonly AST.Pattern[], query: GrepQuery): RgMatcher {
-  let engine: RgEngine = "default";
+  let engine = "default" as RgEngine;
   const groups = new Map<AST.CapturingGroup, number>();
   for (const pattern of parsed)
     visitRegExpAST(pattern, {
       onAssertionEnter(node) {
-        if (node.kind !== "word") engine = "pcre2";
+        if (node.kind !== "word" || node.negate) engine = "pcre2";
       },
       onBackreferenceEnter() {
         engine = "pcre2";
@@ -606,10 +613,12 @@ function translateScan(parsed: readonly AST.Pattern[], query: GrepQuery): RgMatc
   };
   const translated = parsed.map((pattern) => emitAlternatives(pattern.alternatives, ctx));
   checkBackreferences(ctx.scan);
+  const multiline = query.multiline || ctx.scan.standaloneCr;
+  const pattern =
+    translated.length === 1 ? translated[0] : translated.map((text) => `(?:${text})`).join("|");
   return {
     engine,
-    multiline: query.multiline || ctx.scan.standaloneCr,
-    pattern:
-      translated.length === 1 ? translated[0] : translated.map((text) => `(?:${text})`).join("|"),
+    multiline,
+    pattern: engine === "pcre2" && !multiline ? `${INSIDE_LINE}(?:${pattern})` : pattern,
   };
 }
