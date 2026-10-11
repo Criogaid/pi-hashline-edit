@@ -290,7 +290,7 @@ export function registerForgetTool(
     description: `Remove tagged inspection output from your context. Only results of your previous response whose report has a resultId (${formatKiB(FORGET_MIN_BYTES)} or larger, or images) can be forgotten; later responses cannot forget them. After this response each selected result's entire content, including its report, is replaced with a forgotten receipt. A codemode resultId covers its entire output, including other results printed by the script. Files and session history are unchanged.`,
     promptSnippet: "Forget tagged inspection output you no longer need",
     promptGuidelines: [
-      "In the response right after results with a resultId, forget each one unless you will edit with its anchors or need its exact text again; first copy any facts you still need into note.",
+      "In the response right after results with a resultId, forget each one unless you will need its text after that response's tool results return; anchors you pass to edit in that same response are already in the edit call, so using them is no reason to keep it. First copy any facts you still need into note.",
       "Make that one forget call alongside the response's other tool calls, naming every result to forget; when the response makes no other tool call, skip forget.",
     ],
     parameters: forgetSchema,
