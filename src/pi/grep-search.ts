@@ -1,7 +1,10 @@
 /**
- * grep's one search path: rg lists candidate files through the prefilter, and native
- * RegExp in a bounded worker pool decides every match on each file's LF view. Each
- * matched file keeps the revision of the bytes it was matched against.
+ * grep's search path: rg lists candidates and native RegExp in a bounded worker pool decides
+ * every match on each file's LF view. Without multiline, rg lists candidate lines through
+ * the translation in rg-regex.ts, which matches at least every line the query matches, and
+ * workers check only those lines; a multiline query, or one rg cannot compile, lists
+ * candidate files through the prefilter and workers check every line. Each matched file
+ * keeps the revision of the bytes it was matched against.
  *
  * @module pi-hashline-edit/pi
  */
@@ -9,11 +12,19 @@ import { createHash } from "node:crypto";
 import { stat } from "node:fs/promises";
 import { availableParallelism } from "node:os";
 import { resolve } from "node:path";
-import type { GrepQuery, SearchInput } from "../core/search.ts";
+import type { GrepQuery, LineSearchInput, SearchInput } from "../core/search.ts";
 import { extractPrefilter } from "../core/search-analysis.ts";
 import { SEARCH_RESULT_SCHEMA, type SearchResult } from "../core/search-schema.ts";
 import { scanTextFile } from "./text-stream.ts";
-import { candidateArgs, type RgRunResult, runRgPaths } from "./rg-process.ts";
+import {
+  candidateArgs,
+  COMMON_RG_ARGS,
+  LINE_LISTING_ARGS,
+  type RgRunResult,
+  runRgLines,
+  runRgPaths,
+} from "./rg-process.ts";
+import { lineCandidatePatterns } from "./rg-regex.ts";
 import { withRegexWorker } from "./regex-worker.ts";
 import { invalidWorkerResult, workerReplyDecoder } from "./regex-worker-contract.ts";
 import { throwIfCancelled } from "./error-text.ts";
@@ -45,6 +56,7 @@ export interface SearchScope {
 /** @internal — injectable process boundary for deterministic tests. */
 export interface GrepBackend {
   runRgPaths: typeof runRgPaths;
+  runRgLines: typeof runRgLines;
 }
 
 /** The only place scope becomes rg flags. */
@@ -81,6 +93,8 @@ const SEARCH_CHUNK_UNITS = 1024 * 1024;
 const MAX_SEARCH_LINE_UNITS = MAX_MULTILINE_SEARCH_BYTES;
 const MAX_SEARCH_HEAP_MB = 512;
 const MAX_SEARCH_WORKERS = 4;
+/** Beyond this many candidate lines, a file's every line is checked instead. */
+const MAX_CANDIDATE_LINES = 64 * 1024;
 const SEARCH_WORKERS = Math.max(1, Math.min(MAX_SEARCH_WORKERS, availableParallelism() - 1));
 
 class SearchFileLimitError extends Error {
@@ -104,7 +118,41 @@ class WorkerFailure {
 
 const decodeReply = workerReplyDecoder(SEARCH_RESULT_SCHEMA);
 type Rows = SearchResult["lines"];
-type Run = (input: SearchInput) => Promise<SearchResult>;
+type Run = (input: SearchInput | LineSearchInput) => Promise<SearchResult>;
+
+/** A file to check: only its candidate lines, ascending, or every line when absent. */
+interface Candidate {
+  filePath: string;
+  lines?: readonly number[];
+}
+
+/**
+ * The candidate lines among the next lines of a request source, as the LF view shows them.
+ * `next` indexes the first candidate in source; a returned line number is 1-based in source.
+ * `lengths` holds each selected line's length, and `lines` the lines a worker matches.
+ */
+function selectLines(source: string, offset: number, wanted: readonly number[], next: number) {
+  const numbers: number[] = [];
+  const lengths: number[] = [];
+  const texts: string[] = [];
+  let start = 0;
+  let line = offset + 1;
+  for (; next < wanted.length; next++) {
+    while (line < wanted[next] && start < source.length) {
+      const lf = source.indexOf("\n", start);
+      start = lf === -1 ? source.length : lf + 1;
+      line++;
+    }
+    if (start >= source.length) break;
+    const lf = source.indexOf("\n", start);
+    // A CRLF line feeds its view without the CR; a CR before the end of the file stays.
+    const end = lf === -1 ? source.length : source[lf - 1] === "\r" ? lf - 1 : lf;
+    numbers.push(line - offset);
+    lengths.push(end - start);
+    texts.push(source.slice(start, end), "\n");
+  }
+  return { numbers, lengths, lines: texts.join("") };
+}
 
 function physicalLines(text: string): number {
   let lines = 0;
@@ -117,7 +165,7 @@ function physicalLines(text: string): number {
  * line feed; a multiline query sends the whole file. Undefined when the file has NUL.
  */
 async function searchFile(
-  filePath: string,
+  { filePath, lines: wanted }: Candidate,
   query: GrepQuery,
   room: () => number,
   run: Run,
@@ -128,25 +176,49 @@ async function searchFile(
   const hash = createHash("sha256");
   const rows: Rows = [];
   let lineOffset = 0;
+  let nextWanted = 0;
+  const check = async (input: SearchInput | LineSearchInput, lines: number) => {
+    let result: SearchResult;
+    try {
+      result = await run(input);
+    } catch (error) {
+      throw new WorkerFailure(error);
+    }
+    if (result.totalLines !== lines || result.lines.length > input.limit)
+      throw invalidWorkerResult();
+    let previous = 0;
+    for (const row of result.lines) {
+      if (row.lineNumber <= previous || row.lineNumber > lines) throw invalidWorkerResult();
+      previous = row.lineNumber;
+    }
+    return result.lines;
+  };
   const send = async (source: string) => {
     const lines = physicalLines(source);
+    let candidates = lines;
+    if (wanted) {
+      let end = nextWanted;
+      while (end < wanted.length && wanted[end] <= lineOffset + lines) end++;
+      candidates = end - nextWanted;
+    }
     const limit = room() - rows.length;
-    if (lines > 0 && limit > 0) {
-      let result: SearchResult;
-      try {
-        result = await run({ source, query, limit });
-      } catch (error) {
-        throw new WorkerFailure(error);
-      }
-      if (result.totalLines !== lines || result.lines.length > limit) throw invalidWorkerResult();
-      let previous = 0;
-      for (const { lineNumber, column } of result.lines) {
-        if (lineNumber <= previous || lineNumber > lines || column > source.length)
-          throw invalidWorkerResult();
-        previous = lineNumber;
-        rows.push({ lineNumber: lineOffset + lineNumber, column });
+    if (candidates > 0 && limit > 0) {
+      // Selecting most lines costs more than matching them all, with the same results.
+      if (wanted && candidates * 2 <= lines) {
+        const selected = selectLines(source, lineOffset, wanted, nextWanted);
+        const found = await check({ lines: selected.lines, query, limit }, candidates);
+        for (const { lineNumber, column } of found) {
+          if (column > selected.lengths[lineNumber - 1]) throw invalidWorkerResult();
+          rows.push({ lineNumber: lineOffset + selected.numbers[lineNumber - 1], column });
+        }
+      } else {
+        for (const { lineNumber, column } of await check({ source, query, limit }, lines)) {
+          if (column > source.length) throw invalidWorkerResult();
+          rows.push({ lineNumber: lineOffset + lineNumber, column });
+        }
       }
     }
+    if (wanted) nextWanted += candidates;
     lineOffset += lines;
   };
 
@@ -218,7 +290,7 @@ export async function searchFiles(options: {
     failed.abort();
   };
 
-  const queue: string[] = [];
+  const queue: Candidate[] = [];
   let listed = false;
   const idle: (() => void)[] = [];
   const space: (() => void)[] = [];
@@ -227,17 +299,18 @@ export async function searchFiles(options: {
     for (const wake of idle.splice(0)) wake();
     for (const wake of space.splice(0)) wake();
   };
-  const next = async (): Promise<string | undefined> => {
+  const next = async (): Promise<Candidate | undefined> => {
     while (!queue.length && !listed && !stopped())
       await new Promise<void>((wake) => idle.push(wake));
     space.shift()?.();
     return stopped() ? undefined : queue.shift();
   };
 
-  const searchPath = async (filePath: string, run: Run) => {
+  const searchPath = async (candidate: Candidate, run: Run) => {
+    const { filePath } = candidate;
     let found: Awaited<ReturnType<typeof searchFile>>;
     try {
-      found = await searchFile(filePath, query, () => limit - raw.length, run, poolSignal);
+      found = await searchFile(candidate, query, () => limit - raw.length, run, poolSignal);
     } catch (error) {
       if (error instanceof WorkerFailure) throw error.error;
       const warning =
@@ -260,14 +333,14 @@ export async function searchFiles(options: {
 
   const workers: Promise<void>[] = [];
   const startWorker = () =>
-    withRegexWorker<SearchInput, SearchResult, void>(
+    withRegexWorker<SearchInput | LineSearchInput, SearchResult, void>(
       new URL("./grep-worker.mjs", import.meta.url),
       decodeReply,
       timeoutMs,
       poolSignal,
       async (run) => {
-        for (let path = await next(); path !== undefined; path = await next())
-          await searchPath(path, run);
+        for (let file = await next(); file !== undefined; file = await next())
+          await searchPath(file, run);
       },
       { maxOldGenerationSizeMb: MAX_SEARCH_HEAP_MB },
     ).catch((error) => {
@@ -276,30 +349,48 @@ export async function searchFiles(options: {
     });
 
   const seen = new Set<string>();
+  let listedAny = false;
+  const enqueue = async (path: string, lines?: readonly number[]) => {
+    listedAny = true;
+    const filePath = resolve(path);
+    if (stopped()) return false;
+    if (seen.has(filePath)) return true;
+    seen.add(filePath);
+    queue.push({ filePath, lines });
+    if (idle.length) idle.shift()!();
+    else if (workers.length < SEARCH_WORKERS) workers.push(startWorker());
+    while (queue.length >= SEARCH_WORKERS && !stopped())
+      await new Promise<void>((wake) => space.push(wake));
+    return !stopped();
+  };
+  const scoped = [...scopeArgs(scope), "--", ...scope.searchPaths];
   try {
-    const listing = await backend.runRgPaths(
-      rgPath,
-      [
-        ...candidateArgs(extractPrefilter(query)),
-        "--null",
-        ...scopeArgs(scope),
-        "--",
-        ...scope.searchPaths,
-      ],
-      poolSignal,
-      async (path) => {
-        const filePath = resolve(path);
-        if (stopped()) return false;
-        if (seen.has(filePath)) return true;
-        seen.add(filePath);
-        queue.push(filePath);
-        if (idle.length) idle.shift()!();
-        else if (workers.length < SEARCH_WORKERS) workers.push(startWorker());
-        while (queue.length >= SEARCH_WORKERS && !stopped())
-          await new Promise<void>((wake) => space.push(wake));
-        return !stopped();
-      },
-    );
+    const patterns = query.multiline ? undefined : lineCandidatePatterns(query);
+    let listing = patterns
+      ? await backend.runRgLines(
+          rgPath,
+          [
+            ...COMMON_RG_ARGS,
+            "--engine=default",
+            "--case-sensitive",
+            "--encoding=none",
+            ...LINE_LISTING_ARGS,
+            ...patterns.flatMap((pattern) => ["-e", pattern]),
+            ...scoped,
+          ],
+          poolSignal,
+          MAX_CANDIDATE_LINES,
+          enqueue,
+        )
+      : undefined;
+    // rg reports a pattern it cannot compile, such as one beyond its size limit, before any file.
+    if (!listing || (listing.code === 2 && !listedAny))
+      listing = await backend.runRgPaths(
+        rgPath,
+        [...candidateArgs(extractPrefilter(query)), "--null", ...scoped],
+        poolSignal,
+        (path) => enqueue(path),
+      );
     recordSearchDiagnostics(listing, warnings);
   } catch (error) {
     fail(error);

@@ -128,26 +128,19 @@ async function* delimitedRecords(stream: Readable, delimiter: number): AsyncGene
   if (pending.length) yield pending;
 }
 
-async function runDelimited(
+/** Run rg while read consumes its stdout; read returns false to stop rg early. */
+async function runRg(
   rgPath: string,
   args: readonly string[],
   input: Buffer | undefined,
-  delimiter: number,
   signal: AbortSignal | undefined,
-  onRecord: (record: Buffer) => boolean | Promise<boolean>,
+  read: (stdout: Readable) => Promise<boolean>,
 ): Promise<RgRunResult> {
   const process = startRg(rgPath, args, signal);
-  let stopped = false;
   process.child.stdin.end(input);
   try {
-    for await (const record of delimitedRecords(process.child.stdout, delimiter)) {
-      throwIfCancelled(signal);
-      if (!(await onRecord(record))) {
-        stopped = true;
-        process.kill();
-        break;
-      }
-    }
+    const stopped = !(await read(process.child.stdout));
+    if (stopped) process.kill();
     const result = await process.done;
     throwIfCancelled(signal);
     if (result.error) throw ripgrepFailure("Failed to run ripgrep.", { error: result.error });
@@ -158,6 +151,23 @@ async function runDelimited(
   }
 }
 
+function runDelimited(
+  rgPath: string,
+  args: readonly string[],
+  input: Buffer | undefined,
+  delimiter: number,
+  signal: AbortSignal | undefined,
+  onRecord: (record: Buffer) => boolean | Promise<boolean>,
+): Promise<RgRunResult> {
+  return runRg(rgPath, args, input, signal, async (stdout) => {
+    for await (const record of delimitedRecords(stdout, delimiter)) {
+      throwIfCancelled(signal);
+      if (!(await onRecord(record))) return false;
+    }
+    return true;
+  });
+}
+
 /** @internal — read NUL-delimited UTF-8 paths from an owned rg process. */
 export function runRgPaths(
   rgPath: string,
@@ -165,10 +175,77 @@ export function runRgPaths(
   signal: AbortSignal | undefined,
   onPath: (path: string) => boolean | Promise<boolean>,
 ): Promise<RgRunResult> {
-  return runDelimited(rgPath, args, undefined, 0, signal, (record) => {
-    const path = record.toString("utf8");
-    if (!Buffer.from(path, "utf8").equals(record)) throw unsupportedPath();
-    return onPath(path);
+  return runDelimited(rgPath, args, undefined, 0, signal, (record) => onPath(decodePath(record)));
+}
+
+function decodePath(record: Buffer): string {
+  const path = record.toString("utf8");
+  if (!Buffer.from(path, "utf8").equals(record)) throw unsupportedPath();
+  return path;
+}
+
+/** Arguments that make rg print, per file, its NUL-terminated path and matching line numbers. */
+export const LINE_LISTING_ARGS = [
+  "--text",
+  "--null",
+  "--heading",
+  "--with-filename",
+  "--line-number",
+  "--max-columns=1",
+];
+
+/**
+ * @internal — read a {@link LINE_LISTING_ARGS} listing. Each file's group is a NUL-terminated
+ * path, then one `N:` record per matching line ending in a line feed (its content is at most
+ * one byte or an omission notice), then an empty line. onFile receives a file's ascending line
+ * numbers, or undefined once there are more than maxLines.
+ */
+export function runRgLines(
+  rgPath: string,
+  args: string[],
+  signal: AbortSignal | undefined,
+  maxLines: number,
+  onFile: (path: string, lines: readonly number[] | undefined) => boolean | Promise<boolean>,
+): Promise<RgRunResult> {
+  return runRg(rgPath, args, undefined, signal, async (stdout) => {
+    let path: string | undefined;
+    let lines: number[] | undefined = [];
+    let pending: Buffer = Buffer.alloc(0);
+    const flush = () => {
+      const found = lines;
+      const file = path!;
+      path = undefined;
+      lines = [];
+      return onFile(file, found);
+    };
+    // Records are parsed synchronously; only a completed file waits for its consumer.
+    for await (const value of stdout) {
+      throwIfCancelled(signal);
+      const chunk = value as Buffer;
+      const buf = pending.length ? Buffer.concat([pending, chunk]) : chunk;
+      let at = 0;
+      for (;;) {
+        const end = buf.indexOf(path === undefined ? 0 : 10, at);
+        if (end === -1) break;
+        const record = buf.subarray(at, end);
+        at = end + 1;
+        if (path === undefined) path = decodePath(record);
+        else if (!record.length) {
+          if (!(await flush())) return false;
+        } else if (lines) {
+          const colon = record.indexOf(58);
+          const line = colon > 0 ? Number(record.subarray(0, colon).toString("latin1")) : NaN;
+          if (!Number.isSafeInteger(line) || line < 1)
+            throw ripgrepFailure("ripgrep printed an unexpected line record.");
+          if (lines.length < maxLines) lines.push(line);
+          else lines = undefined;
+        }
+      }
+      pending = buf.subarray(at);
+      if (pending.length > MAX_RG_RECORD_BYTES) throw ripgrepFailure(RG_RECORD_LIMIT_MESSAGE);
+    }
+    if (pending.length) throw ripgrepFailure("ripgrep printed an incomplete line record.");
+    return path === undefined || flush();
   });
 }
 

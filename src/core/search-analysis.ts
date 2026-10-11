@@ -253,7 +253,11 @@ function analyzeAlternatives(alternatives: readonly AST.Alternative[], ctx: Cont
  * Parse a pattern V8 already accepted; undefined when regexpp lacks its syntax or
  * exceeds its own limits, which only makes an analysis less precise.
  */
-function parse(pattern: string, literal: boolean, flags: string): AST.Pattern | undefined {
+export function parseQueryPattern(
+  pattern: string,
+  literal: boolean,
+  flags: string,
+): AST.Pattern | undefined {
   const source = regexSource(pattern, !literal);
   try {
     return new RegExpParser({ ecmaVersion: 2025 }).parsePattern(source, 0, source.length, {
@@ -269,7 +273,7 @@ function parse(pattern: string, literal: boolean, flags: string): AST.Pattern | 
 /** Smart case over decoded characters; case-sensitive when a pattern cannot be analyzed. */
 export function smartIgnoreCase(patterns: readonly string[], literal: boolean): boolean {
   return !patterns.some((pattern) => {
-    const parsed = parse(pattern, literal, "");
+    const parsed = parseQueryPattern(pattern, literal, "");
     if (!parsed) return true;
     let uppercase = false;
     visitRegExpAST(parsed, {
@@ -288,7 +292,7 @@ export function extractPrefilter(query: GrepQuery): Prefilter {
   const ctx: Context = { ignoreCase: query.flags.includes("i"), unicode };
   const literals: Literal[] = [];
   for (const pattern of query.patterns) {
-    const parsed = parse(pattern, query.literal, query.flags);
+    const parsed = parseQueryPattern(pattern, query.literal, query.flags);
     if (!parsed) return ALL;
     const required = requiredOf(analyzeAlternatives(parsed.alternatives, ctx));
     if (!required) return ALL;

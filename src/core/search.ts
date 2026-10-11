@@ -17,6 +17,15 @@ export interface SearchInput {
   readonly query: GrepQuery;
   readonly limit: number;
 }
+/**
+ * Selected physical lines of an LF view, each followed by a line feed. Unlike a source, they
+ * are not normalized: a line keeps a CR that ends it.
+ */
+export interface LineSearchInput {
+  readonly lines: string;
+  readonly query: GrepQuery;
+  readonly limit: number;
+}
 type Rows = SearchResult["lines"];
 
 function mergeRows(left: Rows, right: Rows, limit: number): Rows {
@@ -65,10 +74,21 @@ function multilineRows(source: string, regex: RegExp, limit: number): Rows {
   return rows;
 }
 
-/** Inputs have passed the tool boundary; RegExp owns all syntax and matching semantics. */
-export function searchText({ source: raw, query, limit }: SearchInput): SearchResult {
-  const source = normalizeLineEndings(raw);
-  const regexes = query.patterns.map((pattern) => buildRegex(pattern, !query.literal, query.flags));
+const queryRegexes = (query: GrepQuery) =>
+  query.patterns.map((pattern) => buildRegex(pattern, !query.literal, query.flags));
+
+/** The first match column of one physical line, or undefined when no pattern matches it. */
+function lineColumn(regexes: readonly RegExp[], text: string): number | undefined {
+  let column = Infinity;
+  for (const regex of regexes) {
+    regex.lastIndex = 0;
+    const match = regex.exec(text);
+    if (match) column = Math.min(column, match.index);
+  }
+  return column === Infinity ? undefined : column;
+}
+
+function countLines(source: string): number {
   let totalLines = 0;
   for (let start = 0; start < source.length; ) {
     totalLines++;
@@ -76,28 +96,35 @@ export function searchText({ source: raw, query, limit }: SearchInput): SearchRe
     if (end === -1) break;
     start = end + 1;
   }
+  return totalLines;
+}
+
+/** Each line of source, as line feeds separate it, matched alone. */
+function lineRows(source: string, regexes: readonly RegExp[], limit: number): Rows {
+  const lines: Rows = [];
+  for (let start = 0, lineNumber = 1; start < source.length && lines.length < limit; lineNumber++) {
+    const separator = source.indexOf("\n", start);
+    const end = separator === -1 ? source.length : separator;
+    const column = lineColumn(regexes, source.slice(start, end));
+    if (column !== undefined) lines.push({ lineNumber, column });
+    start = end + 1;
+  }
+  return lines;
+}
+
+/** Inputs have passed the tool boundary; RegExp owns all syntax and matching semantics. */
+export function searchText({ source: raw, query, limit }: SearchInput): SearchResult {
+  const source = normalizeLineEndings(raw);
+  const regexes = queryRegexes(query);
   let lines: Rows = [];
   if (query.multiline) {
     for (const regex of regexes)
       lines = mergeRows(lines, multilineRows(source, regex, limit), limit);
-  } else {
-    for (
-      let start = 0, lineNumber = 1;
-      start < source.length && lines.length < limit;
-      lineNumber++
-    ) {
-      const separator = source.indexOf("\n", start);
-      const end = separator === -1 ? source.length : separator;
-      const text = source.slice(start, end);
-      let column = Infinity;
-      for (const regex of regexes) {
-        regex.lastIndex = 0;
-        const match = regex.exec(text);
-        if (match) column = Math.min(column, match.index);
-      }
-      if (column !== Infinity) lines.push({ lineNumber, column });
-      start = end + 1;
-    }
-  }
-  return { lines, totalLines };
+  } else lines = lineRows(source, regexes, limit);
+  return { lines, totalLines: countLines(source) };
+}
+
+/** Line-mode matching of selected lines; a row's lineNumber is the line's 1-based position. */
+export function searchLines({ lines, query, limit }: LineSearchInput): SearchResult {
+  return { lines: lineRows(lines, queryRegexes(query), limit), totalLines: countLines(lines) };
 }

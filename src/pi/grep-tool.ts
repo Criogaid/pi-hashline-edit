@@ -23,7 +23,7 @@ import {
 } from "./grep-search.ts";
 export type { GrepBackend } from "./grep-search.ts";
 import { toDisplayLines } from "./grep-render.ts";
-import { runRgPaths } from "./rg-process.ts";
+import { runRgLines, runRgPaths } from "./rg-process.ts";
 import { smartIgnoreCase } from "../core/search-analysis.ts";
 import { buildRegex } from "../core/replace.ts";
 import { DEFAULT_GREP_FLAGS } from "../core/search.ts";
@@ -163,7 +163,7 @@ export function makeGrepOverrideWithBackend(
 ) {
   const { hashLen } = config;
   const grepSchema = createGrepSchema(config.grep);
-  const backend: GrepBackend = { runRgPaths, ...overrides };
+  const backend: GrepBackend = { runRgPaths, runRgLines, ...overrides };
 
   return {
     name: "grep" as const,
