@@ -22,6 +22,8 @@ const PNG = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
   "base64",
 );
+const NOT_FORGETTABLE_NEXT =
+  "Do not call forget again for the notForgettable ids; those results stay in context.";
 
 for (const { name, filename, body, receiptSuffix } of [
   { name: "ordinary log", filename: "build.log", body: LOG_BODY, receiptSuffix: " · lines 1–2" },
@@ -205,124 +207,127 @@ test("forget with a note → calls, saved facts, source bytes and raw session re
 });
 
 for (const invalid of ["old result", "unknown result"] as const) {
-  test(`eligible id combined with ${invalid} → the whole forget call is rejected`, {
+  test(`forget includes an eligible id and ${invalid} → only the eligible result is forgotten`, {
     timeout: SESSION_TIMEOUT_MS,
   }, async (t) => {
     const f = await openForgetSession(t);
     await writeFile(join(f.cwd, "build.log"), LOG_BODY);
+    await writeFile(join(f.cwd, "next.txt"), "next task");
     await f.prompt(
       toolResponse(f.read("old")),
       toolResponse(f.read("current")),
       (messages) => {
         const current = forgetCall(messages, "current");
         const currentId = taggedResultId(toolResult(messages, "current"));
-        assert.ok(currentId);
-        const old = taggedResultId(toolResult(messages, "old"));
-        assert.ok(old);
-        const invalidId = invalid === "old result" ? old : "r00000";
-        assert.notEqual(taggedResultId(toolResult(messages, "current")), invalidId);
-        return toolResponse({ ...current, arguments: { ids: [currentId, invalidId] } });
+        const oldId = taggedResultId(toolResult(messages, "old"));
+        assert.ok(currentId && oldId);
+        const invalidId = invalid === "old result" ? oldId : "r00000";
+        assert.notEqual(currentId, invalidId);
+        assert.notEqual(oldId, "r00000");
+        return toolResponse(
+          { ...current, arguments: { ids: [currentId, invalidId] } },
+          f.read("next", "next.txt"),
+        );
       },
       finish,
     );
-    assert.equal(toolResult(f.requests[3], "forget-call").isError, true);
-    for (const id of ["old", "current"]) {
-      assert.deepEqual(toolResult(f.requests[3], id), toolResult(f.requests[2], id));
-    }
-    assert.ok(!f.sessionManager.getEntries().some((entry) => entry.type === "context_edit"));
+    const before = f.requests[2];
+    const after = f.requests[3];
+    const currentId = taggedResultId(toolResult(before, "current"));
+    const oldId = taggedResultId(toolResult(before, "old"));
+    assert.ok(currentId && oldId);
+    const invalidId = invalid === "old result" ? oldId : "r00000";
+    const result = toolResult(after, "forget-call");
+    assert.equal(result.isError, false);
+    assert.deepEqual(reportOf(result), {
+      tool: "forget",
+      forgotten: [currentId],
+      notForgettable: [invalidId],
+      next: NOT_FORGETTABLE_NEXT,
+    });
+    assertForgotten(toolResult(after, "current"), currentId);
+    assert.deepEqual(toolResult(after, "old"), toolResult(before, "old"));
+    assert.equal(toolResult(after, "next").isError, false);
+    const receipt = `${join(f.cwd, "build.log")} · lines 1–2`;
+    const displayed = f.renderForgetCard();
+    assert.ok(displayed.includes(receipt));
+    assert.ok(displayed.includes(`not forgettable: ${invalidId}`));
+    assert.ok(displayed.indexOf(receipt) < displayed.indexOf("not forgettable:"));
   });
 }
 
-for (const scenario of [
-  "rejected batch call",
-  "split batch",
-  "already forgotten result",
-] as const) {
-  test(`forget ${scenario} → later forget sees only the remaining batch results`, {
+for (const reply of ["rejected forget", "successful mixed batch", "forget-only"] as const) {
+  test(`${reply} reply after tagged results → later forget rejects every previous id`, {
     timeout: SESSION_TIMEOUT_MS,
   }, async (t) => {
     const f = await openForgetSession(t);
     await writeFile(join(f.cwd, "build.log"), LOG_BODY);
+    await writeFile(join(f.cwd, "next.txt"), "next task");
     await f.prompt(
       toolResponse(f.read("batch-first"), f.read("batch-second")),
       (messages) => {
-        const source = scenario === "rejected batch call" ? "batch-second" : "batch-first";
-        const id = taggedResultId(toolResult(messages, source));
-        assert.ok(id);
-        const ids = scenario === "rejected batch call" ? ["r00000", id] : [id];
+        const call = forgetCall(messages, "batch-first");
         for (const source of ["batch-first", "batch-second"])
           assert.notEqual(taggedResultId(toolResult(messages, source)), "r00000");
-        return toolResponse({
-          type: "toolCall",
+        const forget = {
+          ...call,
           id: "forget-first-attempt",
-          name: "forget",
-          arguments: { ids },
-        });
+          arguments: reply === "rejected forget" ? { ids: ["r00000"] } : call.arguments,
+        };
+        return toolResponse(
+          forget,
+          ...(reply === "successful mixed batch" ? [f.read("next", "next.txt")] : []),
+        );
       },
       (messages) => {
-        const originals = ["batch-first", "batch-second"].map((source) =>
-          toolResult(f.requests[1], source),
-        );
-        const ids = originals.map((result) => {
-          const id = taggedResultId(result);
-          assert.ok(id);
-          return id;
-        });
+        const original = toolResult(f.requests[1], "batch-first");
+        const firstId = taggedResultId(original);
+        assert.ok(firstId);
         const firstAttempt = toolResult(messages, "forget-first-attempt");
-        if (scenario === "rejected batch call") {
+        if (reply === "rejected forget") {
           assert.equal(firstAttempt.isError, true);
-          const report = reportOf(firstAttempt);
-          assert.equal(report?.error, "NOT_FORGETTABLE");
-          assert.deepEqual(report?.ids, ["r00000"]);
-          assert.deepEqual(report?.available, ids);
-          for (const original of originals)
-            assert.deepEqual(toolResult(messages, original.toolCallId), original);
+          assert.deepEqual(reportOf(firstAttempt), {
+            error: "NOT_FORGETTABLE",
+            tool: "forget",
+            message: "No id names a tagged result of the previous response.",
+            notForgettable: ["r00000"],
+            next: NOT_FORGETTABLE_NEXT,
+          });
+          assert.deepEqual(toolResult(messages, "batch-first"), original);
         } else {
           assert.equal(firstAttempt.isError, false);
-          assert.deepEqual(reportOf(firstAttempt)?.forgotten, [ids[0]]);
-          assertForgotten(toolResult(messages, "batch-first"), ids[0]);
-          assert.deepEqual(toolResult(messages, "batch-second"), originals[1]);
+          assert.deepEqual(reportOf(firstAttempt), { tool: "forget", forgotten: [firstId] });
+          assertForgotten(toolResult(messages, "batch-first"), firstId);
         }
+        assert.deepEqual(
+          toolResult(messages, "batch-second"),
+          toolResult(f.requests[1], "batch-second"),
+        );
         return toolResponse({
-          type: "toolCall",
+          ...forgetCall(f.requests[1], "batch-first", "batch-second"),
           id: "forget-second-attempt",
-          name: "forget",
-          arguments: { ids: [ids[scenario === "already forgotten result" ? 0 : 1]] },
         });
       },
       finish,
     );
-    const firstId = taggedResultId(toolResult(f.requests[1], "batch-first"));
-    const secondId = taggedResultId(toolResult(f.requests[1], "batch-second"));
-    assert.ok(firstId && secondId);
+    const ids = ["batch-first", "batch-second"].map((source) => {
+      const id = taggedResultId(toolResult(f.requests[1], source));
+      assert.ok(id);
+      return id;
+    });
     const after = f.requests[3];
     const secondAttempt = toolResult(after, "forget-second-attempt");
-    if (scenario === "already forgotten result") {
-      assert.equal(secondAttempt.isError, true);
-      const report = reportOf(secondAttempt);
-      assert.equal(report?.error, "NOT_FORGETTABLE");
-      assert.deepEqual(report?.ids, [firstId]);
-      assert.deepEqual(report?.available, [secondId]);
-      assertForgotten(toolResult(after, "batch-first"), firstId);
-      assert.deepEqual(
-        toolResult(after, "batch-second"),
-        toolResult(f.requests[1], "batch-second"),
-      );
-    } else {
-      assert.equal(secondAttempt.isError, false, JSON.stringify(reportOf(secondAttempt)));
-      assert.deepEqual(reportOf(secondAttempt)?.forgotten, [secondId]);
-      assertForgotten(toolResult(after, "batch-second"), secondId);
-      if (scenario === "split batch") assertForgotten(toolResult(after, "batch-first"), firstId);
-      else
-        assert.deepEqual(
-          toolResult(after, "batch-first"),
-          toolResult(f.requests[1], "batch-first"),
-        );
-    }
+    assert.equal(secondAttempt.isError, true);
+    assert.partialDeepStrictEqual(reportOf(secondAttempt), {
+      error: "NOT_FORGETTABLE",
+      notForgettable: ids,
+    });
+    for (const source of ["batch-first", "batch-second"])
+      assert.deepEqual(toolResult(after, source), toolResult(f.requests[2], source));
   });
 }
 
-test("forget mixed with read → the next forget is limited to the new batch", {
+test("forget mixed with read → the next forget removes new results and reports old ids", {
   timeout: SESSION_TIMEOUT_MS,
 }, async (t) => {
   const f = await openForgetSession(t);
@@ -332,17 +337,16 @@ test("forget mixed with read → the next forget is limited to the new batch", {
     (messages) => toolResponse(forgetCall(messages, "old-batch"), f.read("new-batch")),
     (messages) => {
       const oldId = taggedResultId(toolResult(f.requests[1], "old-batch"));
-      assert.ok(oldId);
       const keptId = taggedResultId(toolResult(messages, "old-kept"));
-      assert.ok(keptId);
+      const newId = taggedResultId(toolResult(messages, "new-batch"));
+      assert.ok(oldId && keptId && newId);
       assert.equal(toolResult(messages, "forget-call").isError, false);
       assertForgotten(toolResult(messages, "old-batch"), oldId);
-      assert.ok(taggedResultId(toolResult(messages, "new-batch")));
       return toolResponse({
         type: "toolCall",
-        id: "forget-old-batch",
+        id: "forget-new-batch",
         name: "forget",
-        arguments: { ids: [oldId, keptId] },
+        arguments: { ids: [newId, oldId, keptId] },
       });
     },
     finish,
@@ -351,18 +355,18 @@ test("forget mixed with read → the next forget is limited to the new batch", {
   const keptId = taggedResultId(toolResult(f.requests[1], "old-kept"));
   const newId = taggedResultId(toolResult(f.requests[2], "new-batch"));
   assert.ok(oldId && keptId && newId);
-  const rejected = toolResult(f.requests[3], "forget-old-batch");
-  assert.equal(rejected.isError, true);
-  const report = reportOf(rejected);
-  assert.equal(report?.error, "NOT_FORGETTABLE");
-  assert.deepEqual(report?.ids, [oldId, keptId]);
-  assert.deepEqual(report?.available, [newId]);
+  const result = toolResult(f.requests[3], "forget-new-batch");
+  assert.equal(result.isError, false);
+  assert.partialDeepStrictEqual(reportOf(result), {
+    forgotten: [newId],
+    notForgettable: [oldId, keptId],
+  });
   assertForgotten(toolResult(f.requests[3], "old-batch"), oldId);
+  assertForgotten(toolResult(f.requests[3], "new-batch"), newId);
   assert.deepEqual(toolResult(f.requests[3], "old-kept"), toolResult(f.requests[1], "old-kept"));
-  assert.deepEqual(toolResult(f.requests[3], "new-batch"), toolResult(f.requests[2], "new-batch"));
 });
 
-test("forget after a reply without tools → the earlier batch is no longer available", {
+test("forget after a reply without tools → the earlier batch is no longer forgettable", {
   timeout: SESSION_TIMEOUT_MS,
 }, async (t) => {
   const f = await openForgetSession(t);
@@ -384,10 +388,10 @@ test("forget after a reply without tools → the earlier batch is no longer avai
   assert.ok(after);
   const rejected = toolResult(after, "forget-after-text");
   assert.equal(rejected.isError, true);
-  const report = reportOf(rejected);
-  assert.equal(report?.error, "NOT_FORGETTABLE");
-  assert.deepEqual(report?.ids, [id]);
-  assert.deepEqual(report?.available, []);
+  assert.partialDeepStrictEqual(reportOf(rejected), {
+    error: "NOT_FORGETTABLE",
+    notForgettable: [id],
+  });
   assert.deepEqual(toolResult(after, "earlier-batch"), original);
 });
 
