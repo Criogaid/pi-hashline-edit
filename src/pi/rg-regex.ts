@@ -11,6 +11,7 @@
 import { RegExpParser, visitRegExpAST, type AST } from "@eslint-community/regexpp";
 import { regexSource } from "../core/replace.ts";
 import type { GrepQuery } from "../core/search.ts";
+import { equivalentCases } from "../core/case-fold.ts";
 
 export type RgEngine = "default" | "pcre2";
 
@@ -133,26 +134,6 @@ function without(ranges: Ranges, value: number): Ranges {
       ...(value < high ? [[value + 1, high] as const] : []),
     ];
   });
-}
-
-let caseGroups: readonly (readonly number[])[] | undefined;
-
-/** Code units that ignoreCase treats as equal: ECMA-262 Canonicalize without the u flag. */
-function equivalentCases(): readonly (readonly number[])[] {
-  if (caseGroups) return caseGroups;
-  const groups = new Map<number, number[]>();
-  for (let unit = 0; unit <= MAX_UNIT; unit++) {
-    const upper = String.fromCharCode(unit).toUpperCase();
-    const canonical =
-      upper.length === 1 && !(unit >= 128 && upper.charCodeAt(0) < 128)
-        ? upper.charCodeAt(0)
-        : unit;
-    const group = groups.get(canonical);
-    if (group) group.push(unit);
-    else groups.set(canonical, [unit]);
-  }
-  caseGroups = [...groups.values()].filter((group) => group.length > 1);
-  return caseGroups;
 }
 
 function foldCase(units: Ranges): Ranges {
