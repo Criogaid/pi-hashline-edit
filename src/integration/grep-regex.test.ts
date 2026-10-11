@@ -248,3 +248,43 @@ test("backreference regression: ignoreCase with an ASCII capture → does not ma
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test("zero-maximum quantifiers → real grep matches the active capture", async (t) => {
+  const cases = [
+    {
+      name: "multiline newline repeated zero times → matches aa",
+      pattern: "(a\\n{0})\\1",
+      source: "aa\n",
+      multiline: true,
+      ignoreCase: false,
+    },
+    {
+      name: "caseless non-ASCII text repeated zero times → matches AA",
+      pattern: "(aé{0})\\1",
+      source: "AA\n",
+      multiline: false,
+      ignoreCase: true,
+    },
+  ];
+  for (const { name, pattern, source, multiline, ignoreCase } of cases) {
+    await t.test(name, async () => {
+      const dir = await mkdtemp(join(tmpdir(), "hashline-grep-zero-maximum-"));
+      try {
+        const path = join(dir, "input.txt");
+        await writeFile(path, source);
+        const tool = makeGrepOverrideWithBackend(dir, DEFAULT_CONFIG, {});
+        const result = await callTool(tool, {
+          path,
+          pattern,
+          literal: false,
+          multiline,
+          ignoreCase,
+        });
+        assert.equal(result.isError, undefined, JSON.stringify(result));
+        assert.equal(reportOf(result)?.matches, 1);
+      } finally {
+        await rm(dir, { recursive: true, force: true });
+      }
+    });
+  }
+});

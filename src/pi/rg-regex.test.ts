@@ -83,3 +83,51 @@ test("grep smart case uses decoded characters across the whole query", () => {
     );
   }
 });
+
+test("zero-maximum quantifiers → exclude inert contents from backreference analysis", async (t) => {
+  const cases = [
+    {
+      name: "multiline newline repeated zero times → accepted",
+      pattern: "(a\\n{0})\\1",
+      multiline: true,
+      ignoreCase: false,
+      accepted: true,
+    },
+    {
+      name: "caseless non-ASCII text repeated zero times → accepted",
+      pattern: "(aé{0})\\1",
+      multiline: false,
+      ignoreCase: true,
+      accepted: true,
+    },
+    {
+      name: "line-mode newline repeated zero times → accepted",
+      pattern: "(a\\n{0})\\1",
+      multiline: false,
+      ignoreCase: false,
+      accepted: true,
+    },
+    {
+      name: "caseless self-reference repeated zero times → accepted",
+      pattern: "(a(?:\\1){0})\\1",
+      multiline: false,
+      ignoreCase: true,
+      accepted: true,
+    },
+    {
+      name: "multiline newline repeated up to once → rejected",
+      pattern: "(a\\n{0,1})\\1",
+      multiline: true,
+      ignoreCase: false,
+      accepted: false,
+    },
+  ];
+  for (const { name, pattern, multiline, ignoreCase, accepted } of cases) {
+    await t.test(name, () => {
+      const translate = () =>
+        translateQuery({ patterns: [pattern], literal: false, multiline, ignoreCase });
+      if (accepted) assert.doesNotThrow(translate);
+      else assert.throws(translate, RegexTranslationError);
+    });
+  }
+});
