@@ -30,8 +30,8 @@ const writeSchema = Type.Object(
       description: "Complete file content, written exactly as supplied, including line endings.",
     }),
     mode: Type.Union([
-      Type.Literal("create", { description: "Fail if the target already exists" }),
-      Type.Literal("overwrite", { description: "Fail if the target does not exist" }),
+      Type.Literal("create", { description: "Fail if the target already exists." }),
+      Type.Literal("overwrite", { description: "Fail if the target does not exist." }),
     ]),
   },
   { additionalProperties: false },

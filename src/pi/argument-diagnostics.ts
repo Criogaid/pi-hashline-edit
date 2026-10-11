@@ -216,18 +216,64 @@ function propertyPath(path: string, key: string): string {
     : `${path}[${JSON.stringify(key)}]`;
 }
 
-function fieldPath(pointer: string, prepared: unknown, key?: string): string {
-  const parts = pointer
+function pointerParts(pointer: string): readonly string[] {
+  return pointer
     .split("/")
     .slice(1)
     .map((part) => part.replaceAll("~1", "/").replaceAll("~0", "~"));
+}
+
+function fieldPath(pointer: string, prepared: unknown, key?: string): string {
   let value = prepared;
   let path = "";
-  for (const part of parts) {
+  for (const part of pointerParts(pointer)) {
     path = Array.isArray(value) ? `${path}[${part}]` : propertyPath(path, part);
     value = typeof value === "object" && value !== null ? Reflect.get(value, part) : undefined;
   }
   return (key === undefined ? path : propertyPath(path, key)) || "$";
+}
+
+/** One declaration's meaning: its description, labeled with its values when it is a choice. */
+function explainDeclaration(schema: TSchema): string | undefined {
+  const description: unknown = Reflect.get(schema, "description");
+  const values = literalValues(schema);
+  if (values === undefined) return typeof description === "string" ? description : undefined;
+  if (typeof description === "string")
+    return `${values.map((value) => JSON.stringify(value)).join(" or ")}: ${description}`;
+  if (!IsUnion(schema)) return undefined;
+  const choices = schema.anyOf.map(explainDeclaration);
+  return choices.every((choice) => choice !== undefined) ? choices.join(" ") : undefined;
+}
+
+/**
+ * What a missing field does, from its declarations in the objects at `parts`.
+ * Choices label each value, so every branch's choices are listed together;
+ * other declarations must agree, so one branch's description is never
+ * attributed to another.
+ */
+function fieldExplanation(
+  schema: TSchema,
+  parts: readonly string[],
+  key: string,
+): string | undefined {
+  const declarations = new Set<TSchema>();
+  const visit = (node: TSchema, depth: number): void => {
+    if (IsUnion(node)) for (const branch of node.anyOf) visit(branch, depth);
+    else if (depth === parts.length) {
+      if (IsObject(node) && Object.hasOwn(node.properties, key))
+        declarations.add(node.properties[key]);
+    } else if (IsObject(node)) {
+      if (Object.hasOwn(node.properties, parts[depth]))
+        visit(node.properties[parts[depth]], depth + 1);
+    } else if (IsArray(node)) visit(node.items, depth + 1);
+  };
+  visit(schema, 0);
+  const explanations = new Set([...declarations].map(explainDeclaration));
+  if (explanations.has(undefined)) return undefined;
+  const choices = [...declarations].every(
+    (declaration) => literalValues(declaration) !== undefined,
+  );
+  return choices || explanations.size === 1 ? [...explanations].join(" ") : undefined;
 }
 
 /** One issue per field: distinct reasons joined, and distinct fixes joined, each in report order. */
@@ -248,10 +294,12 @@ function combineIssues(issues: readonly ArgumentIssue[]): readonly ArgumentIssue
 
 function aggregateErrors(
   errors: readonly TLocalizedValidationError[],
+  parameters: TObject,
   prepared: unknown,
 ): readonly ArgumentIssue[] {
   const issues: ArgumentIssue[] = [];
-  const add = (field: string, reason: string) => issues.push({ field, reason });
+  const add = (field: string, reason: string, fix?: string) =>
+    issues.push(fix === undefined ? { field, reason } : { field, reason, fix });
   for (const error of errors) {
     if (
       error.keyword === "anyOf" &&
@@ -265,10 +313,16 @@ function aggregateErrors(
     )
       continue;
     switch (error.keyword) {
-      case "required":
+      case "required": {
+        const parts = pointerParts(error.instancePath);
         for (const key of error.params.requiredProperties)
-          add(fieldPath(error.instancePath, prepared, key), "is required");
+          add(
+            fieldPath(error.instancePath, prepared, key),
+            "is required",
+            fieldExplanation(parameters, parts, key),
+          );
         break;
+      }
       case "additionalProperties":
         for (const key of error.params.additionalProperties)
           add(fieldPath(error.instancePath, prepared, key), "is not allowed");
@@ -350,7 +404,7 @@ export function diagnoseArguments(
     issues: combineIssues([
       ...retained,
       ...projection.derived,
-      ...batches.flatMap((batch) => aggregateErrors(batch.errors, prepared)),
+      ...batches.flatMap((batch) => aggregateErrors(batch.errors, parameters, prepared)),
     ]),
     limited: batches.some((batch) => batch.limited),
   };

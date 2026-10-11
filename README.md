@@ -209,7 +209,7 @@ edits[0].body: is empty
 
 Collapsed cards use the shared bounded preview. Expanding shows all retained issues and the prepared arguments under a separate label. Source omission and schema-limit notices appear before the issues so they remain visible when collapsed.
 
-`issues` combines schema and tool-specific failures. Field paths refer to Pi's prepared arguments: array indices use `[0]`, named properties use dots, and other property names use JSON-quoted brackets. `$` identifies a preparation failure without a field diagnostic. `arguments` contains the prepared value, including Pi coercion, when it fits and can be encoded.
+`issues` combines schema and tool-specific failures. A missing required field's `fix` states what the field does, taken from its schema description; for a choice field such as an edit's `op`, it lists each value with its description. Field paths refer to Pi's prepared arguments: array indices use `[0]`, named properties use dots, and other property names use JSON-quoted brackets. `$` identifies a preparation failure without a field diagnostic. `arguments` contains the prepared value, including Pi coercion, when it fits and can be encoded.
 
 Within an edit operation, omit an optional `end` when no range is needed. `end: null` remains a schema error, including when other arguments are invalid.
 
