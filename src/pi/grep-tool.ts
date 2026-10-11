@@ -122,16 +122,38 @@ type GrepTool = ToolDefinition<
 >;
 /** Report patterns JavaScript or ripgrep cannot compile; Pi checks field shapes. */
 function checkGrepArguments(args: unknown, report: ReportArgumentIssue): void {
-  const { pattern, literal, multiline = false } = (args ?? {}) as Record<string, unknown>;
+  const {
+    pattern,
+    literal,
+    multiline = false,
+    ignoreCase,
+  } = (args ?? {}) as Record<string, unknown>;
   if (typeof literal !== "boolean" || typeof multiline !== "boolean") return;
   const fields = Array.isArray(pattern)
     ? pattern.map((value, index) => [`pattern[${index}]`, value] as const)
     : [["pattern", pattern] as const];
-  for (const [field, value] of fields) {
-    if (typeof value !== "string" || value === "") continue;
+  const valid = fields.filter(([field, value]) => {
+    if (typeof value !== "string" || value === "") return false;
+    if (literal) return true;
     try {
-      if (!literal) buildRegex(value, true, undefined);
-      translateQuery({ patterns: [value], literal, ignoreCase: false, multiline });
+      buildRegex(value, true, undefined);
+      return true;
+    } catch (error) {
+      report(field, errorMessage(error));
+      return false;
+    }
+  }) as (readonly [string, string])[];
+  // Case affects translation, so check with the case the search will use.
+  const caseless =
+    typeof ignoreCase === "boolean"
+      ? ignoreCase
+      : smartIgnoreCase(
+          valid.map(([, value]) => value),
+          literal,
+        );
+  for (const [field, value] of valid) {
+    try {
+      translateQuery({ patterns: [value], literal, ignoreCase: caseless, multiline });
     } catch (error) {
       report(
         field,

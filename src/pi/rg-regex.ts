@@ -257,9 +257,37 @@ interface Context {
   /** JavaScript's m flag; grep sets it, and only a modifier group clears it. */
   readonly lineAnchors: boolean;
   readonly groups: ReadonlyMap<AST.CapturingGroup, number>;
-  /** Set when a line query matches a standalone CR, which needs ripgrep's multiline mode. */
-  readonly scan: { standaloneCr: boolean };
+  /** Capturing groups whose text the current element becomes part of. */
+  readonly capturing: readonly AST.CapturingGroup[];
+  readonly scan: Scan;
 }
+
+/** What a capturing group's text can hold, as far as a backreference to it is concerned. */
+interface Capture {
+  /** A line break, which the LF view and the original bytes spell differently. */
+  lineBreak: boolean;
+  /** A non-ASCII character, which PCRE2 and JavaScript fold differently. */
+  nonAscii: boolean;
+}
+
+interface Scan {
+  /** Set when a line query matches a standalone CR, which needs ripgrep's multiline mode. */
+  standaloneCr: boolean;
+  readonly captures: Map<AST.CapturingGroup, Capture>;
+  readonly backreferences: { readonly node: AST.Backreference; readonly ignoreCase: boolean }[];
+  /** Groups whose text includes a backreference's text: [enclosing group, referenced group]. */
+  readonly nested: [AST.CapturingGroup, AST.CapturingGroup][];
+}
+
+function capture(ctx: Context, found: Partial<Capture>): void {
+  for (const group of ctx.capturing) {
+    const known = ctx.scan.captures.get(group)!;
+    known.lineBreak ||= found.lineBreak ?? false;
+    known.nonAscii ||= found.nonAscii ?? false;
+  }
+}
+
+const isNonAscii = (scalars: Ranges) => scalars.some(([, high]) => high > 0x7f);
 
 /** Translated text; an atom takes a quantifier without a group. */
 interface Emitted {
@@ -279,18 +307,26 @@ function emitSet(set: Ranges, ctx: Context): Emitted {
   const scalars = without(set, 0);
   const hasLf = contains(scalars, LF);
   const hasCr = contains(scalars, CR);
-  if (!hasLf && !hasCr) return atom(classText(scalars));
+  if (!hasLf && !hasCr) {
+    capture(ctx, { nonAscii: isNonAscii(scalars) });
+    return atom(classText(scalars));
+  }
   if (!ctx.multiline) {
     const rest = without(without(scalars, LF), CR);
-    if (rest.length) return atom(classText(rest));
+    if (rest.length) {
+      capture(ctx, { nonAscii: isNonAscii(rest) });
+      return atom(classText(rest));
+    }
     if (!hasCr)
       throw new RegexTranslationError(
         "Without multiline, each line is matched without its line break, so \\n matches nothing.",
         "Set multiline to true to match across lines.",
       );
     ctx.scan.standaloneCr = true;
+    capture(ctx, { lineBreak: true });
     return atom(`(?:${STANDALONE_CR[ctx.engine]})`);
   }
+  capture(ctx, { lineBreak: true, nonAscii: isNonAscii(scalars) });
   const branches: string[] = [];
   let rest = without(scalars, CR);
   if (hasLf) {
@@ -380,18 +416,64 @@ function emitAssertion(node: AST.Assertion, ctx: Context): Emitted {
     case "lookahead":
     case "lookbehind": {
       const marker = `${node.kind === "lookbehind" ? "<" : ""}${node.negate ? "!" : "="}`;
-      return atom(`(?${marker}${emitAlternatives(node.alternatives, ctx)})`);
+      // Text a lookaround matches is not part of the groups around it.
+      const inner = { ...ctx, capturing: [] };
+      return atom(`(?${marker}${emitAlternatives(node.alternatives, inner)})`);
     }
   }
 }
 
-/** JavaScript matches a backreference to a group that did not participate as empty text. */
+const targetsOf = (node: AST.Backreference) =>
+  Array.isArray(node.resolved) ? node.resolved : [node.resolved];
+
+/**
+ * JavaScript matches a backreference to a group that did not participate as empty
+ * text. (?r) keeps PCRE2 from folding ASCII to non-ASCII characters such as the
+ * Kelvin sign; checkBackreferences admits only ASCII captures under ignoreCase.
+ */
 function emitBackreference(node: AST.Backreference, ctx: Context): Emitted {
-  const targets = Array.isArray(node.resolved) ? node.resolved : [node.resolved];
+  const targets = targetsOf(node);
+  ctx.scan.backreferences.push({ node, ignoreCase: ctx.ignoreCase });
+  for (const outer of ctx.capturing)
+    for (const target of targets) ctx.scan.nested.push([outer, target]);
   const text = targets
     .map((group) => ctx.groups.get(group)!)
     .reduceRight((otherwise, index) => `(?(${index})\\g{${index}}|${otherwise})`, "");
-  return atom(ctx.ignoreCase ? `(?i:${text})` : text);
+  return atom(ctx.ignoreCase ? `(?ir:${text})` : text);
+}
+
+/**
+ * A backreference matches the captured bytes again. Those equal JavaScript's text on
+ * the LF view only without line breaks, and fold as JavaScript does only in ASCII.
+ */
+function checkBackreferences(scan: Scan): void {
+  const { captures } = scan;
+  // A group holding a backreference holds what its referenced group can capture.
+  for (let changed = true; changed; ) {
+    changed = false;
+    for (const [outer, target] of scan.nested) {
+      const into = captures.get(outer)!;
+      const from = captures.get(target)!;
+      if ((from.lineBreak && !into.lineBreak) || (from.nonAscii && !into.nonAscii)) {
+        into.lineBreak ||= from.lineBreak;
+        into.nonAscii ||= from.nonAscii;
+        changed = true;
+      }
+    }
+  }
+  for (const { node, ignoreCase } of scan.backreferences) {
+    const targets = targetsOf(node).map((group) => captures.get(group)!);
+    if (targets.some((target) => target.lineBreak))
+      throw new RegexTranslationError(
+        `${node.raw} references a group that can match a line break; ripgrep compares the original bytes, where a line break may be CRLF.`,
+        "Exclude \\n and \\r from the referenced group, as in [^\\n\\r]+ instead of [\\s\\S]+.",
+      );
+    if (ignoreCase && targets.some((target) => target.nonAscii))
+      throw new RegexTranslationError(
+        `${node.raw} ignores case for a group that can match non-ASCII text; ripgrep folds non-ASCII case differently from JavaScript.`,
+        "Limit the referenced group to ASCII, as in \\w+, or set ignoreCase to false.",
+      );
+  }
 }
 
 function emitElement(node: AST.Element, ctx: Context): Emitted {
@@ -406,8 +488,10 @@ function emitElement(node: AST.Element, ctx: Context): Emitted {
       const inner = node.modifiers ? withModifiers(ctx, node.modifiers) : ctx;
       return atom(`(?:${emitAlternatives(node.alternatives, inner)})`);
     }
-    case "CapturingGroup":
-      return atom(`(${emitAlternatives(node.alternatives, ctx)})`);
+    case "CapturingGroup": {
+      const inner = { ...ctx, capturing: [...ctx.capturing, node] };
+      return atom(`(${emitAlternatives(node.alternatives, inner)})`);
+    }
     case "Assertion":
       return emitAssertion(node, ctx);
     case "Backreference":
@@ -430,6 +514,7 @@ function emitAlternatives(alternatives: readonly AST.Alternative[], ctx: Context
         // A surrogate pair is one supplementary character; ignoreCase never folds it without u.
         const pair = surrogatePair(elements[index], elements[index + 1]);
         if (pair !== undefined) {
+          capture(ctx, { nonAscii: true });
           parts.push(escapeScalar(pair));
           index++;
         } else parts.push(emitElement(elements[index], ctx).text);
@@ -496,9 +581,18 @@ function translateScan(parsed: readonly AST.Pattern[], query: GrepQuery): RgMatc
     dotAll: false,
     lineAnchors: true,
     groups,
-    scan: { standaloneCr: false },
+    capturing: [],
+    scan: {
+      standaloneCr: false,
+      captures: new Map(
+        [...groups.keys()].map((group) => [group, { lineBreak: false, nonAscii: false }]),
+      ),
+      backreferences: [],
+      nested: [],
+    },
   };
   const translated = parsed.map((pattern) => emitAlternatives(pattern.alternatives, ctx));
+  checkBackreferences(ctx.scan);
   return {
     engine,
     multiline: query.multiline || ctx.scan.standaloneCr,
