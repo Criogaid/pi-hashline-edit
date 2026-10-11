@@ -50,7 +50,7 @@ function createGrepSchema({ defaultLimit, defaultContext }: HashlineEditConfig["
         [Type.String({ minLength: 1 }), Type.Array(Type.String({ minLength: 1 }), { minItems: 1 })],
         {
           description:
-            "String or array of strings; an array matches any of them, so use it for alternatives instead of joining them with |. Regex syntax is JavaScript, as in replace; ^ and $ match at line boundaries.",
+            "String or array of strings; an array matches any of them, so use it for alternatives instead of joining them with |. Regex syntax is JavaScript, as in replace; ^ and $ match at line boundaries. Use explicit character classes: . and classes that can split a UTF-16 surrogate pair are rejected.",
         },
       ),
       path: Type.Optional(
@@ -90,7 +90,7 @@ function createGrepSchema({ defaultLimit, defaultContext }: HashlineEditConfig["
       multiline: Type.Optional(
         Type.Boolean({
           description:
-            "Match across lines (default false); content mode returns every line a match touches. \\n matches LF and CRLF; the . wildcard does not match newlines, so use \\n or [\\s\\S].",
+            "Match across lines (default false); content mode returns every line a match touches. \\n matches LF and CRLF.",
         }),
       ),
       context: Type.Optional(

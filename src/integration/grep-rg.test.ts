@@ -594,7 +594,7 @@ test("multiline grep anchors CRLF spans and counts overlapping physical lines on
       tool,
       "0",
       {
-        pattern: "(?s:alpha.*gamma)",
+        pattern: "alpha[\\w\\s]*gamma",
         literal: false,
         path: file,
         multiline: true,
@@ -717,7 +717,7 @@ test("multiline zero-width EOF stays on the last existing physical line", async 
       const result = await invoke(
         tool,
         "0",
-        { pattern: "$(?![\\s\\S])", path: file, multiline: true, literal: false },
+        { pattern: "(?-m:$)", path: file, multiline: true, literal: false },
         undefined,
         undefined,
       );
@@ -893,9 +893,9 @@ test("real rg accepts wildcard-only regexes and preserves limits and literal mod
     await writeFile(join(directory, "fixture.txt"), "first\n\n.*\n");
     const tool = makeGrepOverrideWithBackend(directory, DEFAULT_CONFIG, {});
     for (const [pattern, expected] of [
-      [".*", 3],
-      ["^.+$", 2],
-      [".?", 3],
+      ["[\\w.*]*", 3],
+      ["^[\\w.*]+$", 2],
+      ["[\\w.*]?", 3],
     ] as const) {
       const result: any = await invoke(
         tool,
@@ -910,7 +910,7 @@ test("real rg accepts wildcard-only regexes and preserves limits and literal mod
     const limited: any = await invoke(
       tool,
       "limited",
-      { pattern: ".*", literal: false, limit: 1 },
+      { pattern: "[\\w.*]*", literal: false, limit: 1 },
       undefined,
       undefined,
     );
@@ -1317,7 +1317,7 @@ test("invalid UTF-8 matches use plain previews while valid files retain edit anc
     const multiline = await invoke(
       grep,
       "multiline",
-      { path: invalid, pattern: "needle.*\\nafter", literal: false, multiline: true },
+      { path: invalid, pattern: "needle[\\w ]*\\nafter", literal: false, multiline: true },
       undefined,
       undefined,
     );
@@ -1471,7 +1471,7 @@ test("raw-byte matches changed before revision acquisition are never confirmed b
                   mode === "limited"
                     ? `needle${boundary}after`
                     : mode === "eof"
-                      ? `needle${boundary}after$(?![\\s\\S])`
+                      ? `needle${boundary}after(?-m:$)`
                       : `needle${multiline ? `${boundary}after` : ""}`,
                 literal: false,
                 ignoreCase: false,

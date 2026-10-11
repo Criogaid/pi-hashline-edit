@@ -4,14 +4,11 @@
  * with the m flag; ripgrep searches the original bytes with --crlf. regexpp parses
  * the pattern, and this module emits an equivalent ripgrep pattern: JavaScript
  * character sets and ignoreCase folding as explicit classes, CRLF-aware line
- * breaks, and PCRE2 only when lookaround or backreferences need it.
- *
- * Ripgrep matches code points, so a surrogate pair is one character and a lone
- * surrogate is rejected. ^ and $ treat a standalone CR as a line boundary, as
- * JavaScript does. Without multiline, ripgrep strips CR and LF from every class,
- * so a class such as \s drops CR. A set holding nothing but CR and LF matches a
- * standalone CR through ripgrep's multiline mode instead; no line-mode set holds
- * LF, so no match leaves its line.
+ * breaks, and PCRE2 assertions where Rust regex cannot express JavaScript boundaries.
+ * Reject constructs whose UTF-16 units or capture evaluation cannot be preserved.
+ * A literal surrogate pair stays one adjacent sequence; character sets that can
+ * split a pair are unsupported. Zero-maximum quantifiers retain capture numbering
+ * without imposing matching constraints.
  *
  * @module pi-hashline-edit/pi
  */
@@ -89,14 +86,15 @@ const WORD_BOUNDARY = {
     `(?:(?<=${PCRE2_WORD})(?=${PCRE2_WORD})|(?<!${PCRE2_WORD})(?!${PCRE2_WORD}))`,
   ],
 } as const;
-/**
- * Line anchors on the original bytes. With --crlf, ripgrep's default engine never
- * places ^ or $ inside CRLF; PCRE2 does, so its anchors exclude that position.
- */
-const LINE_ANCHORS = {
-  default: ["^", "$"],
-  pcre2: ["(?<![^\\n\\r])(?!(?<=\\r)\\n)", "(?![^\\n\\r])(?!(?<=\\r)\\n)"],
-} as const;
+/** Logical line boundaries on original bytes, excluding the middle of CRLF. */
+const LINE_BREAKS = classBody(LINE_TERMINATORS);
+const OUTSIDE_CRLF = "(?!(?<=\\r)\\n)";
+const LINE_ANCHORS = [
+  `(?<![^${LINE_BREAKS}])${OUTSIDE_CRLF}`,
+  `(?![^${LINE_BREAKS}])${OUTSIDE_CRLF}`,
+] as const;
+/** A line-mode input excludes its LF/CRLF separator but retains standalone CR. */
+const PHYSICAL_LINE_ANCHORS = ["(?<![^\\n])", `(?=\\r?\\n|\\z)${OUTSIDE_CRLF}`] as const;
 /** A CR that is not part of CRLF: the default engine's ^ never follows the CR of CRLF. */
 const STANDALONE_CR = { default: "\\r^", pcre2: "\\r(?!\\n)" } as const;
 
@@ -193,31 +191,14 @@ function withoutSurrogates(ranges: Ranges): Ranges {
   ]);
 }
 
-/**
- * Code-unit set → scalar set. A set holding every surrogate (such as . or a negated
- * class) also holds every supplementary character; a partial one cannot be searched.
- */
-function toScalars(units: Ranges, supplementary: readonly number[]): Ranges {
-  let surrogates = 0;
-  let lone: number | undefined;
-  for (const [low, high] of units) {
-    const from = Math.max(low, 0xd800);
-    const to = Math.min(high, 0xdfff);
-    if (from > to) continue;
-    surrogates += to - from + 1;
-    lone ??= from;
-  }
-  const scalars = [
-    ...withoutSurrogates(units),
-    ...supplementary.map((point) => [point, point] as const),
-  ];
-  if (surrogates === 0x800) scalars.push([0x10000, MAX_SCALAR]);
-  else if (lone !== undefined)
+/** UTF-16 unit sets are representable only when they cannot split a surrogate pair. */
+function toScalars(units: Ranges, inert: boolean): Ranges {
+  if (!inert && units.some(([low, high]) => low <= 0xdfff && high >= 0xd800))
     throw new RegexTranslationError(
-      `\\u${lone.toString(16).toUpperCase()} is half of a surrogate pair; ripgrep matches whole characters.`,
-      "Write whole characters, and group a supplementary character before quantifying it, as in (?:😀)+.",
+      "This character set can match half of a UTF-16 surrogate pair; ripgrep matches whole characters.",
+      "Use [\\u0001-\\uD7FF\\uE000-\\uFFFF] for BMP characters, or write whole characters and group a supplementary literal, as in (?:😀)+.",
     );
-  return normalize(scalars);
+  return withoutSurrogates(units);
 }
 
 function scalarComplement(scalars: Ranges): Ranges {
@@ -261,6 +242,8 @@ interface Context {
   readonly capturing: readonly AST.CapturingGroup[];
   /** Inside a quantifier with a maximum of zero: emitted for group numbering, never matched. */
   readonly inert: boolean;
+  readonly repeated: boolean;
+  readonly backward: boolean;
   readonly scan: Scan;
 }
 
@@ -270,18 +253,26 @@ interface Capture {
   lineBreak: boolean;
   /** A non-ASCII character, which PCRE2 and JavaScript fold differently. */
   nonAscii: boolean;
+  /** JS clears captures on repetition; PCRE2 can retain a previous iteration's value. */
+  repeated: boolean;
+  /** JS evaluates lookbehind captures from right to left. */
+  backward: boolean;
 }
 
 interface Scan {
   /** Set when a line query matches a standalone CR, which needs ripgrep's multiline mode. */
   standaloneCr: boolean;
   readonly captures: Map<AST.CapturingGroup, Capture>;
-  readonly backreferences: { readonly node: AST.Backreference; readonly ignoreCase: boolean }[];
+  readonly backreferences: {
+    readonly node: AST.Backreference;
+    readonly ignoreCase: boolean;
+    readonly backward: boolean;
+  }[];
   /** Groups whose text includes a backreference's text: [enclosing group, referenced group]. */
   readonly nested: [AST.CapturingGroup, AST.CapturingGroup][];
 }
 
-function capture(ctx: Context, found: Partial<Capture>): void {
+function capture(ctx: Context, found: Partial<Pick<Capture, "lineBreak" | "nonAscii">>): void {
   if (ctx.inert) return;
   for (const group of ctx.capturing) {
     const known = ctx.scan.captures.get(group)!;
@@ -304,7 +295,7 @@ const atom = (text: string): Emitted => ({ text, atom: true });
  * Emit a scalar set. grep skips files containing NUL, so no set needs it, and
  * ripgrep rejects a literal NUL. On the LF view \n is CRLF or LF and \r is a
  * standalone CR, so multiline sets that hold them match those byte sequences.
- * Lines hold no LF, and line mode drops CR from a class that has other members.
+ * Line-mode sets drop LF but retain standalone CR through a multiline scan.
  */
 function emitSet(set: Ranges, ctx: Context): Emitted {
   const scalars = without(set, 0);
@@ -316,19 +307,17 @@ function emitSet(set: Ranges, ctx: Context): Emitted {
   }
   if (!ctx.multiline) {
     const rest = without(without(scalars, LF), CR);
-    if (rest.length) {
-      capture(ctx, { nonAscii: isNonAscii(rest) });
-      return atom(classText(rest));
-    }
-    if (!hasCr && ctx.inert) return atom(NEVER);
-    if (!hasCr)
+    if (!hasCr && rest.length === 0 && !ctx.inert)
       throw new RegexTranslationError(
         "Without multiline, each line is matched without its line break, so \\n matches nothing.",
         "Set multiline to true to match across lines.",
       );
-    ctx.scan.standaloneCr = true;
-    capture(ctx, { lineBreak: true });
-    return atom(`(?:${STANDALONE_CR[ctx.engine]})`);
+    capture(ctx, { lineBreak: hasCr, nonAscii: isNonAscii(rest) });
+    if (!hasCr) return atom(classText(rest));
+    ctx.scan.standaloneCr ||= !ctx.inert;
+    const branches: string[] = [STANDALONE_CR[ctx.engine]];
+    if (rest.length) branches.push(classText(rest));
+    return atom(`(?:${branches.join("|")})`);
   }
   capture(ctx, { lineBreak: true, nonAscii: isNonAscii(scalars) });
   const branches: string[] = [];
@@ -346,8 +335,8 @@ function emitSet(set: Ranges, ctx: Context): Emitted {
   return atom(`(?:${branches.join("|")})`);
 }
 
-function unitSet(units: Ranges, ctx: Context, supplementary: readonly number[] = []): Ranges {
-  return toScalars(ctx.ignoreCase ? foldCase(units) : units, supplementary);
+function unitSet(units: Ranges, ctx: Context): Ranges {
+  return toScalars(ctx.ignoreCase ? foldCase(units) : units, ctx.inert);
 }
 
 function escapeUnits(node: AST.CharacterSet, ctx: Context): Ranges {
@@ -361,22 +350,16 @@ function escapeUnits(node: AST.CharacterSet, ctx: Context): Ranges {
 
 function classSet(node: AST.CharacterClass, ctx: Context): Ranges {
   const units: (readonly [number, number])[] = [];
-  const supplementary: number[] = [];
-  const { elements } = node;
-  for (let index = 0; index < elements.length; index++) {
-    const element = elements[index];
-    const pair = surrogatePair(element, elements[index + 1]);
-    if (pair !== undefined) {
-      supplementary.push(pair);
-      index++;
-    } else if (element.type === "Character") units.push([element.value, element.value]);
+  for (const element of node.elements) {
+    if (element.type === "Character") units.push([element.value, element.value]);
     else if (element.type === "CharacterClassRange")
       units.push([element.min.value, element.max.value]);
     else if (element.type === "CharacterSet") units.push(...escapeUnits(element, ctx));
     else throw new Error(`Unexpected ${element.type} without the v flag.`);
   }
-  const scalars = unitSet(normalize(units), ctx, supplementary);
-  return node.negate ? scalarComplement(scalars) : scalars;
+  const normalized = normalize(units);
+  const folded = ctx.ignoreCase ? foldCase(normalized) : normalized;
+  return toScalars(node.negate ? complement(folded, MAX_UNIT) : folded, ctx.inert);
 }
 
 function quantifierText({ min, max, greedy }: AST.Quantifier): string {
@@ -410,10 +393,9 @@ function emitAssertion(node: AST.Assertion, ctx: Context): Emitted {
   switch (node.kind) {
     case "start":
     case "end": {
-      const [start, end] = LINE_ANCHORS[ctx.engine];
-      // Line mode searches one line, so its input boundaries are line boundaries.
-      if (!ctx.multiline || ctx.lineAnchors) return atom(node.kind === "start" ? start : end);
-      return atom(node.kind === "start" ? "\\A" : "\\z");
+      const index = node.kind === "start" ? 0 : 1;
+      if (ctx.lineAnchors) return atom(LINE_ANCHORS[index]);
+      return atom(ctx.multiline ? (index === 0 ? "\\A" : "\\z") : PHYSICAL_LINE_ANCHORS[index]);
     }
     case "word":
       return atom(WORD_BOUNDARY[ctx.engine][node.negate ? 1 : 0]);
@@ -421,7 +403,7 @@ function emitAssertion(node: AST.Assertion, ctx: Context): Emitted {
     case "lookbehind": {
       const marker = `${node.kind === "lookbehind" ? "<" : ""}${node.negate ? "!" : "="}`;
       // Text a lookaround matches is not part of the groups around it.
-      const inner = { ...ctx, capturing: [] };
+      const inner = { ...ctx, capturing: [], backward: ctx.backward || node.kind === "lookbehind" };
       return atom(`(?${marker}${emitAlternatives(node.alternatives, inner)})`);
     }
   }
@@ -438,7 +420,7 @@ const targetsOf = (node: AST.Backreference) =>
 function emitBackreference(node: AST.Backreference, ctx: Context): Emitted {
   const targets = targetsOf(node);
   if (!ctx.inert) {
-    ctx.scan.backreferences.push({ node, ignoreCase: ctx.ignoreCase });
+    ctx.scan.backreferences.push({ node, ignoreCase: ctx.ignoreCase, backward: ctx.backward });
     for (const outer of ctx.capturing)
       for (const target of targets) ctx.scan.nested.push([outer, target]);
   }
@@ -467,12 +449,22 @@ function checkBackreferences(scan: Scan): void {
       }
     }
   }
-  for (const { node, ignoreCase } of scan.backreferences) {
+  for (const { node, ignoreCase, backward } of scan.backreferences) {
     const targets = targetsOf(node).map((group) => captures.get(group)!);
+    if (backward || targets.some((target) => target.backward))
+      throw new RegexTranslationError(
+        `${node.raw} depends on lookbehind captures, which JavaScript evaluates in reverse order.`,
+        "Move the capture and its backreference outside lookbehind.",
+      );
+    if (targets.some((target) => target.repeated))
+      throw new RegexTranslationError(
+        `${node.raw} references a capture inside a repeated expression; JavaScript and ripgrep reset captures differently.`,
+        "Capture the whole repetition instead of referencing a capture inside it.",
+      );
     if (targets.some((target) => target.lineBreak))
       throw new RegexTranslationError(
         `${node.raw} references a group that can match a line break; ripgrep compares the original bytes, where a line break may be CRLF.`,
-        "Exclude \\n and \\r from the referenced group, as in [^\\n\\r]+ instead of [\\s\\S]+.",
+        "Use an explicit class without \\n or \\r in the referenced group, such as [A-Za-z0-9_]+.",
       );
     if (ignoreCase && targets.some((target) => target.nonAscii))
       throw new RegexTranslationError(
@@ -495,6 +487,11 @@ function emitElement(node: AST.Element, ctx: Context): Emitted {
       return atom(`(?:${emitAlternatives(node.alternatives, inner)})`);
     }
     case "CapturingGroup": {
+      if (!ctx.inert) {
+        const capture = ctx.scan.captures.get(node)!;
+        capture.repeated = ctx.repeated;
+        capture.backward = ctx.backward;
+      }
       const inner = { ...ctx, capturing: [...ctx.capturing, node] };
       return atom(`(${emitAlternatives(node.alternatives, inner)})`);
     }
@@ -503,7 +500,11 @@ function emitElement(node: AST.Element, ctx: Context): Emitted {
     case "Backreference":
       return emitBackreference(node, ctx);
     case "Quantifier": {
-      const inner = emitElement(node.element, node.max === 0 ? { ...ctx, inert: true } : ctx);
+      const inner = emitElement(node.element, {
+        ...ctx,
+        inert: ctx.inert || node.max === 0,
+        repeated: ctx.repeated || node.max > 1,
+      });
       const body = inner.atom ? inner.text : `(?:${inner.text})`;
       return { text: body + quantifierText(node), atom: false };
     }
@@ -571,7 +572,7 @@ function translateScan(parsed: readonly AST.Pattern[], query: GrepQuery): RgMatc
   for (const pattern of parsed)
     visitRegExpAST(pattern, {
       onAssertionEnter(node) {
-        if (node.kind === "lookahead" || node.kind === "lookbehind") engine = "pcre2";
+        if (node.kind !== "word") engine = "pcre2";
       },
       onBackreferenceEnter() {
         engine = "pcre2";
@@ -589,10 +590,15 @@ function translateScan(parsed: readonly AST.Pattern[], query: GrepQuery): RgMatc
     groups,
     capturing: [],
     inert: false,
+    repeated: false,
+    backward: false,
     scan: {
       standaloneCr: false,
       captures: new Map(
-        [...groups.keys()].map((group) => [group, { lineBreak: false, nonAscii: false }]),
+        [...groups.keys()].map((group) => [
+          group,
+          { lineBreak: false, nonAscii: false, repeated: false, backward: false },
+        ]),
       ),
       backreferences: [],
       nested: [],

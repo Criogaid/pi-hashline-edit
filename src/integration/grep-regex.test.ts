@@ -53,7 +53,12 @@ const cases: readonly RegexCase[] = [
     ignoreCase: false,
   },
   { name: "standalone CR atom", patterns: ["\\r"], source: "head\rsolo\ntail", ignoreCase: false },
-  { name: "dot excludes CR", patterns: ["a.b"], source: "a\rb\naxb\nab", ignoreCase: false },
+  {
+    name: "BMP class excludes CR",
+    patterns: ["a[A-Za-z]b"],
+    source: "a\rb\naxb\nab",
+    ignoreCase: false,
+  },
   { name: "sigma folding", patterns: ["^σ$"], source: "σ\nς\nΣ\ns", ignoreCase: true },
   { name: "ASCII k excludes Kelvin", patterns: ["^k$"], source: "k\nK\nK", ignoreCase: true },
   { name: "Kelvin excludes ASCII k", patterns: ["^K$"], source: "k\nK\nK", ignoreCase: true },
@@ -117,11 +122,47 @@ const cases: readonly RegexCase[] = [
     multilineOnly: true,
   },
   {
-    name: "dotAll modifier",
-    patterns: ["(?s:alpha.*gamma)"],
+    name: "BMP class spans lines",
+    patterns: ["alpha[\\w\\s]*gamma"],
     source: "alpha\nbeta\ngamma",
     ignoreCase: false,
     multilineOnly: true,
+  },
+  {
+    name: "Unicode line separator anchors",
+    patterns: ["^solo$"],
+    source: "head\u2028solo\u2029tail",
+    ignoreCase: false,
+  },
+  {
+    name: "standalone CR in whitespace",
+    patterns: ["head\\ssolo"],
+    source: "head\rsolo\nhead solo",
+    ignoreCase: false,
+  },
+  {
+    name: "standalone CR in mixed class",
+    patterns: ["head[a\\r]solo"],
+    source: "head\rsolo\nheadasolo",
+    ignoreCase: false,
+  },
+  {
+    name: "scoped m removal excludes Unicode line boundaries",
+    patterns: ["(?-m:^solo$)"],
+    source: "head\u2028solo\u2029tail\nsolo",
+    ignoreCase: false,
+  },
+  {
+    name: "negated BMP class preserves case folding without splitting surrogate pairs",
+    patterns: ["^[^a\\uD800-\\uDFFF]$"],
+    source: "a\nA\nb\n😀\né",
+    ignoreCase: true,
+  },
+  {
+    name: "grouped supplementary literals retain UTF-16 sequence semantics",
+    patterns: ["^(?:😀)+$"],
+    source: "😀\n😀😀\na",
+    ignoreCase: false,
   },
 ];
 
@@ -166,7 +207,7 @@ test("real grep matches V8 on the LF view across engines, case modes, and line e
   }
 });
 
-test("real grep wildcard cannot cross malformed UTF-8 bytes", async (t) => {
+test("real grep character classes cannot cross malformed UTF-8 bytes", async (t) => {
   const directory = await mkdtemp(join(tmpdir(), "hl-grep-js-invalid-"));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const path = join(directory, "invalid.txt");
@@ -175,7 +216,10 @@ test("real grep wildcard cannot cross malformed UTF-8 bytes", async (t) => {
     path,
     Buffer.concat([Buffer.from("a"), Buffer.from([0xff]), Buffer.from("b\naxb\n")]),
   );
-  for (const pattern of ["a.b", "(?=a)a.b"]) {
+  for (const pattern of [
+    "a[\\u0001-\\uD7FF\\uE000-\\uFFFF]b",
+    "(?=a)a[\\u0001-\\uD7FF\\uE000-\\uFFFF]b",
+  ]) {
     const result = await callTool(tool, { path, pattern, literal: false, ignoreCase: false });
     assert.equal(result.isError, undefined);
     assert.equal(reportOf(result)?.matches, 1);
@@ -285,6 +329,30 @@ test("zero-maximum quantifiers → real grep matches the active capture", async 
       } finally {
         await rm(dir, { recursive: true, force: true });
       }
+    });
+  }
+});
+
+test("strict JS translation rejects rg-only syntax and non-equivalent constructs before search", async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), "hashline-grep-strict-js-"));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const path = join(dir, "input.txt");
+  await writeFile(path, "😀\naba\nab\n");
+  const tool = makeGrepOverrideWithBackend(dir, DEFAULT_CONFIG, {});
+  for (const pattern of [
+    "(?i)abc",
+    "^..$",
+    "^[^a]{2}$",
+    "^[😀]$",
+    "^(?:(a)|b)+\\1$",
+    "(?<=(a)\\1)b",
+    "(?<=(a))b\\1",
+  ]) {
+    await t.test(pattern, async () => {
+      await assert.rejects(
+        () => callTool(tool, { path, pattern, literal: false, ignoreCase: false }),
+        rejectsArgument("pattern"),
+      );
     });
   }
 });

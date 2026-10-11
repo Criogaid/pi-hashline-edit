@@ -5,9 +5,9 @@ import { RegexTranslationError, smartIgnoreCase, translateQuery } from "./rg-reg
 const query = (patterns: readonly string[], multiline = false, literal = false) =>
   translateQuery({ patterns, multiline, literal, ignoreCase: false });
 
-test("grep translation selects PCRE2 only for lookaround or backreferences", () => {
+test("grep translation selects PCRE2 for assertions requiring lookaround or backreferences", () => {
   for (const [pattern, engine] of [
-    ["^a[bc]+$", "default"],
+    ["^a[bc]+$", "pcre2"],
     ["\\b\\w+\\B", "default"],
     ["(?<word>a)(?:b|c)", "default"],
     ["(?i:a)(?-i:b)", "default"],
@@ -30,13 +30,14 @@ test("grep line queries matching standalone CR enable a multiline scan", () => {
   for (const [patterns, literal] of [
     [["\\r"], false],
     [["needle", "standalone\r"], true],
+    [["\\s"], false],
+    [["[a\\r]"], false],
   ] as const) {
     const [matcher] = query(patterns, false, literal);
     assert.equal(matcher.multiline, true);
     assert.equal(matcher.engine, "default");
   }
-  for (const pattern of ["\\s", "[^a]"])
-    assert.equal(query([pattern])[0].multiline, false, pattern);
+  assert.equal(query(["[a\\t]"])[0].multiline, false);
 });
 
 test("grep translation rejects line breaks and lone surrogates with actionable fixes", () => {
@@ -129,5 +130,22 @@ test("zero-maximum quantifiers → exclude inert contents from backreference ana
       if (accepted) assert.doesNotThrow(translate);
       else assert.throws(translate, RegexTranslationError);
     });
+  }
+});
+
+test("strict JS translation rejects constructs with different code-unit or capture semantics", () => {
+  for (const pattern of [
+    ".",
+    "[^a]",
+    "[\\s\\S]",
+    "[😀]",
+    "(?:(a)|b)+\\1",
+    "(?<=(a)\\1)b",
+    "(?<=(a))b\\1",
+  ]) {
+    assert.throws(() => query([pattern]), RegexTranslationError, pattern);
+  }
+  for (const pattern of ["[\\u0001-\\uD7FF\\uE000-\\uFFFF]", "(?:😀)+", ".{0}a", "(a)\\1"]) {
+    assert.doesNotThrow(() => query([pattern]), pattern);
   }
 });

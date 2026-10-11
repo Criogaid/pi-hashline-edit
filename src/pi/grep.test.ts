@@ -795,7 +795,7 @@ test("grep OR arrays accept more than sixteen patterns in one line scan", async 
   });
 });
 
-test("rejects empty patterns while allowing wildcard, literal, and empty-line searches", async () => {
+test("rejects empty patterns while allowing character classes, literals, and empty-line searches", async () => {
   await withDir(async (dir) => {
     const fake = fakeBackend();
     const tool = makeGrepOverrideWithBackend(dir, DEFAULT_CONFIG, fake.backend);
@@ -804,7 +804,7 @@ test("rejects empty patterns while allowing wildcard, literal, and empty-line se
       await assert.rejects(call(tool, { pattern, literal: true }), rejectsArguments("grep"));
     }
     assert.equal(fake.calls.length, 0);
-    for (const pattern of [".*", "^.+$", ".?"]) {
+    for (const pattern of ["[\\w.*]*", "^[\\w.*]+$", "[\\w.*]?"]) {
       assert.equal(reportOf(await call(tool, { pattern, literal: false }))?.matches, 0);
     }
 
