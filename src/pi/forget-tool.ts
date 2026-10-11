@@ -6,15 +6,18 @@
  * tags before reaching the script: Pi persists only the script's final output,
  * which is forgotten as one result even when the script transforms or mixes data.
  * A tag is the `resultId` fact of the result's report (report.ts), owned by
- * forget alone. Before each request, the `context` handler records tagged results
- * after the last assistant message. forget may name only those ids. At `turn_end` of a completed
- * response, branch-local context edits replace each named result with a receipt
- * report.
+ * forget alone. Before each request, the `context` handler records the tagged,
+ * not yet forgotten results of the newest batch: the results after the latest
+ * response that called a tool other than forget. A response that only calls
+ * forget, even a rejected one, keeps that batch, so a retry or a later forget can
+ * still name the rest of it. forget may name only those ids. At `turn_end` of a
+ * completed response, branch-local context edits replace each named result with a
+ * receipt report.
  * The tool call and any facts saved in forget's note remain in context.
  *
  * Restricting forget to the newest batch bounds how much of the next request changes:
  * it differs from the earliest replaced result on, which covers later results of the
- * same batch, the response that requested the edit, and its tool results. Messages
+ * same batch, the forget responses after it, and their tool results. Messages
  * before that result are unchanged. Editing an older result would change every
  * later message. Raw session entries stay intact; navigating before the edit shows
  * the original result again.
@@ -62,10 +65,12 @@ function resultId(toolCallId: string): string {
 
 type ResultContent = AgentToolResult<unknown>["content"];
 
-/** Whether the model saw this result tagged: its last block is a report naming the call's id. */
-function isTagged(content: ResultContent, toolCallId: string): boolean {
+/** The report of a result the model saw tagged: its last block is a report naming the call's id. */
+function tagReport(content: ResultContent, toolCallId: string): Report | undefined {
   const last = content.at(-1);
-  return last?.type === "text" && decodeReport(last.text)?.resultId === resultId(toolCallId);
+  if (last?.type !== "text") return undefined;
+  const report = decodeReport(last.text);
+  return report?.resultId === resultId(toolCallId) ? report : undefined;
 }
 
 /** Text results below the threshold save too little to be worth forgetting; images always qualify. */
@@ -179,7 +184,7 @@ export function registerForgetTool(
     if (
       !event.parentToolCallId ||
       (event.toolName !== "read" && event.toolName !== "grep") ||
-      !isTagged(event.content, event.toolCallId)
+      !tagReport(event.content, event.toolCallId)
     )
       return;
     // A nested id cannot identify a transcript entry: rebuild the report without it.
@@ -234,20 +239,22 @@ export function registerForgetTool(
 
   pi.on("context", (event) => {
     forgettable = new Map();
-    const lastAssistant = event.messages.findLastIndex((message) => message.role === "assistant");
+    // The batch belongs to the latest response that called anything besides forget.
+    const batchResponse = event.messages.findLastIndex((message) => {
+      if (message.role !== "assistant") return false;
+      const calls = message.content.filter((block) => block.type === "toolCall");
+      return calls.length === 0 || calls.some((call) => call.name !== "forget");
+    });
     // Every tag still visible, older batches included: an id the model can see on more
     // than one result cannot name a single one, so none of them is forgettable.
     const visible = new Map<string, number>();
     event.messages.forEach((message, index) => {
-      if (
-        message.role !== "toolResult" ||
-        message.isError ||
-        !isTagged(message.content, message.toolCallId)
-      )
-        return;
+      if (message.role !== "toolResult" || message.isError) return;
+      const report = tagReport(message.content, message.toolCallId);
+      if (!report) return;
       const id = resultId(message.toolCallId);
       visible.set(id, (visible.get(id) ?? 0) + 1);
-      if (index > lastAssistant)
+      if (index > batchResponse && !report.contentForgotten)
         forgettable.set(id, {
           toolCallId: message.toolCallId,
           receipt: receiptOf(message.details),
@@ -286,7 +293,7 @@ export function registerForgetTool(
   pi.registerTool({
     name: "forget",
     label: "forget",
-    description: `Remove tagged inspection output from your context. Only results from the previous step whose report has a resultId (${formatKiB(FORGET_MIN_BYTES)} or larger, or images) can be forgotten. After this response each selected result's entire content, including its report, is replaced with a forgotten receipt. A codemode resultId covers its entire output, including other results printed by the script. Files and session history are unchanged.`,
+    description: `Remove tagged inspection output from your context. Only results whose report has a resultId (${formatKiB(FORGET_MIN_BYTES)} or larger, or images) can be forgotten, and only from your latest response that called a tool other than forget; responses that call only forget keep them available. After this response each selected result's entire content, including its report, is replaced with a forgotten receipt. A codemode resultId covers its entire output, including other results printed by the script. Files and session history are unchanged.`,
     promptSnippet: "Forget tagged inspection output you no longer need",
     promptGuidelines: [
       "In the step right after a result with a resultId, forget it unless you will edit with its anchors or need its exact text again; first copy any facts you still need into note.",
@@ -326,7 +333,7 @@ export function registerForgetTool(
           const available = boundedFacts([...forgettable.keys()], budget.blockBytes);
           throw new HashlineError(
             "NOT_FORGETTABLE",
-            "Only tagged inspection results from the previous step can be forgotten.",
+            "Only tagged results of the latest response that called a tool other than forget can be forgotten.",
             {
               facts: {
                 ids: unknown,
