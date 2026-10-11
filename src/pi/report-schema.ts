@@ -165,10 +165,6 @@ export const FACT_FIELDS = {
   offset: Type.Integer({ minimum: 0 }),
   timeoutMs: Type.Integer({ minimum: 1 }),
   exitCode: Type.Union([Type.Integer(), Type.Null()]),
-  // forget rejection.
-  ids: Type.Array(Type.String()),
-  available: Type.Array(Type.String()),
-  omittedAvailable: count("Available ids omitted from the byte budget."),
   // read outcome.
   pagination: Type.Object(
     {
@@ -207,6 +203,9 @@ export const FACT_FIELDS = {
   progressError: CAUSE_SCHEMA,
   // forget.
   forgotten: Type.Array(Type.String()),
+  notForgettable: Type.Array(Type.String(), {
+    description: "Named ids that are not tagged results of the previous response.",
+  }),
   resultId: Type.String({ description: "Id to pass to forget." }),
   forgetScope: Type.String(),
   contentForgotten: Type.Literal(true),
@@ -234,6 +233,10 @@ function facts<const R extends readonly FactName[], const O extends readonly Fac
 }
 const NONE = facts([]);
 const MATCHED = ["matched", "omittedMatched"] as const;
+
+/** Text shared by forget's failure and partial success: a later response cannot forget them either. */
+const NOT_FORGETTABLE_NEXT =
+  "Do not call forget again for the notForgettable ids; those results stay in context.";
 
 /**
  * Each error code: its facts and its recovery. `next.default` is the code's
@@ -326,7 +329,8 @@ export const ERROR_DEFINITIONS = {
     facts: NONE,
   },
   NOT_FORGETTABLE: {
-    facts: facts(["ids", "available"], ["omittedAvailable"]),
+    facts: facts(["notForgettable"]),
+    next: { default: NOT_FORGETTABLE_NEXT },
   },
   UNCLASSIFIED: { facts: NONE },
 } as const satisfies Record<
@@ -377,6 +381,7 @@ export const OUTCOME_NEXT = [
   ["matchLimit", "Raise limit or refine the pattern for more matches."],
   ["outputLimit", "Narrow path, glob, or pattern to see the omitted output."],
   ["linePreviewLimit", "Read the full line before rewriting it from a partial preview."],
+  ["notForgettable", NOT_FORGETTABLE_NEXT],
   ["contentForgotten", "Rerun the call to see it again."],
 ] as const satisfies readonly (readonly [FactName, string])[];
 
@@ -415,7 +420,7 @@ const SUCCESS_DEFINITIONS = {
   edit: facts([]),
   replace: facts([], ["matches"]),
   write: facts([], ["created"]),
-  forget: facts(["forgotten"]),
+  forget: facts(["forgotten"], ["notForgettable"]),
   codemode: facts([], ["resultId", "forgetScope", "contentForgotten"]),
 } as const;
 const TOOL_SCHEMA = Type.Union(Object.keys(SUCCESS_DEFINITIONS).map((tool) => Type.Literal(tool)));
