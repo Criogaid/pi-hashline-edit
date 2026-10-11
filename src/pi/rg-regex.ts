@@ -259,6 +259,8 @@ interface Context {
   readonly groups: ReadonlyMap<AST.CapturingGroup, number>;
   /** Capturing groups whose text the current element becomes part of. */
   readonly capturing: readonly AST.CapturingGroup[];
+  /** Inside a quantifier with a maximum of zero: emitted for group numbering, never matched. */
+  readonly inert: boolean;
   readonly scan: Scan;
 }
 
@@ -280,6 +282,7 @@ interface Scan {
 }
 
 function capture(ctx: Context, found: Partial<Capture>): void {
+  if (ctx.inert) return;
   for (const group of ctx.capturing) {
     const known = ctx.scan.captures.get(group)!;
     known.lineBreak ||= found.lineBreak ?? false;
@@ -317,6 +320,7 @@ function emitSet(set: Ranges, ctx: Context): Emitted {
       capture(ctx, { nonAscii: isNonAscii(rest) });
       return atom(classText(rest));
     }
+    if (!hasCr && ctx.inert) return atom(NEVER);
     if (!hasCr)
       throw new RegexTranslationError(
         "Without multiline, each line is matched without its line break, so \\n matches nothing.",
@@ -433,9 +437,11 @@ const targetsOf = (node: AST.Backreference) =>
  */
 function emitBackreference(node: AST.Backreference, ctx: Context): Emitted {
   const targets = targetsOf(node);
-  ctx.scan.backreferences.push({ node, ignoreCase: ctx.ignoreCase });
-  for (const outer of ctx.capturing)
-    for (const target of targets) ctx.scan.nested.push([outer, target]);
+  if (!ctx.inert) {
+    ctx.scan.backreferences.push({ node, ignoreCase: ctx.ignoreCase });
+    for (const outer of ctx.capturing)
+      for (const target of targets) ctx.scan.nested.push([outer, target]);
+  }
   const text = targets
     .map((group) => ctx.groups.get(group)!)
     .reduceRight((otherwise, index) => `(?(${index})\\g{${index}}|${otherwise})`, "");
@@ -497,7 +503,7 @@ function emitElement(node: AST.Element, ctx: Context): Emitted {
     case "Backreference":
       return emitBackreference(node, ctx);
     case "Quantifier": {
-      const inner = emitElement(node.element, ctx);
+      const inner = emitElement(node.element, node.max === 0 ? { ...ctx, inert: true } : ctx);
       const body = inner.atom ? inner.text : `(?:${inner.text})`;
       return { text: body + quantifierText(node), atom: false };
     }
@@ -582,6 +588,7 @@ function translateScan(parsed: readonly AST.Pattern[], query: GrepQuery): RgMatc
     lineAnchors: true,
     groups,
     capturing: [],
+    inert: false,
     scan: {
       standaloneCr: false,
       captures: new Map(
