@@ -25,9 +25,8 @@ import { makeEditOverride } from "../pi/edit-tool.ts";
 import { makeReadOverride } from "../pi/read-tool.ts";
 import { makeWriteOverride } from "../pi/write-tool.ts";
 import { makeReplaceTool } from "../pi/replace-tool.ts";
-import { COMMON_RG_ARGS, MAX_RG_RECORD_BYTES, probeRegex, runRg } from "../pi/rg-process.ts";
+import { COMMON_RG_ARGS, MAX_RG_RECORD_BYTES, runRgPaths } from "../pi/rg-process.ts";
 import { DEFAULT_OUTPUT_BUDGETS } from "../pi/budgets.ts";
-import { runRgSearch } from "../pi/grep-search.ts";
 import { computeLineHash } from "../core/hash.ts";
 import { callTool } from "../pi/tool-call.testing.ts";
 import { DEFAULT_CONFIG } from "../pi/config.ts";
@@ -312,42 +311,25 @@ test("shared rg runner stops and cleans up after limits, callback failures, and 
   try {
     const file = join(directory, "fixture.txt");
     await writeFile(file, "needle\n".repeat(10_000));
-    const args = [
-      ...COMMON_RG_ARGS,
-      "--engine=default",
-      "--no-multiline",
-      "--json",
-      "-e",
-      "needle",
-      "--",
-      file,
-    ];
-    const stopped = await runRg(rgPath, args, undefined, () => false);
+    const args = [...COMMON_RG_ARGS, "--files", "--null", "--", file];
+    const stopped = await runRgPaths(rgPath, args, undefined, () => false);
     assert.equal(stopped.stopped, true);
     await assert.rejects(
-      runRg(rgPath, args, undefined, () => {
+      runRgPaths(rgPath, args, undefined, () => {
         throw new Error("callback failed");
       }),
       /callback failed/,
     );
     const controller = new AbortController();
     await assert.rejects(
-      runRg(rgPath, args, controller.signal, () => {
+      runRgPaths(rgPath, args, controller.signal, () => {
         controller.abort();
         return true;
       }),
       /Operation aborted/,
     );
     await assert.rejects(
-      runRg(join(directory, "missing-rg"), [], undefined, () => true),
-      /Failed to run ripgrep/,
-    );
-    await assert.rejects(
-      probeRegex(join(directory, "missing-rg"), {
-        engine: "default",
-        pattern: "needle",
-        multiline: false,
-      }),
+      runRgPaths(join(directory, "missing-rg"), [], undefined, () => true),
       /Failed to run ripgrep/,
     );
   } finally {
@@ -496,21 +478,14 @@ test("directory traversal skips symlinks but explicitly named linked files remai
   }
 });
 
-test("real grep uses JavaScript when PCRE2 cannot compile unbounded lookbehind", async (t) => {
+test("unbounded lookbehind → native JS matches after rg discovery", async (t) => {
   const directory = await mkdtemp(join(tmpdir(), "hl-grep-lookbehind-"));
   t.after(() => rm(directory, { recursive: true, force: true }));
   await writeFile(join(directory, "fixture.txt"), "aaab\n");
-  let searched = false;
-  const tool = makeGrepOverrideWithBackend(directory, DEFAULT_CONFIG, {
-    search(...args) {
-      searched = true;
-      return runRgSearch(...args);
-    },
-  });
+  const tool = makeGrepOverrideWithBackend(directory, DEFAULT_CONFIG, {});
   const result = await invoke(tool, "0", { pattern: "(?<=a+)b", literal: false });
   assert.equal(result.isError, undefined, JSON.stringify(reportOf(result)));
   assert.equal(reportOf(result)?.matches, 1);
-  assert.equal(searched, false);
 });
 
 test("line-based grep uses context for display but never matches across CRLF", async () => {
@@ -726,51 +701,6 @@ test("multiline zero-width EOF stays on the last existing physical line", async 
   }
 });
 
-test("multiline grep detects changed files and propagates cancellation", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "hl-grep-multiline-state-"));
-  try {
-    const file = join(directory, "fixture.txt");
-    await writeFile(file, "alpha\nbeta\n");
-    const changing = makeGrepOverrideWithBackend(directory, DEFAULT_CONFIG, {
-      async search(path, request, signal, onLine) {
-        const result = await runRgSearch(path, request, signal, onLine);
-        await writeFile(file, "alpha\nchanged\n");
-        return result;
-      },
-    });
-    await expectToolFailure(
-      invoke(
-        changing,
-        "0",
-        { pattern: "alpha\\nbeta", path: file, multiline: true, literal: false },
-        undefined,
-        undefined,
-      ),
-      "FILE_CHANGED",
-    );
-    await writeFile(file, "alpha\nbeta\n");
-    const controller = new AbortController();
-    const cancelling = makeGrepOverrideWithBackend(directory, DEFAULT_CONFIG, {
-      search(path, request, signal, onLine) {
-        controller.abort();
-        return runRgSearch(path, request, signal, onLine);
-      },
-    });
-    await expectToolFailure(
-      invoke(
-        cancelling,
-        "0",
-        { pattern: "alpha\\nbeta", path: file, multiline: true, literal: false },
-        controller.signal,
-        undefined,
-      ),
-      "OPERATION_ABORTED",
-    );
-  } finally {
-    await rm(directory, { recursive: true, force: true });
-  }
-});
-
 test("files and count modes aggregate only matching lines inside the limit", async () => {
   const directory = await mkdtemp(join(tmpdir(), "hl-grep-output-modes-"));
   try {
@@ -816,65 +746,6 @@ test("files and count modes aggregate only matching lines inside the limit", asy
     );
     assert.match(contextual.content[0].text, /a\.txt · 1 match/);
     assert.match(contextual.content[0].text, /2#[0-9A-Z]+│needle/);
-  } finally {
-    await rm(directory, { recursive: true, force: true });
-  }
-});
-
-test("default grep rejects file changes and propagates cancellation", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "hl-grep-default-state-"));
-  try {
-    const file = join(directory, "fixture.txt");
-    await writeFile(file, "foo bar\n");
-    const changing = makeGrepOverrideWithBackend(directory, DEFAULT_CONFIG, {
-      async search(path, request, signal, onLine) {
-        const result = await runRgSearch(path, request, signal, onLine);
-        await writeFile(file, "changed content\n");
-        return result;
-      },
-    });
-    await expectToolFailure(
-      invoke(changing, "0", { literal: true, pattern: "foo", path: file }, undefined, undefined),
-      "FILE_CHANGED",
-    );
-
-    await writeFile(file, "foo bar\n");
-    const controller = new AbortController();
-    const cancelling = makeGrepOverrideWithBackend(directory, DEFAULT_CONFIG, {
-      search(path, request, signal, onLine) {
-        controller.abort();
-        return runRgSearch(path, request, signal, onLine);
-      },
-    });
-    await expectToolFailure(
-      invoke(
-        cancelling,
-        "0",
-        { literal: true, pattern: "foo", path: file },
-        controller.signal,
-        undefined,
-      ),
-      "OPERATION_ABORTED",
-    );
-  } finally {
-    await rm(directory, { recursive: true, force: true });
-  }
-});
-
-test("owned rg rejects an oversized JSONL record", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "hl-grep-record-limit-"));
-  try {
-    await writeFile(join(directory, "large.txt"), `needle${"x".repeat(MAX_RG_RECORD_BYTES + 1)}\n`);
-    const tool = makeGrepOverrideWithBackend(directory, DEFAULT_CONFIG, {});
-    await expectToolFailure(
-      invoke(tool, "0", { pattern: "needle", literal: true }, undefined, undefined),
-      "RIPGREP_FAILED",
-      (report) =>
-        assert.match(
-          report.message ?? "",
-          new RegExp(`record exceeds ${MAX_RG_RECORD_BYTES / 1024 ** 2} MiB`),
-        ),
-    );
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
@@ -1314,7 +1185,7 @@ test("invalid UTF-8 matches use plain previews while valid files retain edit anc
       undefined,
       undefined,
     );
-    // Malformed bytes cannot be consumed by the translated wildcard.
+    // The explicit class excludes the replacement character in the lossy view.
     assert.equal(reportOf(multiline)?.matches, 0);
   } finally {
     await rm(directory, { recursive: true, force: true });
@@ -1418,117 +1289,24 @@ test("literal LF and CRLF queries match original valid and invalid UTF-8 files a
   }
 });
 
-test("raw-byte matches changed before revision acquisition are never confirmed by lossy previews", async (t) => {
-  const directory = await mkdtemp(join(tmpdir(), "hl-grep-raw-revision-"));
-  try {
-    const file = join(directory, "invalid.txt");
-    for (const separator of ["\n", "\r\n"]) {
-      for (const mode of [false, true, "limited", "eof"] as const) {
-        const multiline = mode !== false;
-        for (const outputMode of ["content", "files", "count"] as const) {
-          await t.test(`${JSON.stringify(separator)} ${mode} ${outputMode}`, async () => {
-            const source = (byte: number) =>
-              Buffer.concat([
-                Buffer.from(`before${separator}${"x".repeat(64 * 1024)}`),
-                Buffer.from([byte]),
-                Buffer.from(`needle${separator}after${mode === "eof" ? "" : separator}`),
-              ]);
-            await writeFile(file, source(0xff));
-            const changedSource =
-              mode === "eof"
-                ? Buffer.concat([source(0xff), Buffer.from(`tail${separator}`)])
-                : mode === "limited"
-                  ? Buffer.concat([
-                      Buffer.from(`before${separator}${"x".repeat(64 * 1024)}`),
-                      Buffer.from([0xff]),
-                      Buffer.from(`needle${separator}AFTER${separator}`),
-                    ])
-                  : source(0xfe);
-            let changed = false;
-            const grep = makeGrepOverrideWithBackend(directory, DEFAULT_CONFIG, {
-              search(path, request, signal, onLine) {
-                return runRgSearch(path, request, signal, async (event) => {
-                  if (!changed && JSON.parse(event).type === "match") {
-                    changed = true;
-                    await writeFile(file, changedSource);
-                  }
-                  return onLine(event);
-                });
-              },
-            });
-            const boundary = "\\n";
-            await expectToolFailure(
-              invoke(grep, "changed", {
-                path: file,
-                pattern:
-                  mode === "limited"
-                    ? `needle${boundary}after`
-                    : mode === "eof"
-                      ? `needle${boundary}after(?-m:$)`
-                      : `needle${multiline ? `${boundary}after` : ""}`,
-                literal: false,
-                ignoreCase: false,
-                multiline,
-                ...(mode === "limited" || mode === "eof" ? { limit: 1 } : {}),
-                outputMode,
-              }),
-              "FILE_CHANGED",
-            );
-            assert.equal(changed, true);
-            assert.deepEqual(await readFile(file), changedSource);
-          });
-        }
-      }
-    }
-  } finally {
-    await rm(directory, { recursive: true, force: true });
-  }
-});
-
-test("raw files lost before summary verification leave only confirmed counts and an incomplete notice", async (t) => {
-  const directory = await mkdtemp(join(tmpdir(), "hl-grep-raw-summary-"));
-  try {
-    const invalid = join(directory, "invalid.txt");
-    const valid = join(directory, "valid.txt");
-    for (const outputMode of ["files", "count"] as const) {
-      for (const keepValid of [true, false]) {
-        await t.test(`${outputMode} ${keepValid}`, async () => {
-          await writeFile(invalid, Buffer.concat([Buffer.from("needle "), Buffer.from([0xff])]));
-          await writeFile(valid, "needle\n");
-          const grep = makeGrepOverrideWithBackend(directory, DEFAULT_CONFIG, {
-            async search(...args) {
-              const result = await runRgSearch(...args);
-              await rm(invalid);
-              return result;
-            },
-          });
-          const result = invoke(grep, "summary", {
-            path: keepValid ? [invalid, valid] : invalid,
-            pattern: "needle",
-            literal: true,
-            limit: keepValid ? 2 : 1,
-            outputMode,
-          });
-          if (!keepValid) {
-            await expectToolFailure(result, "SEARCH_INCOMPLETE", (report) => {
-              assert.match(report.message ?? "", /No matches could be displayed/);
-              assert.match(report.diagnostics ?? "", /invalid\.txt/);
-            });
-            return;
-          }
-          const summary = await result;
-          assert.equal(summary.details?.incomplete, true);
-          const shown = summary.content[0].text;
-          assert.equal(shown, outputMode === "files" ? "valid.txt" : "valid.txt: 1");
-          const report = reportOf(summary);
-          assert.equal(report?.matchLimit, 2);
-          assert.equal(report?.matches, 1);
-          assert.equal(report?.files, 1);
-          assert.match(report?.diagnostics ?? "", /Could not read .*invalid\.txt/);
-        });
-      }
-    }
-  } finally {
-    await rm(directory, { recursive: true, force: true });
-  }
+test("oversized candidate path record → bounded runner rejects before invoking its consumer", async () => {
+  let called = false;
+  await assert.rejects(
+    runRgPaths(
+      process.execPath,
+      [
+        "--input-type=module",
+        "--eval",
+        "process.stdout.write(Buffer.alloc(Number(process.argv[1]), 97))",
+        String(MAX_RG_RECORD_BYTES + 1),
+      ],
+      AbortSignal.timeout(10_000),
+      () => {
+        called = true;
+        return true;
+      },
+    ),
+    (error: unknown) => error instanceof Error && error.message.includes("record exceeds"),
+  );
+  assert.equal(called, false);
 });

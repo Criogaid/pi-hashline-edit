@@ -3,12 +3,11 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { Worker } from "node:worker_threads";
 import { DEFAULT_CONFIG } from "../pi/config.ts";
-import { MAX_JS_SEARCH_FILE_BYTES } from "../pi/grep-javascript.ts";
+import { MAX_MULTILINE_SEARCH_BYTES } from "../pi/grep-search.ts";
 import { makeGrepOverrideWithBackend } from "../pi/grep-tool.ts";
 import { reportOf } from "../pi/report.ts";
-import { runRgPaths } from "../pi/rg-process.ts";
+import { COMMON_RG_ARGS, runRgPaths } from "../pi/rg-process.ts";
 import { callTool } from "../pi/tool-call.testing.ts";
 
 const query = { pattern: "^..$", literal: false, ignoreCase: false };
@@ -73,34 +72,6 @@ test("JS grep: physical rows, context, and limits agree across output modes", as
   }
 });
 
-test("JS grep: changes beyond a limited multiline result invalidate every output mode", async (t) => {
-  const directory = await mkdtemp(join(tmpdir(), "hl-grep-js-revision-"));
-  t.after(() => rm(directory, { recursive: true, force: true }));
-  const path = join(directory, "input.txt");
-  const tool = makeGrepOverrideWithBackend(directory, DEFAULT_CONFIG, {
-    runRgPaths(rg, args, signal, onPath) {
-      return runRgPaths(rg, args, signal, async (found) => {
-        const keepGoing = await onPath(found);
-        await writeFile(path, "😀\nchanged\n");
-        return keepGoing;
-      });
-    },
-  });
-  for (const outputMode of ["content", "files", "count"] as const) {
-    await writeFile(path, "😀\nkeep\n");
-    const result = await callTool(tool, {
-      path,
-      pattern: "(?s:.)+",
-      literal: false,
-      multiline: true,
-      limit: 1,
-      outputMode,
-    });
-    assert.equal(result.isError, true);
-    assert.equal(reportOf(result)?.error, "FILE_CHANGED");
-  }
-});
-
 test("JS grep: malformed UTF-8 matches the preview text without editable anchors", async (t) => {
   const directory = await mkdtemp(join(tmpdir(), "hl-grep-js-preview-"));
   t.after(() => rm(directory, { recursive: true, force: true }));
@@ -117,75 +88,88 @@ test("JS grep: malformed UTF-8 matches the preview text without editable anchors
   assert.doesNotMatch(body.text, /\d+#[0-9A-Z]+/);
 });
 
-test("JS grep: catastrophic evaluation can time out or be cancelled", {
-  timeout: 15_000,
-}, async (t) => {
-  const directory = await mkdtemp(join(tmpdir(), "hl-grep-js-stop-"));
-  t.after(() => rm(directory, { recursive: true, force: true }));
-  const path = join(directory, "input.txt");
-  await writeFile(path, `${"a".repeat(100)}!`);
-  const config = { ...DEFAULT_CONFIG, grep: { ...DEFAULT_CONFIG.grep, regexTimeoutMs: 3_000 } };
-  const tool = makeGrepOverrideWithBackend(directory, config, {});
-  const params = { path, pattern: "(?=.)^(a+)+$", literal: false };
-  const timeout = await callTool(tool, params);
-  assert.equal(reportOf(timeout)?.error, "REGEX_TIMEOUT");
-  assert.equal(reportOf(timeout)?.timeoutMs, config.grep.regexTimeoutMs);
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 1_000);
-  try {
-    const cancelled = await callTool(tool, params, { signal: controller.signal });
-    assert.equal(reportOf(cancelled)?.error, "OPERATION_ABORTED");
-  } finally {
-    clearTimeout(timer);
-  }
-  const recovered = await callTool(tool, { ...params, pattern: "a." });
-  assert.equal(recovered.isError, undefined);
-  assert.equal(reportOf(recovered)?.matches, 1);
-});
-
-test("JS grep: oversized text is reported as incomplete rather than no matches", async (t) => {
+test("oversized line or multiline input → explicit incomplete-search diagnostics", async (t) => {
   const directory = await mkdtemp(join(tmpdir(), "hl-grep-js-bound-"));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const path = join(directory, "large.txt");
-  await writeFile(path, Buffer.alloc(MAX_JS_SEARCH_FILE_BYTES + 1, 0x61));
+  const good = join(directory, "good.txt");
+  await writeFile(path, Buffer.alloc(MAX_MULTILINE_SEARCH_BYTES + 1, 0x61));
+  await writeFile(good, "a\n");
   const tool = makeGrepOverrideWithBackend(directory, DEFAULT_CONFIG, {});
-  const result = await callTool(tool, { path, pattern: ".", literal: false });
-  assert.equal(result.isError, true);
-  assert.equal(reportOf(result)?.error, "SEARCH_INCOMPLETE");
-  assert.match(reportOf(result)?.diagnostics ?? "", /large\.txt/);
+  for (const multiline of [false, true]) {
+    for (const includeGood of [false, true]) {
+      const result = await callTool(tool, {
+        path: includeGood ? [path, good] : path,
+        pattern: "a",
+        literal: true,
+        multiline,
+      });
+      assert.match(reportOf(result)?.diagnostics ?? "", /large\.txt/);
+      if (includeGood) {
+        assert.equal(result.isError, undefined);
+        assert.equal(reportOf(result)?.matches, 1);
+        assert.equal(result.details?.incomplete, true);
+      } else {
+        assert.equal(result.isError, true);
+        assert.equal(reportOf(result)?.error, "SEARCH_INCOMPLETE");
+      }
+    }
+  }
 });
 
-test("JS grep: worker rows must describe the searched snapshot", async (t) => {
-  const directory = await mkdtemp(join(tmpdir(), "hl-grep-js-reply-"));
+test("real rg candidate prefilter → the same matches as an unfiltered file listing", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "hl-grep-prefilter-"));
   t.after(() => rm(directory, { recursive: true, force: true }));
-  const path = join(directory, "input.txt");
-  await writeFile(path, "😀\n");
-  for (const result of [
-    { lines: [{ lineNumber: 2, column: 0 }], totalLines: 1 },
-    {
-      lines: [
-        { lineNumber: 1, column: 0 },
-        { lineNumber: 1, column: 0 },
-      ],
-      totalLines: 1,
-    },
-    { lines: [{ lineNumber: 1, column: 0 }], totalLines: 2 },
-    { lines: [{ lineNumber: 1, column: -1 }], totalLines: 1 },
-    { lines: [{ lineNumber: 1, column: 999 }], totalLines: 1 },
-  ]) {
-    await t.test(JSON.stringify(result), async (t) => {
-      const emit = Worker.prototype.emit;
-      t.mock.method(
-        Worker.prototype,
-        "emit",
-        function (this: Worker, event: string | symbol, ...args: unknown[]) {
-          return emit.call(this, event, ...(event === "message" ? [{ result }] : args));
+  const fixtures = [
+    ["color.txt", Buffer.from("COLOR\r\ncolour\r\ncolouur\n")],
+    ["invalid.txt", Buffer.from([0x61, 0xff, 0x62, 0x0d, 0x0a])],
+    ["unicode.txt", Buffer.from("K\nk\nſ\ns\n😀\n")],
+    ["span.txt", Buffer.from("alpha\r\nbeta\n")],
+    ["miss.txt", Buffer.from("unrelated\n")],
+  ] as const;
+  for (const [name, bytes] of fixtures) await writeFile(join(directory, name), bytes);
+  for (const [pattern, flags, multiline, matches] of [
+    ["colou?r", "mi", false, 2],
+    ["a\\uFFFDb", "m", false, 1],
+    ["k", "miu", false, 2],
+    ["alpha\\nbeta", "m", true, 2],
+  ] as const) {
+    await t.test(`${pattern} /${flags} → identical confirmed results`, async () => {
+      const candidates = new Set<string>();
+      const filtered = makeGrepOverrideWithBackend(directory, DEFAULT_CONFIG, {
+        runRgPaths(rg, args, signal, onPath) {
+          return runRgPaths(rg, args, signal, (path) => {
+            candidates.add(path);
+            return onPath(path);
+          });
         },
-      );
-      const tool = makeGrepOverrideWithBackend(directory, DEFAULT_CONFIG, {});
-      const failure = await callTool(tool, { ...query, path });
-      assert.equal(failure.isError, true);
-      assert.equal(reportOf(failure)?.error, "REGEX_WORKER_FAILED");
+      });
+      const full = makeGrepOverrideWithBackend(directory, DEFAULT_CONFIG, {
+        runRgPaths(rg, args, signal, onPath) {
+          const scopeStart = args.indexOf("--null");
+          assert.ok(scopeStart >= 0);
+          return runRgPaths(
+            rg,
+            [...COMMON_RG_ARGS, "--files", ...args.slice(scopeStart)],
+            signal,
+            onPath,
+          );
+        },
+      });
+      for (const outputMode of ["content", "files", "count"] as const) {
+        const params = { path: directory, pattern, flags, multiline, literal: false, outputMode };
+        const actual = await callTool(filtered, params);
+        const expected = await callTool(full, params);
+        assert.equal(actual.isError, undefined, JSON.stringify(reportOf(actual)));
+        assert.equal(expected.isError, undefined, JSON.stringify(reportOf(expected)));
+        assert.equal(reportOf(actual)?.matches, matches);
+        assert.equal(reportOf(expected)?.matches, matches);
+        const actualText = actual.content[0];
+        const expectedText = expected.content[0];
+        assert.ok(actualText.type === "text" && expectedText.type === "text");
+        assert.deepEqual(actualText.text.split("\n").sort(), expectedText.text.split("\n").sort());
+      }
+      assert.ok(candidates.size > 0 && candidates.size < fixtures.length);
     });
   }
 });

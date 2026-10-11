@@ -7,7 +7,6 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import { syncBuiltinESMExports } from "node:module";
-import { setTimeout as delay } from "node:timers/promises";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import fsPromises from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -17,8 +16,7 @@ import { initTheme } from "@earendil-works/pi-coding-agent";
 import { theme } from "../../node_modules/@earendil-works/pi-coding-agent/dist/modes/interactive/theme/theme.js";
 import { computeLineHash } from "../core/hash.ts";
 import { makeGrepOverrideWithBackend, type GrepBackend } from "./grep-tool.ts";
-import { scopeArgs, type SearchRequest } from "./grep-search.ts";
-import { matcherArgs } from "./rg-process.ts";
+import { Worker } from "node:worker_threads";
 import { makeEditOverride } from "./edit-tool.ts";
 import { callTool } from "./tool-call.testing.ts";
 import { DEFAULT_CONFIG } from "./config.ts";
@@ -28,12 +26,10 @@ import { reportOf } from "./report.ts";
 import { expectToolFailure } from "./report-failure.testing.ts";
 
 type FakeOptions = {
-  lines?: string[];
   code?: number | null;
   stderr?: string;
-  validation?: Awaited<ReturnType<GrepBackend["probeRegex"]>>;
   error?: Error;
-  onRun?: () => void;
+  onRun?: () => void | Promise<void>;
   paths?: string[];
 };
 
@@ -46,56 +42,32 @@ async function withDir<T>(fn: (dir: string) => Promise<T>): Promise<T> {
   }
 }
 
-function rgMatch(filePath: string, lineNumber: number, text: string, byteOffset?: number): string {
-  return JSON.stringify({
-    type: "match",
-    data: {
-      path: { text: filePath },
-      line_number: lineNumber,
-      lines: { text },
-      ...(byteOffset === undefined ? {} : { absolute_offset: byteOffset }),
-      submatches: [{ start: 0, end: Buffer.byteLength(text.replace(/\r?\n$/, "")) }],
-    },
-  });
-}
-
 function fakeBackend(options: FakeOptions = {}) {
-  const calls: { path: string; request: SearchRequest }[] = [];
-  const probes: Parameters<GrepBackend["probeRegex"]>[] = [];
+  const calls: { path: string; args: readonly string[] }[] = [];
   const backend: GrepBackend = {
-    async search(path, request, _signal, onLine) {
-      calls.push({ path, request });
-      options.onRun?.();
+    async runRgPaths(path, args, _signal, onPath) {
+      calls.push({ path, args });
+      await options.onRun?.();
       if (options.error) throw options.error;
-      for (const line of options.lines ?? []) {
-        if (!(await onLine(line)))
+      for (const file of options.paths ?? []) {
+        if (!(await onPath(file)))
           return { code: null, stderr: options.stderr ?? "", stopped: true };
       }
       return {
-        code: options.code === undefined ? 0 : options.code,
+        code: options.code ?? (options.paths?.length ? 0 : 1),
         stderr: options.stderr ?? "",
         stopped: false,
       };
     },
-    async runRgPaths(_path, _args, _signal, onPath) {
-      for (const path of options.paths ?? []) {
-        if (!(await onPath(path))) return { code: null, stderr: "", stopped: true };
-      }
-      return { code: options.paths?.length ? 0 : 1, stderr: "", stopped: false };
-    },
-    async probeRegex(...args) {
-      probes.push(args);
-      return { code: 1, stderr: "", ...options.validation };
-    },
   };
-  return { backend, calls, probes };
+  return { backend, calls };
 }
 
 const text = (result: any): string => result.content[0].text;
 const call = (tool: any, params: any, signal?: AbortSignal) =>
   callTool(tool, params, { toolCallId: "0", signal });
 
-test("grep call rendering shows explicit JavaScript flags", () => {
+test("explicit JavaScript flags → call rendering shows them", () => {
   initTheme("dark");
   const { backend } = fakeBackend();
   const tool = makeGrepOverrideWithBackend(process.cwd(), DEFAULT_CONFIG, backend);
@@ -105,7 +77,7 @@ test("grep call rendering shows explicit JavaScript flags", () => {
   assert.ok(rendered.includes("/\\p{Letter}+/u"));
 });
 
-test("configured grep defaults drive descriptions, match limits, and context", async () =>
+test("configured defaults → descriptions, limits, and context use the registered values", async () =>
   withDir(async (dir) => {
     const file = join(dir, "configured.txt");
     const lines = [
@@ -118,9 +90,7 @@ test("configured grep defaults drive descriptions, match limits, and context", a
       "after two",
     ];
     await writeFile(file, `${lines.join("\n")}\n`);
-    const fake = fakeBackend({
-      lines: [rgMatch(file, 2, "needle one\n"), rgMatch(file, 6, "needle two\n")],
-    });
+    const fake = fakeBackend({ paths: [file] });
     const config = {
       ...DEFAULT_CONFIG,
       grep: { ...DEFAULT_CONFIG.grep, defaultLimit: 1, defaultContext: 2 },
@@ -248,38 +218,6 @@ test("grep schema rejects empty search inputs and fractional context", async () 
     assert.equal(fake.calls.length, 0);
   }));
 
-test("grep searches translated matchers with explicit engine, case, and line modes", async () => {
-  await withDir(async (dir) => {
-    const file = join(dir, "fixture.ts");
-    await writeFile(file, "FOO\nfoo\n");
-    const fake = fakeBackend();
-    const tool = makeGrepOverrideWithBackend(dir, DEFAULT_CONFIG, fake.backend);
-    await call(tool, {
-      path: file,
-      pattern: "FOO",
-      ignoreCase: true,
-      multiline: true,
-      literal: true,
-    });
-    const multilineArgs = matcherArgs(fake.calls[0].request.matcher);
-    assert.ok(multilineArgs.includes("--case-sensitive"));
-    assert.ok(multilineArgs.includes("--multiline"));
-    assert.ok(multilineArgs.includes("--crlf"));
-    assert.ok(multilineArgs.includes("--encoding=none"));
-    assert.ok(multilineArgs.includes("--engine=default"));
-    for (const flag of ["-i", "--ignore-case", "--smart-case", "--fixed-strings"])
-      assert.equal(multilineArgs.includes(flag), false);
-    await call(tool, {
-      literal: true,
-      path: file,
-      pattern: "foo",
-      ignoreCase: false,
-      multiline: false,
-    });
-    assert.equal(fake.calls.at(-1)?.request.matcher.multiline, false);
-  });
-});
-
 test("grep points wildcard paths to glob without changing ordinary missing-path errors", async () => {
   await withDir(async (dir) => {
     const tool = makeGrepOverrideWithBackend(dir, DEFAULT_CONFIG, fakeBackend().backend);
@@ -302,21 +240,13 @@ test("grep points wildcard paths to glob without changing ordinary missing-path 
   });
 });
 
-test("formats parsed rg matches with full-line hash anchors", async () => {
+test("matched files → full-line hash anchors", async () => {
   await withDir(async (dir) => {
     const a = join(dir, "a.ts");
     const b = join(dir, "b.ts");
     await writeFile(a, "alpha beta\ngamma\nalpha only\n");
     await writeFile(b, "alpha here\n");
-    const fake = fakeBackend({
-      lines: [
-        "not json",
-        JSON.stringify({ type: "begin" }),
-        rgMatch(a, 1, "alpha beta\n"),
-        rgMatch(a, 3, "alpha only\n"),
-        rgMatch(b, 1, "alpha here\n"),
-      ],
-    });
+    const fake = fakeBackend({ paths: [a, b] });
 
     const tool = makeGrepOverrideWithBackend(dir, DEFAULT_CONFIG, fake.backend);
     assert.deepEqual(tool.parameters.required, ["pattern", "literal"]);
@@ -327,148 +257,56 @@ test("formats parsed rg matches with full-line hash anchors", async () => {
     assert.match(output, new RegExp(`1#${computeLineHash(1, "alpha beta", 4)}│alpha beta`));
     assert.match(output, /3#[0-9A-Z]+│alpha only/);
     assert.equal(fake.calls[0].path, rgPath);
-    assert.equal(fake.calls[0].request.matcher.engine, "default");
-    assert.equal(fake.calls[0].request.matcher.multiline, false);
-    assert.deepEqual(fake.calls[0].request.scope, {
-      globs: [],
-      noIgnore: false,
-      follow: false,
-      searchPaths: [dir],
-    });
   });
 });
 
-test("grep rejects a file changed between a match and anchor formatting", async () => {
+test("file changes after matching → every output mode rejects its stale revision", async (t) => {
   await withDir(async (dir) => {
     const file = join(dir, "grep.txt");
-    await writeFile(file, "needle\nother\n");
-    const fake = fakeBackend({ lines: [rgMatch(file, 1, "needle\n")] });
-    const backend: GrepBackend = {
-      ...fake.backend,
-      async search(...args) {
-        const result = await fake.backend.search(...args);
-        await writeFile(file, "NOT_THE_MATCH\nneedle\n");
-        return result;
-      },
-    };
-    await expectToolFailure(
-      call(makeGrepOverrideWithBackend(dir, DEFAULT_CONFIG, backend), {
-        literal: true,
-        pattern: "needle",
-      }),
-      "FILE_CHANGED",
-    );
-  });
-});
-
-test("grep rejects matches missing from the current file before anchoring context", async () =>
-  withDir(async (dir) => {
-    const file = join(dir, "grep.txt");
-    await writeFile(file, "line1\nline2\nline3\nneedle\nline5\n");
-    const fake = fakeBackend({ lines: [rgMatch(file, 5, "needle\n")] });
-    const backend: GrepBackend = {
-      ...fake.backend,
-      async search(...args) {
-        await writeFile(file, "line1\nline2\nline3\n");
-        return fake.backend.search(...args);
-      },
-    };
-    await expectToolFailure(
-      call(makeGrepOverrideWithBackend(dir, DEFAULT_CONFIG, backend), {
-        literal: true,
-        pattern: "needle",
-        context: 2,
-      }),
-      "FILE_CHANGED",
-    );
-  }));
-
-test("multiline grep rejects a zero-width match beyond the current EOF", async () =>
-  withDir(async (dir) => {
-    const file = join(dir, "grep.txt");
-    await writeFile(file, "one\ntwo\nthree\nfour\nfive\n");
-    const fake = fakeBackend({
-      lines: [
-        JSON.stringify({
-          type: "match",
-          data: {
-            path: { text: file },
-            line_number: 5,
-            lines: { text: "" },
-            submatches: [{ start: 0, end: 0 }],
-          },
-        }),
+    for (const [before, after] of [
+      [Buffer.from("needle\nold context\n"), Buffer.from("needle\nnew context\n")],
+      [
+        Buffer.from([0x6e, 0x65, 0x65, 0x64, 0x6c, 0x65, 0x0a, 0xff]),
+        Buffer.from([0x6e, 0x65, 0x65, 0x64, 0x6c, 0x65, 0x0a, 0xfe]),
       ],
-    });
-    const backend: GrepBackend = {
-      ...fake.backend,
-      async search(...args) {
-        await writeFile(file, "one\ntwo\n");
-        return fake.backend.search(...args);
-      },
-    };
-    for (const outputMode of ["content", "files", "count"]) {
-      await expectToolFailure(
-        call(makeGrepOverrideWithBackend(dir, DEFAULT_CONFIG, backend), {
-          pattern: "^one",
-          multiline: true,
-          literal: false,
-          outputMode,
-        }),
-        "FILE_CHANGED",
-      );
+    ]) {
+      for (const multiline of [false, true]) {
+        for (const outputMode of ["content", "files", "count"] as const) {
+          await t.test(
+            `${outputMode}, multiline=${multiline}, bytes=${before.toString("hex")} → FILE_CHANGED`,
+            async (t) => {
+              await writeFile(file, before);
+              const emit = Worker.prototype.emit;
+              let changed = false;
+              t.mock.method(
+                Worker.prototype,
+                "emit",
+                function (this: Worker, event: string | symbol, ...args: unknown[]) {
+                  if (event === "message" && !changed) {
+                    changed = true;
+                    fs.writeFileSync(file, after);
+                  }
+                  return emit.call(this, event, ...args);
+                },
+              );
+              const fake = fakeBackend({ paths: [file] });
+              await expectToolFailure(
+                call(makeGrepOverrideWithBackend(dir, DEFAULT_CONFIG, fake.backend), {
+                  pattern: "needle",
+                  literal: true,
+                  multiline,
+                  outputMode,
+                  context: 1,
+                  limit: 1,
+                }),
+                "FILE_CHANGED",
+              );
+              assert.equal(changed, true);
+            },
+          );
+        }
+      }
     }
-  }));
-
-test("multiline grep rejects spans beyond a truncated file", async () => {
-  await withDir(async (dir) => {
-    const file = join(dir, "grep.txt");
-    await writeFile(file, "alpha\n");
-    const fake = fakeBackend({
-      lines: [
-        JSON.stringify({
-          type: "match",
-          data: {
-            path: { text: file },
-            line_number: 1,
-            lines: { text: "alpha\nbeta\n" },
-            submatches: [{ start: 0, end: 10 }],
-          },
-        }),
-      ],
-    });
-    await expectToolFailure(
-      call(makeGrepOverrideWithBackend(dir, DEFAULT_CONFIG, fake.backend), {
-        pattern: "alpha\\nbeta",
-        path: file,
-        literal: false,
-        multiline: true,
-      }),
-      "FILE_CHANGED",
-    );
-  });
-});
-test("grep rejects changed context even when the matched line stays the same", async () => {
-  await withDir(async (dir) => {
-    const file = join(dir, "grep.txt");
-    await writeFile(file, "needle\nold context\n");
-    const fake = fakeBackend({ lines: [rgMatch(file, 1, "needle\n")] });
-    const backend: GrepBackend = {
-      ...fake.backend,
-      async search(...args) {
-        const result = await fake.backend.search(...args);
-        await writeFile(file, "needle\nnew context\n");
-        return result;
-      },
-    };
-    await expectToolFailure(
-      call(makeGrepOverrideWithBackend(dir, DEFAULT_CONFIG, backend), {
-        literal: true,
-        pattern: "needle",
-        context: 1,
-      }),
-      "FILE_CHANGED",
-    );
   });
 });
 
@@ -480,7 +318,7 @@ test("grep in a subdirectory returns a path that edits the matching file", async
     const matchedFile = join(dir, "src", "status.ts");
     await writeFile(rootFile, original);
     await writeFile(matchedFile, original);
-    const fake = fakeBackend({ lines: [rgMatch(matchedFile, 1, original.split("\n")[0])] });
+    const fake = fakeBackend({ paths: [matchedFile] });
     const result = await call(makeGrepOverrideWithBackend(dir, DEFAULT_CONFIG, fake.backend), {
       literal: true,
       pattern: "status",
@@ -517,7 +355,7 @@ test("context preserves logical CRLF anchors around a matched line", async () =>
       file,
       "outside-before\r\nalpha beta drop\r\nbefore survivor\r\nalpha beta\r\nafter survivor\r\nalpha only\r\noutside-after\r\n",
     );
-    const fake = fakeBackend({ lines: [rgMatch(file, 4, "alpha beta\n")] });
+    const fake = fakeBackend({ paths: [file] });
 
     const tool = makeGrepOverrideWithBackend(dir, DEFAULT_CONFIG, fake.backend);
     const contextSchema: any = tool.parameters.properties.context;
@@ -538,16 +376,13 @@ test("context preserves logical CRLF anchors around a matched line", async () =>
   });
 });
 
-test("grep applies scope filters and formats files and counts", async () => {
+test("scope filters and output modes → confirmed files and counts are preserved", async () => {
   await withDir(async (dir) => {
     const a = join(dir, "a.ts");
     const b = join(dir, "b.ts");
     await writeFile(a, "Foo a.b\n");
     await writeFile(b, "foo a.b\n");
-    const fake = fakeBackend({
-      lines: [rgMatch(a, 1, "Foo a.b\n"), rgMatch(b, 1, "foo a.b\n")],
-      paths: [a, b],
-    });
+    const fake = fakeBackend({ paths: [a, b] });
 
     const files = await call(makeGrepOverrideWithBackend(dir, DEFAULT_CONFIG, fake.backend), {
       pattern: ["Foo", "a.b"],
@@ -556,24 +391,18 @@ test("grep applies scope filters and formats files and counts", async () => {
       literal: true,
       outputMode: "files",
     });
-    assert.equal(text(files), "a.ts\nb.ts");
-    assert.equal(fake.calls.length, 1);
-    assert.equal(fake.calls[0].request.matcher.engine, "default");
-    assert.deepEqual(scopeArgs(fake.calls[0].request.scope), [
-      "--hidden",
-      "--glob",
-      "*.ts",
-      "--glob",
-      "!**/*.test.ts",
-    ]);
-    assert.deepEqual(fake.calls[0].request.scope.searchPaths, [a, b]);
+    assert.deepEqual(text(files).split("\n").sort(), ["a.ts", "b.ts"]);
+    assert.ok(
+      fake.calls.some(({ args }) => args.includes("*.ts") && args.includes("!**/*.test.ts")),
+    );
+    assert.deepEqual(fake.calls.at(-1)?.args.slice(-2), [a, b]);
 
     const count = await call(makeGrepOverrideWithBackend(dir, DEFAULT_CONFIG, fake.backend), {
       literal: true,
       pattern: "foo",
       outputMode: "count",
     });
-    assert.equal(text(count), "a.ts: 1\nb.ts: 1");
+    assert.deepEqual(text(count).split("\n").sort(), ["a.ts: 1", "b.ts: 1"]);
     assert.equal(reportOf(count)?.matches, 2);
     assert.equal(reportOf(count)?.files, 2);
   });
@@ -588,7 +417,7 @@ for (const diagnosticLineCount of [0, 80]) {
       ...Array.from({ length: diagnosticLineCount }, (_, index) => `diagnostic ${index}`),
       "error: missing runtime library",
     ].join("\n");
-    const fake = fakeBackend({ validation: { code: 3, stderr: diagnostic } });
+    const fake = fakeBackend({ code: 2, stderr: diagnostic });
     const tool = makeGrepOverrideWithBackend(process.cwd(), DEFAULT_CONFIG, fake.backend);
     const args = { pattern: "(?<=a+)b", literal: false };
     const failure: Awaited<ReturnType<typeof tool.execute>> = await callTool(tool, args);
@@ -663,17 +492,11 @@ test("aligns TUI line numbers across files to the widest result", () => {
   );
 });
 
-test("limit counts matched lines and stops the fake runner", async () => {
+test("matching rows exceed limit → bounded results carry matchLimit", async () => {
   await withDir(async (dir) => {
     const file = join(dir, "a.ts");
     await writeFile(file, "alpha beta\nalpha only\nalpha later\n");
-    const fake = fakeBackend({
-      lines: [
-        rgMatch(file, 1, "alpha beta\n"),
-        rgMatch(file, 2, "alpha only\n"),
-        rgMatch(file, 3, "alpha later\n"),
-      ],
-    });
+    const fake = fakeBackend({ paths: [file] });
 
     const limit = 1;
     const result = await call(makeGrepOverrideWithBackend(dir, DEFAULT_CONFIG, fake.backend), {
@@ -691,56 +514,21 @@ test("grep requires literal before invoking the backend", async () => {
   const fake = fakeBackend();
   const tool = makeGrepOverrideWithBackend(process.cwd(), DEFAULT_CONFIG, fake.backend);
   await assert.rejects(callTool(tool, { pattern: "needle" }), rejectsArgument("literal"));
-  assert.equal(fake.probes.length, 0);
   assert.equal(fake.calls.length, 0);
 });
 
-test("literal grep searches regex punctuation exactly without a regex probe", async () =>
+test("literal punctuation → exact text is matched", async () =>
   withDir(async (dir) => {
     const file = join(dir, "literal.txt");
     await writeFile(file, "foo(0)\n");
-    const fake = fakeBackend({
-      lines: [rgMatch(file, 1, "foo(0)\n")],
-      validation: { code: 2, stderr: "regex probe must not run" },
-    });
+    const fake = fakeBackend({ paths: [file] });
     const tool = makeGrepOverrideWithBackend(dir, DEFAULT_CONFIG, fake.backend);
     const result = await call(tool, { pattern: "foo(0)", literal: true });
     assert.match(text(result), /1#[0-9A-Z]+│foo\(0\)/);
-    assert.deepEqual(fake.probes, []);
     assert.equal(fake.calls.length, 1);
   }));
 
-test("grep regex probe outcomes allow search or stop it with diagnostics", async () =>
-  withDir(async (dir) => {
-    const file = join(dir, "regex.txt");
-    await writeFile(file, "foo0\n");
-    for (const validation of [
-      { code: 0, stderr: "" },
-      { code: 1, stderr: "" },
-      { code: 3, stderr: "" },
-    ]) {
-      const fake = fakeBackend({ lines: [rgMatch(file, 1, "foo0\n")], validation });
-      const tool = makeGrepOverrideWithBackend(dir, DEFAULT_CONFIG, fake.backend);
-      const result = call(tool, { pattern: "foo(0)", literal: false });
-      if (validation.code <= 1) {
-        assert.match(text(await result), /1#[0-9A-Z]+│foo0/);
-        assert.equal(fake.calls.length, 1);
-      } else {
-        await expectToolFailure(result, "RIPGREP_FAILED", (report) => {
-          assert.equal(report.exitCode, validation.code);
-          assert.equal(report.cause?.message, validation.stderr || undefined);
-        });
-        assert.equal(fake.calls.length, 0);
-      }
-      assert.equal(fake.probes.length, 1);
-      assert.equal(fake.probes[0][0], rgPath);
-      assert.equal(fake.probes[0][1].engine, "default");
-      assert.equal(fake.probes[0][1].multiline, false);
-      if (validation.code <= 1) assert.deepEqual(fake.probes[0][1], fake.calls[0].request.matcher);
-    }
-  }));
-
-test("grep invalid JavaScript rejects its field before probing", async () =>
+test("invalid JavaScript → its field rejects before file discovery", async () =>
   withDir(async (dir) => {
     for (const value of ["(", "(?m)^foo", "(?i)abc"]) {
       for (const pattern of [value, ["plain", value]]) {
@@ -751,33 +539,8 @@ test("grep invalid JavaScript rejects its field before probing", async () =>
           call(tool, { pattern, literal: false }),
           rejectsArgument(field, /Invalid regular expression/),
         );
-        assert.equal(fake.probes.length, 0);
         assert.equal(fake.calls.length, 0);
       }
-    }
-  }));
-
-test("grep probes each matcher before searching and separates multiline OR scans", async () =>
-  withDir(async (dir) => {
-    for (const multiline of [false, true]) {
-      const fake = fakeBackend();
-      const tool = makeGrepOverrideWithBackend(dir, DEFAULT_CONFIG, {
-        ...fake.backend,
-        search(...args) {
-          assert.equal(fake.probes.length, multiline ? 2 : 1);
-          return fake.backend.search(...args);
-        },
-      });
-      await call(tool, { pattern: ["foo", "bar(?=baz)"], literal: false, multiline });
-      assert.equal(fake.calls.length, multiline ? 2 : 1);
-      assert.deepEqual(
-        fake.probes.map((probe) => probe[1]),
-        fake.calls.map((call) => call.request.matcher),
-      );
-      assert.deepEqual(
-        fake.calls.map((call) => call.request.matcher.engine),
-        multiline ? ["default", "pcre2"] : ["pcre2"],
-      );
     }
   }));
 
@@ -807,7 +570,6 @@ test("rejects empty patterns while allowing character classes, literals, and emp
     assert.equal(reportOf(await call(tool, { pattern: ".*", literal: true }))?.matches, 0);
     assert.equal(reportOf(await call(tool, { pattern: "^$", literal: false }))?.matches, 0);
     assert.equal(fake.calls.length, 5);
-    assert.equal(fake.probes.length, 4);
   });
 });
 
@@ -886,13 +648,11 @@ test("rejects calls aborted before or during rg execution", async () => {
   });
 });
 
-test("OR patterns count each matched line once", async () => {
+test("overlapping OR patterns → each matched line counts once", async () => {
   await withDir(async (dir) => {
     const file = join(dir, "fixture.ts");
     await writeFile(file, "foo bar\n".repeat(4097));
-    const fake = fakeBackend({
-      lines: Array.from({ length: 4097 }, (_, index) => rgMatch(file, index + 1, "foo bar\n")),
-    });
+    const fake = fakeBackend({ paths: [file] });
     const result = await call(makeGrepOverrideWithBackend(dir, DEFAULT_CONFIG, fake.backend), {
       pattern: ["foo", "bar"],
       literal: true,
@@ -904,14 +664,12 @@ test("OR patterns count each matched line once", async () => {
   });
 });
 
-test("long candidate lines remain countable without content previews", async () => {
+test("long matching lines → counts do not depend on content previews", async () => {
   await withDir(async (dir) => {
     const file = join(dir, "large.ts");
     const line = `foo${"x".repeat(600_000)}\n`;
     await writeFile(file, line.repeat(3));
-    const fake = fakeBackend({
-      lines: Array.from({ length: 3 }, (_, index) => rgMatch(file, index + 1, line)),
-    });
+    const fake = fakeBackend({ paths: [file] });
     const result = await call(makeGrepOverrideWithBackend(dir, DEFAULT_CONFIG, fake.backend), {
       pattern: "foo",
       literal: true,
@@ -928,7 +686,6 @@ test("grep previews invalid UTF-8 without anchors and skips NUL hits in every mo
     const source = Buffer.from([0x61, 0x0a, 0xc3, 0x28, 0x0a]);
     await writeFile(invalid, source);
     const fake = fakeBackend({
-      lines: [rgMatch(invalid, 1, "a\n", 0)],
       paths: [invalid],
     });
     const result = await call(makeGrepOverrideWithBackend(dir, DEFAULT_CONFIG, fake.backend), {
@@ -946,7 +703,7 @@ test("grep previews invalid UTF-8 without anchors and skips NUL hits in every mo
     const binary = join(dir, "nul.txt");
     const binarySource = Buffer.from("a\nb\0c");
     await writeFile(binary, binarySource);
-    const binaryBackend = fakeBackend({ lines: [rgMatch(binary, 1, "a\n")], paths: [binary] });
+    const binaryBackend = fakeBackend({ paths: [binary] });
     for (const { outputMode, multiline } of [
       { outputMode: "content", multiline: false },
       { outputMode: "content", multiline: true },
@@ -966,20 +723,13 @@ test("grep previews invalid UTF-8 without anchors and skips NUL hits in every mo
   });
 });
 
-test("grep files and count modes diagnose a file lost before its first-match read", async () => {
+test("candidate file disappears before reading → summary modes report incomplete coverage", async () => {
   await withDir(async (dir) => {
     const file = join(dir, "listed.txt");
     for (const outputMode of ["files", "count"] as const) {
       await writeFile(file, "needle\n");
-      const fake = fakeBackend({ lines: [rgMatch(file, 1, "needle\n")] });
-      const backend: GrepBackend = {
-        ...fake.backend,
-        async search(...args) {
-          // Scope resolution has succeeded; the backend can still deliver a hit already read by rg.
-          await rm(file);
-          return fake.backend.search(...args);
-        },
-      };
+      const fake = fakeBackend({ paths: [file], onRun: () => rm(file) });
+      const backend = fake.backend;
       await expectToolFailure(
         call(makeGrepOverrideWithBackend(dir, DEFAULT_CONFIG, backend), {
           literal: true,
@@ -998,7 +748,7 @@ test("grep files and count modes diagnose a file lost before its first-match rea
   });
 });
 
-test("partial searches retain matches and surface stderr across output modes", async () => {
+test("candidate listing reports errors → all output modes retain confirmed matches and diagnostics", async () => {
   await withDir(async (dir) => {
     const file = join(dir, "found.txt");
     const rowPayloadChars = 256;
@@ -1010,7 +760,7 @@ test("partial searches retain matches and surface stderr across output modes", a
     for (const outputMode of ["content", "files", "count"]) {
       for (const limit of [1, 10]) {
         const fake = fakeBackend({
-          lines: rows.map((row, index) => rgMatch(file, index + 1, row)),
+          paths: [file],
           code: 2,
           stderr: "unreadable.txt: Permission denied",
         });
@@ -1051,22 +801,14 @@ test("partial searches retain matches and surface stderr across output modes", a
   });
 });
 
-test("first-match revision read errors retain results from other files", async () =>
+test("one candidate cannot be read → matches from other files remain available", async () =>
   withDir(async (dir) => {
     const good = join(dir, "good.txt");
     const gone = join(dir, "gone.txt");
     await writeFile(good, "needle\n");
     await writeFile(gone, "needle\n");
-    const fake = fakeBackend({
-      lines: [rgMatch(good, 1, "needle\n"), rgMatch(gone, 1, "needle\n")],
-    });
-    const backend: GrepBackend = {
-      ...fake.backend,
-      async search(...args) {
-        await rm(gone);
-        return fake.backend.search(...args);
-      },
-    };
+    const fake = fakeBackend({ paths: [good, gone], onRun: () => rm(gone) });
+    const backend = fake.backend;
     const result = await call(makeGrepOverrideWithBackend(dir, DEFAULT_CONFIG, backend), {
       literal: true,
       pattern: "needle",
@@ -1076,46 +818,11 @@ test("first-match revision read errors retain results from other files", async (
     assert.match(JSON.stringify(reportOf(result)?.diagnostics), /gone\.txt/);
   }));
 
-test("failed result reads report incomplete coverage while retaining readable files", async () => {
-  await withDir(async (dir) => {
-    const good = join(dir, "good.txt");
-    const gone = join(dir, "gone.txt");
-    await writeFile(good, "needle\n");
-    await writeFile(gone, "needle\n");
-    const fake = fakeBackend({
-      lines: [rgMatch(gone, 1, "needle\n"), rgMatch(good, 1, "needle\n")],
-    });
-    const result = await call(
-      makeGrepOverrideWithBackend(dir, DEFAULT_CONFIG, {
-        ...fake.backend,
-        search: async (...args) => {
-          const result = await fake.backend.search(...args);
-          await rm(gone);
-          return result;
-        },
-      }),
-      { literal: true, pattern: "needle" },
-    );
-    assert.match(text(result), /good\.txt · 1 match/);
-    assert.doesNotMatch(text(result), /gone\.txt · 1 match/);
-    assert.match(JSON.stringify(reportOf(result)?.diagnostics), /gone\.txt/);
-  });
-});
-
-test("explicit-file glob listing warnings retain confirmed matches", async () => {
+test("explicit-file glob listing reports warnings → confirmed matches remain available", async () => {
   await withDir(async (dir) => {
     const file = join(dir, "fixture.txt");
     await writeFile(file, "needle\n");
-    const event = JSON.stringify({
-      type: "match",
-      data: {
-        path: { text: file },
-        line_number: 1,
-        lines: { text: "needle\n" },
-        submatches: [{ start: 0, end: 6 }],
-      },
-    });
-    const fake = fakeBackend({ paths: [file], lines: [event] });
+    const fake = fakeBackend({ paths: [file] });
     const listing = await call(
       makeGrepOverrideWithBackend(dir, DEFAULT_CONFIG, {
         ...fake.backend,
@@ -1131,71 +838,29 @@ test("explicit-file glob listing warnings retain confirmed matches", async () =>
   });
 });
 
-test("concurrent file reads preserve discovery order across multiple matched files", async () => {
+test("concurrent file searches → all discovered matches remain present", async () => {
   await withDir(async (dir) => {
     const files: string[] = [];
-    const matches: string[] = [];
     for (let i = 1; i <= 25; i++) {
       const file = join(dir, `file_${String(i).padStart(2, "0")}.txt`);
       await writeFile(file, `header\nmatch_${i}\nfooter\n`);
       files.push(file);
-      matches.push(rgMatch(file, 2, `match_${i}\n`));
     }
-    const fake = fakeBackend({ lines: matches, paths: files });
+    const fake = fakeBackend({ paths: files });
     const result = await call(makeGrepOverrideWithBackend(dir, DEFAULT_CONFIG, fake.backend), {
       literal: true,
       pattern: "match",
     });
     const content = text(result);
-    // Verify each file block appears in exact discovery order
-    let lastIndex = -1;
     for (let i = 1; i <= 25; i++) {
       const pad = String(i).padStart(2, "0");
       const expectedHeader = `file_${pad}.txt · 1 match`;
       const idx = content.indexOf(expectedHeader);
-      assert.ok(
-        idx > lastIndex,
-        `Expected ${expectedHeader} at index > ${lastIndex}, found ${idx}`,
-      );
-      lastIndex = idx;
+      assert.ok(idx >= 0, `Missing ${expectedHeader}`);
       assert.match(content, new RegExp(`2#[0-9A-Z]+│match_${i}`));
     }
   });
 });
-
-test("fatal format errors stop workers from starting new file reads after rejection", async () =>
-  withDir(async (dir) => {
-    const events: string[] = [];
-    for (let i = 0; i < 60; i++) {
-      const file = join(dir, `file_${i}.txt`);
-      await writeFile(file, i === 0 ? "changed\n" : `needle\n${"x".repeat(256 * 1024)}\n`);
-      events.push(rgMatch(file, 1, "needle\n"));
-    }
-    const original = fs.createReadStream;
-    let started = 0;
-    fs.createReadStream = ((...args: Parameters<typeof original>) => {
-      if (typeof args[0] === "string" && args[0].startsWith(dir)) started++;
-      return original(...args);
-    }) as typeof original;
-    syncBuiltinESMExports();
-    try {
-      const fake = fakeBackend({ lines: events });
-      await expectToolFailure(
-        call(makeGrepOverrideWithBackend(dir, DEFAULT_CONFIG, fake.backend), {
-          literal: true,
-          pattern: "needle",
-        }),
-        "FILE_CHANGED",
-      );
-      const atRejection = started;
-      assert.ok(atRejection > 60, "expected to observe format-stage streams");
-      await delay(350);
-      assert.equal(started, atRejection, "file reads started after the tool rejected");
-    } finally {
-      fs.createReadStream = original;
-      syncBuiltinESMExports();
-    }
-  }));
 
 test("grep output exceeds the forget threshold → only content mode receives a tag", async () =>
   withDir(async (dir) => {
@@ -1205,7 +870,7 @@ test("grep output exceeds the forget threshold → only content mode receives a 
       join(dir, `${index}-${"x".repeat(namePaddingChars)}.txt`),
     );
     await Promise.all(paths.map((path) => writeFile(path, "needle\n")));
-    const fake = fakeBackend({ paths, lines: paths.map((path) => rgMatch(path, 1, "needle\n")) });
+    const fake = fakeBackend({ paths });
     const tool = makeGrepOverrideWithBackend(
       dir,
       { ...DEFAULT_CONFIG, forget: true },
@@ -1255,3 +920,71 @@ test("scope inspection fails for access or traversal reasons → grep preserves 
       }
     }
   }));
+
+test("invalid worker replies → the entire grep call fails", async (t) => {
+  await withDir(async (dir) => {
+    const path = join(dir, "input.txt");
+    await writeFile(path, "😀\n");
+    for (const result of [
+      { lines: [{ lineNumber: 2, column: 0 }], totalLines: 1 },
+      {
+        lines: [
+          { lineNumber: 1, column: 0 },
+          { lineNumber: 1, column: 0 },
+        ],
+        totalLines: 1,
+      },
+      { lines: [{ lineNumber: 1, column: 0 }], totalLines: 2 },
+      { lines: [{ lineNumber: 1, column: -1 }], totalLines: 1 },
+      { lines: [{ lineNumber: 1, column: 999 }], totalLines: 1 },
+    ]) {
+      await t.test(`${JSON.stringify(result)} → REGEX_WORKER_FAILED`, async (t) => {
+        const emit = Worker.prototype.emit;
+        t.mock.method(
+          Worker.prototype,
+          "emit",
+          function (this: Worker, event: string | symbol, ...args: unknown[]) {
+            return emit.call(this, event, ...(event === "message" ? [{ result }] : args));
+          },
+        );
+        const tool = makeGrepOverrideWithBackend(
+          dir,
+          DEFAULT_CONFIG,
+          fakeBackend({ paths: [path] }).backend,
+        );
+        await expectToolFailure(
+          callTool(tool, { pattern: "^..$", literal: false, path }),
+          "REGEX_WORKER_FAILED",
+        );
+      });
+    }
+  });
+});
+
+test("catastrophic worker evaluation → timeout and cancellation fail the search and release workers", {
+  timeout: 15_000,
+}, async () => {
+  await withDir(async (dir) => {
+    const path = join(dir, "input.txt");
+    await writeFile(path, `${"a".repeat(100)}!`);
+    const config = { ...DEFAULT_CONFIG, grep: { ...DEFAULT_CONFIG.grep, regexTimeoutMs: 3_000 } };
+    const tool = makeGrepOverrideWithBackend(dir, config, fakeBackend({ paths: [path] }).backend);
+    const params = { path, pattern: "(?=.)^(a+)+$", literal: false };
+    await expectToolFailure(callTool(tool, params), "REGEX_TIMEOUT", (report) =>
+      assert.equal(report.timeoutMs, config.grep.regexTimeoutMs),
+    );
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 1_000);
+    try {
+      await expectToolFailure(
+        callTool(tool, params, { signal: controller.signal }),
+        "OPERATION_ABORTED",
+      );
+    } finally {
+      clearTimeout(timer);
+    }
+    const recovered = await callTool(tool, { ...params, pattern: "a." });
+    assert.equal(recovered.isError, undefined);
+    assert.equal(reportOf(recovered)?.matches, 1);
+  });
+});

@@ -1,24 +1,29 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { assertRgSucceeded, matcherArgs } from "./rg-process.ts";
+import { assertRgSucceeded, candidateArgs, COMMON_RG_ARGS } from "./rg-process.ts";
 import { HashlineError } from "../core/errors.ts";
 
-test("grep matcher arguments fix the engine, original-byte view, and case mode", () => {
-  for (const engine of ["default", "pcre2"] as const) {
-    for (const multiline of [false, true]) {
-      const pattern = "--pattern";
-      assert.deepEqual(matcherArgs({ engine, pattern, multiline }), [
-        "--no-config",
-        "--color=never",
-        `--engine=${engine}`,
-        "--crlf",
-        multiline ? "--multiline" : "--no-multiline",
-        "--case-sensitive",
-        "--encoding=none",
-        "-e",
-        pattern,
-      ]);
-    }
+test("candidate literals → rg lists files with escaped byte-preserving alternatives", () => {
+  assert.deepEqual(candidateArgs({ kind: "all" }), [...COMMON_RG_ARGS, "--files"]);
+  for (const [literals, pattern] of [
+    [
+      [
+        [["a"], ["."], ["b"]],
+        [["-"], ["é"]],
+      ],
+      "a\\x{2e}b|\\x{2d}\\x{e9}",
+    ],
+    [[[["K", "k", "K"], ["_"], ["9"]]], "[Kk\\x{212a}]_9"],
+  ] as const) {
+    assert.deepEqual(candidateArgs({ kind: "literals", literals }), [
+      ...COMMON_RG_ARGS,
+      "--files-with-matches",
+      "--engine=default",
+      "--case-sensitive",
+      "--encoding=none",
+      "-e",
+      pattern,
+    ]);
   }
 });
 

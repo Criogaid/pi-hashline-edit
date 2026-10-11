@@ -3,12 +3,10 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { rgPath } from "@vscode/ripgrep";
 import { rejectsArgument } from "../pi/argument-error.testing.ts";
 import { DEFAULT_CONFIG } from "../pi/config.ts";
 import { makeGrepOverrideWithBackend } from "../pi/grep-tool.ts";
 import { reportOf } from "../pi/report.ts";
-import { probeRegex } from "../pi/rg-process.ts";
 import { callTool } from "../pi/tool-call.testing.ts";
 
 interface RegexCase {
@@ -203,7 +201,7 @@ const cases: readonly RegexCase[] = [
   })),
 ];
 
-test("real grep matches V8 on the LF view across engines, case modes, and line endings", async (t) => {
+test("regex and case modes across line endings → real grep agrees with native V8", async (t) => {
   const directory = await mkdtemp(join(tmpdir(), "hl-grep-js-equivalence-"));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const path = join(directory, "fixture.txt");
@@ -244,7 +242,7 @@ test("real grep matches V8 on the LF view across engines, case modes, and line e
   }
 });
 
-test("real grep character classes cannot cross malformed UTF-8 bytes", async (t) => {
+test("malformed UTF-8 → character classes match replacement characters in the lossy view", async (t) => {
   const directory = await mkdtemp(join(tmpdir(), "hl-grep-js-invalid-"));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const path = join(directory, "invalid.txt");
@@ -259,34 +257,13 @@ test("real grep character classes cannot cross malformed UTF-8 bytes", async (t)
   ]) {
     const result = await callTool(tool, { path, pattern, literal: false, ignoreCase: false });
     assert.equal(result.isError, undefined);
-    assert.equal(reportOf(result)?.matches, 1);
+    assert.equal(reportOf(result)?.matches, 2);
     const body = result.content[0];
     assert.ok(body.type === "text");
     assert.match(body.text, /2│axb/);
-    assert.doesNotMatch(body.text, /1│|\d+#/);
+    assert.match(body.text, /1│a�b/);
+    assert.doesNotMatch(body.text, /\d+#/);
   }
-});
-
-test("real grep probe compiles translated matchers on empty input and propagates cancellation", async () => {
-  for (const [engine, pattern, code] of [
-    ["default", "^$", 1],
-    ["default", "needle", 1],
-    ["pcre2", "(?=needle)needle", 1],
-    ["pcre2", "(?<=a+)b", 2],
-  ] as const) {
-    const result = await probeRegex(rgPath, { engine, pattern, multiline: false });
-    assert.equal(result.code, code);
-  }
-  const controller = new AbortController();
-  controller.abort();
-  await assert.rejects(
-    probeRegex(
-      rgPath,
-      { engine: "default", pattern: "needle", multiline: false },
-      controller.signal,
-    ),
-    /Operation aborted/,
-  );
 });
 
 test("backreference regression: a capture spanning mixed line endings → matches the LF view", async () => {

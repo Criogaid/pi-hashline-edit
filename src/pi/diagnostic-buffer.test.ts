@@ -3,7 +3,10 @@ import { test } from "node:test";
 import { DiagnosticBuffer } from "./diagnostic-buffer.ts";
 import { DEFAULT_OUTPUT_BUDGETS } from "./budgets.ts";
 import { assembleGrepOutput } from "./grep-output.ts";
-import { MAX_RG_STDERR_BYTES, runText } from "./rg-process.ts";
+import { MAX_RG_STDERR_BYTES, runRgPaths } from "./rg-process.ts";
+import { mkdtemp, writeFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 const diagnostic = (size: number) =>
   `regex parse error:\n${"intermediate context 中🙂\n".repeat(size)}error: unclosed group\n`;
@@ -61,13 +64,22 @@ test("search warning aggregation retains the final cause and labels truncation",
   assert.match(facts.diagnostics ?? "", /omitted/i);
 });
 
-test("stderr collection preserves UTF-8 and reports overflow without losing the final cause", async () => {
+test("stderr overflow → UTF-8 opening and final cause survive", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "hl-rg-stderr-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const path = join(directory, "stderr.txt");
   for (const source of ["权限不足🙂\n", diagnostic(MAX_RG_STDERR_BYTES)]) {
-    const result = await runText(
+    await writeFile(path, source);
+    const result = await runRgPaths(
       process.execPath,
-      ["--input-type=module", "--eval", "process.stdin.pipe(process.stderr)"],
-      Buffer.from(source),
+      [
+        "--input-type=module",
+        "--eval",
+        "import { createReadStream } from 'node:fs'; createReadStream(process.argv[1]).pipe(process.stderr)",
+        path,
+      ],
       AbortSignal.timeout(10000),
+      () => true,
     );
     if (Buffer.byteLength(source) <= MAX_RG_STDERR_BYTES) {
       assert.equal(result.stderr, source);
