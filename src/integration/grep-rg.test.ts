@@ -203,10 +203,9 @@ test("owned rg processes ignore RIPGREP_CONFIG_PATH", async () => {
     assert.match(result.content[0].text, /│foo/);
     assert.match(result.content[0].text, /│FOO/);
     assert.doesNotMatch(result.content[0].text, /│bar/);
-    await assert.rejects(
-      invoke(tool, "0", { pattern: "foo\\nbar", literal: false }),
-      rejectsArgument("pattern", /each line.*line break/),
-    );
+    const lineOnly = await invoke(tool, "0", { pattern: "foo\\nbar", literal: false });
+    assert.equal(lineOnly.isError, undefined);
+    assert.equal(reportOf(lineOnly)?.matches, 0);
     const multiline = await invoke(
       tool,
       "0",
@@ -497,7 +496,7 @@ test("directory traversal skips symlinks but explicitly named linked files remai
   }
 });
 
-test("real grep reports PCRE2 unbounded lookbehind as INVALID_REGEX before searching", async (t) => {
+test("real grep uses JavaScript when PCRE2 cannot compile unbounded lookbehind", async (t) => {
   const directory = await mkdtemp(join(tmpdir(), "hl-grep-lookbehind-"));
   t.after(() => rm(directory, { recursive: true, force: true }));
   await writeFile(join(directory, "fixture.txt"), "aaab\n");
@@ -508,14 +507,9 @@ test("real grep reports PCRE2 unbounded lookbehind as INVALID_REGEX before searc
       return runRgSearch(...args);
     },
   });
-  await expectToolFailure(
-    invoke(tool, "0", { pattern: "(?<=a+)b", literal: false }),
-    "INVALID_REGEX",
-    (report) => {
-      assert.match(report.cause?.message ?? "", /lookbehind/i);
-      assert.match(report.next ?? "", /bounded length/);
-    },
-  );
+  const result = await invoke(tool, "0", { pattern: "(?<=a+)b", literal: false });
+  assert.equal(result.isError, undefined, JSON.stringify(reportOf(result)));
+  assert.equal(reportOf(result)?.matches, 1);
   assert.equal(searched, false);
 });
 
@@ -539,10 +533,9 @@ test("line-based grep uses context for display but never matches across CRLF", a
       ["alpha\\nbeta", false],
       ["alpha\nbeta", true],
     ] as const) {
-      await assert.rejects(
-        invoke(tool, "0", { pattern, literal }),
-        rejectsArgument("pattern", /each line.*line break/),
-      );
+      const result = await invoke(tool, "0", { pattern, literal });
+      assert.equal(result.isError, undefined);
+      assert.equal(reportOf(result)?.matches, 0);
     }
     const limited = await invoke(
       tool,

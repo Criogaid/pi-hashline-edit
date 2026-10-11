@@ -1,10 +1,8 @@
 /**
  * Override grep: valid UTF-8 results feed edit; malformed UTF-8 uses non-editable previews.
- * Scope and paths live in grep-scope; JavaScript regex translation in rg-regex;
- * search requests and ripgrep events in grep-search; the rg process layer in
- * rg-process; result formatting in
- * grep-output; TUI presentation in grep-render. This module owns the tool
- * schema, the production backend, render wiring, and execution order.
+ * grep-plan selects rg translation (rg-regex, grep-search, rg-process) or native
+ * JS matching (grep-javascript, core/search). Both reuse grep-scope, grep-output,
+ * and grep-render. This module owns the schema, backend wiring, and execution order.
  * @module pi-hashline-edit/pi
  */
 
@@ -16,12 +14,7 @@ import { renderOutputPreview, renderToolError, reportLines, withoutReport } from
 import { type ForgetReceiptDetails, grepReceipt, withResultTag } from "./forget-tool.ts";
 import { createAnchorFormatter } from "./anchor-format.ts";
 import { assembleGrepOutput, formatMatches, searchIncompleteError } from "./grep-output.ts";
-import {
-  assertValidRegex,
-  filterExplicitFilesByGlob,
-  toArray,
-  resolveSearchPaths,
-} from "./grep-scope.ts";
+import { filterExplicitFilesByGlob, toArray, resolveSearchPaths } from "./grep-scope.ts";
 import {
   runRgSearch,
   searchMatches,
@@ -32,8 +25,11 @@ import {
 export type { GrepBackend } from "./grep-search.ts";
 import { toDisplayLines } from "./grep-render.ts";
 import { probeRegex, runRgPaths } from "./rg-process.ts";
-import { RegexTranslationError, smartIgnoreCase, translateQuery } from "./rg-regex.ts";
+import { smartIgnoreCase } from "./rg-regex.ts";
+import { planSearch } from "./grep-plan.ts";
+import { searchJavaScript } from "./grep-javascript.ts";
 import { buildRegex } from "../core/replace.ts";
+import { DEFAULT_GREP_FLAGS } from "../core/search.ts";
 import { errorMessage } from "../core/errors.ts";
 import { GREP_CONTEXT_RANGE, POSITIVE_SAFE_INTEGER } from "./schema.ts";
 import { throwIfCancelled } from "./error-text.ts";
@@ -50,7 +46,7 @@ function createGrepSchema({ defaultLimit, defaultContext }: HashlineEditConfig["
         [Type.String({ minLength: 1 }), Type.Array(Type.String({ minLength: 1 }), { minItems: 1 })],
         {
           description:
-            "String or array of strings; an array matches any of them, so use it for alternatives instead of joining them with |. Regex syntax is JavaScript, as in replace; ^ and $ match at line boundaries. Use explicit character classes: . and classes that can split a UTF-16 surrogate pair are rejected.",
+            "String or array of strings; an array matches any of them, so use it for alternatives instead of joining them with |. Regex syntax is JavaScript, as in replace.",
         },
       ),
       path: Type.Optional(
@@ -81,10 +77,15 @@ function createGrepSchema({ defaultLimit, defaultContext }: HashlineEditConfig["
         description:
           "true: match the text exactly, including regex punctuation; use it for names, paths, and code snippets. false: JavaScript regex, where foo(0) matches foo0; use it only for an intentional regex.",
       }),
+      flags: Type.Optional(
+        Type.String({
+          description: `JavaScript regex flags (default ${DEFAULT_GREP_FLAGS}); explicit flags replace the default. g is always enabled and repeated flags are ignored. Use u or v for Unicode mode, s for dotAll, and y for sticky matching.`,
+        }),
+      ),
       ignoreCase: Type.Optional(
         Type.Boolean({
           description:
-            "true ignores case, false matches case; omitted uses smart-case for the whole query.",
+            "true ignores case, false matches case; overrides the i flag. When omitted, explicit flags control case; otherwise use smart-case for the whole query (case-sensitive if analysis is unavailable).",
         }),
       ),
       multiline: Type.Optional(
@@ -120,46 +121,26 @@ type GrepTool = ToolDefinition<
   GrepSchema,
   ({ incomplete?: true } & ForgetReceiptDetails & Partial<ReportDetails>) | undefined
 >;
-/** Report patterns JavaScript or ripgrep cannot compile; Pi checks field shapes. */
+/** Validate JavaScript syntax once; engine selection does not reject valid patterns. */
 function checkGrepArguments(args: unknown, report: ReportArgumentIssue): void {
-  const {
-    pattern,
-    literal,
-    multiline = false,
-    ignoreCase,
-  } = (args ?? {}) as Record<string, unknown>;
-  if (typeof literal !== "boolean" || typeof multiline !== "boolean") return;
+  const { pattern, literal, flags } = (args ?? {}) as Record<string, unknown>;
+  if (typeof literal !== "boolean" || (flags !== undefined && typeof flags !== "string")) return;
+  try {
+    buildRegex("", false, flags ?? DEFAULT_GREP_FLAGS);
+  } catch (error) {
+    report("flags", errorMessage(error));
+    return;
+  }
+  if (literal) return;
   const fields = Array.isArray(pattern)
     ? pattern.map((value, index) => [`pattern[${index}]`, value] as const)
     : [["pattern", pattern] as const];
-  const valid = fields.filter(([field, value]) => {
-    if (typeof value !== "string" || value === "") return false;
-    if (literal) return true;
+  for (const [field, value] of fields) {
+    if (typeof value !== "string" || value === "") continue;
     try {
-      buildRegex(value, true, undefined);
-      return true;
+      buildRegex(value, true, flags ?? DEFAULT_GREP_FLAGS);
     } catch (error) {
       report(field, errorMessage(error));
-      return false;
-    }
-  }) as (readonly [string, string])[];
-  // Case affects translation, so check with the case the search will use.
-  const caseless =
-    typeof ignoreCase === "boolean"
-      ? ignoreCase
-      : smartIgnoreCase(
-          valid.map(([, value]) => value),
-          literal,
-        );
-  for (const [field, value] of valid) {
-    try {
-      translateQuery({ patterns: [value], literal, ignoreCase: caseless, multiline });
-    } catch (error) {
-      report(
-        field,
-        errorMessage(error),
-        error instanceof RegexTranslationError ? error.fix : undefined,
-      );
     }
   }
 }
@@ -196,8 +177,8 @@ export function makeGrepOverrideWithBackend(
     name: "grep" as const,
     label: "grep",
     description:
-      "Search file contents with ripgrep. Content mode returns LINE#HASH edit anchors for valid UTF-8 and plain line numbers without anchors otherwise; files/count modes return paths or matching-line counts. NUL-containing files are skipped. Directory searches respect ignore rules and skip linked directories. Use grep instead of rg or grep in a shell to search files; use the shell only for ignored or linked directories, or to filter another command's output.",
-    promptSnippet: "Search file contents with ripgrep",
+      "Search file contents. Content mode returns LINE#HASH edit anchors for valid UTF-8 and plain line numbers without anchors otherwise; files/count modes return paths or matching-line counts. NUL-containing files are skipped. Directory searches respect ignore rules and skip linked directories. Use grep instead of rg or grep in a shell to search files; use the shell only for ignored or linked directories, or to filter another command's output.",
+    promptSnippet: "Search file contents",
     promptGuidelines: [
       "When you need several independent searches, send them as separate grep calls in one response; they run in parallel.",
       "Copy grep anchors directly into edit.",
@@ -219,7 +200,7 @@ export function makeGrepOverrideWithBackend(
       const pathText = Array.isArray(rawPath) ? rawPath.join(" ") : String(rawPath ?? ".");
       let text =
         theme.fg("toolTitle", theme.bold("grep ")) +
-        theme.fg("accent", `/${patternText}/`) +
+        theme.fg("accent", `/${patternText}/${args?.flags ?? ""}`) +
         theme.fg("toolOutput", ` in ${pathText}`);
       if (args?.glob) text += theme.fg("toolOutput", ` (${toArray(args.glob).join(", ")})`);
       if (args?.outputMode && args.outputMode !== "content")
@@ -268,10 +249,18 @@ export function makeGrepOverrideWithBackend(
         const multiline = params.multiline ?? false;
         const globs = toArray(params.glob);
         const { literal } = params;
-        const ignoreCase = params.ignoreCase ?? smartIgnoreCase(patterns, literal);
-        const matchers = translateQuery({ patterns, literal, ignoreCase, multiline });
-        // Escaped literal text always compiles; only regex syntax needs ripgrep's check.
-        if (!literal) await assertValidRegex(matchers, rgPath, backend, signal);
+        const flags = new Set(params.flags ?? DEFAULT_GREP_FLAGS);
+        const ignoreCase =
+          params.ignoreCase ??
+          (params.flags === undefined ? smartIgnoreCase(patterns, literal) : flags.has("i"));
+        if (ignoreCase) flags.add("i");
+        else flags.delete("i");
+        const plan = await planSearch(
+          { patterns, literal, flags: [...flags].join(""), multiline },
+          rgPath,
+          backend,
+          signal,
+        );
         const ctx = context;
         const { searchPaths, pathInfo } = await resolveSearchPaths(cwd, params.path);
         let scope: SearchScope = {
@@ -300,15 +289,26 @@ export function makeGrepOverrideWithBackend(
                 matchLimitReached: false,
                 snapshots: new Map<string, SearchFileSnapshot>(),
               }
-            : await searchMatches({
-                backend,
-                rgPath,
-                scope,
-                matchers,
-                limit: effectiveLimit,
-                signal,
-                warnings,
-              });
+            : plan.engine === "rg"
+              ? await searchMatches({
+                  backend,
+                  rgPath,
+                  scope,
+                  matchers: plan.matchers,
+                  limit: effectiveLimit,
+                  signal,
+                  warnings,
+                })
+              : await searchJavaScript({
+                  backend,
+                  rgPath,
+                  scope,
+                  query: plan.query,
+                  limit: effectiveLimit,
+                  timeoutMs: config.grep.regexTimeoutMs,
+                  signal,
+                  warnings,
+                });
         const { raw, matchLimitReached } = result;
 
         const report = { tool: "grep", path: params.path };

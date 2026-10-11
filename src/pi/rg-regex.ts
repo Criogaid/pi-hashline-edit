@@ -1,20 +1,16 @@
 /**
- * JavaScript regex → ripgrep translation. grep accepts the JavaScript syntax replace
- * uses (without the u flag, validated by V8) and matches it on each file's LF view
- * with the m flag; ripgrep searches the original bytes with --crlf. regexpp parses
- * the pattern, and this module emits an equivalent ripgrep pattern: JavaScript
- * character sets and ignoreCase folding as explicit classes, CRLF-aware line
- * breaks, and PCRE2 assertions where Rust regex cannot express JavaScript boundaries.
- * Reject constructs whose UTF-16 units or capture evaluation cannot be preserved.
- * A literal surrogate pair stays one adjacent sequence; character sets that can
- * split a pair are unsupported. Zero-maximum quantifiers retain capture numbering
- * without imposing matching constraints.
+ * Translate the verified JS subset to rg over original bytes with --crlf.
+ * Character sets use JS non-Unicode case folding, assertions use LF-view
+ * boundaries, and capture numbering stays local to each caller pattern.
+ * grep-plan selects native JS when a construct cannot be translated here.
+ * Zero-maximum quantifiers retain group numbers without matching constraints.
  *
  * @module pi-hashline-edit/pi
  */
 
 import { RegExpParser, visitRegExpAST, type AST } from "@eslint-community/regexpp";
 import { regexSource } from "../core/replace.ts";
+import type { GrepQuery } from "../core/search.ts";
 
 export type RgEngine = "default" | "pcre2";
 
@@ -26,21 +22,11 @@ export interface RgMatcher {
   readonly multiline: boolean;
 }
 
-/** A grep query as the caller wrote it; patterns are alternatives. */
-export interface GrepQuery {
-  readonly patterns: readonly string[];
-  readonly literal: boolean;
-  readonly ignoreCase: boolean;
-  readonly multiline: boolean;
-}
-
-/** A valid JavaScript regex grep cannot search; `fix` is the argument change that can. */
+/** A valid JavaScript pattern outside the verified rg translation subset. */
 export class RegexTranslationError extends Error {
-  readonly fix: string | undefined;
-  constructor(message: string, fix?: string) {
+  constructor(message: string) {
     super(message);
     this.name = "RegexTranslationError";
-    this.fix = fix;
   }
 }
 
@@ -203,7 +189,6 @@ function toScalars(units: Ranges, inert: boolean): Ranges {
   if (!inert && units.some(([low, high]) => low <= 0xdfff && high >= 0xd800))
     throw new RegexTranslationError(
       "This character set can match half of a UTF-16 surrogate pair; ripgrep matches whole characters.",
-      "Use [\\u0001-\\uD7FF\\uE000-\\uFFFF] for BMP characters, or write whole characters and group a supplementary literal, as in (?:😀)+.",
     );
   return withoutSurrogates(units);
 }
@@ -314,11 +299,7 @@ function emitSet(set: Ranges, ctx: Context): Emitted {
   }
   if (!ctx.multiline) {
     const rest = without(without(scalars, LF), CR);
-    if (!hasCr && rest.length === 0 && !ctx.inert)
-      throw new RegexTranslationError(
-        "Without multiline, each line is matched without its line break, so \\n matches nothing.",
-        "Set multiline to true to match across lines.",
-      );
+    if (!hasCr && rest.length === 0) return atom(NEVER);
     capture(ctx, { lineBreak: hasCr, nonAscii: isNonAscii(rest) });
     if (!hasCr) return atom(classText(rest));
     ctx.scan.standaloneCr ||= !ctx.inert;
@@ -461,22 +442,18 @@ function checkBackreferences(scan: Scan): void {
     if (backward || targets.some((target) => target.backward))
       throw new RegexTranslationError(
         `${node.raw} depends on lookbehind captures, which JavaScript evaluates in reverse order.`,
-        "Move the capture and its backreference outside lookbehind.",
       );
     if (targets.some((target) => target.repeated))
       throw new RegexTranslationError(
         `${node.raw} references a capture inside a repeated expression; JavaScript and ripgrep reset captures differently.`,
-        "Capture the whole repetition instead of referencing a capture inside it.",
       );
     if (targets.some((target) => target.lineBreak))
       throw new RegexTranslationError(
         `${node.raw} references a group that can match a line break; ripgrep compares the original bytes, where a line break may be CRLF.`,
-        "Use an explicit class without \\n or \\r in the referenced group, such as [A-Za-z0-9_]+.",
       );
     if (ignoreCase && targets.some((target) => target.nonAscii))
       throw new RegexTranslationError(
         `${node.raw} ignores case for a group that can match non-ASCII text; ripgrep folds non-ASCII case differently from JavaScript.`,
-        "Limit the referenced group to ASCII, as in \\w+, or set ignoreCase to false.",
       );
   }
 }
@@ -546,27 +523,42 @@ function parse(pattern: string, literal: boolean): AST.Pattern {
   });
 }
 
-/** Smart case for the whole query: ignore case unless a pattern contains an uppercase letter. */
+/** Parser limits must not reject syntax already accepted by V8 at the tool boundary. */
+export function isTranslationLimit(error: unknown): boolean {
+  return (
+    error instanceof RegexTranslationError ||
+    error instanceof SyntaxError ||
+    error instanceof RangeError
+  );
+}
+
+/** Infer case from decoded characters; use case-sensitive matching if analysis is unavailable. */
 export function smartIgnoreCase(patterns: readonly string[], literal: boolean): boolean {
   return !patterns.some((pattern) => {
-    let uppercase = false;
-    visitRegExpAST(parse(pattern, literal), {
-      onCharacterEnter({ value }) {
-        const text = String.fromCharCode(value);
-        uppercase ||= text !== text.toLowerCase();
-      },
-    });
-    return uppercase;
+    try {
+      let uppercase = false;
+      visitRegExpAST(parse(pattern, literal), {
+        onCharacterEnter({ value }) {
+          const text = String.fromCharCode(value);
+          uppercase ||= text !== text.toLowerCase();
+        },
+      });
+      return uppercase;
+    } catch (error) {
+      if (isTranslationLimit(error)) return true;
+      throw error;
+    }
   });
 }
 
 /**
  * Translate a query into the ripgrep scans that search it. Patterns sharing a scan
  * become non-capturing alternatives, with capture numbers offset for backreferences
- * in later patterns. Throws RegexTranslationError; grep's prepareArguments reports
- * it before execution.
+ * in later patterns. grep-plan handles translation limits by selecting JavaScript.
  */
 export function translateQuery(query: GrepQuery): RgMatcher[] {
+  if (/[^dgims]/.test(query.flags))
+    throw new RegexTranslationError("These flags require JavaScript evaluation.");
   const parsed = query.patterns.map((pattern) => parse(pattern, query.literal));
   // rg reports non-overlapping spans, so overlapping multiline alternatives need separate scans.
   const scans = query.multiline ? parsed.map((pattern) => [pattern]) : [parsed];
@@ -591,9 +583,9 @@ function translateScan(parsed: readonly AST.Pattern[], query: GrepQuery): RgMatc
   const ctx: Context = {
     engine,
     multiline: query.multiline,
-    ignoreCase: query.ignoreCase,
-    dotAll: false,
-    lineAnchors: true,
+    ignoreCase: query.flags.includes("i"),
+    dotAll: query.flags.includes("s"),
+    lineAnchors: query.flags.includes("m"),
     groups,
     capturing: [],
     inert: false,
@@ -621,4 +613,25 @@ function translateScan(parsed: readonly AST.Pattern[], query: GrepQuery): RgMatc
     multiline,
     pattern: engine === "pcre2" && !multiline ? `${INSIDE_LINE}(?:${pattern})` : pattern,
   };
+}
+
+/** Conservative zero-width check: rg's PCRE2 multiline scanner can omit empty matches. */
+export function mayMatchEmpty(query: GrepQuery): boolean {
+  const nullable = (node: AST.Element): boolean => {
+    switch (node.type) {
+      case "Assertion":
+      case "Backreference":
+        return true;
+      case "Group":
+      case "CapturingGroup":
+        return node.alternatives.some(({ elements }) => elements.every(nullable));
+      case "Quantifier":
+        return node.min === 0 || nullable(node.element);
+      default:
+        return false;
+    }
+  };
+  return query.patterns.some((pattern) =>
+    parse(pattern, query.literal).alternatives.some(({ elements }) => elements.every(nullable)),
+  );
 }

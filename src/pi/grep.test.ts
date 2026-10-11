@@ -95,6 +95,16 @@ const text = (result: any): string => result.content[0].text;
 const call = (tool: any, params: any, signal?: AbortSignal) =>
   callTool(tool, params, { toolCallId: "0", signal });
 
+test("grep call rendering shows explicit JavaScript flags", () => {
+  initTheme("dark");
+  const { backend } = fakeBackend();
+  const tool = makeGrepOverrideWithBackend(process.cwd(), DEFAULT_CONFIG, backend);
+  const rendered = tool.renderCall!({ pattern: "\\p{Letter}+", literal: false, flags: "u" }, theme)
+    .render(120)
+    .join("\n");
+  assert.ok(rendered.includes("/\\p{Letter}+/u"));
+});
+
 test("configured grep defaults drive descriptions, match limits, and context", async () =>
   withDir(async (dir) => {
     const file = join(dir, "configured.txt");
@@ -111,7 +121,10 @@ test("configured grep defaults drive descriptions, match limits, and context", a
     const fake = fakeBackend({
       lines: [rgMatch(file, 2, "needle one\n"), rgMatch(file, 6, "needle two\n")],
     });
-    const config = { ...DEFAULT_CONFIG, grep: { defaultLimit: 1, defaultContext: 2 } };
+    const config = {
+      ...DEFAULT_CONFIG,
+      grep: { ...DEFAULT_CONFIG.grep, defaultLimit: 1, defaultContext: 2 },
+    };
     const tool = makeGrepOverrideWithBackend(dir, config, fake.backend);
     for (const [field, expected] of [
       ["limit", 1],
@@ -144,12 +157,13 @@ test("configured grep defaults drive descriptions, match limits, and context", a
     assert.match(text(explicit), /configured\.txt · 2 matches\n/);
   }));
 
-test("grep exposes nine parameters and rejects only the six removed fields", async () => {
+test("grep exposes its declared parameters and rejects removed fields", async () => {
   await withDir(async (dir) => {
     const fake = fakeBackend();
     const tool = makeGrepOverrideWithBackend(dir, DEFAULT_CONFIG, fake.backend);
     assert.deepEqual(Object.keys(tool.parameters.properties).sort(), [
       "context",
+      "flags",
       "glob",
       "ignoreCase",
       "limit",
@@ -396,7 +410,7 @@ test("multiline grep rejects a zero-width match beyond the current EOF", async (
     for (const outputMode of ["content", "files", "count"]) {
       await expectToolFailure(
         call(makeGrepOverrideWithBackend(dir, DEFAULT_CONFIG, backend), {
-          pattern: "^",
+          pattern: "^one",
           multiline: true,
           literal: false,
           outputMode,
@@ -569,12 +583,12 @@ for (const diagnosticLineCount of [0, 80]) {
   test(`grep renders ${diagnosticLineCount ? "long errors fully when expanded" : "short errors fully when collapsed"}`, async () => {
     initTheme("dark");
     const diagnostic = [
-      "rg: regex parse error:",
-      "    (?<=a+)b",
+      "rg: initialization failed:",
+      "    loading search engine",
       ...Array.from({ length: diagnosticLineCount }, (_, index) => `diagnostic ${index}`),
-      "error: lookbehind assertion is not fixed length",
+      "error: missing runtime library",
     ].join("\n");
-    const fake = fakeBackend({ validation: { code: 2, stderr: diagnostic } });
+    const fake = fakeBackend({ validation: { code: 3, stderr: diagnostic } });
     const tool = makeGrepOverrideWithBackend(process.cwd(), DEFAULT_CONFIG, fake.backend);
     const args = { pattern: "(?<=a+)b", literal: false };
     const failure: Awaited<ReturnType<typeof tool.execute>> = await callTool(tool, args);
@@ -617,8 +631,8 @@ for (const diagnosticLineCount of [0, 80]) {
       }
     }
     if (diagnosticLineCount) {
-      assert.match(collapsed, /regex parse error/);
-      assert.doesNotMatch(collapsed, /lookbehind assertion is not fixed length/);
+      assert.match(collapsed, /initialization failed/);
+      assert.doesNotMatch(collapsed, /missing runtime library/);
       assert.ok(collapsed.split("\n").length < expanded.split("\n").length);
     }
   });
@@ -703,7 +717,6 @@ test("grep regex probe outcomes allow search or stop it with diagnostics", async
     for (const validation of [
       { code: 0, stderr: "" },
       { code: 1, stderr: "" },
-      { code: 2, stderr: "lookbehind assertion is not fixed length" },
       { code: 3, stderr: "" },
     ]) {
       const fake = fakeBackend({ lines: [rgMatch(file, 1, "foo0\n")], validation });
@@ -713,14 +726,10 @@ test("grep regex probe outcomes allow search or stop it with diagnostics", async
         assert.match(text(await result), /1#[0-9A-Z]+│foo0/);
         assert.equal(fake.calls.length, 1);
       } else {
-        await expectToolFailure(
-          result,
-          validation.code === 2 ? "INVALID_REGEX" : "RIPGREP_FAILED",
-          (report) => {
-            if (validation.code !== 2) assert.equal(report.exitCode, validation.code);
-            assert.equal(report.cause?.message, validation.stderr || undefined);
-          },
-        );
+        await expectToolFailure(result, "RIPGREP_FAILED", (report) => {
+          assert.equal(report.exitCode, validation.code);
+          assert.equal(report.cause?.message, validation.stderr || undefined);
+        });
         assert.equal(fake.calls.length, 0);
       }
       assert.equal(fake.probes.length, 1);
@@ -731,30 +740,17 @@ test("grep regex probe outcomes allow search or stop it with diagnostics", async
     }
   }));
 
-test("grep invalid JavaScript and unsearchable patterns reject their field before probing", async () =>
+test("grep invalid JavaScript rejects its field before probing", async () =>
   withDir(async (dir) => {
-    for (const { value, literal, reason, fix } of [
-      { value: "(", literal: false, reason: /Invalid regular expression/, fix: undefined },
-      { value: "(?m)^foo", literal: false, reason: /Invalid regular expression/, fix: undefined },
-      { value: "\\n", literal: false, reason: /each line.*line break/, fix: /multiline.*true/ },
-      { value: "\n", literal: true, reason: /each line.*line break/, fix: /multiline.*true/ },
-      {
-        value: "\\uD83D",
-        literal: false,
-        reason: /surrogate pair/,
-        fix: /whole characters.*group/,
-      },
-    ]) {
+    for (const value of ["(", "(?m)^foo", "(?i)abc"]) {
       for (const pattern of [value, ["plain", value]]) {
         const fake = fakeBackend();
         const tool = makeGrepOverrideWithBackend(dir, DEFAULT_CONFIG, fake.backend);
         const field = typeof pattern === "string" ? "pattern" : "pattern[1]";
-        await assert.rejects(call(tool, { pattern, literal }), (error: unknown) => {
-          rejectsArgument(field, reason)(error);
-          const issue = argumentError(error).issues.find((issue) => issue.field === field);
-          if (fix) assert.match(issue?.fix ?? "", fix);
-          return true;
-        });
+        await assert.rejects(
+          call(tool, { pattern, literal: false }),
+          rejectsArgument(field, /Invalid regular expression/),
+        );
         assert.equal(fake.probes.length, 0);
         assert.equal(fake.calls.length, 0);
       }

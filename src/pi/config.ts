@@ -23,6 +23,14 @@ function integerSetting(
   return Type.Number({ ...range, default: value, description });
 }
 
+// The floor exceeds measured worker startup+handshake on slower Windows hosts.
+// README's regex timeout settings link to this shared definition.
+const regexTimeoutSetting = integerSetting(
+  integerRange(3_000, 300_000),
+  5_000,
+  "Time limit for one isolated regex evaluation, in milliseconds.",
+);
+
 /** Settings schema: the single source of setting types, bounds, and defaults. */
 export const configSchema = Type.Object({
   enabled: Type.Boolean({
@@ -73,15 +81,10 @@ export const configSchema = Type.Object({
       0,
       "Context lines shown when context is omitted.",
     ),
+    regexTimeoutMs: regexTimeoutSetting,
   }),
   replace: Type.Object({
-    // The floor must exceed measured worker startup+handshake (0.8–1.3 s on a slow
-    // Windows box); a timeout below it fails even trivial regex batches.
-    regexTimeoutMs: integerSetting(
-      integerRange(3_000, 300_000),
-      5_000,
-      "Time limit for one regex batch, in milliseconds.",
-    ),
+    regexTimeoutMs: regexTimeoutSetting,
   }),
 });
 

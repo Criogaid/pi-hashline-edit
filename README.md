@@ -154,15 +154,15 @@ The codes, their facts (`?` marks optional ones), and their recovery are defined
 | `OVERLAPPING_EDITS` | Edits of one batch touch the same lines. | `matched`?, `omittedMatched`? |
 | `NO_MATCH` | A `replace` rule has no matches. | `rule` |
 | `OVERLAPPING_MATCHES` | Two `replace` matches overlap. | `rules`, `offset` |
-| `REGEX_TIMEOUT` | `replace` regex evaluation exceeded `replace.regexTimeoutMs`. | `timeoutMs` |
-| `REGEX_WORKER_FAILED` | The `replace` regex worker failed or returned an invalid result. | `exitCode`? |
+| `REGEX_TIMEOUT` | Isolated regex evaluation exceeded `grep.regexTimeoutMs` or `replace.regexTimeoutMs`. | `timeoutMs` |
+| `REGEX_WORKER_FAILED` | A regex worker failed or returned an invalid result. | `exitCode`? |
 | `TARGET_EXISTS` | `write` with `mode: "create"` names an existing target, or one appeared during creation. | — |
 | `NOT_REGULAR_FILE` | The target is not a regular file. | — |
 | `MULTIPLE_HARD_LINKS` | The target has more than one hard link. | — |
 | `SYMLINK_UNRESOLVED` | A symbolic link target cannot be resolved. | — |
 | `PUBLISH_FAILED` | Publication itself failed; `publication` says whether the file may have changed. | — |
 | `POST_PROCESS_FAILED` | A step after publication failed; the change is saved. | — |
-| `INVALID_REGEX` | ripgrep cannot compile a translated `grep` regex, such as a lookbehind of unbounded length; `cause` holds its error. | — |
+| `INVALID_REGEX` | Recognized when reading persisted regex-compilation failures. A new grep call uses JavaScript when rg cannot compile a valid pattern. | — |
 | `SEARCH_INCOMPLETE` | `grep` could not confirm any result. | `diagnostics` |
 | `RIPGREP_FAILED` | ripgrep failed or produced output the tool cannot use; `cause` holds its stderr when there is any. | `exitCode`? |
 | `UNSUPPORTED_PATH` | A path reported by ripgrep is not valid UTF-8. | — |
@@ -300,7 +300,7 @@ Literal mode keeps `$` text verbatim. Both literal and regex modes match the sha
 
 Replacement text also normalizes CRLF to LF, then reuses matched separators in order. Additional lines use the last matched separator, or the file style when the match contains no separator (CRLF if present anywhere, otherwise LF).
 
-Regex patterns use JavaScript syntax, as `grep` does. Unlike `grep`, which always applies the `m` flag, `replace` applies only the flags a rule gives; add the `m` flag for per-line `^`/`$`. `\d` matches only ASCII digits; `\w` and `\b` are ASCII-based, except that with both `i` and `u` they also treat `ſ` (U+017F) and `K` (U+212A) as word characters through case folding. Regex patterns run on LF text, so use `\n` for a line boundary. Captures and replacement templates also use the LF snapshot; the result then restores original separators. Use `write` for explicit line-ending conversion. Source-code escapes are ordinary text: JSON `"find": "\\r\\n"` finds the visible four-character sequence in literal mode, while `"find": "\r\n"` contains an actual CRLF boundary. Set `regex: true` for JavaScript capture groups and replacement templates:
+Regex patterns use JavaScript syntax, as `grep` does. `grep` defaults to the `m` flag; `replace` applies only the flags a rule gives; add the `m` flag for per-line `^`/`$`. `\d` matches only ASCII digits; `\w` and `\b` are ASCII-based, except that with both `i` and `u` they also treat `ſ` (U+017F) and `K` (U+212A) as word characters through case folding. Regex patterns run on LF text, so use `\n` for a line boundary. Captures and replacement templates also use the LF snapshot; the result then restores original separators. Use `write` for explicit line-ending conversion. Source-code escapes are ordinary text: JSON `"find": "\\r\\n"` finds the visible four-character sequence in literal mode, while `"find": "\r\n"` contains an actual CRLF boundary. Set `regex: true` for JavaScript capture groups and replacement templates:
 
 ```json
 { "path": "src/foo.ts", "replacements": [{ "find": "get([A-Z]\\w*)", "replace": "fetch$1", "regex": true }] }
@@ -333,11 +333,12 @@ When the line limit or the byte budget leaves more content, the report's `pagina
 
 | Parameter | Default | Meaning |
 | --- | --- | --- |
-| `pattern` | Required | Non-empty string (including whitespace-only text) or array of non-empty strings; arrays match any pattern (OR). When `ignoreCase` is omitted, smart-case is resolved for the entire query, not separately for each array item. |
+| `pattern` | Required | Non-empty string (including whitespace-only text) or array of non-empty strings; arrays match any pattern (OR). |
 | `path` | Current directory | Omit `path` to search the working directory. If supplied, it must be one non-empty existing file or directory, or a non-empty array of search roots; `""` and `[]` are invalid. Wildcards are not expanded; use `glob` to filter filenames. |
 | `glob` | None | One non-empty glob or a non-empty ordered array; prefix exclusions with `!`. |
-| `literal` | Required | `true` matches every pattern as exact text, including regex punctuation such as `pi.on(`; use it for names, paths, and code snippets. It does not force case-sensitive matching. `false` treats every pattern as a JavaScript regex, the syntax `replace` uses, without the `u` flag and with the `m` flag, so `^`/`$` match at line boundaries; lookaround and backreferences are supported within the limits below, and a valid regex such as `foo(0)` matches `foo0`, not `foo(0)`. Invalid syntax and patterns grep cannot search fail as `INVALID_ARGUMENTS` for the `pattern` field before any file is searched. |
-| `ignoreCase` | Smart-case | Query-level case override with JavaScript case folding: `true` ignores case; `false` distinguishes case. A modifier group such as `(?i:...)` or `(?-i:...)` overrides it inside the group. |
+| `literal` | Required | `true` matches every pattern as exact text, including regex punctuation such as `pi.on(`. It does not force case-sensitive matching. `false` accepts JavaScript pattern syntax; a valid regex such as `foo(0)` matches `foo0`. Invalid syntax fails as `INVALID_ARGUMENTS` for the `pattern` field before any file is searched. |
+| `flags` | `m` | JavaScript flags supported by the host engine, including `u`/`v` Unicode modes, `s` dotAll, and `y` sticky matching. Explicit flags replace the [default](src/core/search.ts). `g` is always enabled; duplicate flags are ignored. Invalid flags or incompatible `u` and `v` fail as `INVALID_ARGUMENTS` for `flags`. |
+| `ignoreCase` | From flags or smart-case | `true` enables `i`; `false` removes `i`. When omitted, explicit `flags` control case; otherwise smart-case examines decoded characters across the whole query. If that analysis reaches a parser limit, the default is case-sensitive. Scoped modifiers such as `(?i:...)` still override case locally. |
 | `multiline` | `false` | Allow matches across physical lines; `\n` matches an LF or CRLF line break. Each distinct matched physical line counts toward `limit`. Content mode adds anchors only for valid UTF-8 files. `context` alone does not enable cross-line matching. Use `\n` or an explicit character class such as `[\w\s]` to cross line breaks. |
 | `context` | `0` | Integer from 0 to 20: include that many lines before and after each match (pass 3–5 to inspect code blocks without another read). Fractions are rejected, not rounded. Context lines do not count toward `limit`. |
 | `limit` | `100` | Positive safe-integer maximum of distinct matching physical lines, across all files and patterns. Reaching the limit sets the report's `matchLimit`; it does not prove that another match exists. |
@@ -351,23 +352,21 @@ Directory traversal respects ignore rules, does not follow symbolic links, and i
 
 Scope inspection reports `PATH_NOT_FOUND` only for a filesystem `ENOENT` failure; for a path containing a wildcard, `next` points to `glob`. Permission failures, symlink loops, and other traversal errors are `FILESYSTEM_ERROR` with their native error text.
 
-Searches use bundled ripgrep, independent of system `rg` or `PATH`. The tool disables external ripgrep configuration with `--no-config` and clears `RIPGREP_CONFIG_PATH`, and searches the original files with `--crlf` and `--encoding=none`. Each pattern is parsed and translated into an equivalent ripgrep pattern that matches as JavaScript would on the shared LF view: `\n` matches LF or CRLF, `^`/`$` treat LF, CRLF, standalone CR, U+2028, and U+2029 as line boundaries, a BOM remains content, and case folding follows JavaScript. The translation selects ripgrep's default engine, or PCRE2 when a pattern uses lookaround, a backreference, `\B`, or a line anchor that needs JavaScript boundary assertions. Ripgrep then compiles the translated regex before searching; a rejection, such as a lookbehind of unbounded length or an exceeded size limit, fails with `INVALID_REGEX`. Literal queries skip that check. NUL-containing files are silently skipped in all output modes, including explicitly named files; they do not consume the match limit. Match paths refer to original files.
+Searches use bundled ripgrep, independent of system `rg` or `PATH`. The tool disables external ripgrep configuration with `--no-config` and clears `RIPGREP_CONFIG_PATH`. NUL-containing files are silently skipped in every output mode, including explicit file paths; they do not consume the match limit.
 
-The input language is JavaScript, never Rust regex or PCRE2. JavaScript syntax is validated before translation; unsupported constructs fail as argument errors rather than being passed through with different semantics:
+JavaScript validates flags and pattern syntax first. The [search planner](src/pi/grep-plan.ts) prefers an equivalent rg translation over the original bytes, with `--crlf` and `--encoding=none`. The translation selects rg's default engine or PCRE2 for lookaround, backreferences, `\B`, and JavaScript line-boundary assertions. A translated regex is compiled before searching; literal queries skip this probe. Process failures and cancellation remain errors.
 
-- Character sets that can match half of a UTF-16 surrogate pair are rejected, including `.`, `\D`, `\W`, `\S`, `[\s\S]`, most negated classes, and `[😀]`. Use a class that excludes surrogates, such as `[\u0001-\uD7FF\uE000-\uFFFF]` for non-NUL BMP characters, or whole literal characters. Group a supplementary literal before quantifying it, as in `(?:😀)+`.
-- Without `multiline`, each physical line excludes its LF/CRLF separator but retains standalone CR, including in `\s` or a mixed class such as `[a\r]`. An element that can match only `\n` is rejected, because lines exclude their break.
-- A backreference matches the captured original bytes again, so it is rejected when its group can match `\n` or `\r`, including through `\s`. With `ignoreCase`, it is also rejected when its group can match a non-ASCII character. ASCII-only groups such as `(\w+)\s+\1` work in both case modes.
-- Backreferences inside lookbehind, references to lookbehind captures, and references to captures inside expressions repeated more than once are rejected. JavaScript evaluates lookbehind captures backwards and resets captures on each repetition; PCRE2 can choose or retain different captured values.
-- Contents of zero-maximum quantifiers such as `{0}` retain capture numbering but do not impose character-set or backreference restrictions.
+When translation is unavailable, rg cannot compile the result, or its PCRE2 multiline scan could omit zero-width matches, the query runs in an isolated JavaScript worker. Unicode (`u`, `v`) and sticky (`y`) modes also use this path. Ripgrep still discovers files and applies scope, ignore, and glob rules. This supports `.`, negated sets, UTF-16 surrogate matches, repeated capture resets, non-ASCII caseless backreferences, captures across normalized line breaks, and JavaScript lookbehind semantics. A valid JavaScript identity escape such as `\K` means literal `K`; it never becomes a PCRE2 directive.
 
-Grep reports matching physical lines rather than every JavaScript match object:
+Both paths match the LF view. `\n` matches LF or CRLF when `multiline` is enabled; standalone CR and a BOM remain content. With `m`, `^`/`$` recognize JavaScript line boundaries, including U+2028 and U+2029. Without `multiline`, each physical line excludes its LF/CRLF separator, so a required `\n` simply cannot match. With `multiline`, a pattern can span physical lines.
 
-- An empty match at the very end of the file, such as `$` with `multiline`, is not reported. With `multiline` under PCRE2, an empty match directly after an empty line may be skipped.
+Grep reports distinct matching physical lines, not individual match objects. A final newline terminates the last line and does not create an additional empty row. A zero-width EOF match belongs to the last line only when that line has no final newline. Empty files have no rows.
 
-Files with invalid UTF-8 and no NUL remain searchable with the same translated pattern and line-break handling. Malformed bytes match no supported consuming pattern element, so a match cannot span them. Content-mode output uses replacement characters and plain `LINE│content` rows for the entire file, including context, and the report lists such files in `invalidUtf8`. These previews are not editable anchors. Unmatched invalid UTF-8 files produce no warning.
+JavaScript fallback has a [64 MiB per-file input limit and a 512 MB worker main-heap budget](src/pi/grep-javascript.ts). An oversized text file produces an incomplete-search diagnostic, never an unqualified no-match result. Each file's regex request is bounded by [`grep.regexTimeoutMs`](#configuration), including any remaining worker startup; a timeout reports `REGEX_TIMEOUT`, cancellation reports `OPERATION_ABORTED`, and worker failure reports `REGEX_WORKER_FAILED`. These limits do not apply to queries executed by rg.
 
-Each matched file is read once when its first match arrives, which skips NUL-containing files and records the file's byte revision; a matched file that cannot be read becomes a search diagnostic. All output modes verify invalid UTF-8 results against that revision and the complete raw-byte match spans reported by ripgrep, including the part of a multiline match omitted by `limit`. The tool keeps fixed-size byte digests and verifies them with a bounded scan; different malformed bytes cannot be accepted merely because both display as the same replacement character. Content output retains its complete-file byte revision check for valid UTF-8 as well. A detected mismatch reports `FILE_CHANGED` (`File changed during search.`).
+Files with invalid UTF-8 and no NUL remain searchable. The rg path searches original bytes, where malformed bytes match no supported consuming element. The JavaScript path evaluates the lossy text shown in previews, so malformed bytes become replacement characters for matching too. Content output uses plain `LINE│content` rows for the entire invalid file, including context, and lists it in `invalidUtf8`; these rows are not editable anchors. Unmatched invalid UTF-8 files produce no warning.
+
+Matched files retain byte revisions. All output modes verify invalid UTF-8 results against their full revision and raw match spans, including spans omitted by `limit`. JavaScript results verify the complete input bytes in every output mode; rg content output also verifies the complete file. Fixed-size byte digests prevent different malformed bytes from being accepted merely because they display identically. A detected mismatch reports `FILE_CHANGED` (`File changed during search.`).
 
 Search diagnostics are preserved even when a result limit stops ripgrep. Readable, confirmed matches remain available with the diagnostics in the report's `diagnostics` and `details.incomplete: true`; `matches`, `files`, and counts then cover only confirmed matches. If no results can be returned, the tool reports `SEARCH_INCOMPLETE` with the diagnostics in `diagnostics`, rather than claiming there are no matches. Search diagnostics use the [text-field budget](#output-budgets). Ripgrep stderr retains up to 64 KiB as a process resource limit. Both bounds preserve opening context and the final cause and explicitly mark omitted middle text. The shared implementation is [`DiagnosticBuffer`](src/pi/diagnostic-buffer.ts); limits live in [`budgets.ts`](src/pi/budgets.ts) and [`rg-process.ts`](src/pi/rg-process.ts).
 
@@ -387,7 +386,7 @@ Zero matches in any rule (`NO_MATCH`), an invalid rule (`INVALID_ARGUMENTS`), or
 Regex captures and prefix/suffix substitutions always refer to the original LF-normalized snapshot.
 Regex batches run in a worker and are terminated on cancellation (`OPERATION_ABORTED`) or when `replace.regexTimeoutMs` (default 5000 ms) elapses (`REGEX_TIMEOUT`). A cancelled or timed-out batch leaves the file unchanged; literal-only batches retain their existing execution path.
 
-The worker receives replacement rules already validated by the tool entry point. Replies are validated at the thread boundary using code-specific error facts and contain exactly one result or failure. Invalid replies produce `REGEX_WORKER_FAILED`. Causes retain their codes and nested branches across the worker boundary. The worker loads only production dependencies, including the pinned TypeBox schema validator; it does not import the Pi runtime.
+Workers receive inputs already validated by the tool entry point. The host validates replies with the pinned TypeBox schema validator and code-specific error facts; each reply contains exactly one result or failure. Invalid replies produce `REGEX_WORKER_FAILED`. Causes retain their codes and nested branches across the worker boundary. Grep and replace share the worker lifecycle and error envelope; workers load only production dependencies and do not import the Pi runtime.
 
 ### Write
 
@@ -435,7 +434,7 @@ Add `hashlineEdit` to Pi's global settings (`~/.pi/agent/settings.json` by defau
     "hashLen": 4,
     "shiftRadius": 15,
     "read": { "defaultLimit": 500 },
-    "grep": { "defaultLimit": 100, "defaultContext": 0 },
+    "grep": { "defaultLimit": 100, "defaultContext": 0, "regexTimeoutMs": 5000 },
     "replace": { "regexTimeoutMs": 5000 }
   }
 }
@@ -454,6 +453,7 @@ Top-level settings control shared behavior; each group configures one tool.
 | `read.maxKiB` | Model capacity | Optional explicit anchored-text cap, 1–4096 KiB. Omit for automatic sizing; invalid values also select automatic sizing, which never exceeds this 4,096 KiB ceiling. Calls cannot raise an explicit cap. |
 | `grep.defaultLimit` | `100` | Matching lines returned when a call omits `limit`; positive safe integer. |
 | `grep.defaultContext` | `0` | Context lines shown when a call omits `context`, 0–20. |
+| `grep.regexTimeoutMs` | `5000` | Time limit for one file's JavaScript regex evaluation, 3000–300000 ms, including any remaining worker startup. Bounds and default share the [regex timeout schema](src/pi/config.ts) with replace. Does not limit rg execution. |
 | `replace.regexTimeoutMs` | `5000` | Time limit for one regex batch, 3000–300000 ms, including worker startup. Values below the floor are invalid and select the default. |
 
 The project's `hashlineEdit` object replaces the global object as a whole. Each setting is resolved on its own: a missing or invalid setting, or a group that is not an object, uses the defaults while valid neighbors are kept. Types, bounds, and defaults are defined once by the settings schema in `src/pi/config.ts`. Tools receive the resolved configuration at registration, keep it for their lifetime, and state configured defaults in their parameter descriptions. Reload Pi after changes to register tools with the new configuration.

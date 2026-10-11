@@ -4,10 +4,10 @@ pi 扩展 `@criogaid/pi-hashline-edit`，注册入口为 `src/index.ts`。
 
 ## 按任务定位
 
-- `src/core/`：内部纯函数层，无公开 API，不依赖 Pi：行拆分、checksum、文本解码、错误码，以及 edit（`apply.ts`）与 replace（`replace.ts`）的引擎。它信任工具层已筛过的输入。
+- Keep `src/core/` independent of Pi: line handling, checksums, decoding, errors, edit (`apply.ts`), replace (`replace.ts`), and JavaScript search (`search.ts`). Core engines trust inputs validated at tool entry.
 - `src/pi/`：工具注册、配置、渲染、grep 与 ripgrep 进程层、文件提交和 Action Fusion。
 - Use `src/pi/file-read.ts` for guarded stream and whole-file reads; keep byte revision checks in search and commit owners.
-- Define replacement rule shapes in `src/core/replace-schema.ts`; validate worker replies in `src/pi/replace-worker-contract.ts`. Workers trust rules validated by the tool entry point. Keep shared cause transport in `src/pi/report-cause.ts` free of Pi runtime imports.
+- Define replacement rules in `src/core/replace-schema.ts` and search results in `src/core/search-schema.ts`. Validate worker replies with `src/pi/regex-worker-contract.ts`; keep shared worker lifecycle in `src/pi/regex-worker.ts` and cause transport in `src/pi/report-cause.ts`. Workers trust inputs validated at tool entry and never import the Pi runtime.
 - `src/integration/`：真实后端集成测试。
 - Use `src/testing/` for shared test environment and installed-package fixtures. Run suites through npm scripts to exclude inherited Node loaders and personal Pi settings.
 - 改工具参数、用户可见行为或配置时，核对 `README.md` 中对应契约。
@@ -22,8 +22,9 @@ pi 扩展 `@criogaid/pi-hashline-edit`，注册入口为 `src/index.ts`。
 - Classify only Node's confirmed malformed UTF-8 error as `UNSUPPORTED_ENCODING`; preserve other decoder failures and their causes. Streaming validity checks catch only `Utf8DecodingError`.
 - `edit` 的空正文行是实际逻辑行；末尾空行需要终止符才能保留时补上终止符，BOM-only 单行除外。非空末行保留原有最终换行状态。
 - Use the shared CRLF-to-LF view for valid UTF-8 in `read/grep/edit/replace`; standalone CR and literal source escapes remain content. Map mutation offsets back to the original bytes; `write` uses the supplied full content and line endings exactly.
-- Skip NUL-containing files silently in `grep`. Search invalid UTF-8 with the same translated pattern and display plain preview rows without edit anchors; verify the revision read at a file's first match and complete raw match spans in every output mode, even when the output limit omits part of a span. Preserve full byte revision checks for both preview and anchored content.
-- `grep` accepts the JavaScript regex syntax `replace` uses. Translate patterns in `src/pi/rg-regex.ts` so ripgrep matches them as JavaScript would on the LF view, searching original files with `--crlf`; choose PCRE2 for lookaround, backreferences, or JavaScript line-boundary assertions. Reject untranslatable character sets and capture semantics as argument errors; never pass through another regex dialect. Document physical-line reporting limits in README.
+- Skip NUL files in grep. Keep invalid UTF-8 output as plain preview rows; rg searches original bytes, while JavaScript fallback matches the lossy preview text. Verify full revisions and raw match spans in every output mode for invalid UTF-8, including omitted spans; verify the full input of every JavaScript result in every output mode.
+- Validate grep patterns and flags with V8 at tool entry; resolve case overrides once into `GrepQuery.flags` (`src/core/search.ts`). Select execution in `src/pi/grep-plan.ts`: prefer verified translations in `src/pi/rg-regex.ts`, otherwise use `src/pi/grep-javascript.ts` with rg file discovery and `src/core/search.ts` matching the LF view. Translation, parser, and compilation limits select JavaScript; process failures and cancellation do not. Never pass through a foreign regex dialect.
+- Keep JavaScript matching in a bounded, cancellable worker; use `scanTextFile` for guarded source reads and the existing grep snapshot/output pipeline. Document file and worker budgets and physical-line semantics in README.
 - Render reports through `src/pi/render.ts` from structured `details.report`; decode Pi's text-only argument rejections with the current wire schema. Use `src/pi/diagnostic-buffer.ts` for bounded stderr and search diagnostics.
 - 行 hash 是可碰撞的位置相关 checksum。恢复候选由调用方重新提交验证；range 验证边界见 README。
 - `edit/replace` 提交绑定实际读取字节的 revision。工具结果使用 `publishedRevision`；Action Fusion 以 mutation 返回的 `publishedRevision` 为 freshness 基线。

@@ -3,7 +3,7 @@ import { test } from "node:test";
 import { RegexTranslationError, smartIgnoreCase, translateQuery } from "./rg-regex.ts";
 
 const query = (patterns: readonly string[], multiline = false, literal = false) =>
-  translateQuery({ patterns, multiline, literal, ignoreCase: false });
+  translateQuery({ patterns, multiline, literal, flags: "m" });
 
 test("grep translation selects PCRE2 for assertions requiring lookaround or backreferences", () => {
   for (const [pattern, engine] of [
@@ -41,19 +41,16 @@ test("grep line queries matching standalone CR enable a multiline scan", () => {
   assert.equal(query(["[a\\t]"])[0].multiline, false);
 });
 
-test("grep translation rejects line breaks and lone surrogates with actionable fixes", () => {
-  for (const [pattern, literal, reason, fix] of [
-    ["\\n", false, /each line.*line break/, /multiline.*true/],
-    ["\n", true, /each line.*line break/, /multiline.*true/],
-    ["\\uD83D", false, /surrogate pair/, /whole characters.*group/],
-    ["\uD83D", true, /surrogate pair/, /whole characters.*group/],
+test("grep translation delegates surrogate code units to JavaScript", () => {
+  for (const [pattern, literal] of [
+    ["\\uD83D", false],
+    ["\uD83D", true],
   ] as const) {
     assert.throws(
       () => query([pattern], false, literal),
       (error: unknown) => {
         assert.ok(error instanceof RegexTranslationError);
-        assert.match(error.message, reason);
-        assert.match(error.fix ?? "", fix);
+        assert.match(error.message, /surrogate pair/);
         return true;
       },
     );
@@ -127,7 +124,12 @@ test("zero-maximum quantifiers → exclude inert contents from backreference ana
   for (const { name, pattern, multiline, ignoreCase, accepted } of cases) {
     await t.test(name, () => {
       const translate = () =>
-        translateQuery({ patterns: [pattern], literal: false, multiline, ignoreCase });
+        translateQuery({
+          patterns: [pattern],
+          literal: false,
+          multiline,
+          flags: ignoreCase ? "mi" : "m",
+        });
       if (accepted) assert.doesNotThrow(translate);
       else assert.throws(translate, RegexTranslationError);
     });

@@ -36,7 +36,7 @@ test("defaults come from the settings schema", () => {
     hashLen: 4,
     shiftRadius: 15,
     read: { defaultLimit: 500, maxKiB: undefined },
-    grep: { defaultLimit: 100, defaultContext: 0 },
+    grep: { ...DEFAULT_CONFIG.grep, defaultLimit: 100, defaultContext: 0 },
     replace: { regexTimeoutMs: 5_000 },
   });
 });
@@ -83,14 +83,18 @@ test("tool groups resolve each setting independently", () =>
     await write({
       hashlineEdit: {
         read: { defaultLimit: 50, maxKiB: 0 },
-        grep: { defaultContext: 21, defaultLimit: 7 },
+        grep: { ...DEFAULT_CONFIG.grep, defaultContext: 21, defaultLimit: 7 },
         replace: "fast",
       },
     });
     assert.deepEqual(loadConfig(root), {
       ...DEFAULT_CONFIG,
       read: { defaultLimit: 50, maxKiB: DEFAULT_CONFIG.read.maxKiB },
-      grep: { defaultLimit: 7, defaultContext: DEFAULT_CONFIG.grep.defaultContext },
+      grep: {
+        ...DEFAULT_CONFIG.grep,
+        defaultLimit: 7,
+        defaultContext: DEFAULT_CONFIG.grep.defaultContext,
+      },
     });
     await write({ hashlineEdit: { replace: { regexTimeoutMs: 20_000 } } });
     assert.equal(loadConfig(root).replace.regexTimeoutMs, 20_000);
@@ -105,7 +109,7 @@ test("project settings replace global groups while absent project settings use g
       hashLen: 8,
       shiftRadius: 0,
       read: { defaultLimit: 7, maxKiB: 2 },
-      grep: { defaultLimit: 3, defaultContext: 2 },
+      grep: { ...DEFAULT_CONFIG.grep, defaultLimit: 3, defaultContext: 2 },
       replace: { regexTimeoutMs: 3_000 },
     };
     await writeFile(
@@ -135,7 +139,7 @@ test("invalid tool groups default independently without discarding valid sibling
       hashLen: 6,
       shiftRadius: 0,
       read: { defaultLimit: 2, maxKiB: 1 },
-      grep: { defaultLimit: 3, defaultContext: 2 },
+      grep: { ...DEFAULT_CONFIG.grep, defaultLimit: 3, defaultContext: 2 },
       replace: { regexTimeoutMs: 3_000 },
     };
     for (const group of ["read", "grep", "replace"] as const) {

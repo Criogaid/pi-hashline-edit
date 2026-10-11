@@ -1,40 +1,14 @@
 import { stat } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { canonicalPath } from "./path.ts";
-import { COMMON_RG_ARGS, ripgrepFailure } from "./rg-process.ts";
+import { COMMON_RG_ARGS } from "./rg-process.ts";
 import {
   recordSearchDiagnostics,
   scopeArgs,
   type GrepBackend,
   type SearchScope,
 } from "./grep-search.ts";
-import { throwIfCancelled } from "./error-text.ts";
-import type { RgMatcher } from "./rg-regex.ts";
 import { errnoCode, HashlineError } from "../core/errors.ts";
-
-/**
- * Reject a translated matcher ripgrep cannot compile before any file is searched.
- * The arguments are ours, so a usage failure here is the pattern, such as an
- * unbounded PCRE2 lookbehind or a size limit.
- */
-export async function assertValidRegex(
-  matchers: readonly RgMatcher[],
-  rgPath: string,
-  backend: GrepBackend,
-  signal: AbortSignal | undefined,
-): Promise<void> {
-  for (const matcher of matchers) {
-    const result = await backend.probeRegex(rgPath, matcher, signal);
-    throwIfCancelled(signal);
-    if (result.code === 0 || result.code === 1) continue;
-    if (result.code === 2)
-      // ripgrep's error is the cause; it names the construct and position.
-      throw new HashlineError("INVALID_REGEX", "ripgrep cannot compile the regex.", {
-        cause: result.stderr.trim(),
-      });
-    throw ripgrepFailure("ripgrep could not check the regex.", result);
-  }
-}
 
 /** Normalize a `string | string[]` param to an array (`undefined` → `[]`). */
 export function toArray(v: string | string[] | undefined): string[] {

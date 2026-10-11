@@ -164,6 +164,43 @@ const cases: readonly RegexCase[] = [
     source: "😀\n😀😀\na",
     ignoreCase: false,
   },
+  ...(
+    [
+      ["UTF-16 dot width", "^..$", "😀\nab\na\n😀😀", false],
+      ["negated digit set", "^\\D{2}$", "😀\nab\n12", false],
+      ["negated word set", "^\\W{2}$", "😀\n!!\nab", false],
+      ["negated space set", "^\\S{2}$", "😀\nab\n a", false],
+      ["all code units", "^[\\s\\S]{2}$", "😀\nab\na", false],
+      ["surrogate class", "[😀]", "😀\n😁\n🥳\na", false],
+      ["surrogate capture and reference", "^(\\uD83D).\\1.$", "😀😁\n😀😀\n🥳😀", false],
+      ["ungrouped supplementary quantifier", "^😀+$", "😀\n😀😀\na", false],
+      ["greedy and lazy dot", "a.*?b", "a😀b\naab\nac", false],
+      ["scoped dotAll", "(?s:^a.*b$)", "a\nb\na😀b\nx", false],
+      ["capture reset after alternate repetition", "^(?:(a)|b)+\\1$", "aba\nab\naa\na", false],
+      ["capture reset after optional repetition", "^(?:(a)?b)+\\1$", "abba\nabb\naba\nb", false],
+      ["backward capture greediness", "(?<=([ab]+)([bc]+))\\1", "abca\nabcb\na", false],
+      ["negative unbounded lookbehind", "(?<!a+)b", "ab\nb\ncab\ncb", false],
+      ["forward reference in lookbehind", "(?<=\\1(a))b", "ab\naab\nb", false],
+      ["caseless non-ASCII backreference", "^(σ)\\1$", "σς\nΣσ\nσσ\nss", true],
+      ["case folding does not expand characters", "^(ß)\\1$", "ßß\nßSS\nss", true],
+      ["legacy quantified lookahead", "(?=a)?b", "b\nab\na", false],
+      ["negative assertion leaves capture unset", "(?!(a))\\1b", "b\nab\na", false],
+      [
+        "duplicate names in disjoint alternatives",
+        "(?:(?<x>a)|(?<x>b))\\k<x>",
+        "aa\nbb\nab",
+        false,
+      ],
+      ["JS identity escapes are not PCRE syntax", "\\K\\R\\A\\z", "KRAz\nother", false],
+      ["empty default-engine matches", "(?:)", "\n\na", false],
+      ["consecutive empty lookahead matches", "(?=^$)", "\n\n\na", false],
+    ] as const
+  ).map(([name, pattern, source, ignoreCase]) => ({
+    name,
+    patterns: [pattern],
+    source,
+    ignoreCase,
+  })),
 ];
 
 test("real grep matches V8 on the LF view across engines, case modes, and line endings", async (t) => {
@@ -252,23 +289,21 @@ test("real grep probe compiles translated matchers on empty input and propagates
   );
 });
 
-test("backreference regression: a capture spanning mixed line endings → rejected before search", async () => {
+test("backreference regression: a capture spanning mixed line endings → matches the LF view", async () => {
   const dir = await mkdtemp(join(tmpdir(), "hashline-grep-backreference-"));
   try {
     const path = join(dir, "mixed.txt");
     await writeFile(path, "a\r\na\n");
     const tool = makeGrepOverrideWithBackend(dir, DEFAULT_CONFIG, {});
-    await assert.rejects(
-      () =>
-        callTool(tool, {
-          path,
-          pattern: "(a\\n)\\1",
-          literal: false,
-          multiline: true,
-          ignoreCase: false,
-        }),
-      rejectsArgument("pattern", /line break/),
-    );
+    const result = await callTool(tool, {
+      path,
+      pattern: "(a\\n)\\1",
+      literal: false,
+      multiline: true,
+      ignoreCase: false,
+    });
+    assert.equal(result.isError, undefined, JSON.stringify(reportOf(result)));
+    assert.equal(reportOf(result)?.matches, 2);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
@@ -333,14 +368,17 @@ test("zero-maximum quantifiers → real grep matches the active capture", async 
   }
 });
 
-test("strict JS translation rejects rg-only syntax and non-equivalent constructs before search", async (t) => {
+test("JS syntax boundary rejects rg-only syntax and executes constructs requiring JS", async (t) => {
   const dir = await mkdtemp(join(tmpdir(), "hashline-grep-strict-js-"));
   t.after(() => rm(dir, { recursive: true, force: true }));
   const path = join(dir, "input.txt");
   await writeFile(path, "😀\naba\nab\n");
   const tool = makeGrepOverrideWithBackend(dir, DEFAULT_CONFIG, {});
+  await assert.rejects(
+    () => callTool(tool, { path, pattern: "(?i)abc", literal: false }),
+    rejectsArgument("pattern"),
+  );
   for (const pattern of [
-    "(?i)abc",
     "^..$",
     "^[^a]{2}$",
     "^[😀]$",
@@ -349,9 +387,11 @@ test("strict JS translation rejects rg-only syntax and non-equivalent constructs
     "(?<=(a))b\\1",
   ]) {
     await t.test(pattern, async () => {
-      await assert.rejects(
-        () => callTool(tool, { path, pattern, literal: false, ignoreCase: false }),
-        rejectsArgument("pattern"),
+      const result = await callTool(tool, { path, pattern, literal: false, ignoreCase: false });
+      assert.equal(result.isError, undefined, JSON.stringify(reportOf(result)));
+      assert.equal(
+        reportOf(result)?.matches,
+        jsLines("😀\naba\nab\n", [pattern], false, false).length,
       );
     });
   }
