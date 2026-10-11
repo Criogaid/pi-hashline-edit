@@ -1,12 +1,17 @@
 import assert from "node:assert/strict";
-import { test } from "node:test";
+import { test, type TestContext } from "node:test";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { rgPath } from "@vscode/ripgrep";
 import { extractPrefilter } from "../core/search-analysis.ts";
 import { searchText, type GrepQuery } from "../core/search.ts";
-import { acceptsNative, matrixCases, MATRIX_INPUTS } from "../core/search-matrix.testing.ts";
+import {
+  acceptsNative,
+  matrixCases,
+  pairedMatrixCases,
+  MATRIX_INPUTS,
+} from "../core/search-matrix.testing.ts";
 import { assertRgSucceeded, candidateArgs, runRgPaths } from "../pi/rg-process.ts";
 
 interface CandidateCase {
@@ -14,7 +19,7 @@ interface CandidateCase {
   readonly required: Map<string, GrepQuery>;
 }
 
-test("Cartesian JS queries → every emitted rg candidate expression retains all native hits", async (t) => {
+async function checkCandidates(t: TestContext, queries: Iterable<{ readonly query: GrepQuery }>) {
   const directory = await mkdtemp(join(tmpdir(), "hl-grep-matrix-"));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const inputs = MATRIX_INPUTS.map(([label, bytes], index) => ({
@@ -25,8 +30,12 @@ test("Cartesian JS queries → every emitted rg candidate expression retains all
   for (const input of inputs) await writeFile(join(directory, input.name), input.bytes);
   const groups = new Map<string, CandidateCase>();
   let accepted = 0;
-  for (const { query } of matrixCases()) {
-    if (!acceptsNative(query)) continue;
+  let rejected = 0;
+  for (const { query } of queries) {
+    if (!acceptsNative(query)) {
+      rejected++;
+      continue;
+    }
     accepted++;
     const args = candidateArgs(extractPrefilter(query));
     const key = JSON.stringify(args);
@@ -86,8 +95,22 @@ test("Cartesian JS queries → every emitted rg candidate expression retains all
   );
   for (const worker of workers) if (worker.status === "rejected") throw worker.reason;
   t.diagnostic(
-    JSON.stringify({ accepted, candidateExpressions: cases.length, checkedFiles, misses }),
+    JSON.stringify({
+      accepted,
+      rejected,
+      candidateExpressions: cases.length,
+      checkedFiles,
+      misses,
+    }),
   );
   assert.ok(checkedFiles > 0);
   assert.equal(misses, 0, examples.join("\n"));
+}
+
+test("Cartesian JS queries → every emitted rg candidate expression retains all native hits", async (t) => {
+  await checkCandidates(t, matrixCases());
+});
+
+test("Cartesian paired JS syntax × composition × flags × line modes → real rg retains native hits", async (t) => {
+  await checkCandidates(t, pairedMatrixCases());
 });

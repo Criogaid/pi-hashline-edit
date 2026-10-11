@@ -161,3 +161,21 @@ export function hasCandidateBytes(bytes: Buffer, prefilter: Prefilter): boolean 
     return false;
   });
 }
+
+/** Pair every syntax fragment with every other fragment, including independent OR-array entries. */
+export function* pairedMatrixCases(): Generator<{ readonly query: GrepQuery }> {
+  for (const [, left] of MATRIX_SYNTAX) {
+    for (const [, right] of MATRIX_SYNTAX) {
+      for (const patterns of [
+        [`(?:${left})(?:${right})`],
+        [`(?:${left}|${right})`],
+        [left, right],
+      ]) {
+        for (const flags of MATRIX_FLAGS) {
+          for (const multiline of [false, true])
+            yield { query: { patterns, flags, multiline, literal: false } };
+        }
+      }
+    }
+  }
+}
