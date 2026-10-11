@@ -27,6 +27,7 @@
     "bench": "node bench/throughput.bench.ts"
   },
   "dependencies": {
+    "@eslint-community/regexpp": "4.12.2",
     "@vscode/ripgrep": "1.18.0",
     "jiti": "2.7.0"
   },

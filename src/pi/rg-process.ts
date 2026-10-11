@@ -1,7 +1,7 @@
 /**
  * ripgrep process layer: spawning and cancelling rg, bounded record and
- * stderr reading, shared arguments, matcher-mode probes, and rg JSON string
- * decoding. Knows nothing about anchors or output formatting.
+ * stderr reading, shared arguments, the matcher compile probe, and rg JSON
+ * string decoding. Knows nothing about anchors or output formatting.
  *
  * @module pi-hashline-edit/pi
  */
@@ -10,11 +10,11 @@ import { StringDecoder } from "node:string_decoder";
 import { DiagnosticBuffer } from "./diagnostic-buffer.ts";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import type { Readable } from "node:stream";
-import { escapeRegex } from "../core/text.ts";
 import { HashlineError } from "../core/errors.ts";
 import { throwIfCancelled } from "./error-text.ts";
+import type { RgMatcher } from "./rg-regex.ts";
 
-export const COMMON_RG_ARGS = ["--no-config", "--color=never", "--no-crlf"];
+export const COMMON_RG_ARGS = ["--no-config", "--color=never"];
 export const MAX_RG_RECORD_BYTES = 16 * 1024 * 1024;
 const RG_RECORD_LIMIT_MESSAGE = `ripgrep output record exceeds ${MAX_RG_RECORD_BYTES / 1024 ** 2} MiB.`;
 /**
@@ -43,12 +43,6 @@ function unsupportedPath(): HashlineError {
 export const MAX_RG_STDERR_BYTES = 64 * 1024;
 /** Probe runs read only a short stdout; more means an unexpected rg mode. */
 const MAX_RG_PROBE_OUTPUT_BYTES = 64 * 1024;
-
-export interface SearchModes {
-  literal: boolean;
-  ignoreCase: boolean;
-  multiline: boolean;
-}
 
 interface ExitResult {
   code: number | null;
@@ -232,81 +226,30 @@ export const runText: RunText = async (rgPath, args, input, signal) => {
   };
 };
 
-const DEFAULT_RG_MODE_ARGS = [...COMMON_RG_ARGS, "--engine=default"];
-
-export function matcherArgs(modes: SearchModes): string[] {
+/**
+ * A translated matcher over the original bytes: --crlf treats CRLF as one line
+ * break, and case folding is already in the pattern.
+ */
+export function matcherArgs({ engine, pattern, multiline }: RgMatcher): string[] {
   return [
-    ...DEFAULT_RG_MODE_ARGS,
-    modes.multiline ? "--multiline" : "--no-multiline",
-    modes.ignoreCase ? "--ignore-case" : "--case-sensitive",
-    ...(modes.literal ? ["--fixed-strings"] : []),
+    ...COMMON_RG_ARGS,
+    `--engine=${engine}`,
+    "--crlf",
+    multiline ? "--multiline" : "--no-multiline",
+    "--case-sensitive",
+    "--encoding=none",
+    "-e",
+    pattern,
   ];
 }
 
-/** Compile the patterns with rg's default engine against empty input; code 2 with a parse error means invalid regex. */
+/** Compile a matcher against empty input; any exit other than 0 or 1 means rg rejected it. */
 export async function probeRegex(
   rgPath: string,
-  patterns: readonly string[],
-  multiline: boolean,
+  matcher: RgMatcher,
   signal?: AbortSignal,
 ): Promise<Pick<TextRunResult, "code" | "stderr">> {
-  return runText(
-    rgPath,
-    [
-      ...DEFAULT_RG_MODE_ARGS,
-      multiline ? "--multiline" : "--no-multiline",
-      "--quiet",
-      ...patterns.flatMap((pattern) => ["-e", pattern]),
-      "--",
-      "-",
-    ],
-    Buffer.alloc(0),
-    signal,
-  );
-}
-
-/** Resolve rg's query-level default case flag; inline regex flags still apply normally. */
-export async function resolveIgnoreCase(
-  rgPath: string,
-  patterns: readonly string[],
-  modes: Pick<SearchModes, "literal" | "multiline">,
-  explicit: boolean | undefined,
-  signal?: AbortSignal,
-  run: RunText = runText,
-): Promise<boolean> {
-  throwIfCancelled(signal);
-  if (patterns.length === 0) throw new Error("pattern is required (got an empty array)");
-  if (explicit !== undefined) return explicit;
-
-  const sources = patterns.map((pattern) => (modes.literal ? escapeRegex(pattern) : pattern));
-  const result = await run(
-    rgPath,
-    [
-      ...DEFAULT_RG_MODE_ARGS,
-      modes.multiline ? "--multiline" : "--no-multiline",
-      "--smart-case",
-      "--encoding=none",
-      "--no-heading",
-      "--no-filename",
-      "--no-line-number",
-      "--only-matching",
-      "--replace",
-      "${1}",
-      "-e",
-      "(\\p{Lu})",
-      ...sources.flatMap((pattern) => ["-e", pattern]),
-      "--",
-      "-",
-    ],
-    Buffer.from("a\n"),
-    signal,
-  );
-  throwIfCancelled(signal);
-  assertRgSucceeded(result);
-  const lines = result.stdout.replace(/\r\n/g, "\n").split("\n");
-  if (lines.some((line) => line !== "" && line !== "a"))
-    throw ripgrepFailure("Unexpected smart-case probe output.");
-  return lines.includes("a");
+  return runText(rgPath, [...matcherArgs(matcher), "--quiet", "--", "-"], Buffer.alloc(0), signal);
 }
 
 interface RgString {

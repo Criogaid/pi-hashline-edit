@@ -1,5 +1,5 @@
 /**
- * Bounded diagnostic text shared by ripgrep stderr, batch aggregation, and
+ * Bounded diagnostic text shared by ripgrep stderr, report causes, and
  * model-facing search warnings. Retain the opening context and final cause;
  * mark omitted text instead of silently dropping diagnostics.
  */

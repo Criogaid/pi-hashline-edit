@@ -9,41 +9,31 @@ import {
   type SearchScope,
 } from "./grep-search.ts";
 import { throwIfCancelled } from "./error-text.ts";
+import type { RgMatcher } from "./rg-regex.ts";
 import { errnoCode, HashlineError } from "../core/errors.ts";
 
-const REGEX_PARSE_ERROR = /^(?:rg: )?regex parse error:/m;
 /**
- * Lookaround and backreferences: valid in JavaScript/PCRE, rejected by ripgrep's default engine.
- * The construct must be unescaped: an even run of backslashes (escaped backslashes) may precede it.
+ * Reject a translated matcher ripgrep cannot compile before any file is searched.
+ * The arguments are ours, so a usage failure here is the pattern, such as an
+ * unbounded PCRE2 lookbehind or a size limit.
  */
-const NON_RUST_REGEX_SYNTAX = /(?:^|[^\\])(?:\\\\)*(?:\(\?<?[=!]|\\[1-9]|\\k<)/;
-
-/** Recovery for a parse failure: another dialect's syntax if the query contains any, else literal search. */
-function invalidRegexNext(patterns: readonly string[]): "rewriteDialect" | undefined {
-  return patterns.some((pattern) => NON_RUST_REGEX_SYNTAX.test(pattern))
-    ? "rewriteDialect"
-    : undefined;
-}
-
-/** Reject a regex query ripgrep cannot parse before any file is searched. */
 export async function assertValidRegex(
-  patterns: readonly string[],
-  multiline: boolean,
+  matchers: readonly RgMatcher[],
   rgPath: string,
   backend: GrepBackend,
   signal: AbortSignal | undefined,
 ): Promise<void> {
-  const result = await backend.probeRegex(rgPath, patterns, multiline, signal);
-  throwIfCancelled(signal);
-  if (result.code === 0 || result.code === 1) return;
-  if (result.code === 2 && REGEX_PARSE_ERROR.test(result.stderr)) {
-    // ripgrep's parse error is the cause; it names the pattern and position.
-    throw new HashlineError("INVALID_REGEX", "ripgrep cannot parse the regex.", {
-      cause: result.stderr.trim(),
-      next: invalidRegexNext(patterns),
-    });
+  for (const matcher of matchers) {
+    const result = await backend.probeRegex(rgPath, matcher, signal);
+    throwIfCancelled(signal);
+    if (result.code === 0 || result.code === 1) continue;
+    if (result.code === 2)
+      // ripgrep's error is the cause; it names the construct and position.
+      throw new HashlineError("INVALID_REGEX", "ripgrep cannot compile the regex.", {
+        cause: result.stderr.trim(),
+      });
+    throw ripgrepFailure("ripgrep could not check the regex.", result);
   }
-  throw ripgrepFailure("ripgrep could not check the regex.", result);
 }
 
 /** Normalize a `string | string[]` param to an array (`undefined` → `[]`). */

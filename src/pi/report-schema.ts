@@ -312,9 +312,8 @@ export const ERROR_DEFINITIONS = {
   INVALID_REGEX: {
     facts: NONE,
     next: {
-      default: "Set literal to true to search the text exactly.",
-      rewriteDialect:
-        "Rewrite the pattern without lookaround or backreferences, or use replace for a JavaScript regex within one file.",
+      default:
+        "Rewrite the construct the cause names: give lookbehind a bounded length, or lower repetition counts.",
     },
   },
   SEARCH_INCOMPLETE: {

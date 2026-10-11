@@ -6,16 +6,16 @@ import {
   type RgRunResult,
   matcherArgs,
   probeRegex,
-  resolveIgnoreCase,
   rgBytes,
   rgText,
   ripgrepFailure,
+  runRg,
   runRgPaths,
-  type SearchModes,
 } from "./rg-process.ts";
 import { submatchesToLineRanges } from "./rg-line-ranges.ts";
 import { rawMatchRevision, type RawMatchRevision } from "./rg-match-bytes.ts";
-import { searchChangedError, throwIfCancelled } from "./error-text.ts";
+import { throwIfCancelled } from "./error-text.ts";
+import type { RgMatcher } from "./rg-regex.ts";
 
 /** Surface incomplete search diagnostics without discarding confirmed matches. */
 export function recordSearchDiagnostics(result: RgRunResult, warnings: string[]): void {
@@ -56,28 +56,38 @@ export interface SearchScope {
 
 /** One JSONL content search, kept structured so the backend never re-parses rg arguments. */
 export interface SearchRequest {
-  /** Matcher and output arguments, including `-e` patterns; no scope flags or paths. */
-  readonly matcher: readonly string[];
-  /** Original patterns for raw-byte files; omitted when they equal the LF-view patterns. */
-  readonly rawMatcher?: readonly string[];
+  readonly matcher: RgMatcher;
   readonly scope: SearchScope;
 }
-
-export type SearchTextView = { kind: "lf" } | { kind: "raw"; snapshot: SearchFileSnapshot };
 
 /** Runs a search request and streams rg JSONL lines to `onLine`; returning false stops rg. */
 export type SearchRunner = (
   rgPath: string,
   request: SearchRequest,
   signal: AbortSignal | undefined,
-  onLine: (line: string, view: SearchTextView) => boolean | Promise<boolean>,
+  onLine: (line: string) => boolean | Promise<boolean>,
 ) => Promise<RgRunResult>;
+
+/** Search the original files; --crlf in the matcher makes CRLF one line break. */
+export const runRgSearch: SearchRunner = (rgPath, { matcher, scope }, signal, onLine) =>
+  runRg(
+    rgPath,
+    [
+      ...matcherArgs(matcher),
+      "--json",
+      "--line-number",
+      ...scopeArgs(scope),
+      "--",
+      ...scope.searchPaths,
+    ],
+    signal,
+    onLine,
+  );
 
 /** @internal — injectable process boundary for deterministic tests. */
 export interface GrepBackend {
   search: SearchRunner;
   runRgPaths: typeof runRgPaths;
-  resolveIgnoreCase: typeof resolveIgnoreCase;
   probeRegex: typeof probeRegex;
 }
 
@@ -95,15 +105,14 @@ interface SearchMatchesOptions {
   backend: GrepBackend;
   rgPath: string;
   scope: SearchScope;
-  patterns: readonly string[];
-  modes: SearchModes;
+  /** Scanned in order; translateQuery decides how patterns share a scan. */
+  matchers: readonly RgMatcher[];
   limit: number;
-  outputMode: "content" | "files" | "count";
   signal?: AbortSignal;
   warnings: string[];
 }
 
-/** What a matched file looked like when searched; content output re-verifies it before display. */
+/** A matched file when its first match arrived; content output re-verifies it before display. */
 export interface SearchFileSnapshot {
   revision: string;
   validUtf8: boolean;
@@ -137,28 +146,15 @@ export function fileReadWarning(
 }
 
 export async function searchMatches(options: SearchMatchesOptions) {
-  const { backend, rgPath, scope, patterns, modes, limit, outputMode, signal, warnings } = options;
-  // Content rows and multiline line mapping read the file; the text view already skips NUL files.
-  const needsSnapshot = outputMode === "content" || modes.multiline;
+  const { backend, rgPath, scope, matchers, limit, signal, warnings } = options;
   const raw: RgMatch[] = [];
+  // Every matched file is read once: NUL files are skipped, and validity decides anchors.
   const snapshots = new Map<string, SearchFileSnapshot>();
   let matchLimitReached = false;
   const unreadableFiles = new Set<string>();
   const seenMatches = new Set<string>();
-  // rg reports non-overlapping spans, so overlapping multiline OR patterns need separate scans.
-  const patternGroups = modes.multiline ? patterns.map((pattern) => [pattern]) : [patterns];
-  for (const group of patternGroups) {
-    const args = [...matcherArgs(modes), "--json", "--line-number"];
-    const normalized = group.map(normalizeLineEndings);
-    const matcher = [...args, ...normalized.flatMap((pattern) => ["-e", pattern])];
-    const request: SearchRequest = {
-      matcher,
-      scope,
-      ...(group.some((pattern, index) => pattern !== normalized[index])
-        ? { rawMatcher: [...args, ...group.flatMap((pattern) => ["-e", pattern])] }
-        : {}),
-    };
-    const run = await backend.search(rgPath, request, signal, async (line, view) => {
+  for (const matcher of matchers) {
+    const run = await backend.search(rgPath, { matcher, scope }, signal, async (line) => {
       if (raw.length >= limit) return false;
       let event: RgJsonEvent;
       try {
@@ -178,12 +174,7 @@ export async function searchMatches(options: SearchMatchesOptions) {
       const filePath = resolve(rgText(data.path));
       if (unreadableFiles.has(filePath)) return true;
       let snapshot = snapshots.get(filePath);
-      if (view.kind === "raw") {
-        if (snapshot && snapshot.revision !== view.snapshot.revision) throw searchChangedError();
-        snapshot = view.snapshot;
-        snapshots.set(filePath, snapshot);
-      }
-      if (!snapshot && needsSnapshot) {
+      if (!snapshot) {
         try {
           snapshot = await scanFileSnapshot(filePath, signal);
           if (!snapshot) {
@@ -199,17 +190,13 @@ export async function searchMatches(options: SearchMatchesOptions) {
           return true;
         }
       }
-      if (snapshot && snapshot.validUtf8 !== (view.kind === "lf")) throw searchChangedError();
       const startLine = data.line_number;
       const bytes = rgBytes(data.lines);
-      const text = bytes.toString("utf8");
-      const rawMatch =
-        view.kind === "raw" ? rawMatchRevision(bytes, startLine, data.absolute_offset) : undefined;
-      // Valid text is already the LF view; normalizing it twice would strip a content CR.
-      const matchedText = (view.kind === "raw" ? normalizeLineEndings(text) : text).replace(
-        /\n$/,
-        "",
-      );
+      // Invalid UTF-8 rows have no anchors, so their exact match bytes are verified instead.
+      const rawMatch = snapshot.validUtf8
+        ? undefined
+        : rawMatchRevision(bytes, startLine, data.absolute_offset);
+      const matchedText = normalizeLineEndings(bytes.toString("utf8")).replace(/\n$/, "");
       const addMatch = (match: RgMatch) => {
         const matchKey = `${filePath}\0${match.lineNumber}`;
         if (seenMatches.has(matchKey)) return true;
@@ -221,7 +208,7 @@ export async function searchMatches(options: SearchMatchesOptions) {
         }
         return true;
       };
-      if (!modes.multiline) {
+      if (!matcher.multiline) {
         return addMatch({
           filePath,
           lineNumber: startLine,
@@ -238,8 +225,7 @@ export async function searchMatches(options: SearchMatchesOptions) {
         bytes,
         startLine,
         submatches,
-        // Multiline always loads a snapshot above.
-        snapshot!.totalLines,
+        snapshot.totalLines,
         columns,
       );
       const texts = matchedText.split("\n");
