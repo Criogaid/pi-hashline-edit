@@ -1,11 +1,10 @@
-import { rejectsArgument, rejectsArguments } from "./argument-error.testing.ts";
+import { argumentError, rejectsArgument, rejectsArguments } from "./argument-error.testing.ts";
 /**
  * Deterministic grep override tests. Ripgrep and built-in grep are injected;
  * fixture files live only in a per-test system temporary directory.
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
 import fs from "node:fs";
 import { syncBuiltinESMExports } from "node:module";
 import { setTimeout as delay } from "node:timers/promises";
@@ -18,7 +17,8 @@ import { initTheme } from "@earendil-works/pi-coding-agent";
 import { theme } from "../../node_modules/@earendil-works/pi-coding-agent/dist/modes/interactive/theme/theme.js";
 import { computeLineHash } from "../core/hash.ts";
 import { makeGrepOverrideWithBackend, type GrepBackend } from "./grep-tool.ts";
-import { scopeArgs, type SearchRequest, type SearchTextView } from "./grep-search.ts";
+import { scopeArgs, type SearchRequest } from "./grep-search.ts";
+import { matcherArgs } from "./rg-process.ts";
 import { makeEditOverride } from "./edit-tool.ts";
 import { callTool } from "./tool-call.testing.ts";
 import { DEFAULT_CONFIG } from "./config.ts";
@@ -32,11 +32,9 @@ type FakeOptions = {
   code?: number | null;
   stderr?: string;
   validation?: Awaited<ReturnType<GrepBackend["probeRegex"]>>;
-  resolvedIgnoreCase?: boolean;
   error?: Error;
   onRun?: () => void;
   paths?: string[];
-  view?: SearchTextView;
 };
 
 async function withDir<T>(fn: (dir: string) => Promise<T>): Promise<T> {
@@ -56,6 +54,7 @@ function rgMatch(filePath: string, lineNumber: number, text: string, byteOffset?
       line_number: lineNumber,
       lines: { text },
       ...(byteOffset === undefined ? {} : { absolute_offset: byteOffset }),
+      submatches: [{ start: 0, end: Buffer.byteLength(text.replace(/\r?\n$/, "")) }],
     },
   });
 }
@@ -63,14 +62,13 @@ function rgMatch(filePath: string, lineNumber: number, text: string, byteOffset?
 function fakeBackend(options: FakeOptions = {}) {
   const calls: { path: string; request: SearchRequest }[] = [];
   const probes: Parameters<GrepBackend["probeRegex"]>[] = [];
-  const caseProbes: Parameters<GrepBackend["resolveIgnoreCase"]>[] = [];
   const backend: GrepBackend = {
     async search(path, request, _signal, onLine) {
       calls.push({ path, request });
       options.onRun?.();
       if (options.error) throw options.error;
       for (const line of options.lines ?? []) {
-        if (!(await onLine(line, options.view ?? { kind: "lf" })))
+        if (!(await onLine(line)))
           return { code: null, stderr: options.stderr ?? "", stopped: true };
       }
       return {
@@ -85,16 +83,12 @@ function fakeBackend(options: FakeOptions = {}) {
       }
       return { code: options.paths?.length ? 0 : 1, stderr: "", stopped: false };
     },
-    async resolveIgnoreCase(...args) {
-      caseProbes.push(args);
-      return args[3] ?? options.resolvedIgnoreCase ?? true;
-    },
     async probeRegex(...args) {
       probes.push(args);
       return { code: 1, stderr: "", ...options.validation };
     },
   };
-  return { backend, calls, probes, caseProbes };
+  return { backend, calls, probes };
 }
 
 const text = (result: any): string => result.content[0].text;
@@ -240,7 +234,7 @@ test("grep schema rejects empty search inputs and fractional context", async () 
     assert.equal(fake.calls.length, 0);
   }));
 
-test("case and multiline options select only their matching ripgrep flags", async () => {
+test("grep searches translated matchers with explicit engine, case, and line modes", async () => {
   await withDir(async (dir) => {
     const file = join(dir, "fixture.ts");
     await writeFile(file, "FOO\nfoo\n");
@@ -253,8 +247,14 @@ test("case and multiline options select only their matching ripgrep flags", asyn
       multiline: true,
       literal: true,
     });
-    assert.ok(fake.calls[0].request.matcher.includes("--ignore-case"));
-    assert.ok(fake.calls[0].request.matcher.includes("--multiline"));
+    const multilineArgs = matcherArgs(fake.calls[0].request.matcher);
+    assert.ok(multilineArgs.includes("--case-sensitive"));
+    assert.ok(multilineArgs.includes("--multiline"));
+    assert.ok(multilineArgs.includes("--crlf"));
+    assert.ok(multilineArgs.includes("--encoding=none"));
+    assert.ok(multilineArgs.includes("--engine=default"));
+    for (const flag of ["-i", "--ignore-case", "--smart-case", "--fixed-strings"])
+      assert.equal(multilineArgs.includes(flag), false);
     await call(tool, {
       literal: true,
       path: file,
@@ -262,8 +262,7 @@ test("case and multiline options select only their matching ripgrep flags", asyn
       ignoreCase: false,
       multiline: false,
     });
-    assert.ok(fake.calls.at(-1)?.request.matcher.includes("--case-sensitive"));
-    assert.ok(fake.calls.at(-1)?.request.matcher.includes("--no-multiline"));
+    assert.equal(fake.calls.at(-1)?.request.matcher.multiline, false);
   });
 });
 
@@ -313,24 +312,14 @@ test("formats parsed rg matches with full-line hash anchors", async () => {
     assert.match(output, /b\.ts · 1 match/);
     assert.match(output, new RegExp(`1#${computeLineHash(1, "alpha beta", 4)}│alpha beta`));
     assert.match(output, /3#[0-9A-Z]+│alpha only/);
-    assert.deepEqual(fake.calls[0], {
-      path: rgPath,
-      request: {
-        matcher: [
-          "--no-config",
-          "--color=never",
-          "--no-crlf",
-          "--engine=default",
-          "--no-multiline",
-          "--ignore-case",
-          "--fixed-strings",
-          "--json",
-          "--line-number",
-          "-e",
-          "alpha",
-        ],
-        scope: { globs: [], noIgnore: false, follow: false, searchPaths: [dir] },
-      },
+    assert.equal(fake.calls[0].path, rgPath);
+    assert.equal(fake.calls[0].request.matcher.engine, "default");
+    assert.equal(fake.calls[0].request.matcher.multiline, false);
+    assert.deepEqual(fake.calls[0].request.scope, {
+      globs: [],
+      noIgnore: false,
+      follow: false,
+      searchPaths: [dir],
     });
   });
 });
@@ -407,7 +396,7 @@ test("multiline grep rejects a zero-width match beyond the current EOF", async (
     for (const outputMode of ["content", "files", "count"]) {
       await expectToolFailure(
         call(makeGrepOverrideWithBackend(dir, DEFAULT_CONFIG, backend), {
-          pattern: "(?m)^",
+          pattern: "^",
           multiline: true,
           literal: false,
           outputMode,
@@ -535,7 +524,7 @@ test("context preserves logical CRLF anchors around a matched line", async () =>
   });
 });
 
-test("passes output flags and formats files and counts", async () => {
+test("grep applies scope filters and formats files and counts", async () => {
   await withDir(async (dir) => {
     const a = join(dir, "a.ts");
     const b = join(dir, "b.ts");
@@ -544,7 +533,6 @@ test("passes output flags and formats files and counts", async () => {
     const fake = fakeBackend({
       lines: [rgMatch(a, 1, "Foo a.b\n"), rgMatch(b, 1, "foo a.b\n")],
       paths: [a, b],
-      resolvedIgnoreCase: false,
     });
 
     const files = await call(makeGrepOverrideWithBackend(dir, DEFAULT_CONFIG, fake.backend), {
@@ -555,21 +543,8 @@ test("passes output flags and formats files and counts", async () => {
       outputMode: "files",
     });
     assert.equal(text(files), "a.ts\nb.ts");
-    assert.deepEqual(fake.calls[0].request.matcher, [
-      "--no-config",
-      "--color=never",
-      "--no-crlf",
-      "--engine=default",
-      "--no-multiline",
-      "--case-sensitive",
-      "--fixed-strings",
-      "--json",
-      "--line-number",
-      "-e",
-      "Foo",
-      "-e",
-      "a.b",
-    ]);
+    assert.equal(fake.calls.length, 1);
+    assert.equal(fake.calls[0].request.matcher.engine, "default");
     assert.deepEqual(scopeArgs(fake.calls[0].request.scope), [
       "--hidden",
       "--glob",
@@ -595,14 +570,13 @@ for (const diagnosticLineCount of [0, 80]) {
     initTheme("dark");
     const diagnostic = [
       "rg: regex parse error:",
-      "    (",
-      "    ^",
+      "    (?<=a+)b",
       ...Array.from({ length: diagnosticLineCount }, (_, index) => `diagnostic ${index}`),
-      "error: unclosed group",
+      "error: lookbehind assertion is not fixed length",
     ].join("\n");
     const fake = fakeBackend({ validation: { code: 2, stderr: diagnostic } });
     const tool = makeGrepOverrideWithBackend(process.cwd(), DEFAULT_CONFIG, fake.backend);
-    const args = { pattern: "(", literal: false };
+    const args = { pattern: "(?<=a+)b", literal: false };
     const failure: Awaited<ReturnType<typeof tool.execute>> = await callTool(tool, args);
     assert.equal(failure.isError, true);
     const errorText = failure.content
@@ -644,7 +618,7 @@ for (const diagnosticLineCount of [0, 80]) {
     }
     if (diagnosticLineCount) {
       assert.match(collapsed, /regex parse error/);
-      assert.doesNotMatch(collapsed, /unclosed group/);
+      assert.doesNotMatch(collapsed, /lookbehind assertion is not fixed length/);
       assert.ok(collapsed.split("\n").length < expanded.split("\n").length);
     }
   });
@@ -720,18 +694,16 @@ test("literal grep searches regex punctuation exactly without a regex probe", as
     assert.match(text(result), /1#[0-9A-Z]+│foo\(0\)/);
     assert.deepEqual(fake.probes, []);
     assert.equal(fake.calls.length, 1);
-    assert.ok(fake.calls[0].request.matcher.includes("--fixed-strings"));
-    assert.ok(fake.calls[0].request.matcher.includes("foo(0)"));
   }));
 
-test("regex probe outcomes allow search or stop it with diagnostics", async () =>
+test("grep regex probe outcomes allow search or stop it with diagnostics", async () =>
   withDir(async (dir) => {
     const file = join(dir, "regex.txt");
     await writeFile(file, "foo0\n");
     for (const validation of [
       { code: 0, stderr: "" },
       { code: 1, stderr: "" },
-      { code: 2, stderr: "Permission denied" },
+      { code: 2, stderr: "lookbehind assertion is not fixed length" },
       { code: 3, stderr: "" },
     ]) {
       const fake = fakeBackend({ lines: [rgMatch(file, 1, "foo0\n")], validation });
@@ -740,113 +712,86 @@ test("regex probe outcomes allow search or stop it with diagnostics", async () =
       if (validation.code <= 1) {
         assert.match(text(await result), /1#[0-9A-Z]+│foo0/);
         assert.equal(fake.calls.length, 1);
-        assert.ok(!fake.calls[0].request.matcher.includes("--fixed-strings"));
       } else {
-        await expectToolFailure(result, "RIPGREP_FAILED", (report) => {
-          assert.equal(report.exitCode, validation.code);
-          assert.equal(report.cause?.message, validation.stderr || undefined);
-        });
+        await expectToolFailure(
+          result,
+          validation.code === 2 ? "INVALID_REGEX" : "RIPGREP_FAILED",
+          (report) => {
+            if (validation.code !== 2) assert.equal(report.exitCode, validation.code);
+            assert.equal(report.cause?.message, validation.stderr || undefined);
+          },
+        );
         assert.equal(fake.calls.length, 0);
       }
-      assert.deepEqual(fake.probes, [[rgPath, ["foo(0)"], false, undefined]]);
-    }
-  }));
-
-test("invalid regex strings and arrays fail before search with explicit literal guidance", async () =>
-  withDir(async (dir) => {
-    for (const pattern of ["streamSimple(", ["plain", "streamSimple("]]) {
-      const fakeValidationDiagnostic = "regex parse error:\nerror: unclosed group";
-      const fake = fakeBackend({
-        validation: { code: 2, stderr: fakeValidationDiagnostic },
-      });
-      const tool = makeGrepOverrideWithBackend(dir, DEFAULT_CONFIG, fake.backend);
-      await expectToolFailure(
-        call(tool, { pattern, literal: false }),
-        "INVALID_REGEX",
-        (report) => {
-          assert.equal(report.cause?.message, fakeValidationDiagnostic);
-          assert.match(report.next ?? "", /literal.*true/);
-        },
-      );
       assert.equal(fake.probes.length, 1);
-      assert.deepEqual(fake.probes[0][1], typeof pattern === "string" ? [pattern] : pattern);
-      assert.equal(fake.calls.length, 0);
+      assert.equal(fake.probes[0][0], rgPath);
+      assert.equal(fake.probes[0][1].engine, "default");
+      assert.equal(fake.probes[0][1].multiline, false);
+      if (validation.code <= 1) assert.deepEqual(fake.probes[0][1], fake.calls[0].request.matcher);
     }
   }));
 
-test("unsupported regex syntax reports the Rust dialect hint before search", async () =>
+test("grep invalid JavaScript and unsearchable patterns reject their field before probing", async () =>
   withDir(async (dir) => {
-    for (const pattern of ["foo(?=bar)", "(foo)\\1", ["plain", "foo(?=bar)"]]) {
-      const fake = fakeBackend({
-        validation: { code: 2, stderr: "regex parse error:\nerror: unsupported syntax" },
-      });
-      const tool = makeGrepOverrideWithBackend(dir, DEFAULT_CONFIG, fake.backend);
-      await expectToolFailure(
-        call(tool, { pattern, literal: false }),
-        "INVALID_REGEX",
-        (report) => {
-          assert.match(report.cause?.message ?? "", /regex parse error/);
-          assert.match(
-            report.next ?? "",
-            /Rewrite.*pattern.*lookaround or backreferences.*replace/,
-          );
-        },
-      );
-      assert.equal(fake.probes.length, 1);
-      assert.equal(fake.calls.length, 0);
+    for (const { value, literal, reason, fix } of [
+      { value: "(", literal: false, reason: /Invalid regular expression/, fix: undefined },
+      { value: "(?m)^foo", literal: false, reason: /Invalid regular expression/, fix: undefined },
+      { value: "\\n", literal: false, reason: /each line.*line break/, fix: /multiline.*true/ },
+      { value: "\n", literal: true, reason: /each line.*line break/, fix: /multiline.*true/ },
+      {
+        value: "\\uD83D",
+        literal: false,
+        reason: /surrogate pair/,
+        fix: /whole characters.*group/,
+      },
+    ]) {
+      for (const pattern of [value, ["plain", value]]) {
+        const fake = fakeBackend();
+        const tool = makeGrepOverrideWithBackend(dir, DEFAULT_CONFIG, fake.backend);
+        const field = typeof pattern === "string" ? "pattern" : "pattern[1]";
+        await assert.rejects(call(tool, { pattern, literal }), (error: unknown) => {
+          rejectsArgument(field, reason)(error);
+          const issue = argumentError(error).issues.find((issue) => issue.field === field);
+          if (fix) assert.match(issue?.fix ?? "", fix);
+          return true;
+        });
+        assert.equal(fake.probes.length, 0);
+        assert.equal(fake.calls.length, 0);
+      }
     }
   }));
 
-test("grep forwards whole queries and applies resolved case mode to searches", async () => {
-  await withDir(async (dir) => {
-    const target = join(dir, "case.ts");
-    await writeFile(target, "FOO alpha\n");
-    for (const [pattern, literal, resolvedIgnoreCase] of [
-      [["foo", "alpha"], true, true],
-      [["Foo", "alpha"], true, false],
-      ["lower", true, true],
-      ["Upper", true, false],
-      ["foo\\S*", false, true],
-    ] as const) {
-      const fake = fakeBackend({
-        resolvedIgnoreCase,
-        lines: resolvedIgnoreCase ? [rgMatch(target, 1, "FOO alpha\n")] : [],
+test("grep probes each matcher before searching and separates multiline OR scans", async () =>
+  withDir(async (dir) => {
+    for (const multiline of [false, true]) {
+      const fake = fakeBackend();
+      const tool = makeGrepOverrideWithBackend(dir, DEFAULT_CONFIG, {
+        ...fake.backend,
+        search(...args) {
+          assert.equal(fake.probes.length, multiline ? 2 : 1);
+          return fake.backend.search(...args);
+        },
       });
-      const result = await call(makeGrepOverrideWithBackend(dir, DEFAULT_CONFIG, fake.backend), {
-        pattern,
-        literal,
-      });
-      assert.deepEqual(fake.caseProbes, [
-        [
-          rgPath,
-          typeof pattern === "string" ? [pattern] : pattern,
-          { literal, multiline: false },
-          undefined,
-          undefined,
-        ],
-      ]);
-      assert.equal(fake.calls.length, 1);
-      const matcher = fake.calls[0].request.matcher;
-      assert.equal(matcher.includes("--ignore-case"), resolvedIgnoreCase);
-      assert.equal(matcher.includes("--case-sensitive"), !resolvedIgnoreCase);
-      if (resolvedIgnoreCase) assert.match(text(result), /FOO alpha/);
-      else assert.equal(reportOf(result)?.matches, 0);
+      await call(tool, { pattern: ["foo", "bar(?=baz)"], literal: false, multiline });
+      assert.equal(fake.calls.length, multiline ? 2 : 1);
+      assert.deepEqual(
+        fake.probes.map((probe) => probe[1]),
+        fake.calls.map((call) => call.request.matcher),
+      );
+      assert.deepEqual(
+        fake.calls.map((call) => call.request.matcher.engine),
+        multiline ? ["default", "pcre2"] : ["pcre2"],
+      );
     }
-  });
-});
+  }));
 
-test("OR pattern arrays are not limited by the former AND filter", async () => {
+test("grep OR arrays accept more than sixteen patterns in one line scan", async () => {
   await withDir(async (dir) => {
     const fake = fakeBackend();
     const tool = makeGrepOverrideWithBackend(dir, DEFAULT_CONFIG, fake.backend);
     const patterns = Array.from({ length: 17 }, (_, index) => `pattern${index}`);
     assert.equal(reportOf(await call(tool, { literal: true, pattern: patterns }))?.matches, 0);
-    assert.deepEqual(
-      fake.calls[0].request.matcher.flatMap((arg, index, args) =>
-        args[index - 1] === "-e" ? [arg] : [],
-      ),
-      patterns,
-    );
+    assert.equal(fake.calls.length, 1);
   });
 });
 
@@ -895,7 +840,7 @@ test("reports empty output and ripgrep execution failures", async () => {
     const failed = fakeBackend({ code: 2, stderr: "bad regex" });
     await expectToolFailure(
       call(makeGrepOverrideWithBackend(dir, DEFAULT_CONFIG, failed.backend), {
-        pattern: "[",
+        pattern: "x",
         literal: false,
       }),
       "SEARCH_INCOMPLETE",
@@ -959,12 +904,7 @@ test("OR patterns count each matched line once", async () => {
       limit: 5000,
     });
     assert.match(text(result), /fixture\.ts: 4097/);
-    assert.deepEqual(
-      fake.calls[0].request.matcher.flatMap((arg, index, args) =>
-        args[index - 1] === "-e" ? [arg] : [],
-      ),
-      ["foo", "bar"],
-    );
+    assert.equal(fake.calls.length, 1);
   });
 });
 
@@ -986,7 +926,7 @@ test("long candidate lines remain countable without content previews", async () 
   });
 });
 
-test("grep previews invalid UTF-8 without anchors and skips NUL hits that require snapshots", async () => {
+test("grep previews invalid UTF-8 without anchors and skips NUL hits in every mode", async () => {
   await withDir(async (dir) => {
     const invalid = join(dir, "invalid.txt");
     const source = Buffer.from([0x61, 0x0a, 0xc3, 0x28, 0x0a]);
@@ -994,14 +934,6 @@ test("grep previews invalid UTF-8 without anchors and skips NUL hits that requir
     const fake = fakeBackend({
       lines: [rgMatch(invalid, 1, "a\n", 0)],
       paths: [invalid],
-      view: {
-        kind: "raw",
-        snapshot: {
-          revision: createHash("sha256").update(source).digest("hex"),
-          validUtf8: false,
-          totalLines: 2,
-        },
-      },
     });
     const result = await call(makeGrepOverrideWithBackend(dir, DEFAULT_CONFIG, fake.backend), {
       literal: true,
@@ -1019,10 +951,11 @@ test("grep previews invalid UTF-8 without anchors and skips NUL hits that requir
     const binarySource = Buffer.from("a\nb\0c");
     await writeFile(binary, binarySource);
     const binaryBackend = fakeBackend({ lines: [rgMatch(binary, 1, "a\n")], paths: [binary] });
-    // Single-line files/count filtering belongs to runRgTextView and is covered by real-rg tests.
     for (const { outputMode, multiline } of [
       { outputMode: "content", multiline: false },
       { outputMode: "content", multiline: true },
+      { outputMode: "files", multiline: false },
+      { outputMode: "count", multiline: false },
       { outputMode: "files", multiline: true },
       { outputMode: "count", multiline: true },
     ] as const) {
@@ -1037,7 +970,7 @@ test("grep previews invalid UTF-8 without anchors and skips NUL hits that requir
   });
 });
 
-test("single-line files and count modes do not reread a matched file after it disappears", async () => {
+test("grep files and count modes diagnose a file lost before its first-match read", async () => {
   await withDir(async (dir) => {
     const file = join(dir, "listed.txt");
     for (const outputMode of ["files", "count"] as const) {
@@ -1051,15 +984,18 @@ test("single-line files and count modes do not reread a matched file after it di
           return fake.backend.search(...args);
         },
       };
-      const result = await call(makeGrepOverrideWithBackend(dir, DEFAULT_CONFIG, backend), {
-        literal: true,
-        pattern: "needle",
-        path: file,
-        outputMode,
-      });
-      assert.equal(text(result), outputMode === "files" ? "listed.txt" : "listed.txt: 1");
-      assert.equal(reportOf(result)?.matches, 1);
-      assert.equal(reportOf(result)?.diagnostics, undefined);
+      await expectToolFailure(
+        call(makeGrepOverrideWithBackend(dir, DEFAULT_CONFIG, backend), {
+          literal: true,
+          pattern: "needle",
+          path: file,
+          outputMode,
+        }),
+        "SEARCH_INCOMPLETE",
+        (report) => {
+          assert.match(report.diagnostics ?? "", /Could not read .*listed\.txt: ENOENT/);
+        },
+      );
       assert.equal(fake.calls.length, 1);
       await assert.rejects(readFile(file), { code: "ENOENT" });
     }
