@@ -59,13 +59,18 @@ export interface GrepBackend {
   runRgLines: typeof runRgLines;
 }
 
-/** The only place scope becomes rg flags. */
+/**
+ * The only place scope becomes rg flags. Traversal that respects ignore rules also skips
+ * `.git` directories, which `--hidden` would otherwise search; a named path is still searched.
+ * The exclusion follows the caller's globs, because a later rg glob takes precedence.
+ */
 export function scopeArgs(scope: SearchScope): string[] {
   return [
     "--hidden",
     ...(scope.noIgnore ? ["--no-ignore"] : []),
     ...(scope.follow ? ["--follow"] : []),
     ...scope.globs.flatMap((glob) => ["--glob", glob]),
+    ...(scope.noIgnore ? [] : ["--glob", "!.git"]),
   ];
 }
 

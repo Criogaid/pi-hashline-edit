@@ -169,7 +169,7 @@ export function makeGrepOverrideWithBackend(
     name: "grep" as const,
     label: "grep",
     description:
-      "Search file contents. Content mode returns LINE#HASH edit anchors for valid UTF-8 and plain line numbers without anchors otherwise; files/count modes return paths or matching-line counts. NUL-containing files are skipped. Directory searches respect ignore rules and skip linked directories. Use grep instead of rg or grep in a shell to search files; use the shell only for ignored or linked directories, or to filter another command's output.",
+      "Search file contents. Content mode returns LINE#HASH edit anchors for valid UTF-8 and plain line numbers without anchors otherwise; files/count modes return paths or matching-line counts. NUL-containing files are skipped. Directory searches respect ignore rules and skip .git and linked directories. Use grep instead of rg or grep in a shell to search files; use the shell only for ignored, .git, or linked directories, or to filter another command's output.",
     promptSnippet: "Search file contents",
     promptGuidelines: [
       "When you need several independent searches, send them as separate grep calls in one response; they run in parallel.",
