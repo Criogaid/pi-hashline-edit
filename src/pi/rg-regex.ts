@@ -23,6 +23,7 @@ type Ranges = readonly (readonly [number, number])[];
 const LF = 0x0a;
 const REPLACEMENT = 0xfffd;
 const MAX_UNIT = 0xffff;
+const MAX_ASCII = 0x7f;
 const MAX_SCALAR = 0x10ffff;
 const SURROGATES: Ranges = [[0xd800, 0xdfff]];
 const SUPPLEMENTARY: Ranges = [[0x10000, MAX_SCALAR]];
@@ -52,6 +53,8 @@ const SPACE: Ranges = [
 const MAX_EXACT_REPEAT = 16;
 /** Case folding expands a positive set of at most this many characters; larger sets match anything. */
 const MAX_FOLDED_CHARS = 256;
+/** Bound finite v-class enumeration by total UTF-16 units, counting an empty string as one. */
+const MAX_CLASS_SEED_UNITS = 256;
 
 /** The bytes a lossy decoder shows as U+FFFD: every byte of a malformed sequence is 0x80–0xFF. */
 const MALFORMED = "(?-u:[\\x80-\\xff])+";
@@ -241,6 +244,91 @@ function characterSet(node: AST.CharacterSet, ctx: Context): string {
   }
 }
 
+type ClassSeedNode =
+  | AST.CharacterClass
+  | AST.CharacterClassElement
+  | AST.ClassIntersection
+  | AST.ClassSubtraction;
+
+/** Representatives before case folding; an intersection needs only one bounded operand. */
+function classSeeds(node: ClassSeedNode, ctx: Context): readonly string[] | undefined {
+  let seeds: string[];
+  switch (node.type) {
+    case "Character":
+      return [String.fromCodePoint(node.value)];
+    case "ExpressionCharacterClass":
+      return node.negate ? undefined : classSeeds(node.expression, ctx);
+    case "ClassIntersection":
+      return classSeeds(node.left, ctx) ?? classSeeds(node.right, ctx);
+    case "ClassSubtraction":
+      return classSeeds(node.left, ctx);
+    case "CharacterClass":
+      if (node.negate) return undefined;
+      seeds = [];
+      for (const child of node.elements) {
+        const part = classSeeds(child, ctx);
+        if (!part) return undefined;
+        seeds.push(...part);
+        if (seeds.length > MAX_CLASS_SEED_UNITS) return undefined;
+      }
+      break;
+    case "ClassStringDisjunction":
+      seeds = node.alternatives.map(({ elements }) =>
+        elements.map(({ value }) => String.fromCodePoint(value)).join(""),
+      );
+      break;
+    default: {
+      const ranges =
+        node.type === "CharacterSet" &&
+        node.kind === "property" &&
+        node.key === "ASCII" &&
+        !node.negate
+          ? ([[0, MAX_ASCII]] as const)
+          : elementSet(node, ctx);
+      if (!ranges || total(ranges) > MAX_CLASS_SEED_UNITS) return undefined;
+      seeds = [];
+      for (const [low, high] of ranges)
+        for (let point = low; point <= high; point++) seeds.push(String.fromCodePoint(point));
+    }
+  }
+  return seeds.reduce((sum, seed) => sum + Math.max(1, seed.length), 0) <= MAX_CLASS_SEED_UNITS
+    ? seeds
+    : undefined;
+}
+
+function finiteClass(
+  node: AST.CharacterClass | AST.ExpressionCharacterClass,
+  ctx: Context,
+): string | undefined {
+  // Repetition may add ignoreCase, but membership belongs to the original capture's scope.
+  const ignoreCase = ignoreCaseAt(node, ctx);
+  const seeds = classSeeds(node, { ...ctx, ignoreCase });
+  if (!seeds) return undefined;
+  const membership = new RegExp(`^(?:${node.raw})$`, ignoreCase ? "iv" : "v");
+  const characters: [number, number][] = [];
+  const strings: string[] = [];
+  const outputContext = { ...ctx, ignoreCase: ctx.ignoreCase || ignoreCase };
+  for (const seed of new Set(seeds)) {
+    if (!membership.test(seed)) continue;
+    const points = [...seed].map((char) => char.codePointAt(0)!);
+    if (points.length === 1) characters.push([points[0], points[0]]);
+    else
+      strings.push(
+        points
+          .map((point) => unit(folded([[point, point]], outputContext), outputContext))
+          .join(""),
+      );
+  }
+  const choices = [
+    ...(characters.length
+      ? [unit(folded(normalize(characters), outputContext), outputContext)]
+      : []),
+    ...strings,
+  ];
+  if (!choices.length) return NEVER;
+  return choices.length === 1 ? choices[0] : `(?:${choices.join("|")})`;
+}
+
 function assertion(node: AST.Assertion, ctx: Context, position: Position): string {
   // Repeated text held its assertions where the group matched, not where it repeats.
   if (ctx.repeated) return "";
@@ -288,7 +376,8 @@ function modified(node: AST.Group, ctx: Context): Context {
   if (!add) return ctx;
   return {
     ...ctx,
-    ignoreCase: add.ignoreCase || (!remove?.ignoreCase && ctx.ignoreCase),
+    // A capture's modifiers cannot remove case variants allowed where its text is repeated.
+    ignoreCase: add.ignoreCase || ((ctx.repeated || !remove?.ignoreCase) && ctx.ignoreCase),
     multilineAnchors: add.multiline || (!remove?.multiline && ctx.multilineAnchors),
   };
 }
@@ -359,9 +448,9 @@ function element(node: AST.Element, ctx: Context, position: Position): string {
       if (node.value === LF) return NEVER;
       return unit(folded([[node.value, node.value]], ctx), ctx);
     case "CharacterClass":
-      return characterClass(node, ctx);
+      return (ctx.unicodeSets ? finiteClass(node, ctx) : undefined) ?? characterClass(node, ctx);
     case "ExpressionCharacterClass":
-      return node.negate ? unit(everything(ctx), ctx) : ANY_TEXT;
+      return finiteClass(node, ctx) ?? (node.negate ? unit(everything(ctx), ctx) : ANY_TEXT);
     case "CharacterSet":
       return characterSet(node, ctx);
     case "Assertion":

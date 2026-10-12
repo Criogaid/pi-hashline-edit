@@ -35,6 +35,7 @@ const pieces = [
     "Σ",
     "σ",
     "ς",
+    "\u0558",
   ].map((text) => Buffer.from(text)),
   ...[[0x80], [0xc3], [0xe2, 0x82], [0xed, 0xa0, 0x80], [0xf0, 0x9f, 0x98], [0xff]].map((bytes) =>
     Buffer.from(bytes),
@@ -61,6 +62,33 @@ const patterns = [
   "[\\p{ASCII}&&\\p{Letter}]",
   "[\\p{Letter}--[a]]",
   "[\\q{ab|😀}]",
+  "[[a-c]&&[b-d]]",
+  "[[a-c]--[b]]",
+  "[\\p{Letter}&&[a-c]]",
+  "[[a-c]--\\p{Uppercase_Letter}]",
+  "[a[bc]\\q{de|fg}]",
+  "[\\q{ab|cd}&&\\q{cd|ef}]",
+  "[\\q{ab|cd}--\\q{cd}]",
+  "[\\q{ab|}]",
+  "[[a]--[a]]",
+  "[[^a]&&[ab]]",
+  "[[ab]--[^a]]",
+  "[^[a]--[b]]",
+  "[\\q{\\uFFFD|a\\uFFFDb|😀|\\r|\\u2028}]",
+  "[\\q{ab|a}]+",
+  "[[Kkſs]--[k]]",
+  "(?i:[\\q{ks|ab}])",
+  "(?-i:[[aA]--[A]])",
+  "([[a]--[A]])\\1",
+  "([[a]--[A]])(?i:\\1)",
+  "((?-i:[[a]--[A]]))(?i:\\1)",
+  "((?-i:[\\q{a|b}]))(?i:\\1)",
+  "((?-i:a))(?i:\\1)",
+  "(?i:([\\q{ks|ab}]))\\1",
+  "[\\q{\\u0558|a}&&\\p{Letter}]",
+  "[[\\u0100-\\u0300]&&[ſı]]",
+  "[[\\u0100-\\u0300]--[ſ]]",
+  `[\\q{${"a".repeat(300)}|b}]`,
   "(?m:^)",
   "(?m:$)",
   "(?-m:^)",
@@ -128,7 +156,7 @@ test("Cartesian adversarial bytes × syntax × flags × assertion positions → 
   let listedRows = 0;
   let nativeRows = 0;
   for (const atom of patterns) {
-    for (const flags of ["", "m", "iu", "v"]) {
+    for (const flags of ["", "m", "iu", "v", "iv", "mv"]) {
       // Wrapping places each assertion inside a consuming sequence as well as at its edges.
       for (const queryPatterns of [[atom], [`a(?:${atom})b`], [atom, "Z"]]) {
         const query: GrepQuery = {
