@@ -42,9 +42,24 @@ export async function resolveSearchPaths(cwd: string, path: string | string[] | 
   return { searchPaths, pathInfo };
 }
 
-function fileKey(path: string): string {
+/** Groups spellings that a case-insensitive filesystem may treat as one file. */
+const foldedKey = (path: string): string => resolve(path).toLowerCase();
+
+/** Whether rg listed the named file, possibly under its on-disk case spelling. */
+async function isListed(path: string, listed: ReadonlyMap<string, readonly string[]>) {
+  const spellings = listed.get(foldedKey(path)) ?? [];
   const absolute = resolve(path);
-  return process.platform === "win32" ? absolute.toLowerCase() : absolute;
+  if (spellings.some((spelling) => resolve(spelling) === absolute)) return true;
+  if (!spellings.length) return false;
+  const identity = (spelling: string) =>
+    stat(spelling, { bigint: true }).then(
+      ({ dev, ino }) => `${dev}:${ino}`,
+      () => undefined,
+    );
+  const named = await identity(path);
+  for (const spelling of spellings)
+    if (named !== undefined && (await identity(spelling)) === named) return true;
+  return false;
 }
 
 export async function filterExplicitFilesByGlob(
@@ -59,7 +74,7 @@ export async function filterExplicitFilesByGlob(
   if (scope.globs.length === 0 || explicitFiles.length === 0) return paths.map(({ path }) => path);
 
   const parents = [...new Set(explicitFiles.map(({ path }) => dirname(path)))];
-  const allowed = new Set<string>();
+  const allowed = new Map<string, string[]>();
   // Direct file arguments bypass ignore and symlink traversal; let only the ordered globs decide admission.
   const args = [
     ...COMMON_RG_ARGS,
@@ -71,11 +86,13 @@ export async function filterExplicitFilesByGlob(
     ...parents,
   ];
   const listed = await backend.runRgPaths(rgPath, args, signal, async (path) => {
-    allowed.add(fileKey(path));
+    const key = foldedKey(path);
+    allowed.set(key, [...(allowed.get(key) ?? []), path]);
     return true;
   });
-  recordSearchDiagnostics(listed, warnings);
-  return paths
-    .filter(({ path, isFile }) => !isFile || allowed.has(fileKey(path)))
-    .map(({ path }) => path);
+  const admitted = new Set<string>();
+  for (const { path } of explicitFiles) if (await isListed(path, allowed)) admitted.add(path);
+  // Listing diagnostics about sibling entries matter only when they may explain an exclusion.
+  if (admitted.size < explicitFiles.length) recordSearchDiagnostics(listed, warnings);
+  return paths.filter(({ path, isFile }) => !isFile || admitted.has(path)).map(({ path }) => path);
 }
