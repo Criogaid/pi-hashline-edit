@@ -1,34 +1,26 @@
 # Pi Hashline Edit
 
-pi 扩展 `@criogaid/pi-hashline-edit`，注册入口为 `src/index.ts`。
+pi 扩展 `@criogaid/pi-hashline-edit`，注册入口为 `src/index.ts`。它替换 Pi 内置的 `read`、`grep`、`edit`、`write`，并新增 `replace` 与可选的 `forget`。
 
 ## 按任务定位
 
-- Keep `src/core/` independent of Pi: line handling, checksums, decoding, errors, edit (`apply.ts`), replace (`replace.ts`), and JavaScript search (`search.ts`). Core engines trust inputs validated at tool entry.
-- `src/pi/`：工具注册、配置、渲染、grep 与 ripgrep 进程层、文件提交和 Action Fusion。
-- Use `src/pi/file-read.ts` for guarded stream and whole-file reads; keep byte revision checks in search and commit owners.
-- Define replacement rules in `src/core/replace-schema.ts` and search results in `src/core/search-schema.ts`. Validate worker replies with `src/pi/regex-worker-contract.ts`; keep shared worker lifecycle in `src/pi/regex-worker.ts` and cause transport in `src/pi/report-cause.ts`. Workers trust inputs validated at tool entry and never import the Pi runtime.
-- `src/integration/`：真实后端集成测试。
-- Use `src/testing/` for shared test environment and installed-package fixtures. Run suites through npm scripts to exclude inherited Node loaders and personal Pi settings.
-- 改工具参数、用户可见行为或配置时，核对 `README.md` 中对应契约。
+- 改 `src/core/` 前读 `src/core/AGENTS.md`，改 `src/pi/` 或 `src/index.ts` 前读 `src/pi/AGENTS.md`：模块职责和该层的实现约束只写在那里。
+- `src/core/`：不依赖 Pi 的纯引擎（行处理、checksum、解码、错误、edit、replace、JavaScript 搜索），无公开 API。
+- `src/pi/`：工具注册、配置、参数校验、报告与渲染、grep 与 ripgrep 进程层、regex worker、文件提交、Action Fusion 和 forget。
+- `src/integration/`：真实后端集成测试；`src/testing/`：共享测试环境与安装包 fixture。
+- 改工具参数、用户可见行为或配置时，核对 `README.md` 中对应契约（工具参数、输出预算、恢复语义、发布状态）。
 - 改 pi API、生命周期或 TUI 集成时，查看当前安装版本的 pi 文档和类型声明。
 - 涉及发布时，核对 `.github/workflows/publish.yml` 与 `package.json`。
 
 ## 行为契约
 
-- 保留结构化 JSON edits、纯函数 applicator 和批次校验；文件修改复用 `withFileMutationQueue` 与现有提交层。
-- Plan `copy/move` in `src/core/apply.ts` against original line ranges; capture text and separators without moving or duplicating the file-header BOM. Treat source reads separately from mutation conflicts, keep destinations in original coordinates, reject interior move destinations, and make adjacent moves no-ops. Reuse the shared commit and Fusion pipeline.
+- 保留结构化 JSON edits、纯函数 applicator 和批次校验；文件修改复用 `withFileMutationQueue` 与现有提交层（`src/pi/file-commit.ts` 是唯一发布路径）。
 - 文本编辑保留 BOM、行尾和未触及字节。无效 UTF-8、NUL 或非法单行正文应在写入前拒绝。`read` 用 Pi 的图片识别接口将受支持图片交给原生工具；含 NUL 文件也委托原生 read，其余无效 UTF-8 拒绝。
 - Classify only Node's confirmed malformed UTF-8 error as `UNSUPPORTED_ENCODING`; preserve other decoder failures and their causes. Streaming validity checks catch only `Utf8DecodingError`.
 - `edit` 的空正文行是实际逻辑行；末尾空行需要终止符才能保留时补上终止符，BOM-only 单行除外。非空末行保留原有最终换行状态。
 - Use the shared CRLF-to-LF view for valid UTF-8 in `read/grep/edit/replace`; standalone CR and literal source escapes remain content. Map mutation offsets back to the original bytes; `write` uses the supplied full content and line endings exactly.
 - Skip NUL files in grep. Keep invalid UTF-8 output as plain preview rows; matching uses the lossy preview text. Verify every matched file against the full revision it was matched on, in every output mode.
-- Validate grep patterns and flags with V8 at tool entry; resolve case overrides once into `GrepQuery.flags` (`src/core/search.ts`). Native `RegExp` in `src/core/search.ts` decides every grep match on the LF view; rg only lists candidates and never decides a match.
-- Translate a non-multiline query only in `src/pi/rg-regex.ts`, into rg patterns that list every line the query matches: keep a construct only where both engines give it the same meaning over the original line bytes (CRLF, malformed UTF-8, surrogate halves included), and otherwise widen it; never narrow. Bound fixed-width assertion constraints, finite capture bindings, string expansion, and emitted patterns. Preserve every alternative, including branches outside an impossible capture. Workers re-check candidates. A multiline query, unsupported or oversized translation, or pattern rg rejects before reporting a file uses the file prefilter.
-- Own interval algebra, bounded membership caching, and explicit class-string enumeration in `src/core/character-set.ts`; derive Unicode properties, `v` sets, and case closure from the running V8 rather than separate Unicode tables. Intersections may enumerate either string operand, subtractions only the left, and unions require every operand. Keep original scoped case flags for membership even when translating a backreference; apply repetition case widening afterward through the existing byte translator. Unknown string properties remain widened.
-- Derive necessary file conditions in `src/core/search-analysis.ts` as bounded AND/OR literal clauses. Preserve every OR alternative, retain necessary prefixes or suffixes when expansion is too large, and cut literals where bytes can differ from the LF view. Derive case equivalence in `src/core/case-fold.ts`. Own clause intersection and bounded retained paths in `runCandidatePaths` (`src/pi/rg-process.ts`); overflowing retention falls back to one necessary clause. Unknown constructs widen candidates, never narrow them.
-- Keep grep matching in the bounded, cancellable worker pool of `src/pi/grep-search.ts`; use `scanTextFile` for guarded source reads and the existing grep snapshot/output pipeline. Document file and worker budgets and physical-line semantics in README.
-- Render reports through `src/pi/render.ts` from structured `details.report`; decode Pi's text-only argument rejections with the current wire schema. Use `src/pi/diagnostic-buffer.ts` for bounded stderr and search diagnostics.
+- Validate grep patterns and flags with V8 at tool entry; resolve case overrides once into `GrepQuery.flags`. Native `RegExp` in `src/core/search.ts` decides every grep match on the LF view; rg only lists candidates and never decides a match. Candidate derivation may widen but never narrow.
 - 行 hash 是可碰撞的位置相关 checksum。恢复候选由调用方重新提交验证；range 验证边界见 README。
 - `edit/replace` 提交绑定实际读取字节的 revision。工具结果使用 `publishedRevision`；Action Fusion 以 mutation 返回的 `publishedRevision` 为 freshness 基线。
 - Return successful mutations as one report without anchor rows; keep anchors in read/grep output and edit failure diagnostics. Keep diffs in mutation details for the TUI.
@@ -36,7 +28,7 @@ pi 扩展 `@criogaid/pi-hashline-edit`，注册入口为 `src/index.ts`。
 - Action Fusion 通过 `ctx.executeTool("bash", ...)` 调用会话中的 Bash，遵循 override、`tool_call` 和 `tool_result` 钩子；以最终会话结果判定命令状态并向父结果传递 `terminate`，命令失败不回滚已发布文件。
 - 配置字段为 `hashlineEdit`。项目 `.pi/settings.json` 的该字段整体替换全局字段；每个设置项单独校验，缺失或非法时回退默认值。类型、范围和默认值只在 `src/pi/config.ts` 的 schema 中定义。全局路径通过 `getAgentDir()` 获取。
 - 工具在注册时接收解析后的配置并在生命周期内保持不变；修改配置需要 reload。
-- Define output sizing in `src/pi/budgets.ts` and cache it per extension in `src/pi/model-budgets.ts`; derive byte allowances only from the selected model's declared capacity, never remaining context. Share the provider with preparation, capture an immutable snapshot before each execution's asynchronous work, and keep explicit `read.maxKiB` as the read cap; model-derived content budgets share the `MAX_CONTENT_KIB` ceiling the explicit range also uses. Bound worker failures only in the receiving tool.
+- Derive output byte budgets only from the selected model's declared capacity, never remaining context; an explicit `read.maxKiB` overrides only the read cap.
 
 ## 编码约定
 
@@ -49,18 +41,14 @@ pi 扩展 `@criogaid/pi-hashline-edit`，注册入口为 `src/index.ts`。
 - 同类工具共用同一条执行流程，工具只实现自己独有的部分。
 - 同一类失败（如取消、校验失败）使用一致的报错形式。
 - Every tool result states its facts in one report (`src/pi/report-schema.ts` defines each field, its owner, and each code's facts and recovery; `src/pi/report.ts` builds and serializes it as one JSON object). A success report follows the content payload; a failure report is the whole `isError` result. Layers return structured facts and never append sentences or bracket notices; each fact has one owner, so it appears once. Throw sites classify failures as `HashlineError` with a code and the facts its schema requires; `message` describes only the throwing step, a failure beneath that step is `cause`; native diagnostics remain directly in `message`, without a synthetic wrapper, and `next` is derived from the code and publication (a throw site may only select one of the code's named alternatives). Text shared by success and failure (such as `REREAD`) is defined once in the schema module.
-- Validate text-only reports with the closed wire schemas in `report-schema.ts`; require code-specific facts. Serialize only report facts. Preserve underlying cause chains and aggregate branches; skip cyclic and repeated native errors. Derive Fusion progress from `ACTION_FUSION_PROGRESS_SCHEMA` and validate persisted command cards in `fusion-card.ts` before restoring state.
-- Keep Pi argument preparation and original-schema acceptance in `argument-validation.ts`; observe prepared failures without reimplementing coercion or optional-null rules. Keep failure-only schema projection and structured aggregation in `argument-diagnostics.ts`; derive branches, choices, and the explanations of missing, forbidden, and pattern-mismatched fields from the declared schema, suppress only inapplicable or already explained issues, and retain independent fields with bounded native diagnostics.
-- Keep the JSON argument-error envelope and its byte budget in `argument-error.ts`; retain exact field paths, omit whole issues or the argument copy with explicit markers, and never truncate serialized JSON. Use the same envelope for preparation failures.
-- Keep grep scope error classification in `grep-scope.ts`: only `ENOENT` means `PATH_NOT_FOUND`; preserve other filesystem errors.
 - 依赖外部引擎语义的判断交给该引擎本身，不在本地重新实现或近似。
 
 ## 测试标准
 
-- 每条测试保护一条可对外说明的契约：README、本文件的行为契约，或一个已发生的 bug。说不出保护什么，就不写。
+- 每条测试保护一条可对外说明的契约：README、AGENTS.md 的行为契约，或一个已发生的 bug。说不出保护什么，就不写。
 - Do not use Claude for new model-backed experiments.
 - 在能暴露问题的最低层级写：`core/` 纯函数优先，其次是工具层，最后才是跨工具流程。能在 `apply.test.ts` 里测的边界，不经文件系统在 `execute.test.ts` 里测。
-- 工具层测试通过 `callTool` 按生产顺序驱动，不为测试开辟生产中不存在的调用路径。
+- 工具层测试通过 `tool-call.testing.ts` 的 `callTool` 按生产顺序驱动，包括非法输入，不为测试开辟生产中不存在的调用路径。
 - 优先断言行为和状态：文件字节、`publishedRevision`、返回结构、错误码。提示语只断言关键部分，预算数值引用 `budgets.ts` 的常量，不写死。
 - 同一契约只测一遍。多个输入变体用表驱动；`edit` 与 `replace` 等共用流程的行为，写成一个共享用例跑多个工具。
 - 渲染测试必须断言用户可见的具体内容。只验证“不抛错”的用例不写。
@@ -69,19 +57,20 @@ pi 扩展 `@criogaid/pi-hashline-edit`，注册入口为 `src/index.ts`。
 - 一条测试只因一种原因失败；名字写成“条件 → 行为”。
 - 依赖真实 ripgrep、超大文件或平台差异的测试放 `src/integration/`，不进每次提交都跑的 `npm test`。
 
-## 验证
+测试布局：`*.test.ts` 与源码相邻。`registration.test.ts` 覆盖配置接线，`read.test.ts` 覆盖 read，`execute.test.ts` 覆盖 edit 与共享 mutation 流程，`failure-path.test.ts` / `result-safety.test.ts` 覆盖发布失败与结果安全，`argument-validation.test.ts` 经工具入口覆盖组合参数失败。`forget.test.ts` 用 `forget.testing.ts` 的本地模型 fixture 驱动真实 Pi 会话，`src/integration/forget-grep.test.ts` 用同一 fixture 配真实 ripgrep。`src/testing/session.testing.ts` 负责 Pi 会话初始化、本地模型响应流、凭据与资源隔离和清理，工具上下文、forget 和 Fusion 会话共用它，注册与业务断言留在各功能里。`process.testing.ts` 提供干净的子进程环境，`installation.testing.ts` 创建只含锁定生产依赖的源码或 npm 归档安装，`extension-loader.testing.ts` 经 Pi 的 jiti 与虚拟模块加载它们；`src/integration/npm-package.test.ts` 覆盖归档包的工具注册、worker、命令分发和上下文编辑。
 
-按改动影响选择检查：
+## 命令
 
-- 格式：`npm run format:check`（自动格式化为 `npm run format`）。
-- 类型：`npm run typecheck`。
-- Targeted tests: `npm test -- --test-name-pattern "<regex>"`; use the same option with `npm run test:integration`. Keep the npm runner isolation; do not invoke `node --test` directly.
-- core 和 pi 测试：`npm test`。
-- 真实后端集成：`npm run test:integration`；组合运行用 `npm run test:all`。
+TypeScript 经 Node 类型剥离直接运行，没有构建步骤。CI 用 Node 24，并在 Linux、macOS、Windows 上测试 22.19.0 与 26。本地格式、类型、测试和 bench 命令可直接运行，无需确认。
 
-本地类型检查和测试可直接运行，修复本次改动导致的失败后重跑受影响检查。报告实际结果及平台跳过项。
+- `npm run format:check` / `npm run format`：Biome，只管格式，范围为 `src/` 与 `bench/`。
+- `npm run typecheck`：`tsc --noEmit`，覆盖源码与测试。
+- `npm test`：经 `src/testing/run-tests.ts` 在隔离的 Node 环境和临时 Pi agent 目录中运行 core 与工具测试，排除继承的 Node loader 和个人 Pi 设置。
+- 单个用例：`npm test -- --test-name-pattern "<regex>"`，`npm run test:integration` 同样适用。不要直接运行 `node --test`，它绕过环境隔离。
+- `npm run test:integration`：bundled ripgrep、已安装包的 worker、超过 100 MiB 的文件。`npm run test:all` 运行两套隔离测试，与 CI 和发布一致。
+- `npm run bench`、`node --expose-gc bench/grep-memory.bench.ts`：吞吐与 grep 内存；`node bench/argument-validation.bench.ts`：参数准备加 Pi 校验，不执行工具。
 
-独立测试进程读取磁盘源码；通过当前 Pi 会话验证已加载的扩展行为时，需要用户 `/reload` 或重启。等待重载期间继续完成独立检查。纯文档改动核对事实、路径和 diff 即可。
+报告结果时注明平台跳过项。独立测试进程读取磁盘源码；通过当前 Pi 会话验证已加载的扩展行为时，需要用户 `/reload` 或重启，等待期间继续完成独立检查。纯文档改动核对事实、路径和 diff 即可。
 
 ## 提交与发布
 
