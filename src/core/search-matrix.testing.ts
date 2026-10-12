@@ -143,6 +143,8 @@ export function acceptsNative(query: GrepQuery): boolean {
 /** Match literal bytes directly, without relying on the candidate regex formatter or expanding products. */
 export function hasCandidateBytes(bytes: Buffer, prefilter: Prefilter): boolean {
   if (prefilter.kind === "all") return true;
+  if (prefilter.kind === "and")
+    return prefilter.filters.every((filter) => hasCandidateBytes(bytes, filter));
   return prefilter.literals.some((literal) => {
     const positions = literal.map((chars) => chars.map((char) => Buffer.from(char)));
     for (let start = 0; start < bytes.length; start++) {

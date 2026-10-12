@@ -268,6 +268,7 @@ function literalPattern(literal: Literal): string {
  * file in scope. Literals never contain a line break, so line-oriented matching finds them.
  */
 export function candidateArgs(prefilter: Prefilter): string[] {
+  if (prefilter.kind === "and") return candidateArgs(prefilter.filters[0]);
   if (prefilter.kind === "all") return [...COMMON_RG_ARGS, "--files"];
   return [
     ...COMMON_RG_ARGS,
@@ -278,4 +279,61 @@ export function candidateArgs(prefilter: Prefilter): string[] {
     "-e",
     prefilter.literals.map(literalPattern).join("|"),
   ];
+}
+
+/** Maximum retained paths while intersecting necessary file conditions. */
+export const MAX_PREFILTER_PATH_BYTES = 4 * 1024 * 1024;
+
+/** Execute AND-of-OR file conditions, falling back to one necessary clause if retention fills. */
+export async function runCandidatePaths(
+  run: typeof runRgPaths,
+  rgPath: string,
+  prefilter: Prefilter,
+  scopedArgs: readonly string[],
+  signal: AbortSignal | undefined,
+  onFile: (path: string) => boolean | Promise<boolean>,
+): Promise<RgRunResult> {
+  const filters = prefilter.kind === "and" ? prefilter.filters : [prefilter];
+  const diagnostics = new DiagnosticBuffer(MAX_RG_STDERR_BYTES);
+  let allowed: ReadonlySet<string> | undefined;
+  for (const [index, filter] of filters.entries()) {
+    const last = index === filters.length - 1;
+    const paths = new Set<string>();
+    let bytes = 0;
+    let overflow = false;
+    const result = await run(
+      rgPath,
+      [...candidateArgs(filter), "--null", ...scopedArgs],
+      signal,
+      async (path) => {
+        if (allowed && !allowed.has(path)) return true;
+        if (last) return onFile(path);
+        if (!paths.has(path)) {
+          paths.add(path);
+          bytes += Buffer.byteLength(path);
+        }
+        overflow = bytes > MAX_PREFILTER_PATH_BYTES;
+        return !overflow;
+      },
+    );
+    if (result.stderr) diagnostics.append(`${result.stderr}\n`);
+    if (overflow) {
+      const fallback = await run(
+        rgPath,
+        [...candidateArgs(filters[0]), "--null", ...scopedArgs],
+        signal,
+        onFile,
+      );
+      if (fallback.stderr) diagnostics.append(fallback.stderr);
+      return { ...fallback, stderr: diagnostics.toString() };
+    }
+    if (last || result.stopped || (result.code !== 0 && result.code !== 1)) {
+      // An incomplete intermediate listing cannot exclude its already reported candidates.
+      if (!last) for (const path of paths) if (!(await onFile(path))) break;
+      return { ...result, stderr: diagnostics.toString() };
+    }
+    if (!paths.size) return { code: 1, stderr: diagnostics.toString(), stopped: false };
+    allowed = paths;
+  }
+  return { code: 1, stderr: diagnostics.toString(), stopped: false };
 }

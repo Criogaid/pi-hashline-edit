@@ -10,21 +10,22 @@ for (const [char, unicode, expected] of [
   ["σ", false, ["Σ", "ς", "σ"]],
   ["ß", false, ["ß"]],
   ["😀", false, ["😀"]],
-  ["é", true, undefined],
-  ["K", true, undefined],
+  ["é", true, ["É", "é"]],
+  ["K", true, ["K", "k", "K"]],
+  ["σ", true, ["Σ", "ς", "σ"]],
+  ["𐐀", true, ["𐐀", "𐐨"]],
+  ["ß", true, ["ß", "ẞ"]],
 ] as const) {
-  test(`${JSON.stringify(char)} unicode=${unicode} → native case variants or an unknown boundary`, () => {
+  test(`${JSON.stringify(char)} unicode=${unicode} → native case variants`, () => {
     assert.deepEqual(caseVariants(char, unicode), expected);
-    if (expected) {
-      for (const flags of unicode ? ["iu", "iv"] : ["i"]) {
-        const native = new RegExp(`^${char}$`, flags);
-        for (const candidate of ["K", "k", "K", "S", "s", "ſ", "Σ", "σ", "ς", "ß", "é", "😀"])
-          assert.equal(
-            expected.some((value) => value === candidate),
-            native.test(candidate),
-            `${flags}: ${candidate}`,
-          );
-      }
+    for (const flags of unicode ? ["iu", "iv"] : ["i"]) {
+      const native = new RegExp(`^${char}$`, flags);
+      for (const candidate of ["K", "k", "K", "S", "s", "ſ", "Σ", "σ", "ς", "ß", "é", "😀"])
+        assert.equal(
+          expected.some((value) => value === candidate),
+          native.test(candidate),
+          `${flags}: ${candidate}`,
+        );
     }
   });
 }

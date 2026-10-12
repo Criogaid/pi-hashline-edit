@@ -1,7 +1,7 @@
 /**
  * Static analysis of grep queries: smart case, and the necessary literals of grep's
  * candidate-file prefilter. Every JavaScript match of the query, on the LF view of a
- * file without NUL, contains at least one returned literal, and that literal's text
+ * file without NUL, satisfies every returned clause by containing one of its literals; that text
  * appears unchanged in the file's original bytes. Native RegExp still decides every
  * match; an unknown construct only widens the candidate set, down to every file.
  *
@@ -10,40 +10,54 @@
 
 import { RegExpParser, visitRegExpAST, type AST } from "@eslint-community/regexpp";
 import { caseVariants } from "./case-fold.ts";
+import {
+  nativeCharacterRanges,
+  classStrings,
+  membership,
+  total,
+  type CharacterNode,
+} from "./character-set.ts";
 import { regexSource } from "./replace.ts";
 import type { GrepQuery } from "./search.ts";
 
 /** One literal position: the characters JavaScript may match there. */
 export type LiteralChar = readonly string[];
 export type Literal = readonly LiteralChar[];
+export interface LiteralFilter {
+  readonly kind: "literals";
+  readonly literals: readonly Literal[];
+}
 export type Prefilter =
   | { readonly kind: "all" }
-  | { readonly kind: "literals"; readonly literals: readonly Literal[] };
+  | LiteralFilter
+  | { readonly kind: "and"; readonly filters: readonly LiteralFilter[] };
 
 const ALL: Prefilter = { kind: "all" };
 const MAX_SEQUENCES = 16;
 const MAX_SEQUENCE_LENGTH = 64;
 const MAX_CLASS_CHARS = 64;
 const MAX_LITERALS = 64;
+/** Dropping an AND clause widens safely; no OR alternative may be discarded. */
+const MAX_PREFILTER_CLAUSES = 8;
 
 /** Text of unknown length and content: a literal never spans it. */
 const GAP = null;
 type Unit = LiteralChar | typeof GAP;
 type Sequence = readonly Unit[];
 
-/** A node's finite set of exact texts, and literals one of which each match contains. */
+/** A node's bounded exact texts and necessary AND/OR conditions on original bytes. */
 interface Info {
   readonly exact?: readonly Sequence[];
-  /** Undefined when no literal is known to be necessary. */
-  readonly required?: readonly Literal[];
+  readonly filter: Prefilter;
 }
 
-const EMPTY: Info = { exact: [[]] };
-const UNKNOWN: Info = { exact: [[GAP]] };
+const EMPTY: Info = { exact: [[]], filter: ALL };
+const UNKNOWN: Info = { exact: [[GAP]], filter: ALL };
 
 interface Context {
   readonly ignoreCase: boolean;
   readonly unicode: boolean;
+  readonly unicodeSets: boolean;
 }
 
 /**
@@ -58,7 +72,7 @@ function isUnstable(point: number): boolean {
 function charUnit(point: number, ctx: Context): Unit {
   if (isUnstable(point)) return GAP;
   const char = String.fromCodePoint(point);
-  return ctx.ignoreCase ? (caseVariants(char, ctx.unicode) ?? GAP) : [char];
+  return ctx.ignoreCase ? caseVariants(char, ctx.unicode) : [char];
 }
 
 function unionUnits(units: readonly Unit[]): Unit {
@@ -76,6 +90,96 @@ function distinct<T>(values: readonly T[]): T[] {
   return [...new Map(values.map((value) => [key(value), value])).values()];
 }
 
+function literalFilter(values: readonly Literal[]): Prefilter {
+  let literals = distinct(values);
+  if (!literals.length || literals.some((literal) => !literal.length)) return ALL;
+  if (literals.length <= MAX_LITERALS) return { kind: "literals", literals };
+  // Keep every branch while shortening its necessary prefix or suffix.
+  for (let length = MAX_SEQUENCE_LENGTH; length >= 1; length = Math.floor(length / 2)) {
+    const prefix = distinct(literals.map((literal) => literal.slice(0, length)));
+    const suffix = distinct(literals.map((literal) => literal.slice(-length)));
+    const shorter = prefix.length <= suffix.length ? prefix : suffix;
+    if (shorter.length <= MAX_LITERALS) return { kind: "literals", literals: shorter };
+  }
+  const first = unionUnits(literals.map((literal) => literal[0]));
+  return first === GAP ? ALL : { kind: "literals", literals: [[first]] };
+}
+
+function implies(left: LiteralFilter, right: LiteralFilter): boolean {
+  return left.literals.every((long) =>
+    right.literals.some((short) => {
+      for (let offset = 0; offset <= long.length - short.length; offset++)
+        if (
+          short.every((chars, index) => long[offset + index].every((char) => chars.includes(char)))
+        )
+          return true;
+      return false;
+    }),
+  );
+}
+
+function andFilters(filters: readonly Prefilter[]): Prefilter {
+  const clauses = distinct(
+    filters.flatMap((filter) =>
+      filter.kind === "all" ? [] : filter.kind === "and" ? filter.filters : [filter],
+    ),
+  );
+  const kept = clauses.filter(
+    (clause, index) =>
+      !clauses.some(
+        (other, at) =>
+          at !== index && implies(other, clause) && (!implies(clause, other) || at < index),
+      ),
+  );
+  kept.sort(
+    (a, b) =>
+      Math.min(...b.literals.map((literal) => literal.length)) -
+        Math.min(...a.literals.map((literal) => literal.length)) ||
+      a.literals.length - b.literals.length,
+  );
+  const bounded = kept.slice(0, MAX_PREFILTER_CLAUSES);
+  return bounded.length === 0
+    ? ALL
+    : bounded.length === 1
+      ? bounded[0]
+      : { kind: "and", filters: bounded };
+}
+
+function orFilters(filters: readonly Prefilter[]): Prefilter {
+  if (!filters.length || filters.some((filter) => filter.kind === "all")) return ALL;
+  let result = filters[0];
+  for (const filter of filters.slice(1)) {
+    if (result.kind === "all" || filter.kind === "all") return ALL;
+    const left = result.kind === "and" ? result.filters : [result];
+    const right = filter.kind === "and" ? filter.filters : [filter];
+    // CNF distribution creates AND clauses; keeping only bounded clauses is a widening.
+    result = andFilters(
+      left.flatMap((a) => right.map((b) => literalFilter([...a.literals, ...b.literals]))),
+    );
+  }
+  return result;
+}
+
+function sequenceFilter(sequences: readonly Sequence[]): Prefilter {
+  return orFilters(
+    sequences.map((sequence) => {
+      const filters: Prefilter[] = [];
+      let run: LiteralChar[] = [];
+      for (const unit of [...sequence, GAP]) {
+        if (unit !== GAP) run.push(unit);
+        else if (run.length) {
+          filters.push(literalFilter([run]));
+          run = [];
+        }
+      }
+      return andFilters(filters);
+    }),
+  );
+}
+
+const filterOf = (info: Info): Prefilter =>
+  info.exact ? andFilters([info.filter, sequenceFilter(info.exact)]) : info.filter;
+
 function cross(left: readonly Sequence[], right: readonly Sequence[]): Sequence[] | undefined {
   if (left.length * right.length > MAX_SEQUENCES) return undefined;
   const result: Sequence[] = [];
@@ -87,42 +191,10 @@ function cross(left: readonly Sequence[], right: readonly Sequence[]): Sequence[
   return distinct(result);
 }
 
-/** The longest gap-free run of each sequence; undefined when one has none. */
-function necessary(sequences: readonly Sequence[]): Literal[] | undefined {
-  const literals: Literal[] = [];
-  for (const sequence of sequences) {
-    let best: LiteralChar[] = [];
-    let run: LiteralChar[] = [];
-    for (const unit of [...sequence, GAP]) {
-      if (unit !== GAP) run.push(unit);
-      else {
-        if (run.length > best.length) best = run;
-        run = [];
-      }
-    }
-    if (best.length === 0) return undefined;
-    literals.push(best);
-  }
-  return distinct(literals);
-}
-
-const requiredOf = (info: Info) =>
-  info.required ?? (info.exact ? necessary(info.exact) : undefined);
-
-/** Prefer literals whose shortest member is longest, then fewer alternatives. */
-function better(left: readonly Literal[] | undefined, right: readonly Literal[] | undefined) {
-  if (!left) return right;
-  if (!right) return left;
-  const shortest = (literals: readonly Literal[]) =>
-    Math.min(...literals.map((literal) => literal.length));
-  const difference = shortest(right) - shortest(left);
-  return difference > 0 || (difference === 0 && right.length < left.length) ? right : left;
-}
-
 function concatenate(infos: readonly Info[]): Info {
   let run: readonly Sequence[] = [[]];
   let whole = true;
-  let required: readonly Literal[] | undefined;
+  const filters = infos.map((info) => info.filter);
   for (const info of infos) {
     const joined = info.exact && cross(run, info.exact);
     if (joined) {
@@ -130,33 +202,26 @@ function concatenate(infos: readonly Info[]): Info {
       continue;
     }
     whole = false;
-    required = better(required, necessary(run));
-    if (info.exact) run = info.exact;
-    else {
-      required = better(required, info.required);
-      run = [[]];
-    }
+    filters.push(sequenceFilter(run));
+    run = info.exact ?? [[]];
   }
-  if (whole) return { exact: run };
-  return { required: better(required, necessary(run)) };
+  return whole
+    ? { exact: run, filter: andFilters(filters) }
+    : { filter: andFilters([...filters, sequenceFilter(run)]) };
 }
 
 function alternate(infos: readonly Info[]): Info {
   if (infos.every((info) => info.exact)) {
     const exact = distinct(infos.flatMap((info) => info.exact!));
-    if (exact.length <= MAX_SEQUENCES) return { exact };
+    if (exact.length <= MAX_SEQUENCES)
+      return { exact, filter: orFilters(infos.map((info) => info.filter)) };
   }
-  const literals: Literal[] = [];
-  for (const info of infos) {
-    const required = requiredOf(info);
-    if (!required) return {};
-    literals.push(...required);
-  }
-  const required = distinct(literals);
-  return required.length <= MAX_LITERALS ? { required } : {};
+  return { filter: orFilters(infos.map(filterOf)) };
 }
 
 function repeat(exact: readonly Sequence[], count: number): readonly Sequence[] | undefined {
+  if (exact.every((sequence) => !sequence.length)) return [[]];
+  if (count > MAX_SEQUENCE_LENGTH) return undefined;
   let result: readonly Sequence[] | undefined = [[]];
   for (let index = 0; index < count && result; index++) result = cross(result, exact);
   return result;
@@ -167,46 +232,56 @@ function quantified(node: AST.Quantifier, ctx: Context): Info {
   const inner = analyzeElement(node.element, ctx);
   if (inner.exact) {
     const head = repeat(inner.exact, node.min);
-    if (node.min === node.max && head) return { exact: head };
+    if (node.min === node.max && head) return { exact: head, filter: inner.filter };
     if (node.min === 0 && node.max === 1) {
       const exact = distinct([[], ...inner.exact]);
-      if (exact.length <= MAX_SEQUENCES) return { exact };
+      if (exact.length <= MAX_SEQUENCES) return { exact, filter: ALL };
     }
     // The repetitions beyond the minimum are text of unknown length.
     const exact = head && cross(head, UNKNOWN.exact!);
-    if (exact) return { exact };
+    if (exact) return { exact, filter: node.min ? inner.filter : ALL };
   }
-  return node.min === 0 ? UNKNOWN : { required: requiredOf(inner) };
+  return node.min === 0 ? UNKNOWN : { filter: filterOf(inner) };
 }
 
-function classUnit(node: AST.CharacterClass, ctx: Context): Unit {
-  if (node.negate) return GAP;
+function classInfo(node: CharacterNode, ctx: Context): Info {
+  if (node.type === "CharacterSet" && node.kind === "any") return UNKNOWN;
+  const strings = classStrings(node);
+  if (!strings) return UNKNOWN;
+  const flags = `${ctx.ignoreCase ? "i" : ""}${ctx.unicodeSets ? "v" : ctx.unicode ? "u" : ""}`;
+  const ranges = nativeCharacterRanges(node.raw, flags);
+  if (total(ranges) > MAX_CLASS_CHARS) return UNKNOWN;
   const units: Unit[] = [];
-  for (const element of node.elements) {
-    if (element.type === "Character") units.push(charUnit(element.value, ctx));
-    else if (
-      element.type === "CharacterClassRange" &&
-      element.max.value - element.min.value < MAX_CLASS_CHARS
-    )
-      for (let point = element.min.value; point <= element.max.value; point++)
-        units.push(charUnit(point, ctx));
-    else return GAP;
+  for (const [low, high] of ranges)
+    for (let point = low; point <= high; point++)
+      units.push(charUnit(point, { ...ctx, ignoreCase: false }));
+  const infos: Info[] = units.length ? [{ exact: [[unionUnits(units)]], filter: ALL }] : [];
+  const accepts = membership(node.raw, flags);
+  for (const value of strings) {
+    if (!accepts.test(value)) continue;
+    const sequence = [...value].map((char) => charUnit(char.codePointAt(0)!, ctx));
+    infos.push(
+      sequence.length <= MAX_SEQUENCE_LENGTH
+        ? { exact: [sequence], filter: ALL }
+        : { filter: sequenceFilter([sequence]) },
+    );
   }
-  return units.length ? unionUnits(units) : GAP;
+  return alternate(infos);
 }
 
 function analyzeElement(node: AST.Element, ctx: Context): Info {
   switch (node.type) {
     case "Character":
-      return { exact: [[charUnit(node.value, ctx)]] };
+      return { exact: [[charUnit(node.value, ctx)]], filter: ALL };
     case "CharacterClass":
-      return { exact: [[classUnit(node, ctx)]] };
     case "CharacterSet":
     case "ExpressionCharacterClass":
-      return UNKNOWN;
+      return classInfo(node, ctx);
     // Assertions and lookarounds consume nothing; the match text is the rest.
     case "Assertion":
-      return EMPTY;
+      return (node.kind === "lookahead" || node.kind === "lookbehind") && !node.negate
+        ? { exact: [[]], filter: filterOf(analyzeAlternatives(node.alternatives, ctx)) }
+        : EMPTY;
     case "Backreference":
       return UNKNOWN;
     case "Group": {
@@ -240,7 +315,7 @@ function analyzeAlternatives(alternatives: readonly AST.Alternative[], ctx: Cont
         const pair = ctx.unicode ? undefined : surrogatePair(elements[index], elements[index + 1]);
         if (pair === undefined) infos.push(analyzeElement(elements[index], ctx));
         else {
-          infos.push({ exact: [[charUnit(pair, ctx)]] });
+          infos.push({ exact: [[charUnit(pair, ctx)]], filter: ALL });
           index++;
         }
       }
@@ -286,20 +361,18 @@ export function smartIgnoreCase(patterns: readonly string[], literal: boolean): 
   });
 }
 
-/** Literals one of which every match of the query contains, or every file when unknown. */
+/** Necessary file conditions in bounded conjunctive normal form; every OR retains all alternatives. */
 export function extractPrefilter(query: GrepQuery): Prefilter {
   const unicode = query.flags.includes("u") || query.flags.includes("v");
-  const ctx: Context = { ignoreCase: query.flags.includes("i"), unicode };
-  const literals: Literal[] = [];
-  for (const pattern of query.patterns) {
-    const parsed = parseQueryPattern(pattern, query.literal, query.flags);
-    if (!parsed) return ALL;
-    const required = requiredOf(analyzeAlternatives(parsed.alternatives, ctx));
-    if (!required) return ALL;
-    literals.push(...required);
-  }
-  const unique = distinct(literals);
-  return unique.length > 0 && unique.length <= MAX_LITERALS
-    ? { kind: "literals", literals: unique }
-    : ALL;
+  const ctx: Context = {
+    ignoreCase: query.flags.includes("i"),
+    unicode,
+    unicodeSets: query.flags.includes("v"),
+  };
+  return orFilters(
+    query.patterns.map((pattern) => {
+      const parsed = parseQueryPattern(pattern, query.literal, query.flags);
+      return parsed ? filterOf(analyzeAlternatives(parsed.alternatives, ctx)) : ALL;
+    }),
+  );
 }

@@ -1,6 +1,15 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { assertRgSucceeded, candidateArgs, COMMON_RG_ARGS, runRgLines } from "./rg-process.ts";
+import {
+  assertRgSucceeded,
+  candidateArgs,
+  COMMON_RG_ARGS,
+  runRgLines,
+  runCandidatePaths,
+  MAX_PREFILTER_PATH_BYTES,
+  type runRgPaths,
+} from "./rg-process.ts";
+import type { Prefilter } from "../core/search-analysis.ts";
 import { fileURLToPath } from "node:url";
 import { HashlineError } from "../core/errors.ts";
 
@@ -119,4 +128,102 @@ test("line listing ends after a complete row → flush the final file without a 
   const { files, result } = await parseListing(["final\0" + "1:x\n"]);
   assert.deepEqual(files, [{ path: "final", lines: [1] }]);
   assert.equal(result.code, 0);
+});
+
+const conjunction: Prefilter = {
+  kind: "and",
+  filters: [
+    { kind: "literals", literals: [[["a"]]] },
+    { kind: "literals", literals: [[["b"]]] },
+  ],
+};
+
+test("AND file passes → intersect paths before emitting and preserve final callback stop", async () => {
+  let pass = 0;
+  const calls: string[][] = [];
+  const run: typeof runRgPaths = async (_rg, args, _signal, onPath) => {
+    calls.push([...args]);
+    for (const path of [
+      ["a-only", "both"],
+      ["b-only", "both", "later"],
+    ][pass++])
+      if (!(await onPath(path))) return { code: null, stderr: "", stopped: true };
+    return { code: 0, stderr: "", stopped: false };
+  };
+  const paths: string[] = [];
+  const result = await runCandidatePaths(
+    run,
+    "rg",
+    conjunction,
+    ["--", "root"],
+    undefined,
+    (path) => {
+      paths.push(path);
+      return false;
+    },
+  );
+  assert.deepEqual(paths, ["both"]);
+  assert.equal(result.stopped, true);
+  assert.equal(calls.length, 2);
+  for (const args of calls) assert.deepEqual(args.slice(-2), ["--", "root"]);
+});
+
+test("AND path retention fills → rerun one necessary clause without excluding its candidates", async () => {
+  let pass = 0;
+  const run: typeof runRgPaths = async (_rg, _args, _signal, onPath) => {
+    const keepGoing = await onPath(
+      pass++ === 0 ? "x".repeat(MAX_PREFILTER_PATH_BYTES + 1) : "candidate",
+    );
+    return { code: keepGoing ? 0 : null, stderr: "", stopped: !keepGoing };
+  };
+  const paths: string[] = [];
+  const result = await runCandidatePaths(
+    run,
+    "rg",
+    conjunction,
+    ["--", "root"],
+    undefined,
+    (path) => {
+      paths.push(path);
+      return true;
+    },
+  );
+  assert.deepEqual(paths, ["candidate"]);
+  assert.equal(pass, 2);
+  assert.equal(result.stopped, false);
+});
+
+test("incomplete intermediate pass → retain reported candidates and the failure diagnostics", async () => {
+  const run: typeof runRgPaths = async (_rg, _args, _signal, onPath) => {
+    await onPath("reported");
+    return { code: 2, stderr: "unreadable path", stopped: false };
+  };
+  const paths: string[] = [];
+  const result = await runCandidatePaths(run, "rg", conjunction, [], undefined, (path) => {
+    paths.push(path);
+    return true;
+  });
+  assert.deepEqual(paths, ["reported"]);
+  assert.equal(result.code, 2);
+  assert.match(result.stderr, /unreadable path/);
+});
+
+test("cancel between AND passes → propagate cancellation before emitting candidates", async () => {
+  const controller = new AbortController();
+  let pass = 0;
+  const run: typeof runRgPaths = async (_rg, _args, signal, onPath) => {
+    assert.equal(signal, controller.signal);
+    if (pass++) {
+      controller.abort(new Error("cancelled"));
+      signal?.throwIfAborted();
+    }
+    await onPath("candidate");
+    return { code: 0, stderr: "", stopped: false };
+  };
+  await assert.rejects(
+    runCandidatePaths(run, "rg", conjunction, [], controller.signal, () =>
+      assert.fail("cancelled candidate"),
+    ),
+    /cancelled/,
+  );
 });

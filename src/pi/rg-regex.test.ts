@@ -23,7 +23,7 @@ for (const [pattern, expected] of [
   ["[\\p{ASCII}&&\\p{Letter}]", "[A-Za-z]"],
   ["[\\p{Letter}&&[a-c]]", "[a-c]"],
   ["[[a-c]--\\p{Uppercase_Letter}]", "[a-c]"],
-  ["[a[bc]\\q{de|fg}]", "(?:[a-c]|de|fg)"],
+  ["[a[bc]\\q{de|fg}]", "(?:[a-c]|(?:de|fg))"],
   ["[\\q{ab|cd}&&\\q{cd|ef}]", "cd"],
   ["[\\q{ab|cd}--\\q{cd}]", "ab"],
   ["[\\q{ab|}]", "(?:ab|)"],

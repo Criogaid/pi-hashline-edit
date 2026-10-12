@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { test } from "node:test";
 import { rgPath } from "@vscode/ripgrep";
-import { extractPrefilter } from "../core/search-analysis.ts";
+import { extractPrefilter, type Prefilter } from "../core/search-analysis.ts";
 import {
   acceptsNative,
   MATRIX_FLAGS,
@@ -12,7 +12,7 @@ import {
   MATRIX_SYNTAX,
 } from "../core/search-matrix.testing.ts";
 import { searchText, type GrepQuery } from "../core/search.ts";
-import { assertRgSucceeded, candidateArgs, runRgPaths } from "../pi/rg-process.ts";
+import { assertRgSucceeded, runCandidatePaths, runRgPaths } from "../pi/rg-process.ts";
 
 const syntaxCases = [
   ...MATRIX_SYNTAX,
@@ -52,7 +52,7 @@ function emptyCoverage(): Coverage {
 }
 
 interface CandidateCase {
-  readonly args: string[];
+  readonly prefilter: Prefilter;
   readonly required: Map<string, GrepQuery>;
   readonly contributions: Map<Coverage, number>;
 }
@@ -106,11 +106,10 @@ test("Cartesian prefilter coverage × composition × flags × bytes → real rg 
             continue;
           }
           const prefilter = extractPrefilter(query);
-          const args = candidateArgs(prefilter);
-          const key = JSON.stringify(args);
+          const key = JSON.stringify(prefilter);
           let group = groups.get(key);
           if (!group) {
-            group = { args, required: new Map(), contributions: new Map() };
+            group = { prefilter, required: new Map(), contributions: new Map() };
             groups.set(key, group);
           }
           let hits = 0;
@@ -140,9 +139,11 @@ test("Cartesian prefilter coverage × composition × flags × bytes → real rg 
       while (next < cases.length) {
         const group = cases[next++];
         const actual = new Set<string>();
-        const result = await runRgPaths(
+        const result = await runCandidatePaths(
+          runRgPaths,
           rgPath,
-          [...group.args, "--null", "--", directory],
+          group.prefilter,
+          ["--null", "--", directory],
           AbortSignal.timeout(processTimeoutMs),
           (path) => {
             actual.add(basename(path));
@@ -152,7 +153,7 @@ test("Cartesian prefilter coverage × composition × flags × bytes → real rg 
         assertRgSucceeded(result);
         for (const [name, query] of group.required) {
           checkedFiles++;
-          assert.ok(actual.has(name), JSON.stringify({ name, query, args: group.args }));
+          assert.ok(actual.has(name), JSON.stringify({ name, query, prefilter: group.prefilter }));
         }
         for (const [stats, count] of group.contributions)
           stats.candidateFiles += actual.size * count;

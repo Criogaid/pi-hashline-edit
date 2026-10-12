@@ -17,7 +17,7 @@ import { extractPrefilter } from "../core/search-analysis.ts";
 import { SEARCH_RESULT_SCHEMA, type SearchResult } from "../core/search-schema.ts";
 import { scanTextFile } from "./text-stream.ts";
 import {
-  candidateArgs,
+  runCandidatePaths,
   COMMON_RG_ARGS,
   LINE_LISTING_ARGS,
   type RgRunResult,
@@ -385,9 +385,11 @@ export async function searchFiles(options: {
       : undefined;
     // rg reports a pattern it cannot compile, such as one beyond its size limit, before any file.
     if (!listing || (listing.code === 2 && !listedAny))
-      listing = await backend.runRgPaths(
+      listing = await runCandidatePaths(
+        backend.runRgPaths,
         rgPath,
-        [...candidateArgs(extractPrefilter(query)), "--null", ...scoped],
+        extractPrefilter(query),
+        scoped,
         poolSignal,
         (path) => enqueue(path),
       );

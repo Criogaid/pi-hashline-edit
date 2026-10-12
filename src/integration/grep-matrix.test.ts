@@ -4,7 +4,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { rgPath } from "@vscode/ripgrep";
-import { extractPrefilter } from "../core/search-analysis.ts";
+import { extractPrefilter, type Prefilter } from "../core/search-analysis.ts";
 import { searchText, type GrepQuery } from "../core/search.ts";
 import {
   acceptsNative,
@@ -12,10 +12,10 @@ import {
   pairedMatrixCases,
   MATRIX_INPUTS,
 } from "../core/search-matrix.testing.ts";
-import { assertRgSucceeded, candidateArgs, runRgPaths } from "../pi/rg-process.ts";
+import { assertRgSucceeded, runCandidatePaths, runRgPaths } from "../pi/rg-process.ts";
 
 interface CandidateCase {
-  readonly args: readonly string[];
+  readonly prefilter: Prefilter;
   readonly required: Map<string, GrepQuery>;
 }
 
@@ -39,15 +39,15 @@ async function checkCandidates(t: TestContext, queries: Iterable<{ readonly quer
       continue;
     }
     accepted++;
-    const args = candidateArgs(extractPrefilter(query));
-    const key = JSON.stringify(args);
+    const prefilter = extractPrefilter(query);
+    const key = JSON.stringify(prefilter);
     let group = groups.get(key);
     if (!group) {
-      group = { args, required: new Map() };
+      group = { prefilter, required: new Map() };
       groups.set(key, group);
     }
     for (const input of inputs) {
-      // Equal candidate arguments share one rg process; keep a witness for every required file.
+      // Equal prefilters share rg passes; keep a witness for every required file.
       if (group.required.has(input.name)) continue;
       if (searchText({ source: input.bytes.toString("utf8"), query, limit: 1 }).lines.length)
         group.required.set(input.name, query);
@@ -63,11 +63,13 @@ async function checkCandidates(t: TestContext, queries: Iterable<{ readonly quer
   const workers = await Promise.allSettled(
     Array.from({ length: concurrency }, async () => {
       while (next < cases.length) {
-        const { args, required } = cases[next++];
+        const { prefilter, required } = cases[next++];
         const actual = new Set<string>();
-        const result = await runRgPaths(
+        const result = await runCandidatePaths(
+          runRgPaths,
           rgPath,
-          [...args, "--null", "--", directory],
+          prefilter,
+          ["--null", "--", directory],
           AbortSignal.timeout(processTimeoutMs),
           (path) => {
             actual.add(basename(path));
@@ -85,7 +87,7 @@ async function checkCandidates(t: TestContext, queries: Iterable<{ readonly quer
             examples.push(
               JSON.stringify({
                 query,
-                args,
+                prefilter,
                 input: input.label,
                 bytes: input.bytes.toString("hex"),
               }),

@@ -12,49 +12,40 @@
  * @module pi-hashline-edit/pi
  */
 
-import type { AST } from "@eslint-community/regexpp";
+import { visitRegExpAST, type AST } from "@eslint-community/regexpp";
+import {
+  MAX_UNIT,
+  MAX_SCALAR,
+  normalize,
+  complement,
+  subtract,
+  intersect,
+  total,
+  contains,
+  nativeCharacterRanges,
+  foldRanges,
+  membership,
+  type Ranges,
+  classStrings,
+  type CharacterNode,
+} from "../core/character-set.ts";
 import { caseVariants } from "../core/case-fold.ts";
 import { parseQueryPattern } from "../core/search-analysis.ts";
 import type { GrepQuery } from "../core/search.ts";
 
-/** Sorted, disjoint, inclusive code point ranges. */
-type Ranges = readonly (readonly [number, number])[];
-
 const LF = 0x0a;
 const REPLACEMENT = 0xfffd;
-const MAX_UNIT = 0xffff;
-const MAX_ASCII = 0x7f;
-const MAX_SCALAR = 0x10ffff;
 const SURROGATES: Ranges = [[0xd800, 0xdfff]];
 const SUPPLEMENTARY: Ranges = [[0x10000, MAX_SCALAR]];
-const DIGIT: Ranges = [[0x30, 0x39]];
-const WORD: Ranges = [
-  [0x30, 0x39],
-  [0x41, 0x5a],
-  [0x5f, 0x5f],
-  [0x61, 0x7a],
-];
-/** With u and i, \w also matches U+017F and U+212A, whose case folds are word characters. */
-const UNICODE_CASELESS_WORD: Ranges = [...WORD, [0x17f, 0x17f], [0x212a, 0x212a]];
-/** ECMAScript WhiteSpace and LineTerminator. */
-const SPACE: Ranges = [
-  [0x09, 0x0d],
-  [0x20, 0x20],
-  [0xa0, 0xa0],
-  [0x1680, 0x1680],
-  [0x2000, 0x200a],
-  [0x2028, 0x2029],
-  [0x202f, 0x202f],
-  [0x205f, 0x205f],
-  [0x3000, 0x3000],
-  [0xfeff, 0xfeff],
-];
 /** Repetition counts above this become unbounded, keeping rg's compiled size small. */
 const MAX_EXACT_REPEAT = 16;
-/** Case folding expands a positive set of at most this many characters; larger sets match anything. */
-const MAX_FOLDED_CHARS = 256;
-/** Bound finite v-class enumeration by total UTF-16 units, counting an empty string as one. */
-const MAX_CLASS_SEED_UNITS = 256;
+/** Bound expanded class strings by total code points, counting an empty string as one. */
+const MAX_EXPANDED_STRING_POINTS = 256;
+/** Bound emitted string alternatives; oversized sets retain necessary prefixes. */
+const MAX_STRING_PATTERN_UNITS = 8192;
+const MAX_STRING_PREFIX_POINTS = 16;
+/** Leave room for rg's arguments and paths on hosts with small command-line limits. */
+const MAX_LINE_PATTERN_UNITS = 24 * 1024;
 
 /** The bytes a lossy decoder shows as U+FFFD: every byte of a malformed sequence is 0x80–0xFF. */
 const MALFORMED = "(?-u:[\\x80-\\xff])+";
@@ -68,12 +59,14 @@ interface Context {
   readonly ignoreCase: boolean;
   /** The i flag, which modifier groups override. */
   readonly flagIgnoreCase: boolean;
+  readonly flagDotAll: boolean;
   /** u or v: elements consume code points, not UTF-16 units. */
   readonly unicode: boolean;
   readonly unicodeSets: boolean;
   readonly multilineAnchors: boolean;
   /** Translating a group as the text a backreference repeats, away from where it matched. */
   readonly repeated: boolean;
+  readonly bindings: ReadonlyMap<AST.CapturingGroup, string>;
 }
 
 /** Whether nothing consumed can precede or follow an element within its pattern's match. */
@@ -83,66 +76,203 @@ interface Position {
 }
 const INNER: Position = { first: false, last: false };
 
-function normalize(ranges: Iterable<readonly [number, number]>): Ranges {
-  const sorted = [...ranges].sort((a, b) => a[0] - b[0]);
-  const merged: [number, number][] = [];
-  for (const [low, high] of sorted) {
-    const last = merged.at(-1);
-    if (last && low <= last[1] + 1) last[1] = Math.max(last[1], high);
-    else merged.push([low, high]);
-  }
-  return merged;
+/** Bound assertion alternatives and correlated capture expansion. */
+const MAX_ANALYSIS_BRANCHES = 16;
+const MAX_FIXED_UNITS = 64;
+interface FixedSequence {
+  readonly positions: readonly Ranges[];
+  readonly exact: boolean;
 }
+type Constraints = ReadonlyMap<AST.Element, readonly Ranges[]>;
 
-function complement(ranges: Ranges, max: number): Ranges {
-  const result: [number, number][] = [];
-  let next = 0;
-  for (const [low, high] of ranges) {
-    if (low > next) result.push([next, low - 1]);
-    next = high + 1;
-  }
-  if (next <= max) result.push([next, max]);
-  return result;
-}
-
-function subtract(ranges: Ranges, removed: Ranges): Ranges {
-  const max = Math.max(MAX_SCALAR, ...ranges.map(([, high]) => high));
-  const kept = complement(normalize(removed), max);
-  const result: [number, number][] = [];
-  for (const [low, high] of ranges)
-    for (const [keepLow, keepHigh] of kept) {
-      const from = Math.max(low, keepLow);
-      const to = Math.min(high, keepHigh);
-      if (from <= to) result.push([from, to]);
+function fixedAlternatives(
+  nodes: readonly AST.Alternative[],
+  ctx: Context,
+): FixedSequence | undefined {
+  const branches: FixedSequence[] = [];
+  for (const node of nodes) {
+    const positions: Ranges[] = [];
+    let exact = true;
+    for (const child of node.elements) {
+      const fixed = fixedSequence(child, ctx);
+      if (!fixed) return undefined;
+      positions.push(...fixed.positions);
+      exact &&= fixed.exact;
+      if (positions.length > MAX_FIXED_UNITS) return undefined;
     }
+    branches.push({ positions, exact });
+  }
+  if (!branches.every((branch) => branch.positions.length === branches[0].positions.length))
+    return undefined;
+  return {
+    positions: branches[0].positions.map((_, index) =>
+      normalize(branches.flatMap((branch) => branch.positions[index])),
+    ),
+    exact:
+      branches.every((branch) => branch.exact) &&
+      (branches.length === 1 || branches[0].positions.length <= 1),
+  };
+}
+
+function fixedSequence(node: AST.Element, ctx: Context): FixedSequence | undefined {
+  switch (node.type) {
+    case "Character":
+    case "CharacterClass":
+    case "ExpressionCharacterClass":
+    case "CharacterSet":
+      if (classStrings(node)?.length !== 0) return undefined;
+      return { positions: [scalarRanges(node, ctx)], exact: true };
+    case "Assertion":
+      return { positions: [], exact: false };
+    case "Backreference":
+      return undefined;
+    case "Group":
+      return fixedAlternatives(node.alternatives, modified(node, ctx));
+    case "CapturingGroup": {
+      const bound = ctx.bindings.get(node);
+      if (bound !== undefined)
+        return {
+          positions: [...(ctx.unicode ? [...bound] : bound.split(""))].map((char) => [
+            [char.codePointAt(0)!, char.codePointAt(0)!],
+          ]),
+          exact: true,
+        };
+      return fixedAlternatives(node.alternatives, ctx);
+    }
+    case "Quantifier": {
+      if (node.max === 0) return { positions: [], exact: true };
+      if (node.min !== node.max || node.max > MAX_FIXED_UNITS) return undefined;
+      const inner = fixedSequence(node.element, ctx);
+      if (!inner || inner.positions.length * node.max > MAX_FIXED_UNITS) return undefined;
+      return {
+        positions: Array.from({ length: node.max }, () => inner.positions).flat(),
+        exact: inner.exact,
+      };
+    }
+  }
+}
+
+interface Neighbour {
+  readonly node: AST.Element;
+  readonly index: number;
+  readonly ranges: Ranges;
+}
+function neighbours(
+  elements: readonly AST.Element[],
+  from: number,
+  direction: number,
+  count: number,
+  ctx: Context,
+  plan: Constraints,
+): Neighbour[] {
+  const result: Neighbour[] = [];
+  for (
+    let index = from + direction;
+    index >= 0 && index < elements.length && result.length < count;
+    index += direction
+  ) {
+    const node = elements[index];
+    const fixed = fixedSequence(node, ctx);
+    if (!fixed) break;
+    const positions = plan.get(node) ?? fixed.positions;
+    for (
+      let at = direction > 0 ? 0 : positions.length - 1;
+      at >= 0 && at < positions.length && result.length < count;
+      at += direction
+    )
+      result.push({ node, index: at, ranges: positions[at] });
+  }
   return result;
 }
 
-const total = (ranges: Ranges) => ranges.reduce((sum, [low, high]) => sum + high - low + 1, 0);
-const intersects = (ranges: Ranges, other: Ranges) =>
-  total(subtract(ranges, other)) !== total(ranges);
-const contains = (ranges: Ranges, point: number) =>
-  ranges.some(([low, high]) => low <= point && point <= high);
+function restrict(
+  plan: Constraints,
+  neighbour: Neighbour,
+  allowed: Ranges,
+  ctx: Context,
+): Constraints {
+  const result = new Map(plan);
+  const positions = [
+    ...(result.get(neighbour.node) ?? fixedSequence(neighbour.node, ctx)!.positions),
+  ];
+  positions[neighbour.index] = intersect(positions[neighbour.index], allowed);
+  result.set(neighbour.node, positions);
+  return result;
+}
+
+/** Apply only proved constraints; a negative test needs an exact forbidden set. */
+function assertionPlans(elements: readonly AST.Element[], ctx: Context): readonly Constraints[] {
+  let plans: readonly Constraints[] = [new Map()];
+  if (ctx.repeated) return plans;
+  for (const [index, node] of elements.entries()) {
+    if (node.type !== "Assertion") continue;
+    if (node.kind === "lookahead" || node.kind === "lookbehind") {
+      const fixed = fixedAlternatives(node.alternatives, ctx);
+      if (!fixed) continue;
+      const direction = node.kind === "lookahead" ? 1 : -1;
+      const asserted = direction > 0 ? fixed.positions : [...fixed.positions].reverse();
+      if (node.negate && (!fixed.exact || plans.length * asserted.length > MAX_ANALYSIS_BRANCHES))
+        continue;
+      plans = plans.flatMap((plan) => {
+        const adjacent = neighbours(elements, index, direction, asserted.length, ctx, plan);
+        if (node.negate) {
+          if (adjacent.length !== asserted.length) return [plan];
+          return adjacent.map((item, at) =>
+            restrict(plan, item, complement(asserted[at], everything(ctx)[0][1]), ctx),
+          );
+        }
+        let constrained = plan;
+        for (const [at, item] of adjacent.entries())
+          constrained = restrict(constrained, item, asserted[at], ctx);
+        return [constrained];
+      });
+    } else if (node.kind === "word") {
+      const word = nativeCharacterRanges("\\w", nativeFlags(node, ctx));
+      plans = plans.map((plan) => {
+        const left = neighbours(elements, index, -1, 1, ctx, plan)[0];
+        const right = neighbours(elements, index, 1, 1, ctx, plan)[0];
+        if (!left || !right) return plan;
+        for (const [known, other] of [
+          [left, right],
+          [right, left],
+        ]) {
+          const isWord = subtract(known.ranges, word).length === 0;
+          const isNonWord = intersect(known.ranges, word).length === 0;
+          if (isWord || isNonWord)
+            plan = restrict(
+              plan,
+              other,
+              isWord === node.negate ? word : complement(word, everything(ctx)[0][1]),
+              ctx,
+            );
+        }
+        return plan;
+      });
+    } else {
+      const direction = node.kind === "start" ? -1 : 1;
+      plans = plans.map((plan) => {
+        const neighbour = neighbours(elements, index, direction, 1, ctx, plan)[0];
+        if (!neighbour) return plan;
+        const terminators = nativeCharacterRanges("[\\n\\r\\u2028\\u2029]", ctx.unicode ? "u" : "");
+        return restrict(
+          plan,
+          neighbour,
+          node.kind === "start" && !ctx.multilineAnchors ? [] : terminators,
+          ctx,
+        );
+      });
+    }
+  }
+  return plans;
+}
+
+const intersects = (ranges: Ranges, other: Ranges) => intersect(ranges, other).length !== 0;
 
 /** Everything one element can consume: one code point with u, one UTF-16 unit without. */
 const everything = (ctx: Context): Ranges => (ctx.unicode ? [[0, MAX_SCALAR]] : [[0, MAX_UNIT]]);
 
-/** Close a positive set under JavaScript's ignoreCase, or widen it to everything. */
-function folded(ranges: Ranges, ctx: Context): Ranges {
-  if (!ctx.ignoreCase) return ranges;
-  if (total(ranges) > MAX_FOLDED_CHARS) return everything(ctx);
-  const points: (readonly [number, number])[] = [...ranges];
-  for (const [low, high] of ranges)
-    for (let point = low; point <= high; point++) {
-      const variants = caseVariants(String.fromCodePoint(point), ctx.unicode);
-      if (!variants) return everything(ctx);
-      for (const variant of variants) {
-        const code = variant.codePointAt(0)!;
-        points.push([code, code]);
-      }
-    }
-  return normalize(points);
-}
+const folded = (ranges: Ranges, ctx: Context): Ranges =>
+  ctx.ignoreCase ? foldRanges(ranges, ctx.unicode) : ranges;
 
 const escape = (point: number) =>
   /^[0-9A-Za-z_]$/.test(String.fromCodePoint(point))
@@ -172,161 +302,92 @@ function unit(ranges: Ranges, ctx: Context): string {
   return halves ? `(?:${body})?` : body;
 }
 
-/**
- * The set of d, s, w or a negation. Each is closed under ignoreCase: w lists U+017F and
- * U+212A exactly when u and i let them match, and case never maps a digit or space elsewhere.
- */
-function escapeSet(node: AST.EscapeCharacterSet, ctx: Context): Ranges {
-  const positive =
-    node.kind === "digit"
-      ? DIGIT
-      : node.kind === "space"
-        ? SPACE
-        : ctx.ignoreCase && ctx.unicode
-          ? UNICODE_CASELESS_WORD
-          : WORD;
-  return node.negate ? complement(positive, everything(ctx)[0][1]) : positive;
-}
-
-/** Whether a class element's set is known exactly, as a negated class requires. */
-function exactElement(element: AST.CharacterClassElement, ctx: Context): boolean {
-  if (element.type === "Character" || element.type === "CharacterClassRange") return true;
-  // With u and i, \w and \W depend on case folding beyond the sets above.
-  return (
-    element.type === "CharacterSet" &&
-    element.kind !== "property" &&
-    !(element.kind === "word" && ctx.ignoreCase && ctx.unicode)
-  );
-}
-
-function elementSet(element: AST.CharacterClassElement, ctx: Context): Ranges | undefined {
-  switch (element.type) {
-    case "Character":
-      return [[element.value, element.value]];
-    case "CharacterClassRange":
-      return [[element.min.value, element.max.value]];
-    case "CharacterSet":
-      return element.kind === "property" ? undefined : escapeSet(element, ctx);
-    default:
-      return undefined;
-  }
-}
-
-function characterClass(node: AST.CharacterClass, ctx: Context): string {
-  if (node.negate) {
-    // The complement of an exact set without case folding contains the folded complement.
-    if (ctx.ignoreCase && ctx.unicodeSets) return unit(everything(ctx), ctx);
-    if (!node.elements.every((element) => exactElement(element, ctx)))
-      return unit(everything(ctx), ctx);
-    const inside = normalize(node.elements.flatMap((element) => elementSet(element, ctx)!));
-    return unit(complement(inside, everything(ctx)[0][1]), ctx);
-  }
-  const characters: Ranges[] = [];
-  const escapes: Ranges[] = [];
-  for (const element of node.elements) {
-    const set = elementSet(element, ctx);
-    // A v-mode class may contain strings of several characters.
-    if (!set) return ctx.unicodeSets ? ANY_TEXT : unit(everything(ctx), ctx);
-    (element.type === "CharacterSet" ? escapes : characters).push(set);
-  }
-  return unit(normalize([...folded(normalize(characters.flat()), ctx), ...escapes.flat()]), ctx);
-}
-
-function characterSet(node: AST.CharacterSet, ctx: Context): string {
-  switch (node.kind) {
-    case "any":
-      return unit(everything(ctx), ctx);
-    case "property":
-      // v-mode properties of strings match several characters.
-      return node.strings ? ANY_TEXT : unit(everything(ctx), ctx);
-    default:
-      return unit(escapeSet(node, ctx), ctx);
-  }
-}
-
-type ClassSeedNode =
-  | AST.CharacterClass
-  | AST.CharacterClassElement
-  | AST.ClassIntersection
-  | AST.ClassSubtraction;
-
-/** Representatives before case folding; an intersection needs only one bounded operand. */
-function classSeeds(node: ClassSeedNode, ctx: Context): readonly string[] | undefined {
-  let seeds: string[];
-  switch (node.type) {
-    case "Character":
-      return [String.fromCodePoint(node.value)];
-    case "ExpressionCharacterClass":
-      return node.negate ? undefined : classSeeds(node.expression, ctx);
-    case "ClassIntersection":
-      return classSeeds(node.left, ctx) ?? classSeeds(node.right, ctx);
-    case "ClassSubtraction":
-      return classSeeds(node.left, ctx);
-    case "CharacterClass":
-      if (node.negate) return undefined;
-      seeds = [];
-      for (const child of node.elements) {
-        const part = classSeeds(child, ctx);
-        if (!part) return undefined;
-        seeds.push(...part);
-        if (seeds.length > MAX_CLASS_SEED_UNITS) return undefined;
-      }
+function nativeFlags(node: AST.Node, ctx: Context): string {
+  let dotAll = ctx.flagDotAll;
+  for (let parent = node.parent; parent; parent = parent.parent) {
+    if (parent.type !== "Group" || !parent.modifiers) continue;
+    if (parent.modifiers.add.dotAll) {
+      dotAll = true;
       break;
-    case "ClassStringDisjunction":
-      seeds = node.alternatives.map(({ elements }) =>
-        elements.map(({ value }) => String.fromCodePoint(value)).join(""),
-      );
+    }
+    if (parent.modifiers.remove?.dotAll) {
+      dotAll = false;
       break;
-    default: {
-      const ranges =
-        node.type === "CharacterSet" &&
-        node.kind === "property" &&
-        node.key === "ASCII" &&
-        !node.negate
-          ? ([[0, MAX_ASCII]] as const)
-          : elementSet(node, ctx);
-      if (!ranges || total(ranges) > MAX_CLASS_SEED_UNITS) return undefined;
-      seeds = [];
-      for (const [low, high] of ranges)
-        for (let point = low; point <= high; point++) seeds.push(String.fromCodePoint(point));
     }
   }
-  return seeds.reduce((sum, seed) => sum + Math.max(1, seed.length), 0) <= MAX_CLASS_SEED_UNITS
-    ? seeds
-    : undefined;
+  return `${ignoreCaseAt(node, ctx) ? "i" : ""}${dotAll ? "s" : ""}${ctx.unicodeSets ? "v" : ctx.unicode ? "u" : ""}`;
 }
 
-function finiteClass(
-  node: AST.CharacterClass | AST.ExpressionCharacterClass,
-  ctx: Context,
-): string | undefined {
-  // Repetition may add ignoreCase, but membership belongs to the original capture's scope.
-  const ignoreCase = ignoreCaseAt(node, ctx);
-  const seeds = classSeeds(node, { ...ctx, ignoreCase });
-  if (!seeds) return undefined;
-  const membership = new RegExp(`^(?:${node.raw})$`, ignoreCase ? "iv" : "v");
-  const characters: [number, number][] = [];
-  const strings: string[] = [];
-  const outputContext = { ...ctx, ignoreCase: ctx.ignoreCase || ignoreCase };
-  for (const seed of new Set(seeds)) {
-    if (!membership.test(seed)) continue;
-    const points = [...seed].map((char) => char.codePointAt(0)!);
-    if (points.length === 1) characters.push([points[0], points[0]]);
-    else
-      strings.push(
-        points
-          .map((point) => unit(folded([[point, point]], outputContext), outputContext))
-          .join(""),
-      );
+function scalarRanges(node: CharacterNode, ctx: Context): Ranges {
+  const ranges = nativeCharacterRanges(node.raw, nativeFlags(node, ctx));
+  // Case comparison at a reference can widen its capture's original character set.
+  return ctx.repeated && ctx.ignoreCase && !ignoreCaseAt(node, ctx) ? folded(ranges, ctx) : ranges;
+}
+
+const choice = (patterns: readonly string[]): string =>
+  patterns.length === 0 ? NEVER : patterns.length === 1 ? patterns[0] : `(?:${patterns.join("|")})`;
+
+/** Factor common prefixes without dropping an alternative or cutting a code point escape. */
+function wordTree(words: readonly (readonly number[])[], ctx: Context): string {
+  const branches = new Map<number, number[][]>();
+  let empty = false;
+  for (const word of words) {
+    if (!word.length) {
+      empty = true;
+      continue;
+    }
+    const branch = branches.get(word[0]) ?? [];
+    branch.push(word.slice(1));
+    branches.set(word[0], branch);
   }
-  const choices = [
-    ...(characters.length
-      ? [unit(folded(normalize(characters), outputContext), outputContext)]
+  const patterns = [...branches].map(
+    ([point, tails]) => unit(folded([[point, point]], ctx), ctx) + wordTree(tails, ctx),
+  );
+  if (empty) patterns.push("");
+  return choice(patterns);
+}
+
+function stringPattern(strings: readonly string[], ctx: Context): string {
+  const words = [...new Set(strings)].map((text) => [...text].map((char) => char.codePointAt(0)!));
+  const size = words.reduce((sum, word) => sum + Math.max(1, word.length), 0);
+  if (size <= MAX_EXPANDED_STRING_POINTS) return wordTree(words, ctx);
+  const shortest = words.reduce((length, word) => Math.min(length, word.length), Infinity);
+  if (!shortest) return ANY_TEXT;
+  // A suffix survives only where it cannot overlap the retained prefix.
+  const suffix: number[] = [];
+  for (
+    let index = 1;
+    index <= Math.min(MAX_STRING_PREFIX_POINTS, Math.floor(shortest / 2));
+    index++
+  ) {
+    const point = words[0].at(-index)!;
+    if (!words.every((word) => word.at(-index) === point)) break;
+    suffix.unshift(point);
+  }
+  for (
+    let length = Math.min(MAX_STRING_PREFIX_POINTS, shortest - suffix.length);
+    length >= 1;
+    length = Math.floor(length / 2)
+  ) {
+    const prefixes = words.map((word) => word.slice(0, length));
+    const pattern = wordTree(prefixes, ctx) + ANY_TEXT + wordTree([suffix], ctx);
+    if (pattern.length <= MAX_STRING_PATTERN_UNITS) return pattern;
+  }
+  return ANY_TEXT;
+}
+
+function characterPattern(node: CharacterNode, ctx: Context): string {
+  const strings = classStrings(node);
+  if (!strings) return ANY_TEXT;
+  const ranges = scalarRanges(node, ctx);
+  const accepts = membership(node.raw, nativeFlags(node, ctx));
+  const accepted = strings.filter((value) => accepts.test(value));
+  return choice([
+    ...(ranges.length ? [unit(ranges, ctx)] : []),
+    ...(accepted.length
+      ? [stringPattern(accepted, { ...ctx, ignoreCase: ctx.ignoreCase || ignoreCaseAt(node, ctx) })]
       : []),
-    ...strings,
-  ];
-  if (!choices.length) return NEVER;
-  return choices.length === 1 ? choices[0] : `(?:${choices.join("|")})`;
+  ]);
 }
 
 function assertion(node: AST.Assertion, ctx: Context, position: Position): string {
@@ -351,6 +412,8 @@ function assertion(node: AST.Assertion, ctx: Context, position: Position): strin
       if (node.negate) return ctx.unicode ? "(?-u:\\B)" : "";
       return "(?-u:\\b)";
     default:
+      if (!node.negate && position.first && position.last)
+        return alternatives(node.alternatives, ctx, INNER);
       // Lookarounds consume nothing; dropping one only widens the candidates.
       return "";
   }
@@ -427,6 +490,10 @@ function participates(group: AST.CapturingGroup, reference: AST.Backreference): 
  * not have matched leaves the reference empty.
  */
 function backreference(node: AST.Backreference, ctx: Context): string {
+  if (!node.ambiguous) {
+    const bound = ctx.bindings.get(node.resolved);
+    if (bound !== undefined) return literalWord(bound, ctx);
+  }
   // A reference inside repeated text could repeat itself.
   if (ctx.repeated) return ANY_TEXT;
   const groups = node.ambiguous ? node.resolved : [node.resolved];
@@ -448,11 +515,9 @@ function element(node: AST.Element, ctx: Context, position: Position): string {
       if (node.value === LF) return NEVER;
       return unit(folded([[node.value, node.value]], ctx), ctx);
     case "CharacterClass":
-      return (ctx.unicodeSets ? finiteClass(node, ctx) : undefined) ?? characterClass(node, ctx);
     case "ExpressionCharacterClass":
-      return finiteClass(node, ctx) ?? (node.negate ? unit(everything(ctx), ctx) : ANY_TEXT);
     case "CharacterSet":
-      return characterSet(node, ctx);
+      return characterPattern(node, ctx);
     case "Assertion":
       return assertion(node, ctx, position);
     case "Backreference":
@@ -460,7 +525,9 @@ function element(node: AST.Element, ctx: Context, position: Position): string {
     case "Group":
       return alternatives(node.alternatives, modified(node, ctx), position);
     case "CapturingGroup":
-      return alternatives(node.alternatives, ctx, position);
+      return ctx.bindings.has(node)
+        ? literalWord(ctx.bindings.get(node)!, { ...ctx, ignoreCase: false })
+        : alternatives(node.alternatives, ctx, position);
     case "Quantifier":
       return quantifier(node, ctx);
   }
@@ -475,44 +542,173 @@ function supplementary(node: AST.Element, next: AST.Element | undefined): number
 }
 
 function alternatives(nodes: readonly AST.Alternative[], ctx: Context, position: Position): string {
-  const translated = nodes.map(({ elements }) => {
-    let pattern = "";
-    for (let index = 0; index < elements.length; index++) {
-      const pair = ctx.unicode ? undefined : supplementary(elements[index], elements[index + 1]);
-      if (pair !== undefined) {
-        // ignoreCase without u never folds a supplementary character.
-        pattern += classPattern([[pair, pair]]);
-        index++;
-        continue;
+  return choice(
+    nodes.flatMap(({ elements }) =>
+      assertionPlans(elements, ctx).map((plan) => {
+        let pattern = "";
+        for (let index = 0; index < elements.length; index++) {
+          const constrained = plan.get(elements[index]);
+          if (constrained) {
+            pattern += constrained.map((ranges) => unit(ranges, ctx)).join("");
+            continue;
+          }
+          const pair =
+            ctx.unicode || plan.has(elements[index + 1])
+              ? undefined
+              : supplementary(elements[index], elements[index + 1]);
+          if (pair !== undefined) {
+            pattern += classPattern([[pair, pair]]);
+            index++;
+            continue;
+          }
+          pattern += element(elements[index], ctx, {
+            first: position.first && index === 0,
+            last: position.last && index === elements.length - 1,
+          });
+        }
+        return pattern;
+      }),
+    ),
+  );
+}
+
+function literalWord(text: string, ctx: Context): string {
+  return [...text]
+    .map((char) => {
+      const point = char.codePointAt(0)!;
+      return !ctx.unicode && point > MAX_UNIT
+        ? classPattern([[point, point]])
+        : unit(folded([[point, point]], ctx), ctx);
+    })
+    .join("");
+}
+
+function joinWords(
+  left: readonly string[],
+  right: readonly string[],
+): readonly string[] | undefined {
+  if (left.length * right.length > MAX_ANALYSIS_BRANCHES) return undefined;
+  const words = [...new Set(left.flatMap((a) => right.map((b) => a + b)))];
+  return words.some((word) => word.length > MAX_FIXED_UNITS) ? undefined : words;
+}
+
+function finiteWords(node: AST.Element, ctx: Context): readonly string[] | undefined {
+  if (node.type === "Assertion" || node.type === "Backreference") return undefined;
+  if (node.type === "Group" || node.type === "CapturingGroup") {
+    const result: string[] = [];
+    for (const branch of node.alternatives) {
+      let words: readonly string[] = [""];
+      for (const child of branch.elements) {
+        const part = finiteWords(child, ctx);
+        const joined = part && joinWords(words, part);
+        if (!joined) return undefined;
+        words = joined;
       }
-      pattern += element(elements[index], ctx, {
-        first: position.first && index === 0,
-        last: position.last && index === elements.length - 1,
-      });
+      result.push(...words);
+      if (result.length > MAX_ANALYSIS_BRANCHES) return undefined;
     }
-    return pattern;
+    return [...new Set(result)];
+  }
+  if (node.type === "Quantifier") {
+    if (node.max > MAX_ANALYSIS_BRANCHES) return undefined;
+    if (!node.max) return [""];
+    const inner = finiteWords(node.element, ctx);
+    if (!inner) return undefined;
+    let words: readonly string[] = [""];
+    const result: string[] = node.min === 0 ? [""] : [];
+    for (let count = 1; count <= node.max; count++) {
+      const joined = joinWords(words, inner);
+      if (!joined) return undefined;
+      words = joined;
+      if (count >= node.min) result.push(...words);
+      if (result.length > MAX_ANALYSIS_BRANCHES) return undefined;
+    }
+    return [...new Set(result)];
+  }
+  const ranges = scalarRanges(node, ctx);
+  if (total(ranges) > MAX_ANALYSIS_BRANCHES) return undefined;
+  const result: string[] = [];
+  for (const [low, high] of ranges)
+    for (let point = low; point <= high; point++) result.push(String.fromCodePoint(point));
+  const strings = classStrings(node);
+  if (!strings) return undefined;
+  const accepts = membership(node.raw, nativeFlags(node, ctx));
+  for (const value of strings) {
+    if (!accepts.test(value)) continue;
+    let words: readonly string[] = [""];
+    for (const char of value) {
+      const variants = ignoreCaseAt(node, ctx) ? caseVariants(char, ctx.unicode) : [char];
+      const joined = joinWords(words, variants);
+      if (!joined) return undefined;
+      words = joined;
+    }
+    result.push(...words);
+    if (result.length > MAX_ANALYSIS_BRANCHES) return undefined;
+  }
+  return [...new Set(result)];
+}
+
+/** Enumerate only captures whose value is stable at every reference. */
+function bindingContexts(parsed: AST.Pattern, ctx: Context): readonly Context[] {
+  let contexts = [ctx];
+  visitRegExpAST(parsed, {
+    onCapturingGroupEnter(group) {
+      if (
+        !group.references.length ||
+        group.references.some((ref) => ref.ambiguous || !participates(group, ref))
+      )
+        return;
+      for (let parent: AST.Node | null = group.parent; parent; parent = parent.parent)
+        if (parent.type === "Assertion" || parent.type === "Quantifier") return;
+      let nested = false;
+      visitRegExpAST(group, {
+        onCapturingGroupEnter(node) {
+          if (node !== group) nested = true;
+        },
+      });
+      if (nested) return;
+      const words = finiteWords(group, ctx);
+      if (!words?.length || words.length * contexts.length > MAX_ANALYSIS_BRANCHES) return;
+      contexts = contexts.flatMap((context) =>
+        words.map((word) => ({
+          ...context,
+          bindings: new Map([...context.bindings, [group, word]]),
+        })),
+      );
+    },
   });
-  return translated.length === 1 ? translated[0] : `(?:${translated.join("|")})`;
+  return contexts;
 }
 
 /**
  * rg patterns, one per query pattern, whose matching lines include every line the query
- * matches without multiline; undefined when regexpp cannot parse a pattern V8 accepted.
+ * matches without multiline; undefined when parsing or translation exceeds supported budgets.
  */
 export function lineCandidatePatterns(query: GrepQuery): string[] | undefined {
   const ctx: Context = {
     ignoreCase: query.flags.includes("i"),
     flagIgnoreCase: query.flags.includes("i"),
+    flagDotAll: query.flags.includes("s"),
     unicode: query.flags.includes("u") || query.flags.includes("v"),
     unicodeSets: query.flags.includes("v"),
     multilineAnchors: query.flags.includes("m"),
     repeated: false,
+    bindings: new Map(),
   };
   const patterns: string[] = [];
   for (const pattern of query.patterns) {
     const parsed = parseQueryPattern(pattern, query.literal, query.flags);
     if (!parsed) return undefined;
-    const translated = alternatives(parsed.alternatives, ctx, { first: true, last: true });
+    const translated = choice(
+      bindingContexts(parsed, ctx).map((context) =>
+        alternatives(parsed.alternatives, context, { first: true, last: true }),
+      ),
+    );
+    if (
+      translated.length + patterns.reduce((sum, value) => sum + value.length, 0) >
+      MAX_LINE_PATTERN_UNITS
+    )
+      return undefined;
     // A sticky match starts where the line starts.
     patterns.push(query.flags.includes("y") ? `^(?:${translated})` : translated);
   }

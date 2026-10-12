@@ -5,9 +5,8 @@
  * @module pi-hashline-edit/core
  */
 
-const MAX_UNIT = 0xffff;
+import { MAX_UNIT, MAX_SCALAR, nativeCharacterRanges } from "./character-set.ts";
 const MAX_ASCII = 0x7f;
-const MAX_SCALAR = 0x10ffff;
 
 let unitGroups: readonly (readonly number[])[] | undefined;
 
@@ -65,11 +64,17 @@ function variantsOfAscii(code: number): readonly string[] {
 
 /**
  * The characters JavaScript's ignoreCase matches for one character, itself included,
- * or undefined when they are not derived here (non-ASCII characters with u/v).
+ * derived from V8 for Unicode and ECMAScript Canonicalize otherwise.
  */
-export function caseVariants(char: string, unicode: boolean): readonly string[] | undefined {
+export function caseVariants(char: string, unicode: boolean): readonly string[] {
   const point = char.codePointAt(0)!;
-  if (unicode) return point <= MAX_ASCII ? variantsOfAscii(point) : undefined;
+  if (unicode) {
+    if (point <= MAX_ASCII) return variantsOfAscii(point);
+    const result: string[] = [];
+    for (const [low, high] of nativeCharacterRanges(`\\u{${point.toString(16)}}`, "iu"))
+      for (let code = low; code <= high; code++) result.push(String.fromCodePoint(code));
+    return result;
+  }
   // Without u, ignoreCase never folds a supplementary character's surrogates.
   if (point > MAX_UNIT) return [char];
   return variantsWithoutUnicode(point) ?? [char];

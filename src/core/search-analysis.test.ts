@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { extractPrefilter, smartIgnoreCase, type Literal } from "./search-analysis.ts";
 import { searchText, type GrepQuery } from "./search.ts";
+import { hasCandidateBytes } from "./search-matrix.testing.ts";
 
 const query = (pattern: string, flags = "m", literal = false): GrepQuery => ({
   patterns: [pattern],
@@ -13,11 +14,10 @@ const literal = (text: string): Literal => [...text].map((char) => [char]);
 
 for (const [pattern, flags, expected] of [
   ["colou?r", "m", [literal("color"), literal("colour")]],
-  ["\\w+", "m", undefined],
   ["a*", "m", undefined],
   ["(?:word|)", "m", undefined],
   ["[^a]+", "m", undefined],
-  ["(?=word)", "m", undefined],
+  ["(?=word)", "m", [literal("word")]],
   ["(?i:a)(?-i:b)", "m", [[["A", "a"], ["b"]]]],
   ["(?-i:a)(?i:b)", "mi", [[["a"], ["B", "b"]]]],
   ["k", "mi", [[["K", "k"]]]],
@@ -31,12 +31,13 @@ for (const [pattern, flags, expected] of [
       [
         ["A", "a"],
         ["B", "b"],
+        ["É", "é"],
+        ["Z", "z"],
       ],
     ],
   ],
-  ["é", "miu", undefined],
+  ["é", "miu", [[["É", "é"]]]],
   ["[\\u0100-\\u0200]", "m", undefined],
-  [Array.from({ length: 100 }, (_, index) => `word${index}`).join("|"), "m", undefined],
 ] as const) {
   test(`${pattern.slice(0, 80)} /${flags} → conservative candidate literals`, () => {
     assert.deepEqual(
@@ -48,10 +49,11 @@ for (const [pattern, flags, expected] of [
 
 for (const boundary of ["\n", "\r\n", "\uFFFD", "\uD800", "\uDC00", "\0"]) {
   test(`literal ${JSON.stringify(boundary)} boundary → no candidate spans changed bytes`, () => {
-    assert.deepEqual(extractPrefilter(query(`left${boundary}xy`, "m", true)), {
-      kind: "literals",
-      literals: [literal("left")],
-    });
+    const prefilter = extractPrefilter(query(`left${boundary}xy`, "m", true));
+    assert.ok(hasCandidateBytes(Buffer.from(`left${boundary}xy`), prefilter));
+    assert.ok(hasCandidateBytes(Buffer.from("left\nxy"), prefilter));
+    assert.equal(hasCandidateBytes(Buffer.from("left"), prefilter), false);
+    assert.equal(hasCandidateBytes(Buffer.from("xy"), prefilter), false);
     assert.deepEqual(extractPrefilter(query(boundary, "m", true)), { kind: "all" });
   });
 }
@@ -74,13 +76,6 @@ for (const [patterns, isLiteral, expected] of [
   test(`${JSON.stringify(patterns)} literal=${isLiteral} → smart case follows decoded letters`, () => {
     assert.equal(smartIgnoreCase(patterns, isLiteral), expected);
   });
-}
-
-function spellings(value: Literal): string[] {
-  return value.reduce<string[]>(
-    (prefixes, chars) => prefixes.flatMap((prefix) => chars.map((char) => prefix + char)),
-    [""],
-  );
 }
 
 test("seeded random patterns × raw bytes → a JS hit always retains a candidate byte literal", () => {
@@ -150,20 +145,16 @@ test("seeded random patterns × raw bytes → a JS hit always retains a candidat
       for (const multiline of [false, true]) {
         const request = { ...query(pattern, flags), multiline };
         const prefilter = extractPrefilter(request);
-        const needles =
-          prefilter.kind === "all"
-            ? undefined
-            : prefilter.literals.flatMap(spellings).map((value) => Buffer.from(value));
         for (const bytes of sources) {
           if (
             !searchText({ source: bytes.toString("utf8"), query: request, limit: 1 }).lines.length
           )
             continue;
           checkedHits++;
-          if (!needles) continue;
+          if (prefilter.kind === "all") continue;
           filteredHits++;
           assert.ok(
-            needles.some((needle) => bytes.includes(needle)),
+            hasCandidateBytes(bytes, prefilter),
             JSON.stringify({ pattern, flags, multiline, bytes: bytes.toString("hex"), prefilter }),
           );
         }
@@ -172,4 +163,29 @@ test("seeded random patterns × raw bytes → a JS hit always retains a candidat
   }
   assert.ok(checkedHits > 1000, `Only ${checkedHits} matching cases exercised`);
   assert.ok(filteredHits > 1000, `Only ${filteredHits} filtered matches exercised`);
+});
+
+test("oversized literal alternation → retains necessary prefixes without dropping a branch", () => {
+  const words = Array.from({ length: 100 }, (_, index) => `word${index}`);
+  const prefilter = extractPrefilter(query(words.join("|")));
+  for (const word of words) assert.ok(hasCandidateBytes(Buffer.from(word), prefilter));
+  assert.equal(hasCandidateBytes(Buffer.from("unrelated"), prefilter), false);
+});
+
+test("AND and OR file conditions → retain each alternative and require each conjunction", () => {
+  const prefilter = extractPrefilter(query("(?:foo.*bar|baz.*qux)"));
+  for (const value of ["foo\nbar", "baz\nqux"])
+    assert.ok(hasCandidateBytes(Buffer.from(value), prefilter));
+  for (const value of ["foo", "bar", "baz", "qux", "foo\nqux", "baz\nbar"])
+    assert.equal(hasCandidateBytes(Buffer.from(value), prefilter), false, value);
+});
+
+test("empty expression with a huge repeat → completes without iterating the repeat count", () => {
+  assert.deepEqual(extractPrefilter(query("(?:){1000000000}")), { kind: "all" });
+});
+
+test("word escape → keeps word-containing files and rejects punctuation-only files", () => {
+  const prefilter = extractPrefilter(query("\\w+"));
+  assert.ok(hasCandidateBytes(Buffer.from("---a---"), prefilter));
+  assert.equal(hasCandidateBytes(Buffer.from("---"), prefilter), false);
 });

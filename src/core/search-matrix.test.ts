@@ -39,7 +39,7 @@ test("Cartesian JS syntax × quantifiers × contexts × flags × line modes × b
       )
         continue;
       hits++;
-      if (prefilter.kind === "literals") filteredHits++;
+      if (prefilter.kind !== "all") filteredHits++;
       if (candidates[index]) continue;
       misses++;
       if (examples.length < 10)

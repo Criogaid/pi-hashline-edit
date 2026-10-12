@@ -9,6 +9,7 @@ import { searchText, type GrepQuery } from "../core/search.ts";
 import { searchFiles, type GrepMatch } from "../pi/grep-search.ts";
 import { lineCandidatePatterns } from "../pi/rg-regex.ts";
 import { runRgLines } from "../pi/rg-process.ts";
+import { REGEX_TRANSLATION_CORPUS } from "../testing/regex-translation-corpus.ts";
 
 // Ordered pairs expose decoder and boundary interactions between the required byte fragments.
 const pieces = [
@@ -42,6 +43,7 @@ const pieces = [
   ),
 ];
 const patterns = [
+  ...new Set(REGEX_TRANSLATION_CORPUS.map(({ pattern }) => pattern)),
   "\\uD83D",
   "\\uDE00",
   "[\\uD800-\\uDFFF]",
@@ -137,6 +139,13 @@ test("Cartesian adversarial bytes × syntax × flags × assertion positions → 
   t.after(() => rm(directory, { recursive: true, force: true }));
   const corpus = (separator: string) => {
     const chunks = [Buffer.from("\nab\naa\naab\nkk\nkK\nKk\nb\r\naaaaa\nABCDEFGHIJ\n")];
+    chunks.push(
+      Buffer.from(
+        REGEX_TRANSLATION_CORPUS.flatMap(({ hits, misses }) => [...hits, ...misses]).join(
+          separator,
+        ) + separator,
+      ),
+    );
     for (const left of pieces)
       for (const right of pieces) chunks.push(left, right, Buffer.from(separator));
     return Buffer.concat(chunks);
