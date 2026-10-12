@@ -58,7 +58,7 @@ for (const boundary of ["\n", "\r\n", "\uFFFD", "\uD800", "\uDC00", "\0"]) {
   });
 }
 
-for (const [patterns, isLiteral, expected] of [
+for (const [patterns, isLiteral, expected, flags] of [
   [["foo", "bar"], false, true],
   [["foo", "Bar"], false, false],
   [["foo\\S*", "\\D", "\\W"], false, true],
@@ -72,9 +72,17 @@ for (const [patterns, isLiteral, expected] of [
   [["foo\\S*"], true, false],
   [["\\u0041"], true, true],
   [["foo", "BAR"], true, false],
+  [["\\u{41}"], false, false, "u"],
+  [["\\u{41}"], false, false, "v"],
+  [["\\u{61}"], false, true, "u"],
+  [["\\u{61}"], false, true, "v"],
+  [["𐐀"], false, false, "u"],
+  [["𐐀"], false, false, "v"],
+  [["𐐨"], false, true, "u"],
+  [["𐐨"], false, true, "v"],
 ] as const) {
-  test(`${JSON.stringify(patterns)} literal=${isLiteral} → smart case follows decoded letters`, () => {
-    assert.equal(smartIgnoreCase(patterns, isLiteral), expected);
+  test(`${JSON.stringify(patterns)} literal=${isLiteral} flags=${flags ?? ""} → smart case follows decoded letters`, () => {
+    assert.equal(smartIgnoreCase(patterns, isLiteral, flags), expected);
   });
 }
 

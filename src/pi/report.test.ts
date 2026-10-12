@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { stripVTControlCharacters } from "node:util";
-import { initTheme } from "@earendil-works/pi-coding-agent";
+import { formatSize, initTheme } from "@earendil-works/pi-coding-agent";
 import { theme } from "../../node_modules/@earendil-works/pi-coding-agent/dist/modes/interactive/theme/theme.js";
 import { formatArgumentError } from "./argument-error.ts";
 import { renderToolError } from "./render.ts";
@@ -10,10 +10,13 @@ import {
   decodeReport,
   failureResult,
   reportOf,
+  reportResult,
   describeFailure,
   renderReport,
 } from "./report.ts";
 import { DEFAULT_OUTPUT_BUDGETS } from "./budgets.ts";
+import { MAX_UNNARROWED_SCAN_BYTES } from "./grep-search.ts";
+import { OUTCOME_NEXT, type Report } from "./report-schema.ts";
 
 const text = (value: string) => ({ type: "text" as const, text: value });
 function displayed(result: Parameters<typeof renderToolError>[0]) {
@@ -152,9 +155,40 @@ test("report-contract: native failure with an independent cause → retains the 
   assert.equal(report.cause?.code, "EIO");
 });
 
-test("current success report → decodes its facts", () => {
-  const report = { tool: "grep", matches: 1 };
-  const serialized = renderReport(report);
-  assert.deepEqual(decodeReport(serialized), report);
-  assert.deepEqual(reportOf({ content: [text(serialized)] }), report);
+test("grep success and incomplete candidate facts → survive report serialization", () => {
+  for (const report of [
+    { tool: "grep", matches: 1 },
+    { tool: "grep", matches: 1, candidates: "files" },
+    {
+      tool: "grep",
+      matches: 0,
+      candidates: "all",
+      scanLimit: formatSize(MAX_UNNARROWED_SCAN_BYTES),
+    },
+    {
+      tool: "grep",
+      error: "SEARCH_INCOMPLETE",
+      message: "Search incomplete.",
+      diagnostics: "unreadable file",
+      candidates: "all",
+      scanLimit: formatSize(MAX_UNNARROWED_SCAN_BYTES),
+    },
+  ] satisfies Report[]) {
+    const serialized = renderReport(report);
+    assert.deepEqual(decodeReport(serialized), report);
+    assert.deepEqual(reportOf({ content: [text(serialized)] }), report);
+  }
+});
+
+test("match and scan limits → recovery prioritizes the match limit", () => {
+  const next = OUTCOME_NEXT.find(([fact]) => fact === "matchLimit")?.[1];
+  assert.ok(next);
+  const result = reportResult({
+    tool: "grep",
+    matches: 1,
+    matchLimit: 1,
+    candidates: "all",
+    scanLimit: formatSize(MAX_UNNARROWED_SCAN_BYTES),
+  });
+  assert.equal(reportOf(result)?.next, next);
 });

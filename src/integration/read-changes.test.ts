@@ -48,10 +48,17 @@ test("read or grep scan truncated across a UTF-8 sequence → reports file chang
       try {
         const args =
           tool.name === "read" ? { path, limit: 1 } : { path, pattern: "head", literal: true };
-        await expectToolFailure(callTool(tool, args), "FILE_CHANGED", (report) => {
-          assert.match(JSON.stringify(report), /File changed/);
-          assert.doesNotMatch(JSON.stringify(report), /UNSUPPORTED_ENCODING|Invalid UTF-8/);
-        });
+        await expectToolFailure(
+          callTool(tool, args),
+          tool.name === "read" ? "FILE_CHANGED" : "SEARCH_INCOMPLETE",
+          (report) => {
+            if (tool.name === "grep") {
+              assert.match(report.diagnostics ?? "", /race\.txt/);
+              assert.match(report.diagnostics ?? "", /File changed during read\./);
+            } else assert.match(JSON.stringify(report), /File changed/);
+            assert.doesNotMatch(JSON.stringify(report), /UNSUPPORTED_ENCODING|Invalid UTF-8/);
+          },
+        );
         const current = await readFile(path);
         assert.equal(isUtf8(current), true);
         assert.deepEqual(current, source.subarray(0, CHUNK_BYTES - 1));

@@ -156,12 +156,28 @@ const cases = [
     source: "😀x",
     lines: [],
   },
+  ...["s", "m"].flatMap((flags) => [
+    {
+      name: `lowercase pattern with ${flags} → smart-case ignores case`,
+      pattern: "^foo$",
+      flags,
+      source: "FOO\nfoo\n",
+      lines: [1, 2],
+    },
+    {
+      name: `uppercase pattern with ${flags} → smart-case is case-sensitive`,
+      pattern: "^FOO$",
+      flags,
+      source: "FOO\nfoo\n",
+      lines: [1],
+    },
+  ]),
   {
-    name: "explicit flags control case without smart-case",
-    pattern: "^foo$",
-    flags: "m",
+    name: "explicit i overrides uppercase smart-case",
+    pattern: "^FOO$",
+    flags: "i",
     source: "FOO\nfoo\n",
-    lines: [2],
+    lines: [1, 2],
   },
   {
     name: "ignoreCase false overrides i",
@@ -173,7 +189,7 @@ const cases = [
   },
   {
     name: "ignoreCase true enables i",
-    pattern: "^foo$",
+    pattern: "^FOO$",
     flags: "m",
     ignoreCase: true,
     source: "FOO\nfoo\n",

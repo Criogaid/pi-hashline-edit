@@ -272,48 +272,78 @@ test("matched files → full-line hash anchors", async () => {
   });
 });
 
-test("file changes after matching → every output mode rejects its stale revision", async (t) => {
+test("file changes after matching → summary modes retain the snapshot and content omits changed files", async (t) => {
   await withDir(async (dir) => {
     const file = join(dir, "grep.txt");
+    const unchanged = join(dir, "unchanged.txt");
+    await writeFile(unchanged, "needle\n");
     for (const [before, after] of [
-      [Buffer.from("needle\nold context\n"), Buffer.from("needle\nnew context\n")],
+      [Buffer.from("needle\nold context\n"), Buffer.from("changed\nnew context\n")],
       [
         Buffer.from([0x6e, 0x65, 0x65, 0x64, 0x6c, 0x65, 0x0a, 0xff]),
         Buffer.from([0x6e, 0x65, 0x65, 0x64, 0x6c, 0x65, 0x0a, 0xfe]),
       ],
     ]) {
       for (const multiline of [false, true]) {
-        for (const outputMode of ["content", "files", "count"] as const) {
+        for (const [outputMode, keepOtherFile] of [
+          ["files", false],
+          ["count", false],
+          ["content", false],
+          ["content", true],
+        ] as const) {
           await t.test(
-            `${outputMode}, multiline=${multiline}, bytes=${before.toString("hex")} → FILE_CHANGED`,
+            `${outputMode}, other file=${keepOtherFile}, multiline=${multiline}, bytes=${before.toString("hex")}`,
             async (t) => {
               await writeFile(file, before);
+              const paths = keepOtherFile ? [file, unchanged] : [file];
               const emit = Worker.prototype.emit;
+              let replies = 0;
               let changed = false;
               t.mock.method(
                 Worker.prototype,
                 "emit",
                 function (this: Worker, event: string | symbol, ...args: unknown[]) {
-                  if (event === "message" && !changed) {
+                  if (event === "message" && ++replies === paths.length) {
                     changed = true;
                     fs.writeFileSync(file, after);
                   }
                   return emit.call(this, event, ...args);
                 },
               );
-              const fake = fakeBackend({ paths: [file] });
-              await expectToolFailure(
-                call(makeGrepOverrideWithBackend(dir, DEFAULT_CONFIG, fake.backend), {
+              const fake = fakeBackend({ paths });
+              const result = await call(
+                makeGrepOverrideWithBackend(dir, DEFAULT_CONFIG, fake.backend),
+                {
                   pattern: "needle",
                   literal: true,
                   multiline,
                   outputMode,
                   context: 1,
-                  limit: 1,
-                }),
-                "FILE_CHANGED",
+                },
               );
               assert.equal(changed, true);
+              if (outputMode !== "content") {
+                assert.equal(result.isError, undefined);
+                assert.equal(reportOf(result)?.matches, 1);
+                assert.equal(reportOf(result)?.files, 1);
+                assert.equal(reportOf(result)?.diagnostics, undefined);
+                assert.equal(result.details.incomplete, undefined);
+                assert.match(text(result), /grep\.txt/);
+              } else {
+                assert.match(reportOf(result)?.diagnostics ?? "", /grep\.txt/);
+                assert.match(reportOf(result)?.diagnostics ?? "", /File changed during search\./);
+                if (keepOtherFile) {
+                  assert.equal(result.isError, undefined);
+                  assert.equal(reportOf(result)?.matches, 1);
+                  assert.equal(reportOf(result)?.files, 1);
+                  assert.equal(result.details.incomplete, true);
+                  assert.match(text(result), /unchanged\.txt · 1 match/);
+                  assert.doesNotMatch(text(result), /grep\.txt ·/);
+                } else {
+                  assert.equal(result.isError, true);
+                  assert.equal(reportOf(result)?.error, "SEARCH_INCOMPLETE");
+                }
+              }
             },
           );
         }
@@ -321,6 +351,33 @@ test("file changes after matching → every output mode rejects its stale revisi
     }
   });
 });
+
+test("candidate selection → reports only whole-file candidate facts", async () =>
+  withDir(async (dir) => {
+    const file = join(dir, "input.txt");
+    await writeFile(file, "abc \nneedle");
+    for (const [pattern, multiline, candidates] of [
+      ["needle", false, undefined],
+      ["needle", true, "files"],
+      ["[^x\\s]{3}\\s", true, "all"],
+    ] as const) {
+      const fake = fakeBackend({ paths: [file] });
+      const result = await callTool(
+        makeGrepOverrideWithBackend(dir, DEFAULT_CONFIG, fake.backend),
+        {
+          path: file,
+          pattern,
+          literal: false,
+          multiline,
+        },
+      );
+      assert.equal(result.isError, undefined);
+      assert.equal(reportOf(result)?.matches, 1);
+      assert.equal(reportOf(result)?.candidates, candidates);
+      assert.equal(reportOf(result)?.scanLimit, undefined);
+      assert.equal(fake.calls[0].kind, multiline ? "paths" : "lines");
+    }
+  }));
 
 test("grep in a subdirectory returns a path that edits the matching file", async () => {
   await withDir(async (dir) => {
