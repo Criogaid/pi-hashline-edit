@@ -104,7 +104,6 @@ for (const scenario of cases) {
         new Set(result.issues.map((issue) => issue.field)),
         new Set([...scenario.fields, "unexpected"]),
       );
-      assert.deepEqual(result.arguments, args);
       return true;
     });
     assert.equal(await readFile(path, "utf8"), original);

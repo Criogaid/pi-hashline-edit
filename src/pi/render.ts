@@ -161,7 +161,7 @@ function factLines(key: string, value: unknown, theme: Theme, indent = ""): stri
   ];
 }
 
-/** An argument rejection: highlighted field rows, omission notices first, the argument copy when expanded. */
+/** Highlight field issues; saved rejections may also contain an argument copy or its omission notice. */
 function argumentLines(report: Report, theme: Theme, expanded: boolean): string[] {
   const lines = [theme.fg("error", theme.bold(`Invalid arguments · ${report.tool} not executed`))];
   // Keep source omission notices ahead of the bounded collapsed preview.

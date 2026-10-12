@@ -427,7 +427,7 @@ test("all tools render argument issues as field diagnostics while preserving mod
         }
         if (expanded) {
           assert.match(displayed, /unexpected: is not allowed/);
-          assert.match(displayed, /Prepared arguments/);
+          assert.doesNotMatch(displayed, /Prepared arguments/);
         }
       }
     }
@@ -457,9 +457,9 @@ test("argument cards preserve omission notices and all expanded issues", () => {
     field: `edits[${index}].body`,
     reason: `中文🙂 ${index}: supply a line.\n${"context ".repeat(50)}\nFinal cause: empty body.`,
   }));
-  const diagnostic = formatArgumentError("edit", issues, "x".repeat(20000), true);
+  const diagnostic = formatArgumentError("edit", issues, true);
   const parsed = argumentError(new Error(diagnostic));
-  assert.ok(parsed.argumentsOmitted && parsed.schemaLimited && parsed.omittedIssues);
+  assert.ok(parsed.schemaLimited && parsed.omittedIssues);
   const result = {
     content: [{ type: "text" as const, text: diagnostic }],
   };
@@ -471,7 +471,6 @@ test("argument cards preserve omission notices and all expanded issues", () => {
     renderToolError(result, theme, true).render(100).join("\n"),
   );
   for (const displayed of [collapsed, expanded]) {
-    assert.match(displayed, /Prepared arguments omitted/);
     assert.match(displayed, /Schema diagnostic limit/);
     assert.ok(displayed.includes(`${parsed.omittedIssues} issues omitted`));
     assert.doesNotMatch(displayed, /"error":|"issues":/);
@@ -503,7 +502,7 @@ test("unrecognized or malformed JSON errors retain their original diagnostic", (
 test("argument diagnostics wrap Unicode and multiline reasons at narrow terminal widths", () => {
   const field = "edits[0].body";
   const reason = '中文🙂: supply at least one line.\nUse ["空行"] for this example.';
-  const diagnostic = formatArgumentError("edit", [{ field, reason }], { path: "中文.txt" }, false);
+  const diagnostic = formatArgumentError("edit", [{ field, reason }], false);
   const result = { content: [{ type: "text" as const, text: diagnostic }] };
   for (const appearance of ["dark", "light"] as const) {
     initTheme(appearance);
@@ -515,7 +514,6 @@ test("argument diagnostics wrap Unicode and multiline reasons at narrow terminal
         for (const value of [field, reason, "edit not executed"]) {
           assert.ok(displayed.includes(value.replace(/\s/g, "")));
         }
-        assert.equal(displayed.includes("中文.txt"), expanded);
       }
     }
   }

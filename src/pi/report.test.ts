@@ -43,7 +43,6 @@ test("Pi argument failure transported as text → renders field facts after seri
   const diagnostic = formatArgumentError(
     "edit",
     [{ field: "edits[0].body", reason: "is empty" }],
-    { edits: [] },
     false,
   );
   const result = JSON.parse(JSON.stringify({ content: [text(diagnostic)] }));
@@ -53,8 +52,24 @@ test("Pi argument failure transported as text → renders field facts after seri
   assert.doesNotMatch(shown, /"issues":/);
 });
 
+test("persisted argument copies and omission markers → remain readable on replay", () => {
+  for (const facts of [{ arguments: { path: "saved.txt" } }, { argumentsOmitted: true }]) {
+    const report = {
+      tool: "edit",
+      error: "INVALID_ARGUMENTS",
+      issues: [{ field: "edits[0].body", reason: "is empty" }],
+      ...facts,
+    };
+    const diagnostic = JSON.stringify(report);
+    assert.deepEqual(decodeReport(diagnostic), report);
+    const shown = displayed({ content: [text(diagnostic)] });
+    assert.match(shown, /edits\[0\]\.body: is empty/);
+    assert.match(shown, "arguments" in facts ? /saved\.txt/ : /arguments omitted/);
+  }
+});
+
 test("invalid serialized report → retains the raw diagnostic", () => {
-  const valid = formatArgumentError("edit", [{ field: "path", reason: "missing" }], {}, false);
+  const valid = formatArgumentError("edit", [{ field: "path", reason: "missing" }], false);
   for (const invalid of [
     '{"tool":"edit","arbitrary":"user file"}',
     '{"tool":"replace","error":"NO_MATCH","message":"missing rule"}',

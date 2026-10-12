@@ -143,8 +143,9 @@ export const FACT_FIELDS = {
   schemaLimited: Type.Literal(true, {
     description: "A native diagnostic allowance was reached; more issues may exist.",
   }),
-  arguments: Type.Unknown({ description: "Pi's prepared arguments." }),
-  argumentsOmitted: Type.Literal(true, { description: "The argument copy did not fit or encode." }),
+  // Retained for decoding argument rejections in saved sessions; new reports omit both fields.
+  arguments: Type.Unknown({ description: "Prepared arguments in a persisted rejection." }),
+  argumentsOmitted: Type.Literal(true, { description: "A persisted rejection omitted its copy." }),
   // A missing path among several (grep).
   missing: Type.String(),
   // Anchor verification (failure-context.ts).

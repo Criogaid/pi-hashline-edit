@@ -1144,7 +1144,6 @@ test("edit receives multiple wrong-length anchors → reports each location with
         ["edits[0].end", "edits[1].anchor"],
       );
       assert.equal(issues.filter((issue) => issue.fix?.includes("Read or grep")).length, 1);
-      assert.ok(error.message.includes(short));
       assert.match(error.message, new RegExp(`${hashLen - 2} hash characters`));
       assert.match(error.message, new RegExp(`hashLen.*${hashLen}`));
       return true;

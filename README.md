@@ -141,7 +141,7 @@ The codes, their facts (`?` marks optional ones), and their recovery are defined
 
 | Code | Raised when | Facts |
 | --- | --- | --- |
-| `INVALID_ARGUMENTS` | Arguments fail the schema or a tool-specific check; nothing ran. See [Argument errors](#argument-errors). | `issues`, `omittedIssues`?, `schemaLimited`?, `arguments`?, `argumentsOmitted`? |
+| `INVALID_ARGUMENTS` | Arguments fail the schema or a tool-specific check; nothing ran. See [Argument errors](#argument-errors). | `issues`, `omittedIssues`?, `schemaLimited`? |
 | `OPERATION_ABORTED` | The call was cancelled. `message` is `Operation aborted.`, as in Pi's built-in tools; for mutation tools, `publication` and `stage` say where it stopped. | — |
 | `PATH_NOT_FOUND` | The path does not exist (only `ENOENT`), or `write` with `mode: "overwrite"` names a missing target. | `missing`? |
 | `FILESYSTEM_ERROR` | Any other filesystem failure; `message` or `cause` keeps the native error text. | — |
@@ -179,7 +179,7 @@ All six tools use one argument-validation entry point. Tool-specific checks coll
 
 Diagnostics combine distinct constraints on one field and omit duplicate parent summaries. A tool-specific explanation replaces schema messages for that value only when its field belongs to the selected shape; forbidden fields and unknown operations receive no inapplicable body or anchor advice. Missing required fields and other independent errors remain visible. Each top-level field has a separate native diagnostic allowance. The original schema and Pi pipeline still control acceptance, coercion, and optional null handling.
 
-An argument rejection is an `INVALID_ARGUMENTS` report. In place of `message`, it lists `issues` and a copy of the prepared `arguments`. Each issue states what is wrong in `reason` and, when the reason alone does not say how to correct it, the correction in `fix`; a fix shared by several issues appears once, on the first of them:
+An argument rejection is an `INVALID_ARGUMENTS` report. In place of `message`, it lists `issues` without repeating the call's arguments. Each issue states what is wrong in `reason` and, when the reason alone does not say how to correct it, the correction in `fix`; a fix shared by several issues appears once, on the first of them:
 
 ```json
 {
@@ -191,11 +191,7 @@ An argument rejection is an `INVALID_ARGUMENTS` report. In place of `message`, i
       "reason": "is empty",
       "fix": "Remove this edit or supply at least one line ([\"\"] for a blank line)."
     }
-  ],
-  "arguments": {
-    "path": "example.txt",
-    "edits": [{ "op": "insert_after", "anchor": "22#ABCD", "body": [] }]
-  }
+  ]
 }
 ```
 
@@ -207,13 +203,13 @@ edits[0].body: is empty
   Remove this edit or supply at least one line ([""] for a blank line).
 ```
 
-Collapsed cards use the shared bounded preview. Expanding shows all retained issues and the prepared arguments under a separate label. Source omission and schema-limit notices appear before the issues so they remain visible when collapsed.
+Collapsed cards use the shared bounded preview. Expanding shows all retained issues. Issue-omission and schema-limit notices appear before the issues so they remain visible when collapsed. Saved rejections containing `arguments` or `argumentsOmitted` remain readable, including their expanded argument copy.
 
-`issues` combines schema and tool-specific failures. When a schema reason does not say how to correct the value, its `fix` comes from the declared schema. A missing required field or a pattern mismatch states what the field does, taken from its schema description; an array item without its own description uses its array's, and a choice field such as an edit's `op` lists each value with its description. A field that is not allowed lists the fields its selected shape accepts, after the meaning of the operation that selected that shape. Field paths refer to Pi's prepared arguments: array indices use `[0]`, named properties use dots, and other property names use JSON-quoted brackets. `$` identifies a preparation failure without a field diagnostic. `arguments` contains the prepared value, including Pi coercion, when it fits and can be encoded.
+`issues` combines schema and tool-specific failures. When a schema reason does not say how to correct the value, its `fix` comes from the declared schema. A missing required field or a pattern mismatch states what the field does, taken from its schema description; an array item without its own description uses its array's, and a choice field such as an edit's `op` lists each value with its description. A field that is not allowed lists the fields its selected shape accepts, after the meaning of the operation that selected that shape. Field paths refer to Pi's prepared arguments: array indices use `[0]`, named properties use dots, and other property names use JSON-quoted brackets. `$` identifies a preparation failure without a field diagnostic.
 
 Within an edit operation, omit an optional `end` when no range is needed. `end: null` remains a schema error, including when other arguments are invalid.
 
-Argument diagnostics share the [diagnostic-block budget](#output-budgets) in [`budgets.ts`](src/pi/budgets.ts) and remain valid JSON at that limit. An oversized or unavailable argument copy is omitted with `argumentsOmitted: true`. Oversized reports keep whole opening and closing issues and report their omitted count in `omittedIssues`; an oversized field path is omitted whole. Each reason and fix uses the text-field budget and retains its opening and final cause with an omission notice. `schemaLimited: true` means a native diagnostic allowance was reached, so additional issues may remain. Invalid arguments prevent execution. Filesystem access, anchor verification, and forget eligibility remain subsequent checks that require valid arguments.
+Argument diagnostics share the [diagnostic-block budget](#output-budgets) in [`budgets.ts`](src/pi/budgets.ts) and remain valid JSON at that limit. Oversized reports keep whole opening and closing issues and report their omitted count in `omittedIssues`; an oversized field path is omitted whole. Each reason and fix uses the text-field budget and retains its opening and final cause with an omission notice. `schemaLimited: true` means a native diagnostic allowance was reached, so additional issues may remain. Invalid arguments prevent execution. Filesystem access, anchor verification, and forget eligibility remain subsequent checks that require valid arguments.
 
 ### Edit operations
 
@@ -565,7 +561,7 @@ The two minimums leave room for JSON envelopes and diagnostic omission markers. 
 | `grep` | Default 100 matching lines (`grep.defaultLimit`), overridable; `B` payload bytes and `P` UTF-16 units per preview. The match limit controls matching rows, with no extra fixed total-row cap. Hashes and revision checks use full content. Diagnostics have a separate `F` byte allowance. |
 | `forget` tag | With `forget` enabled: direct `read` and content-mode `grep` text results of 2 KiB or more, and image reads. Successful codemode outputs containing a successful read or content-mode grep call use the same threshold and are forgotten as one result; nested results are not tagged. This eligibility threshold stays fixed. |
 | Report `message` | `F` bytes, preserving the opening and the final cause with an omission notice; each `message` within `cause` has the same allowance. Worker replies transport full failures; the receiving tool applies its captured allowance. |
-| Argument errors | `D` bytes of valid JSON for combined tool-specific and schema issues; omit the argument copy before omitting whole issues and label both omissions. Each reason and fix uses `F` bytes. Pi's schema error allowance applies separately within each top-level field. |
+| Argument errors | `D` bytes of valid JSON for combined tool-specific and schema issues; omit whole issues with an explicit count. Each reason and fix uses `F` bytes. Pi's schema error allowance applies separately within each top-level field. |
 | Anchor `failures` | `D` bytes of compact JSON, with no fixed failure-count limit; leading entries are kept whole and the rest counted in `omittedFailures`. Unique candidates include complete rows up to `F` bytes, and ambiguous failures list up to eight candidates each. Unresolved anchors show the current cited row when it fits; oversized or out-of-range rows require a fresh `read` or `grep`. |
 | Anchor `matched` | Independent `D` bytes, with no fixed entry-count limit. Omitted entries are counted in `omittedMatched` and are not implied matched. |
 | `candidateNeighborhoods` | `D` bytes of complete anchored row text, lowest-line first; no fixed row-count limit. Uses the same first eight candidates per failure as the failure lists. Each listed candidate row is limited to `F` bytes. Rows exceeding either limit are omitted in full and counted in `omittedNeighborhoodRows`; later rows that fit are still returned, with gaps reflected in the `lines` ranges. |

@@ -1,8 +1,7 @@
 /**
  * Model-facing argument rejection: an `INVALID_ARGUMENTS` report (report.ts)
- * with the issues and argument copy as its facts, within one byte budget. Pi
- * raises it before execution, so it travels as the thrown message only.
- * The JSON is never truncated; whole issues or the argument copy are omitted.
+ * with field issues within one byte budget. Pi raises it before execution,
+ * so it travels as the thrown message only. Oversized issues are omitted whole.
  */
 import { DEFAULT_OUTPUT_BUDGETS, type OutputBudgets } from "./budgets.ts";
 import { boundedText, renderReport, type Report } from "./report.ts";
@@ -26,11 +25,10 @@ function encode(report: Report & { issues: readonly ArgumentIssue[] }): string {
   return renderReport({ ...report, issues: fixesOnce(report.issues) });
 }
 
-/** Encode prepared arguments once; unsupported values and oversized copies are explicitly omitted. */
+/** Encode actionable field diagnostics without repeating the call's arguments. */
 export function formatArgumentError(
   tool: string,
   issues: readonly ArgumentIssue[],
-  prepared: unknown,
   schemaLimited: boolean,
   budget: OutputBudgets = DEFAULT_OUTPUT_BUDGETS,
 ): string {
@@ -45,42 +43,14 @@ export function formatArgumentError(
     ...(schemaLimited ? { schemaLimited: true as const } : {}),
   };
   const fits = (text: string) => Buffer.byteLength(text) <= budget.blockBytes;
-  let argumentsCopy: unknown;
-  let argumentsAvailable = false;
-  try {
-    const encoded = JSON.stringify(prepared, (_key, value: unknown) => {
-      if (
-        value === undefined ||
-        typeof value === "function" ||
-        typeof value === "symbol" ||
-        typeof value === "bigint" ||
-        (typeof value === "number" && !Number.isFinite(value))
-      ) {
-        throw new TypeError("Prepared arguments contain a value JSON cannot represent");
-      }
-      return value;
-    });
-    if (encoded !== undefined && fits(encoded)) {
-      argumentsCopy = JSON.parse(encoded);
-      argumentsAvailable = true;
-    }
-  } catch {
-    // Pi preparation can fail before producing a JSON value (for example, a cycle).
-    // Report the original cause through issues and label the missing argument copy.
-  }
-  if (argumentsAvailable) {
-    const complete = encode({ ...base, issues: boundedIssues, arguments: argumentsCopy });
-    if (fits(complete)) return complete;
-  }
-  const withoutArguments: Report = { ...base, argumentsOmitted: true };
-  const complete = encode({ ...withoutArguments, issues: boundedIssues });
+  const complete = encode({ ...base, issues: boundedIssues });
   if (fits(complete)) return complete;
 
   // An oversized field path must be omitted whole: a shortened path could name another field.
   const eligible = boundedIssues.filter((issue) =>
     fits(
       encode({
-        ...withoutArguments,
+        ...base,
         issues: [issue],
         omittedIssues: boundedIssues.length - 1 || undefined,
       }),
@@ -90,7 +60,7 @@ export function formatArgumentError(
     const head = Math.ceil(count / 2);
     const tail = count - head;
     return encode({
-      ...withoutArguments,
+      ...base,
       issues: [...eligible.slice(0, head), ...(tail ? eligible.slice(-tail) : [])],
       omittedIssues: boundedIssues.length - count || undefined,
     });
