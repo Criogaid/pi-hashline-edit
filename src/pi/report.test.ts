@@ -15,7 +15,7 @@ import {
   renderReport,
 } from "./report.ts";
 import { DEFAULT_OUTPUT_BUDGETS } from "./budgets.ts";
-import { MAX_UNNARROWED_SCAN_BYTES } from "./grep-search.ts";
+import { MAX_UNNARROWED_SCAN_BYTES } from "./grep-candidates.ts";
 import { OUTCOME_NEXT, type Report } from "./report-schema.ts";
 
 const text = (value: string) => ({ type: "text" as const, text: value });

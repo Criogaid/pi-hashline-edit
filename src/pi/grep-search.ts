@@ -1,30 +1,19 @@
 /**
- * grep's search path: rg lists candidates and native RegExp in a bounded worker pool decides
- * every match on each file's LF view. Without multiline, rg lists candidate lines through
- * the translation in rg-regex.ts, which matches at least every line the query matches, and
- * workers check only those lines; a multiline query, or one rg cannot compile, lists
- * candidate files through the prefilter and workers check every line. Each matched file
- * keeps the revision of the bytes it was matched against.
+ * Native RegExp matching in a bounded worker pool. grep-candidates supplies absolute paths
+ * and optional candidate lines; this module owns queue backpressure, deduplication, worker
+ * cleanup, and each matched file's revision.
  *
  * @module pi-hashline-edit/pi
  */
 import { createHash } from "node:crypto";
 import { stat } from "node:fs/promises";
 import { availableParallelism } from "node:os";
-import { resolve } from "node:path";
 import type { GrepQuery, LineSearchInput, SearchInput } from "../core/search.ts";
-import { extractPrefilter } from "../core/search-analysis.ts";
 import { SEARCH_RESULT_SCHEMA, type SearchResult } from "../core/search-schema.ts";
 import { scanTextFile } from "./text-stream.ts";
-import {
-  runCandidatePaths,
-  COMMON_RG_ARGS,
-  LINE_LISTING_ARGS,
-  recordSearchDiagnostics,
-  type GrepBackend,
-} from "./rg-process.ts";
-import { scopeArgs, type SearchScope } from "./grep-scope.ts";
-import { lineCandidatePatterns } from "./rg-regex.ts";
+import { recordSearchDiagnostics, type GrepBackend } from "./rg-process.ts";
+import type { SearchScope } from "./grep-scope.ts";
+import { listCandidates, type Candidate } from "./grep-candidates.ts";
 import { withRegexWorker } from "./regex-worker.ts";
 import { invalidWorkerResult, workerReplyDecoder } from "./regex-worker-contract.ts";
 import { throwIfCancelled } from "./error-text.ts";
@@ -67,18 +56,7 @@ const SEARCH_CHUNK_UNITS = 1024 * 1024;
 const MAX_SEARCH_LINE_UNITS = MAX_MULTILINE_SEARCH_BYTES;
 const MAX_SEARCH_HEAP_MB = 512;
 const MAX_SEARCH_WORKERS = 4;
-/** Beyond this many candidate lines, a file's every line is checked instead. */
-const MAX_CANDIDATE_LINES = 64 * 1024;
 const SEARCH_WORKERS = Math.max(1, Math.min(MAX_SEARCH_WORKERS, availableParallelism() - 1));
-/**
- * When every file in scope is a candidate, files stop being listed once this many bytes of
- * them were queued; README's search limits link here.
- */
-export const MAX_UNNARROWED_SCAN_BYTES = 256 * 1024 * 1024;
-
-/** How candidates were selected: rg's candidate lines, or whole files (see Prefilter). */
-export type CandidateSource = "lines" | "files" | "all";
-
 class SearchFileLimitError extends Error {
   constructor(multiline: boolean) {
     const limit = `${MAX_MULTILINE_SEARCH_BYTES / 1024 ** 2} MiB`;
@@ -101,12 +79,6 @@ class WorkerFailure {
 const decodeReply = workerReplyDecoder(SEARCH_RESULT_SCHEMA);
 type Rows = SearchResult["lines"];
 type Run = (input: SearchInput | LineSearchInput) => Promise<SearchResult>;
-
-/** A file to check: only its candidate lines, ascending, or every line when absent. */
-interface Candidate {
-  filePath: string;
-  lines?: readonly number[];
-}
 
 /**
  * The candidate lines among the next lines of a request source, as the LF view shows them.
@@ -332,77 +304,43 @@ export async function searchFiles(options: {
     });
 
   const seen = new Set<string>();
-  let listedAny = false;
-  const enqueue = async (path: string, lines?: readonly number[]) => {
-    listedAny = true;
-    const filePath = resolve(path);
+  const enqueue = async (candidate: Candidate) => {
+    const { filePath } = candidate;
     if (stopped()) return false;
     if (seen.has(filePath)) return true;
     seen.add(filePath);
-    queue.push({ filePath, lines });
+    queue.push(candidate);
     if (idle.length) idle.shift()!();
     else if (workers.length < SEARCH_WORKERS) workers.push(startWorker());
     while (queue.length >= SEARCH_WORKERS && !stopped())
       await new Promise<void>((wake) => space.push(wake));
     return !stopped();
   };
-  let candidates: CandidateSource = "lines";
-  let scanned = 0;
-  let scanLimitReached = false;
-  /** Every file is a candidate: stop listing once the scan budget is spent. */
-  const enqueueWithinBudget = async (path: string) => {
-    if (scanned >= MAX_UNNARROWED_SCAN_BYTES) {
-      scanLimitReached = true;
-      return false;
-    }
-    scanned += await stat(resolve(path)).then(
-      ({ size }) => size,
-      () => 0,
-    );
-    return enqueue(path);
-  };
-  const scoped = [...scopeArgs(scope), "--", ...scope.searchPaths];
+  let selection: Awaited<ReturnType<typeof listCandidates>>;
   try {
-    const patterns = query.multiline ? undefined : lineCandidatePatterns(query);
-    let listing = patterns
-      ? await backend.runRgLines(
-          rgPath,
-          [
-            ...COMMON_RG_ARGS,
-            "--engine=default",
-            "--case-sensitive",
-            "--encoding=none",
-            ...LINE_LISTING_ARGS,
-            ...patterns.flatMap((pattern) => ["-e", pattern]),
-            ...scoped,
-          ],
-          poolSignal,
-          MAX_CANDIDATE_LINES,
-          enqueue,
-        )
-      : undefined;
-    // rg reports a pattern it cannot compile, such as one beyond its size limit, before any file.
-    if (!listing || (listing.code === 2 && !listedAny)) {
-      const prefilter = extractPrefilter(query);
-      candidates = prefilter.kind === "all" ? "all" : "files";
-      listing = await runCandidatePaths(
-        backend.runRgPaths,
-        rgPath,
-        prefilter,
-        scoped,
-        poolSignal,
-        candidates === "all" ? enqueueWithinBudget : (path) => enqueue(path),
-      );
-    }
-    recordSearchDiagnostics(listing, warnings);
+    selection = await listCandidates({
+      backend,
+      rgPath,
+      scope,
+      query,
+      signal: poolSignal,
+      onCandidate: enqueue,
+    });
+    recordSearchDiagnostics(selection.listing, warnings);
   } catch (error) {
     fail(error);
+    throw error;
   } finally {
     listed = true;
     releaseAll();
+    await Promise.all(workers);
+    throwIfCancelled(signal);
+    if (failure) throw failure.error;
   }
-  await Promise.all(workers);
-  throwIfCancelled(signal);
-  if (failure) throw failure.error;
-  return { files, matchLimitReached, candidates, scanLimitReached };
+  return {
+    files,
+    matchLimitReached,
+    candidates: selection.candidates,
+    scanLimitReached: selection.scanLimitReached,
+  };
 }

@@ -1,7 +1,7 @@
 /**
  * Override grep: valid UTF-8 results feed edit; malformed UTF-8 uses non-editable previews.
- * grep-search lists candidate files with rg (rg-process, core/search-analysis) and
- * matches them with native JavaScript (core/search). grep-scope, grep-output, and
+ * grep-candidates selects candidates with rg; grep-search matches them with native
+ * JavaScript (core/search). grep-scope, grep-output, and
  * grep-render complete it. This module owns the schema, backend wiring, and execution order.
  * @module pi-hashline-edit/pi
  */
@@ -20,7 +20,8 @@ import {
   resolveSearchPaths,
   type SearchScope,
 } from "./grep-scope.ts";
-import { MAX_UNNARROWED_SCAN_BYTES, searchFiles } from "./grep-search.ts";
+import { searchFiles } from "./grep-search.ts";
+import { MAX_UNNARROWED_SCAN_BYTES } from "./grep-candidates.ts";
 import { toDisplayLines } from "./grep-render.ts";
 import { runRgLines, runRgPaths, type GrepBackend } from "./rg-process.ts";
 import { smartIgnoreCase } from "../core/search-analysis.ts";
