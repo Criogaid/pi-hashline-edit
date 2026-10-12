@@ -830,25 +830,40 @@ test("one candidate cannot be read → matches from other files remain available
     assert.match(JSON.stringify(reportOf(result)?.diagnostics), /gone\.txt/);
   }));
 
-test("explicit-file glob listing reports warnings → confirmed matches remain available", async () => {
-  await withDir(async (dir) => {
-    const file = join(dir, "fixture.txt");
-    await writeFile(file, "needle\n");
-    const fake = fakeBackend({ paths: [file] });
-    const listing = await call(
-      makeGrepOverrideWithBackend(dir, DEFAULT_CONFIG, {
-        ...fake.backend,
-        runRgPaths: async (...args) => {
-          const result = await fake.backend.runRgPaths(...args);
-          return { ...result, code: 2, stderr: "directory: Permission denied" };
-        },
-      }),
-      { literal: true, pattern: "needle", path: file, glob: "*.txt" },
-    );
-    assert.match(text(listing), /1#[0-9A-Z]+│needle/);
-    assert.match(reportOf(listing)?.diagnostics ?? "", /directory: Permission denied/);
-  });
-});
+for (const admitted of [2, 1, 0]) {
+  test(`explicit-file glob listing admits ${admitted}/2 files with stderr → diagnostics reflect excluded files`, async () =>
+    withDir(async (dir) => {
+      const files = [join(dir, "first.txt"), join(dir, "second.txt")];
+      await Promise.all(files.map((file) => writeFile(file, "needle\n")));
+      const fake = fakeBackend({ paths: files.slice(0, admitted) });
+      const result = await call(
+        makeGrepOverrideWithBackend(dir, DEFAULT_CONFIG, {
+          ...fake.backend,
+          runRgPaths: async (...args) => {
+            const listing = await fake.backend.runRgPaths(...args);
+            return { ...listing, code: 2, stderr: "directory: Permission denied" };
+          },
+        }),
+        { literal: true, pattern: "needle", path: files, glob: "*.txt" },
+      );
+      assert.ok(fake.calls[0].args.includes("--no-ignore"));
+      assert.equal(fake.calls[0].args.includes("!.git"), false);
+      if (admitted === files.length) {
+        assert.equal(reportOf(result)?.diagnostics, undefined);
+        assert.equal(result.details.incomplete, undefined);
+      } else {
+        assert.match(reportOf(result)?.diagnostics ?? "", /directory: Permission denied/);
+        if (admitted > 0) assert.equal(result.details.incomplete, true);
+      }
+      if (admitted > 0) {
+        assert.equal(result.isError, undefined);
+        assert.equal(reportOf(result)?.matches, admitted);
+      } else {
+        assert.equal(result.isError, true);
+        assert.equal(reportOf(result)?.error, "SEARCH_INCOMPLETE");
+      }
+    }));
+}
 
 test("concurrent file searches → all discovered matches remain present", async () => {
   await withDir(async (dir) => {
@@ -1008,7 +1023,8 @@ test("non-multiline or multiline query → use line candidates or the file prefi
     for (const multiline of [false, true]) {
       const fake = fakeBackend({ paths: [file], lines: [1, 2] });
       const params = {
-        path: file,
+        path: dir,
+        glob: ["*", "!*.bak"],
         pattern: ["a", "b"],
         literal: true,
         flags: "",
@@ -1035,7 +1051,18 @@ test("non-multiline or multiline query → use line candidates or the file prefi
             ...LINE_LISTING_ARGS,
             ...candidates.flatMap((pattern) => ["-e", pattern]),
           ];
-      assert.deepEqual(fake.calls[0].args, [...prefix, "--hidden", "--", file]);
+      assert.deepEqual(fake.calls[0].args, [
+        ...prefix,
+        "--hidden",
+        "--glob",
+        "*",
+        "--glob",
+        "!*.bak",
+        "--glob",
+        "!.git",
+        "--",
+        dir,
+      ]);
     }
   }));
 
@@ -1120,6 +1147,8 @@ test("native-valid pattern exceeds parser limits → use the all-file prefilter"
       ...candidateArgs({ kind: "all" }),
       "--null",
       "--hidden",
+      "--glob",
+      "!.git",
       "--",
       file,
     ]);

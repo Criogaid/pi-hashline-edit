@@ -12,6 +12,7 @@ import {
   readFile,
   readlink,
   rm,
+  stat,
   symlink,
   writeFile,
 } from "node:fs/promises";
@@ -381,6 +382,112 @@ test("directory searches respect ignores but explicit files and hidden files rem
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
+});
+
+test("directory traversal with caller globs → excludes .git while an explicit .git path remains searchable", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "hl-grep-git-scope-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const git = join(directory, ".git");
+  await mkdir(git);
+  await writeFile(join(git, "x.txt"), "needle\n");
+  await writeFile(join(directory, "a.txt"), "needle\n");
+  const tool = makeGrepOverrideWithBackend(directory, DEFAULT_CONFIG, {});
+  for (const multiline of [false, true]) {
+    for (const glob of [undefined, "*"]) {
+      for (const [path, expected] of [
+        [directory, "a.txt"],
+        [git, ".git/x.txt"],
+      ]) {
+        const result = await callTool(tool, {
+          path,
+          glob,
+          multiline,
+          literal: true,
+          pattern: "needle",
+          outputMode: "files",
+        });
+        assert.equal(result.isError, undefined, JSON.stringify(reportOf(result)));
+        assert.equal(reportOf(result)?.matches, 1);
+        assert.equal(result.content[0].text.replace(/\\/g, "/"), expected);
+      }
+    }
+  }
+});
+
+test("explicit file with different case and a glob → admits the same file on a case-insensitive filesystem", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "hl-grep-case-admission-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const file = join(directory, "MiXeD.txt");
+  const requested = join(directory, "mixed.txt");
+  await writeFile(file, "needle\n");
+  let alias;
+  try {
+    alias = await stat(requested, { bigint: true });
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT")
+      return t.skip("Temporary filesystem is case-sensitive");
+    throw error;
+  }
+  const original = await stat(file, { bigint: true });
+  assert.equal(alias.dev, original.dev);
+  assert.equal(alias.ino, original.ino);
+  const tool = makeGrepOverrideWithBackend(directory, DEFAULT_CONFIG, {});
+  const result = await callTool(tool, {
+    path: requested,
+    glob: "*.txt",
+    literal: true,
+    pattern: "needle",
+  });
+  assert.equal(result.isError, undefined, JSON.stringify(reportOf(result)));
+  assert.equal(reportOf(result)?.matches, 1);
+  assert.equal(reportOf(result)?.files, 1);
+  assert.match(result.content[0].text, /1#[0-9A-Z]+│needle/);
+  assert.equal(reportOf(result)?.diagnostics, undefined);
+  assert.equal(result.details.incomplete, undefined);
+});
+
+test("explicit file with a dangling sibling link and a glob → returns complete matches without listing diagnostics", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "hl-grep-dangling-sibling-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const file = join(directory, "fixture.txt");
+  const link = join(directory, "broken.txt");
+  await writeFile(file, "needle\n");
+  try {
+    await symlink(
+      join(directory, "missing"),
+      link,
+      process.platform === "win32" ? "junction" : "dir",
+    );
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      "code" in error &&
+      typeof error.code === "string" &&
+      ["EPERM", "EACCES", "ENOTSUP"].includes(error.code)
+    )
+      return t.skip("Symbolic link creation unavailable");
+    throw error;
+  }
+  await assert.rejects(stat(link), { code: "ENOENT" });
+  let listingDiagnostics = "";
+  const tool = makeGrepOverrideWithBackend(directory, DEFAULT_CONFIG, {
+    runRgPaths: async (...args) => {
+      const listed = await runRgPaths(...args);
+      listingDiagnostics = listed.stderr;
+      return listed;
+    },
+  });
+  const result = await callTool(tool, {
+    path: file,
+    glob: "*.txt",
+    literal: true,
+    pattern: "needle",
+  });
+  assert.match(listingDiagnostics, /broken\.txt/);
+  assert.equal(result.isError, undefined, JSON.stringify(reportOf(result)));
+  assert.equal(reportOf(result)?.matches, 1);
+  assert.equal(reportOf(result)?.diagnostics, undefined);
+  assert.equal(result.details.incomplete, undefined);
 });
 
 test("explicit file paths obey ordered glob filters without inheriting ignore rules", async () => {
