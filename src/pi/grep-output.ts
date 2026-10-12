@@ -2,7 +2,7 @@ import { truncateHead, formatSize } from "@earendil-works/pi-coding-agent";
 import { DiagnosticBuffer } from "./diagnostic-buffer.ts";
 import { createHash } from "node:crypto";
 import { createAnchorFormatter, displayCarriageReturns, plainRow } from "./anchor-format.ts";
-import { fileReadWarning, type GrepMatch, type SearchFileSnapshot } from "./grep-search.ts";
+import { fileReadWarning, type GrepFileMatch } from "./grep-search.ts";
 import { scanTextLines } from "./text-stream.ts";
 import { DEFAULT_OUTPUT_BUDGETS, type OutputBudgets } from "./budgets.ts";
 import { searchChangedError } from "./error-text.ts";
@@ -67,45 +67,37 @@ function previewLine(
 
 interface FormatMatchesOptions {
   cwd: string;
-  raw: readonly GrepMatch[];
+  files: readonly GrepFileMatch[];
   outputMode: "content" | "files" | "count";
   context: number;
   anchors: ReturnType<typeof createAnchorFormatter>;
   signal?: AbortSignal;
   warnings: string[];
-  searchSnapshots: ReadonlyMap<string, SearchFileSnapshot>;
   budget?: OutputBudgets;
 }
 
 export async function formatMatches(options: FormatMatchesOptions) {
   const {
     cwd,
-    raw,
+    files,
     outputMode,
     context,
     anchors,
     signal,
     warnings,
-    searchSnapshots,
     budget = DEFAULT_OUTPUT_BUDGETS,
   } = options;
-  const byFile = new Map<string, GrepMatch[]>();
-  for (const match of raw) {
-    const lines = byFile.get(match.filePath) ?? [];
-    lines.push(match);
-    byFile.set(match.filePath, lines);
-  }
-  for (const lines of byFile.values()) lines.sort((a, b) => a.lineNumber - b.lineNumber);
   const formatPath = (filePath: string): string => serializePath(cwd, filePath);
   const blocks: string[] = [];
   const invalidUtf8: string[] = [];
   let linesTruncated = false;
   // Paths and counts state the searched snapshot as is. Content rows come from a second read,
   // which must match the revision the search matched; a file that changed is left out.
-  const fileEntries = [...byFile.entries()];
-  if (outputMode === "content" && fileEntries.length) {
+  let fileCount = files.length;
+  let matches = files.reduce((sum, file) => sum + file.rows.length, 0);
+  if (outputMode === "content" && files.length) {
     const fileResults = new Array<{ block?: string; invalidUtf8?: boolean; warning?: string }>(
-      fileEntries.length,
+      files.length,
     );
     let nextIndex = 0;
     const workerAbort = new AbortController();
@@ -113,12 +105,12 @@ export async function formatMatches(options: FormatMatchesOptions) {
     let failed = false;
     let failure: unknown;
     const workers = Array.from(
-      { length: Math.min(MAX_CONCURRENT_FILE_READS, fileEntries.length) },
+      { length: Math.min(MAX_CONCURRENT_FILE_READS, files.length) },
       async () => {
         try {
-          while (!workerAbort.signal.aborted && nextIndex < fileEntries.length) {
+          while (!workerAbort.signal.aborted && nextIndex < files.length) {
             const current = nextIndex++;
-            const [filePath, matchLines] = fileEntries[current];
+            const { filePath, rows: matchLines, snapshot } = files[current];
             try {
               const columns = new Map(matchLines.map((match) => [match.lineNumber, match.column]));
               const windowSet = new Set<number>();
@@ -129,8 +121,6 @@ export async function formatMatches(options: FormatMatchesOptions) {
               const rows: string[] = [];
               const matchedRows = new Set<number>();
               const hash = createHash("sha256");
-              // Content-mode search snapshots every file before recording its matches.
-              const snapshot = searchSnapshots.get(filePath)!;
               const stats = await scanTextLines(
                 filePath,
                 (number) => windowSet.has(number),
@@ -187,22 +177,20 @@ export async function formatMatches(options: FormatMatchesOptions) {
     for (const [index, result] of fileResults.entries()) {
       if (result.warning) {
         warnings.push(result.warning);
-        byFile.delete(fileEntries[index][0]);
+        fileCount--;
+        matches -= files[index].rows.length;
       } else if (result.block) {
         blocks.push(result.block);
-        if (result.invalidUtf8) invalidUtf8.push(formatPath(fileEntries[index][0]));
+        if (result.invalidUtf8) invalidUtf8.push(formatPath(files[index].filePath));
       }
     }
   }
   if (outputMode === "files") {
-    for (const filePath of byFile.keys()) blocks.push(formatPath(filePath));
+    for (const { filePath } of files) blocks.push(formatPath(filePath));
   } else if (outputMode === "count") {
-    for (const [filePath, matchLines] of byFile)
-      blocks.push(`${formatPath(filePath)}: ${matchLines.length}`);
+    for (const { filePath, rows } of files) blocks.push(`${formatPath(filePath)}: ${rows.length}`);
   }
-  let matches = 0;
-  for (const matchLines of byFile.values()) matches += matchLines.length;
-  return { blocks, linesTruncated, invalidUtf8, matches, files: byFile.size };
+  return { blocks, linesTruncated, invalidUtf8, matches, files: fileCount };
 }
 
 /** What grep states about its outcome beside the payload rows. */

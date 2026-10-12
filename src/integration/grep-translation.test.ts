@@ -5,15 +5,17 @@ import { join, resolve } from "node:path";
 import { test } from "node:test";
 import { rgPath } from "@vscode/ripgrep";
 import { searchText, type GrepQuery } from "../core/search.ts";
-import { searchFiles, type GrepMatch } from "../pi/grep-search.ts";
+import { searchFiles, type GrepFileMatch } from "../pi/grep-search.ts";
 import { runRgLines, runRgPaths, runCandidatePaths } from "../pi/rg-process.ts";
 import { lineCandidatePatterns } from "../pi/rg-regex.ts";
 import { extractPrefilter } from "../core/search-analysis.ts";
 import { REGEX_TRANSLATION_CORPUS } from "../testing/regex-translation-corpus.ts";
 
 const timeoutMs = 10_000;
-const sorted = (rows: readonly GrepMatch[]) =>
-  [...rows].sort((a, b) => a.filePath.localeCompare(b.filePath) || a.lineNumber - b.lineNumber);
+const sorted = (files: readonly Pick<GrepFileMatch, "filePath" | "rows">[]) =>
+  files
+    .flatMap(({ filePath, rows }) => rows.map((row) => ({ ...row, filePath })))
+    .sort((a, b) => a.filePath.localeCompare(b.filePath) || a.lineNumber - b.lineNumber);
 
 test("upstream regex witnesses × LF/CRLF/malformed bytes → sound candidates, intended selectivity and exact JS results", {
   timeout: 120_000,
@@ -87,7 +89,7 @@ test("upstream regex witnesses × LF/CRLF/malformed bytes → sound candidates, 
         signal: AbortSignal.timeout(timeoutMs),
         warnings,
       });
-      const expected = inputs.flatMap(({ bytes, filePath }) => {
+      const expected = inputs.map(({ bytes, filePath }) => {
         const native = searchText({ source: bytes.toString("utf8"), query, limit: 1000 });
         for (const row of native.lines)
           assert.ok(
@@ -103,10 +105,10 @@ test("upstream regex witnesses × LF/CRLF/malformed bytes → sound candidates, 
               `unfiltered ${JSON.stringify(example.misses[offset])}`,
             );
           }
-        return native.lines.map((row) => ({ ...row, filePath }));
+        return { filePath, rows: native.lines };
       });
       assert.deepEqual(warnings, []);
-      assert.deepEqual(sorted(result.raw), sorted(expected));
+      assert.deepEqual(sorted(result.files), sorted(expected));
     });
   }
 });
@@ -154,14 +156,12 @@ test("real rg AND/OR file prefilter → excludes incomplete branches before JS v
   });
   assert.deepEqual(warnings, []);
   assert.deepEqual(
-    sorted(result.raw),
+    sorted(result.files),
     sorted(
-      fixtures.flatMap((source, index) =>
-        searchText({ source, query, limit: 100 }).lines.map((row) => ({
-          ...row,
-          filePath: paths[index],
-        })),
-      ),
+      fixtures.map((source, index) => ({
+        filePath: paths[index],
+        rows: searchText({ source, query, limit: 100 }).lines,
+      })),
     ),
   );
 });
@@ -194,10 +194,7 @@ test("oversized line translation → file prefilter fallback preserves JS result
   assert.ok(filePasses > 0);
   assert.deepEqual(warnings, []);
   assert.deepEqual(
-    result.raw,
-    searchText({ source: pattern, query, limit: 10 }).lines.map((row) => ({
-      ...row,
-      filePath: path,
-    })),
+    sorted(result.files),
+    sorted([{ filePath: path, rows: searchText({ source: pattern, query, limit: 10 }).lines }]),
   );
 });

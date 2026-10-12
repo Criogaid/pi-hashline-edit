@@ -6,7 +6,7 @@ import { test } from "node:test";
 import { rgPath } from "@vscode/ripgrep";
 import { acceptsNative } from "../core/search-matrix.testing.ts";
 import { searchText, type GrepQuery } from "../core/search.ts";
-import { searchFiles, type GrepMatch } from "../pi/grep-search.ts";
+import { searchFiles, type GrepFileMatch } from "../pi/grep-search.ts";
 import { lineCandidatePatterns } from "../pi/rg-regex.ts";
 import { runRgLines } from "../pi/rg-process.ts";
 import { REGEX_TRANSLATION_CORPUS } from "../testing/regex-translation-corpus.ts";
@@ -129,8 +129,10 @@ const processTimeoutMs = 10_000;
 const matrixTimeoutMs = 180_000;
 const candidateLineLimit = 65_536;
 
-const sortedRows = (rows: readonly GrepMatch[]) =>
-  [...rows].sort((a, b) => a.filePath.localeCompare(b.filePath) || a.lineNumber - b.lineNumber);
+const sortedRows = (files: readonly Pick<GrepFileMatch, "filePath" | "rows">[]) =>
+  files
+    .flatMap(({ filePath, rows }) => rows.map((row) => ({ ...row, filePath })))
+    .sort((a, b) => a.filePath.localeCompare(b.filePath) || a.lineNumber - b.lineNumber);
 
 test("Cartesian adversarial bytes × syntax × flags × assertion positions → rg rows contain JS and final rows equal JS", {
   timeout: matrixTimeoutMs,
@@ -206,7 +208,7 @@ test("Cartesian adversarial bytes × syntax × flags × assertion positions → 
           signal: AbortSignal.timeout(processTimeoutMs),
           warnings,
         });
-        const expected = inputs.flatMap(({ filePath, bytes }) => {
+        const expected = inputs.map(({ filePath, bytes }) => {
           const result = searchText({ source: bytes.toString("utf8"), query, limit });
           for (const row of result.lines) {
             const context = JSON.stringify({ query, filePath, row });
@@ -214,12 +216,12 @@ test("Cartesian adversarial bytes × syntax × flags × assertion positions → 
             const lines = candidates.get(filePath);
             assert.ok(lines !== undefined && lines.includes(row.lineNumber), context);
           }
-          return result.lines.map((row) => ({ ...row, filePath }));
+          return { filePath, rows: result.lines };
         });
         assert.deepEqual(warnings, [], JSON.stringify(query));
-        assert.deepEqual(sortedRows(actual.raw), sortedRows(expected), JSON.stringify(query));
+        assert.deepEqual(sortedRows(actual.files), sortedRows(expected), JSON.stringify(query));
         assert.equal(actual.matchLimitReached, false);
-        nativeRows += expected.length;
+        nativeRows += expected.reduce((sum, file) => sum + file.rows.length, 0);
         checked++;
       }
     }

@@ -40,11 +40,11 @@ export function recordSearchDiagnostics(result: RgRunResult, warnings: string[])
   if (message) warnings.push(message);
 }
 
-/** One matching physical line; column counts UTF-16 units of the LF view. */
-export interface GrepMatch {
-  filePath: string;
-  lineNumber: number;
-  column: number;
+/** Matching physical lines in ascending order, with the revision they were searched against. */
+export interface GrepFileMatch {
+  readonly filePath: string;
+  readonly rows: readonly SearchResult["lines"][number][];
+  readonly snapshot: SearchFileSnapshot;
 }
 
 export interface SearchScope {
@@ -76,10 +76,10 @@ export function scopeArgs(scope: SearchScope): string[] {
 }
 
 /** A matched file as it was searched; content output re-verifies it before display. */
-export interface SearchFileSnapshot {
-  revision: string;
-  validUtf8: boolean;
-  totalLines: number;
+interface SearchFileSnapshot {
+  readonly revision: string;
+  readonly validUtf8: boolean;
+  readonly totalLines: number;
 }
 
 /**
@@ -299,8 +299,8 @@ export async function searchFiles(options: {
   readonly warnings: string[];
 }) {
   const { backend, rgPath, scope, query, limit, timeoutMs, signal, warnings } = options;
-  const raw: GrepMatch[] = [];
-  const snapshots = new Map<string, SearchFileSnapshot>();
+  const files: GrepFileMatch[] = [];
+  let matches = 0;
   let matchLimitReached = false;
   let failure: { error: unknown } | undefined;
   const failed = new AbortController();
@@ -330,7 +330,7 @@ export async function searchFiles(options: {
     const { filePath } = candidate;
     let found: Awaited<ReturnType<typeof searchFile>>;
     try {
-      found = await searchFile(candidate, query, () => limit - raw.length, run, poolSignal);
+      found = await searchFile(candidate, query, () => limit - matches, run, poolSignal);
     } catch (error) {
       if (error instanceof WorkerFailure) throw error.error;
       const warning =
@@ -341,11 +341,12 @@ export async function searchFiles(options: {
       warnings.push(warning);
       return;
     }
-    const room = limit - raw.length;
+    const room = limit - matches;
     if (!found?.rows.length || room <= 0) return;
-    snapshots.set(filePath, found.snapshot);
-    for (const row of found.rows.slice(0, room)) raw.push({ ...row, filePath });
-    if (raw.length >= limit) {
+    const rows = found.rows.slice(0, room);
+    files.push({ filePath, rows, snapshot: found.snapshot });
+    matches += rows.length;
+    if (matches >= limit) {
       matchLimitReached = true;
       releaseAll();
     }
@@ -441,5 +442,5 @@ export async function searchFiles(options: {
   await Promise.all(workers);
   throwIfCancelled(signal);
   if (failure) throw failure.error;
-  return { raw, snapshots, matchLimitReached, candidates, scanLimitReached };
+  return { files, matchLimitReached, candidates, scanLimitReached };
 }

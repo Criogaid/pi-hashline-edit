@@ -20,7 +20,6 @@ import {
   searchFiles,
   type GrepBackend,
   type SearchScope,
-  type SearchFileSnapshot,
 } from "./grep-search.ts";
 export type { GrepBackend } from "./grep-search.ts";
 import { toDisplayLines } from "./grep-render.ts";
@@ -273,9 +272,8 @@ export function makeGrepOverrideWithBackend(
         const result =
           scope.searchPaths.length === 0
             ? {
-                raw: [],
+                files: [],
                 matchLimitReached: false,
-                snapshots: new Map<string, SearchFileSnapshot>(),
                 candidates: "lines" as const,
                 scanLimitReached: false,
               }
@@ -289,14 +287,14 @@ export function makeGrepOverrideWithBackend(
                 signal,
                 warnings,
               });
-        const { raw, matchLimitReached, candidates, scanLimitReached } = result;
+        const { files, matchLimitReached, candidates, scanLimitReached } = result;
         const searchFacts = {
           candidates: candidates === "lines" ? undefined : candidates,
           scanLimit: scanLimitReached ? formatSize(MAX_UNNARROWED_SCAN_BYTES) : undefined,
         };
 
         const report = { tool: "grep", path: params.path };
-        if (raw.length === 0) {
+        if (files.length === 0) {
           if (warnings.length)
             throw searchIncompleteError("No matches confirmed.", warnings, budget, searchFacts);
           return reportResult(
@@ -308,13 +306,12 @@ export function makeGrepOverrideWithBackend(
 
         const formatted = await formatMatches({
           cwd,
-          raw,
+          files,
           outputMode,
           context: ctx,
           anchors,
           signal,
           warnings,
-          searchSnapshots: result.snapshots,
           budget,
         });
         const { payload, facts } = assembleGrepOutput({
