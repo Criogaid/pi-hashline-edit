@@ -60,6 +60,22 @@ export interface RgRunResult {
   stopped: boolean;
 }
 
+/** @internal — injectable process boundary for deterministic tests. */
+export interface GrepBackend {
+  runRgPaths: typeof runRgPaths;
+  runRgLines: typeof runRgLines;
+}
+
+/** Surface incomplete search diagnostics without discarding confirmed matches. */
+export function recordSearchDiagnostics(result: RgRunResult, warnings: string[]): void {
+  const message =
+    result.stderr.trim() ||
+    (!result.stopped && result.code !== 0 && result.code !== 1
+      ? `ripgrep exited with code ${result.code}.`
+      : "");
+  if (message) warnings.push(message);
+}
+
 function startRg(rgPath: string, args: readonly string[], signal?: AbortSignal): RunningProcess {
   throwIfCancelled(signal);
   const env = { ...process.env };

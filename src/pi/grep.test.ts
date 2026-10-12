@@ -15,7 +15,7 @@ import { rgPath } from "@vscode/ripgrep";
 import { initTheme } from "@earendil-works/pi-coding-agent";
 import { theme } from "../../node_modules/@earendil-works/pi-coding-agent/dist/modes/interactive/theme/theme.js";
 import { computeLineHash } from "../core/hash.ts";
-import { makeGrepOverrideWithBackend, type GrepBackend } from "./grep-tool.ts";
+import { makeGrepOverrideWithBackend } from "./grep-tool.ts";
 import { Worker } from "node:worker_threads";
 import { makeEditOverride } from "./edit-tool.ts";
 import { callTool } from "./tool-call.testing.ts";
@@ -25,7 +25,12 @@ import { taggedResultId } from "./forget.testing.ts";
 import { reportOf } from "./report.ts";
 import { expectToolFailure } from "./report-failure.testing.ts";
 import { RegExpParser } from "@eslint-community/regexpp";
-import { candidateArgs, COMMON_RG_ARGS, LINE_LISTING_ARGS } from "./rg-process.ts";
+import {
+  candidateArgs,
+  COMMON_RG_ARGS,
+  LINE_LISTING_ARGS,
+  type GrepBackend,
+} from "./rg-process.ts";
 import { extractPrefilter } from "../core/search-analysis.ts";
 import { lineCandidatePatterns } from "./rg-regex.ts";
 

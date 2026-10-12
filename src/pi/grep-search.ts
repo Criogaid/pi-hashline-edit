@@ -20,59 +20,21 @@ import {
   runCandidatePaths,
   COMMON_RG_ARGS,
   LINE_LISTING_ARGS,
-  type RgRunResult,
-  runRgLines,
-  runRgPaths,
+  recordSearchDiagnostics,
+  type GrepBackend,
 } from "./rg-process.ts";
+import { scopeArgs, type SearchScope } from "./grep-scope.ts";
 import { lineCandidatePatterns } from "./rg-regex.ts";
 import { withRegexWorker } from "./regex-worker.ts";
 import { invalidWorkerResult, workerReplyDecoder } from "./regex-worker-contract.ts";
 import { throwIfCancelled } from "./error-text.ts";
 import { HashlineError } from "../core/errors.ts";
 
-/** Surface incomplete search diagnostics without discarding confirmed matches. */
-export function recordSearchDiagnostics(result: RgRunResult, warnings: string[]): void {
-  const message =
-    result.stderr.trim() ||
-    (!result.stopped && result.code !== 0 && result.code !== 1
-      ? `ripgrep exited with code ${result.code}.`
-      : "");
-  if (message) warnings.push(message);
-}
-
 /** Matching physical lines in ascending order, with the revision they were searched against. */
 export interface GrepFileMatch {
   readonly filePath: string;
   readonly rows: readonly SearchResult["lines"][number][];
   readonly snapshot: SearchFileSnapshot;
-}
-
-export interface SearchScope {
-  globs: readonly string[];
-  noIgnore: boolean;
-  follow: boolean;
-  searchPaths: readonly string[];
-}
-
-/** @internal — injectable process boundary for deterministic tests. */
-export interface GrepBackend {
-  runRgPaths: typeof runRgPaths;
-  runRgLines: typeof runRgLines;
-}
-
-/**
- * The only place scope becomes rg flags. Traversal that respects ignore rules also skips
- * `.git` directories, which `--hidden` would otherwise search; a named path is still searched.
- * The exclusion follows the caller's globs, because a later rg glob takes precedence.
- */
-export function scopeArgs(scope: SearchScope): string[] {
-  return [
-    "--hidden",
-    ...(scope.noIgnore ? ["--no-ignore"] : []),
-    ...(scope.follow ? ["--follow"] : []),
-    ...scope.globs.flatMap((glob) => ["--glob", glob]),
-    ...(scope.noIgnore ? [] : ["--glob", "!.git"]),
-  ];
 }
 
 /** A matched file as it was searched; content output re-verifies it before display. */

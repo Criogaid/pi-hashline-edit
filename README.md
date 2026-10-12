@@ -350,7 +350,7 @@ Grep defaults to line-based code searches. With `multiline: true`, OR patterns a
 
 Directory traversal respects ignore rules, does not follow symbolic links, and includes hidden files except `.git` directories, even when a `glob` matches them. Explicitly named files and directories, `.git` included, can still be read through a link or from an ignored directory; ordered `glob` filters still apply to explicit file paths, and diagnostics from checking them are reported only when a named file is excluded. These rules have different priorities for explicit paths and directory traversal and are not simply intersected.
 
-Scope inspection reports `PATH_NOT_FOUND` only for a filesystem `ENOENT` failure; for a path containing a wildcard, `next` points to `glob`. Permission failures, symlink loops, and other traversal errors are `FILESYSTEM_ERROR` with their native error text.
+[Scope inspection](src/pi/grep-scope.ts) reports `PATH_NOT_FOUND` only for a filesystem `ENOENT` failure; for a path containing a wildcard, `next` points to `glob`. Permission failures, symlink loops, and other traversal errors are `FILESYSTEM_ERROR` with their native error text.
 
 Searches use bundled ripgrep, independent of system `rg` or `PATH`. The tool disables external ripgrep configuration with `--no-config` and clears `RIPGREP_CONFIG_PATH`. NUL-containing files are silently skipped in every output mode, including explicit file paths; they do not consume the match limit.
 

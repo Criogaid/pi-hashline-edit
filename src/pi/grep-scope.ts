@@ -1,14 +1,30 @@
 import { stat } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { canonicalPath } from "./path.ts";
-import { COMMON_RG_ARGS } from "./rg-process.ts";
-import {
-  recordSearchDiagnostics,
-  scopeArgs,
-  type GrepBackend,
-  type SearchScope,
-} from "./grep-search.ts";
+import { COMMON_RG_ARGS, recordSearchDiagnostics, type GrepBackend } from "./rg-process.ts";
 import { errnoCode, HashlineError } from "../core/errors.ts";
+
+export interface SearchScope {
+  globs: readonly string[];
+  noIgnore: boolean;
+  follow: boolean;
+  searchPaths: readonly string[];
+}
+
+/**
+ * The only place scope becomes rg flags. Traversal that respects ignore rules also skips
+ * `.git` directories, which `--hidden` would otherwise search; a named path is still searched.
+ * The exclusion follows the caller's globs, because a later rg glob takes precedence.
+ */
+export function scopeArgs(scope: SearchScope): string[] {
+  return [
+    "--hidden",
+    ...(scope.noIgnore ? ["--no-ignore"] : []),
+    ...(scope.follow ? ["--follow"] : []),
+    ...scope.globs.flatMap((glob) => ["--glob", glob]),
+    ...(scope.noIgnore ? [] : ["--glob", "!.git"]),
+  ];
+}
 
 /** Normalize a `string | string[]` param to an array (`undefined` → `[]`). */
 export function toArray(v: string | string[] | undefined): string[] {

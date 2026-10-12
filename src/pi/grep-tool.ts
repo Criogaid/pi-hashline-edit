@@ -14,16 +14,15 @@ import { renderOutputPreview, renderToolError, reportLines, withoutReport } from
 import { type ForgetReceiptDetails, grepReceipt, withResultTag } from "./forget-tool.ts";
 import { createAnchorFormatter } from "./anchor-format.ts";
 import { assembleGrepOutput, formatMatches, searchIncompleteError } from "./grep-output.ts";
-import { filterExplicitFilesByGlob, toArray, resolveSearchPaths } from "./grep-scope.ts";
 import {
-  MAX_UNNARROWED_SCAN_BYTES,
-  searchFiles,
-  type GrepBackend,
+  filterExplicitFilesByGlob,
+  toArray,
+  resolveSearchPaths,
   type SearchScope,
-} from "./grep-search.ts";
-export type { GrepBackend } from "./grep-search.ts";
+} from "./grep-scope.ts";
+import { MAX_UNNARROWED_SCAN_BYTES, searchFiles } from "./grep-search.ts";
 import { toDisplayLines } from "./grep-render.ts";
-import { runRgLines, runRgPaths } from "./rg-process.ts";
+import { runRgLines, runRgPaths, type GrepBackend } from "./rg-process.ts";
 import { smartIgnoreCase } from "../core/search-analysis.ts";
 import { buildRegex } from "../core/replace.ts";
 import { DEFAULT_GREP_FLAGS } from "../core/search.ts";
