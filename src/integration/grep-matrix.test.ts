@@ -32,6 +32,8 @@ async function checkCandidates(t: TestContext, queries: Iterable<{ readonly quer
   let accepted = 0;
   let rejected = 0;
   for (const { query } of queries) {
+    // This matrix exercises the file prefilter; line candidates have their own differential suite.
+    if (!query.multiline) continue;
     if (!acceptsNative(query)) {
       rejected++;
       continue;
@@ -107,10 +109,10 @@ async function checkCandidates(t: TestContext, queries: Iterable<{ readonly quer
   assert.equal(misses, 0, examples.join("\n"));
 }
 
-test("Cartesian JS queries → every emitted rg candidate expression retains all native hits", async (t) => {
+test("Cartesian multiline JS queries → file prefilter retains all native hits", async (t) => {
   await checkCandidates(t, matrixCases());
 });
 
-test("Cartesian paired JS syntax × composition × flags × line modes → real rg retains native hits", async (t) => {
+test("Cartesian paired multiline JS syntax × composition × flags → file prefilter retains native hits", async (t) => {
   await checkCandidates(t, pairedMatrixCases());
 });

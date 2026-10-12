@@ -24,6 +24,10 @@ import { FORGET_MIN_BYTES } from "./budgets.ts";
 import { taggedResultId } from "./forget.testing.ts";
 import { reportOf } from "./report.ts";
 import { expectToolFailure } from "./report-failure.testing.ts";
+import { RegExpParser } from "@eslint-community/regexpp";
+import { candidateArgs, COMMON_RG_ARGS, LINE_LISTING_ARGS } from "./rg-process.ts";
+import { extractPrefilter } from "../core/search-analysis.ts";
+import { lineCandidatePatterns } from "./rg-regex.ts";
 
 type FakeOptions = {
   code?: number | null;
@@ -31,6 +35,7 @@ type FakeOptions = {
   error?: Error;
   onRun?: () => void | Promise<void>;
   paths?: string[];
+  lines?: readonly number[];
 };
 
 async function withDir<T>(fn: (dir: string) => Promise<T>): Promise<T> {
@@ -43,22 +48,29 @@ async function withDir<T>(fn: (dir: string) => Promise<T>): Promise<T> {
 }
 
 function fakeBackend(options: FakeOptions = {}) {
-  const calls: { path: string; args: readonly string[] }[] = [];
+  const calls: { kind: "paths" | "lines"; path: string; args: readonly string[] }[] = [];
+  const run = async (
+    kind: "paths" | "lines",
+    path: string,
+    args: readonly string[],
+    onPath: (file: string) => boolean | Promise<boolean>,
+  ) => {
+    calls.push({ kind, path, args });
+    await options.onRun?.();
+    if (options.error) throw options.error;
+    for (const file of options.paths ?? []) {
+      if (!(await onPath(file))) return { code: null, stderr: options.stderr ?? "", stopped: true };
+    }
+    return {
+      code: options.code ?? (options.paths?.length ? 0 : 1),
+      stderr: options.stderr ?? "",
+      stopped: false,
+    };
+  };
   const backend: GrepBackend = {
-    async runRgPaths(path, args, _signal, onPath) {
-      calls.push({ path, args });
-      await options.onRun?.();
-      if (options.error) throw options.error;
-      for (const file of options.paths ?? []) {
-        if (!(await onPath(file)))
-          return { code: null, stderr: options.stderr ?? "", stopped: true };
-      }
-      return {
-        code: options.code ?? (options.paths?.length ? 0 : 1),
-        stderr: options.stderr ?? "",
-        stopped: false,
-      };
-    },
+    runRgPaths: (path, args, _signal, onPath) => run("paths", path, args, onPath),
+    runRgLines: (path, args, _signal, _maxLines, onFile) =>
+      run("lines", path, args, (file) => onFile(file, options.lines)),
   };
   return { backend, calls };
 }
@@ -988,3 +1000,149 @@ test("catastrophic worker evaluation → timeout and cancellation fail the searc
     assert.equal(reportOf(recovered)?.matches, 1);
   });
 });
+
+test("non-multiline or multiline query → use line candidates or the file prefilter with ordered arguments", async () =>
+  withDir(async (dir) => {
+    const file = join(dir, "input.txt");
+    await writeFile(file, "a\na\n");
+    for (const multiline of [false, true]) {
+      const fake = fakeBackend({ paths: [file], lines: [1, 2] });
+      const params = {
+        path: file,
+        pattern: ["a", "b"],
+        literal: true,
+        flags: "",
+        multiline,
+        ignoreCase: false,
+      };
+      const result = await callTool(
+        makeGrepOverrideWithBackend(dir, DEFAULT_CONFIG, fake.backend),
+        params,
+      );
+      assert.equal(reportOf(result)?.matches, 2);
+      assert.equal(fake.calls.length, 1);
+      assert.equal(fake.calls[0].kind, multiline ? "paths" : "lines");
+      const query = { patterns: params.pattern, literal: true, flags: "", multiline };
+      const candidates = lineCandidatePatterns(query);
+      assert.ok(candidates);
+      const prefix = multiline
+        ? [...candidateArgs(extractPrefilter(query)), "--null"]
+        : [
+            ...COMMON_RG_ARGS,
+            "--engine=default",
+            "--case-sensitive",
+            "--encoding=none",
+            ...LINE_LISTING_ARGS,
+            ...candidates.flatMap((pattern) => ["-e", pattern]),
+          ];
+      assert.deepEqual(fake.calls[0].args, [...prefix, "--hidden", "--", file]);
+    }
+  }));
+
+test("line discovery status and emitted files → fallback only for code 2 before any file", async () =>
+  withDir(async (dir) => {
+    const file = join(dir, "input.txt");
+    await writeFile(file, "needle\n");
+    for (const [code, paths, kinds] of [
+      [0, [file], ["lines"]],
+      [1, [], ["lines"]],
+      [2, [], ["lines", "paths"]],
+      [2, [file], ["lines"]],
+    ] as const) {
+      const fake = fakeBackend({ code, paths: [...paths], lines: [1] });
+      const result = await callTool(
+        makeGrepOverrideWithBackend(dir, DEFAULT_CONFIG, fake.backend),
+        {
+          path: dir,
+          pattern: "needle",
+          literal: true,
+        },
+      );
+      assert.deepEqual(
+        fake.calls.map(({ kind }) => kind),
+        kinds,
+      );
+      assert.equal(reportOf(result)?.matches ?? 0, paths.length);
+      if (code === 2 && paths.length === 0) assert.equal(result.isError, true);
+    }
+  }));
+
+test("sparse, dense, or overflowed candidate lines → matching preserves original line numbers and CR", async () =>
+  withDir(async (dir) => {
+    const file = join(dir, "input.txt");
+    await writeFile(file, "miss\r\nneedle\r\nmiss\nmiss\nneedle\r");
+    for (const lines of [[2, 5], [1, 2, 4, 5], undefined]) {
+      const fake = fakeBackend({ paths: [file], lines });
+      const result = await callTool(
+        makeGrepOverrideWithBackend(dir, DEFAULT_CONFIG, fake.backend),
+        {
+          path: file,
+          pattern: "needle",
+          literal: true,
+          context: 0,
+        },
+      );
+      assert.equal(reportOf(result)?.matches, 2);
+      assert.match(text(result), /2#[0-9A-Z]+│needle/);
+      assert.match(text(result), /5#[0-9A-Z]+│needle␍/);
+    }
+    const fake = fakeBackend({ paths: [file], lines: [2, 5] });
+    const result = await callTool(makeGrepOverrideWithBackend(dir, DEFAULT_CONFIG, fake.backend), {
+      path: file,
+      pattern: "\\r$",
+      literal: false,
+      flags: "",
+    });
+    assert.equal(reportOf(result)?.matches, 1);
+    assert.match(text(result), /5#[0-9A-Z]+│needle␍/);
+  }));
+
+test("native-valid pattern exceeds parser limits → use the all-file prefilter", async (t) =>
+  withDir(async (dir) => {
+    const file = join(dir, "input.txt");
+    await writeFile(file, "a\n");
+    t.mock.method(RegExpParser.prototype, "parsePattern", () => {
+      throw new RangeError("parser stack limit");
+    });
+    const fake = fakeBackend({ paths: [file] });
+    const result = await callTool(makeGrepOverrideWithBackend(dir, DEFAULT_CONFIG, fake.backend), {
+      path: file,
+      pattern: "a",
+      literal: false,
+      ignoreCase: false,
+    });
+    assert.equal(reportOf(result)?.matches, 1);
+    assert.deepEqual(
+      fake.calls.map(({ kind }) => kind),
+      ["paths"],
+    );
+    assert.deepEqual(fake.calls[0].args, [
+      ...candidateArgs({ kind: "all" }),
+      "--null",
+      "--hidden",
+      "--",
+      file,
+    ]);
+  }));
+
+test("rg rejects line patterns before listing files → successful file fallback discards the rejected-pattern diagnostic", async () =>
+  withDir(async (dir) => {
+    const file = join(dir, "input.txt");
+    await writeFile(file, "needle\n");
+    const lines = fakeBackend({ code: 2, stderr: "regex too large" });
+    const paths = fakeBackend({ paths: [file] });
+    const result = await callTool(
+      makeGrepOverrideWithBackend(dir, DEFAULT_CONFIG, {
+        runRgLines: lines.backend.runRgLines,
+        runRgPaths: paths.backend.runRgPaths,
+      }),
+      { path: dir, pattern: "needle", literal: true },
+    );
+    assert.equal(result.isError, undefined);
+    assert.equal(reportOf(result)?.matches, 1);
+    assert.equal(reportOf(result)?.diagnostics, undefined);
+    assert.deepEqual(
+      [...lines.calls, ...paths.calls].map(({ kind }) => kind),
+      ["lines", "paths"],
+    );
+  }));

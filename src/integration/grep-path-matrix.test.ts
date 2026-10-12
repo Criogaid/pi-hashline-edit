@@ -7,7 +7,7 @@ import { DEFAULT_GREP_FLAGS, searchText } from "../core/search.ts";
 import { DEFAULT_CONFIG } from "../pi/config.ts";
 import { makeGrepOverrideWithBackend } from "../pi/grep-tool.ts";
 import { reportOf } from "../pi/report.ts";
-import { runRgPaths } from "../pi/rg-process.ts";
+import { runRgLines, runRgPaths } from "../pi/rg-process.ts";
 import { callTool } from "../pi/tool-call.testing.ts";
 import { acceptsNative } from "../core/search-matrix.testing.ts";
 import { rejectsArgument } from "../pi/argument-error.testing.ts";
@@ -26,12 +26,18 @@ test("Cartesian literal mode × flags × case override × line mode × bytes →
   ];
   for (const input of inputs) await writeFile(join(directory, input.name), input.bytes);
   const limit = inputs.reduce((sum, input) => sum + input.bytes.length, 0);
-  const candidates = new Set<string>();
+  const candidates = new Map<string, readonly number[] | undefined>();
   const tool = makeGrepOverrideWithBackend(directory, DEFAULT_CONFIG, {
     runRgPaths(rg, args, signal, onPath) {
       return runRgPaths(rg, args, signal, (path) => {
-        candidates.add(basename(path));
+        candidates.set(basename(path), undefined);
         return onPath(path);
+      });
+    },
+    runRgLines(rg, args, signal, maxLines, onFile) {
+      return runRgLines(rg, args, signal, maxLines, (path, lines) => {
+        candidates.set(basename(path), lines);
+        return onFile(path, lines);
       });
     },
   });
@@ -69,10 +75,9 @@ test("Cartesian literal mode × flags × case override × line mode × bytes →
             const expected = inputs
               .map((input) => ({
                 name: input.name,
-                matches: searchText({ source: input.bytes.toString("utf8"), query, limit }).lines
-                  .length,
+                rows: searchText({ source: input.bytes.toString("utf8"), query, limit }).lines,
               }))
-              .filter((input) => input.matches > 0);
+              .filter((input) => input.rows.length > 0);
             const actual = await callTool(tool, params);
             calls++;
             assert.equal(
@@ -82,15 +87,22 @@ test("Cartesian literal mode × flags × case override × line mode × bytes →
             );
             assert.equal(
               reportOf(actual)?.matches,
-              expected.reduce((sum, input) => sum + input.matches, 0),
+              expected.reduce((sum, input) => sum + input.rows.length, 0),
               context,
             );
             assert.equal(reportOf(actual)?.files, expected.length, context);
             for (const input of expected) {
               nativeMatchingFiles++;
               assert.ok(candidates.has(input.name), `${context}: rg dropped ${input.name}`);
+              const listed = candidates.get(input.name);
+              for (const row of input.rows) {
+                assert.ok(
+                  listed === undefined || listed.includes(row.lineNumber),
+                  `${context}: rg dropped ${input.name}:${row.lineNumber}`,
+                );
+              }
             }
-            extraCandidates += [...candidates].filter(
+            extraCandidates += [...candidates.keys()].filter(
               (name) => !expected.some((input) => input.name === name),
             ).length;
             if (expected.length) {
@@ -98,7 +110,7 @@ test("Cartesian literal mode × flags × case override × line mode × bytes →
               assert.ok(body.type === "text");
               assert.deepEqual(
                 body.text.split("\n").sort(),
-                expected.map((input) => `${input.name}: ${input.matches}`).sort(),
+                expected.map((input) => `${input.name}: ${input.rows.length}`).sort(),
                 context,
               );
             }

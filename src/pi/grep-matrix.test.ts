@@ -9,11 +9,13 @@ import { callTool } from "./tool-call.testing.ts";
 
 test("Cartesian JS syntax × all flag combinations → tool entry agrees with V8 before discovery", async (t) => {
   let discoveries = 0;
+  const discover = async () => {
+    discoveries++;
+    return { code: 1, stderr: "", stopped: false };
+  };
   const tool = makeGrepOverrideWithBackend(process.cwd(), DEFAULT_CONFIG, {
-    async runRgPaths() {
-      discoveries++;
-      return { code: 1, stderr: "", stopped: false };
-    },
+    runRgPaths: discover,
+    runRgLines: discover,
   });
   const flagsCases = [
     ...["", "d", "g", "dg"].flatMap((prefix) => MATRIX_FLAGS.map((flags) => prefix + flags)),

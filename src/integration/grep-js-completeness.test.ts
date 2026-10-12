@@ -7,7 +7,8 @@ import { DEFAULT_CONFIG } from "../pi/config.ts";
 import { MAX_MULTILINE_SEARCH_BYTES } from "../pi/grep-search.ts";
 import { makeGrepOverrideWithBackend } from "../pi/grep-tool.ts";
 import { reportOf } from "../pi/report.ts";
-import { COMMON_RG_ARGS, runRgPaths } from "../pi/rg-process.ts";
+import { COMMON_RG_ARGS, runRgLines, runRgPaths } from "../pi/rg-process.ts";
+import { searchText } from "../core/search.ts";
 import { callTool } from "../pi/tool-call.testing.ts";
 
 const query = { pattern: "^..$", literal: false, ignoreCase: false };
@@ -117,7 +118,7 @@ test("oversized line or multiline input → explicit incomplete-search diagnosti
   }
 });
 
-test("real rg candidate prefilter → the same matches as an unfiltered file listing", async (t) => {
+test("real rg candidates → include every JS row and preserve confirmed output in both paths", async (t) => {
   const directory = await mkdtemp(join(tmpdir(), "hl-grep-prefilter-"));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const fixtures = [
@@ -135,12 +136,18 @@ test("real rg candidate prefilter → the same matches as an unfiltered file lis
     ["alpha\\nbeta", "m", true, 2],
   ] as const) {
     await t.test(`${pattern} /${flags} → identical confirmed results`, async () => {
-      const candidates = new Set<string>();
+      const candidates = new Map<string, readonly number[] | undefined>();
       const filtered = makeGrepOverrideWithBackend(directory, DEFAULT_CONFIG, {
         runRgPaths(rg, args, signal, onPath) {
           return runRgPaths(rg, args, signal, (path) => {
-            candidates.add(path);
+            candidates.set(path, undefined);
             return onPath(path);
+          });
+        },
+        runRgLines(rg, args, signal, maxLines, onFile) {
+          return runRgLines(rg, args, signal, maxLines, (path, lines) => {
+            candidates.set(path, lines);
+            return onFile(path, lines);
           });
         },
       });
@@ -153,6 +160,16 @@ test("real rg candidate prefilter → the same matches as an unfiltered file lis
             [...COMMON_RG_ARGS, "--files", ...args.slice(scopeStart)],
             signal,
             onPath,
+          );
+        },
+        runRgLines(rg, args, signal, _maxLines, onFile) {
+          const scopeStart = args.indexOf("--hidden");
+          assert.ok(scopeStart >= 0);
+          return runRgPaths(
+            rg,
+            [...COMMON_RG_ARGS, "--files", "--null", ...args.slice(scopeStart)],
+            signal,
+            (path) => onFile(path, undefined),
           );
         },
       });
@@ -170,6 +187,22 @@ test("real rg candidate prefilter → the same matches as an unfiltered file lis
         assert.deepEqual(actualText.text.split("\n").sort(), expectedText.text.split("\n").sort());
       }
       assert.ok(candidates.size > 0 && candidates.size < fixtures.length);
+      for (const [name, bytes] of fixtures) {
+        const path = join(directory, name);
+        const rows = searchText({
+          source: bytes.toString("utf8"),
+          query: { patterns: [pattern], literal: false, flags, multiline },
+          limit: bytes.length,
+        }).lines;
+        if (!rows.length) continue;
+        assert.ok(candidates.has(path), `rg dropped ${name}`);
+        const listed = candidates.get(path);
+        for (const row of rows)
+          assert.ok(
+            listed === undefined || listed.includes(row.lineNumber),
+            `${name}:${row.lineNumber}`,
+          );
+      }
     });
   }
 });
