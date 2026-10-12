@@ -346,14 +346,18 @@ export function parseQueryPattern(
 }
 
 /** Smart case over decoded characters; case-sensitive when a pattern cannot be analyzed. */
-export function smartIgnoreCase(patterns: readonly string[], literal: boolean): boolean {
+export function smartIgnoreCase(
+  patterns: readonly string[],
+  literal: boolean,
+  flags: string,
+): boolean {
   return !patterns.some((pattern) => {
-    const parsed = parseQueryPattern(pattern, literal, "");
+    const parsed = parseQueryPattern(pattern, literal, flags);
     if (!parsed) return true;
     let uppercase = false;
     visitRegExpAST(parsed, {
       onCharacterEnter({ value }) {
-        const text = String.fromCharCode(value);
+        const text = String.fromCodePoint(value);
         uppercase ||= text !== text.toLowerCase();
       },
     });

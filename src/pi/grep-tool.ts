@@ -82,7 +82,7 @@ function createGrepSchema({ defaultLimit, defaultContext }: HashlineEditConfig["
       ignoreCase: Type.Optional(
         Type.Boolean({
           description:
-            "true ignores case, false matches case; overrides the i flag. When omitted, explicit flags control case; otherwise use smart-case for the whole query (case-sensitive if analysis is unavailable).",
+            "true ignores case, false matches case; overrides the i flag. When omitted, the i flag ignores case; otherwise smart-case applies to the whole query, whatever other flags are given: any uppercase letter makes it case-sensitive (also when analysis is unavailable).",
         }),
       ),
       multiline: Type.Optional(
@@ -244,7 +244,7 @@ export function makeGrepOverrideWithBackend(
         const flags = new Set(params.flags ?? DEFAULT_GREP_FLAGS);
         const ignoreCase =
           params.ignoreCase ??
-          (params.flags === undefined ? smartIgnoreCase(patterns, literal) : flags.has("i"));
+          (flags.has("i") || smartIgnoreCase(patterns, literal, [...flags].join("")));
         if (ignoreCase) flags.add("i");
         else flags.delete("i");
         const query = { patterns, literal, flags: [...flags].join(""), multiline };
