@@ -3,7 +3,7 @@ import { DiagnosticBuffer } from "./diagnostic-buffer.ts";
 import { createHash } from "node:crypto";
 import { createAnchorFormatter, displayCarriageReturns, plainRow } from "./anchor-format.ts";
 import { fileReadWarning, type GrepMatch, type SearchFileSnapshot } from "./grep-search.ts";
-import { scanTextFile, scanTextLines } from "./text-stream.ts";
+import { scanTextLines } from "./text-stream.ts";
 import { DEFAULT_OUTPUT_BUDGETS, type OutputBudgets } from "./budgets.ts";
 import { searchChangedError } from "./error-text.ts";
 import { HashlineError } from "../core/errors.ts";
@@ -96,9 +96,10 @@ export async function formatMatches(options: FormatMatchesOptions) {
   const blocks: string[] = [];
   const invalidUtf8: string[] = [];
   let linesTruncated = false;
-  // Every mode re-reads each matched file against the revision its matches came from.
+  // Paths and counts state the searched snapshot as is. Content rows come from a second read,
+  // which must match the revision the search matched; a file that changed is left out.
   const fileEntries = [...byFile.entries()];
-  if (fileEntries.length) {
+  if (outputMode === "content" && fileEntries.length) {
     const fileResults = new Array<{ block?: string; invalidUtf8?: boolean; warning?: string }>(
       fileEntries.length,
     );
@@ -115,20 +116,6 @@ export async function formatMatches(options: FormatMatchesOptions) {
             const current = nextIndex++;
             const [filePath, matchLines] = fileEntries[current];
             try {
-              if (outputMode !== "content") {
-                const hash = createHash("sha256");
-                await scanTextFile(
-                  filePath,
-                  undefined,
-                  scanSignal,
-                  (bytes) => hash.update(bytes),
-                  "lossy",
-                );
-                if (hash.digest("hex") !== searchSnapshots.get(filePath)!.revision)
-                  throw searchChangedError();
-                fileResults[current] = {};
-                continue;
-              }
               const columns = new Map(matchLines.map((match) => [match.lineNumber, match.column]));
               const windowSet = new Set<number>();
               for (const { lineNumber } of matchLines) {

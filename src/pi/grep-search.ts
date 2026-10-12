@@ -28,6 +28,7 @@ import { lineCandidatePatterns } from "./rg-regex.ts";
 import { withRegexWorker } from "./regex-worker.ts";
 import { invalidWorkerResult, workerReplyDecoder } from "./regex-worker-contract.ts";
 import { throwIfCancelled } from "./error-text.ts";
+import { HashlineError } from "../core/errors.ts";
 
 /** Surface incomplete search diagnostics without discarding confirmed matches. */
 export function recordSearchDiagnostics(result: RgRunResult, warnings: string[]): void {
@@ -74,19 +75,25 @@ export function scopeArgs(scope: SearchScope): string[] {
   ];
 }
 
-/** A matched file as it was searched; output re-verifies it before display. */
+/** A matched file as it was searched; content output re-verifies it before display. */
 export interface SearchFileSnapshot {
   revision: string;
   validUtf8: boolean;
   totalLines: number;
 }
 
+/**
+ * A per-file failure that leaves the rest of the search valid: a filesystem error, or the
+ * file changing while it was searched or displayed. Undefined for any other failure.
+ */
 export function fileReadWarning(
   filePath: string,
   error: unknown,
   signal?: AbortSignal,
 ): string | undefined {
-  if (signal?.aborted || !(error instanceof Error) || !("code" in error)) return undefined;
+  if (signal?.aborted || !(error instanceof Error)) return undefined;
+  const changed = error instanceof HashlineError && error.errorCode === "FILE_CHANGED";
+  if (!changed && !("code" in error)) return undefined;
   return `Could not read ${filePath}: ${error.message}`;
 }
 
