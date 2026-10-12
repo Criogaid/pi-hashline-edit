@@ -6,7 +6,7 @@
  * @module pi-hashline-edit/pi
  */
 
-import { type ToolDefinition } from "@earendil-works/pi-coding-agent";
+import { formatSize, type ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { rgPath as bundledRgPath } from "@vscode/ripgrep";
 import { Type, type Static } from "typebox";
 import { Text } from "@earendil-works/pi-tui";
@@ -16,6 +16,7 @@ import { createAnchorFormatter } from "./anchor-format.ts";
 import { assembleGrepOutput, formatMatches, searchIncompleteError } from "./grep-output.ts";
 import { filterExplicitFilesByGlob, toArray, resolveSearchPaths } from "./grep-scope.ts";
 import {
+  MAX_UNNARROWED_SCAN_BYTES,
   searchFiles,
   type GrepBackend,
   type SearchScope,
@@ -275,6 +276,8 @@ export function makeGrepOverrideWithBackend(
                 raw: [],
                 matchLimitReached: false,
                 snapshots: new Map<string, SearchFileSnapshot>(),
+                candidates: "lines" as const,
+                scanLimitReached: false,
               }
             : await searchFiles({
                 backend,
@@ -286,13 +289,21 @@ export function makeGrepOverrideWithBackend(
                 signal,
                 warnings,
               });
-        const { raw, matchLimitReached } = result;
+        const { raw, matchLimitReached, candidates, scanLimitReached } = result;
+        const searchFacts = {
+          candidates: candidates === "lines" ? undefined : candidates,
+          scanLimit: scanLimitReached ? formatSize(MAX_UNNARROWED_SCAN_BYTES) : undefined,
+        };
 
         const report = { tool: "grep", path: params.path };
         if (raw.length === 0) {
           if (warnings.length)
-            throw searchIncompleteError("No matches confirmed.", warnings, budget);
-          return reportResult({ ...report, matches: 0, files: 0 });
+            throw searchIncompleteError("No matches confirmed.", warnings, budget, searchFacts);
+          return reportResult(
+            { ...report, matches: 0, files: 0, ...searchFacts },
+            [],
+            scanLimitReached ? { incomplete: true as const } : undefined,
+          );
         }
 
         const formatted = await formatMatches({
@@ -312,12 +323,14 @@ export function makeGrepOverrideWithBackend(
           outputMode,
           matchLimitReached,
           effectiveLimit,
+          searchFacts,
           budget,
         });
+        const incomplete = warnings.length > 0 || scanLimitReached;
         const parts = {
           report: { ...report, ...facts },
           payload: [{ type: "text" as const, text: payload }],
-          details: warnings.length ? { incomplete: true as const } : undefined,
+          details: incomplete ? { incomplete: true as const } : undefined,
         };
         // Only content mode returns file text; paths and counts have nothing to forget.
         if (outputMode !== "content")
@@ -325,7 +338,7 @@ export function makeGrepOverrideWithBackend(
         return withResultTag(toolCallId, parts, config.forget, () =>
           grepReceipt(patterns, formatted.matches, formatted.files, {
             limitReached: matchLimitReached,
-            incomplete: warnings.length > 0,
+            incomplete,
           }),
         );
       });

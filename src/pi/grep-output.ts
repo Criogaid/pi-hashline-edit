@@ -32,14 +32,18 @@ function searchDiagnostics(warnings: readonly string[], budget: OutputBudgets): 
   return diagnostics.toString().trimEnd();
 }
 
+/** How the search selected and bounded its candidates; stated with success and failure alike. */
+export type SearchFacts = Pick<Report, "candidates" | "scanLimit">;
+
 /** No result can be returned from an incomplete search: report it rather than "no matches". */
 export function searchIncompleteError(
   message: string,
   warnings: readonly string[],
   budget: OutputBudgets = DEFAULT_OUTPUT_BUDGETS,
+  searchFacts: SearchFacts = {},
 ): HashlineError<"SEARCH_INCOMPLETE"> {
   return new HashlineError("SEARCH_INCOMPLETE", message, {
-    facts: { diagnostics: searchDiagnostics(warnings, budget) },
+    facts: { ...searchFacts, diagnostics: searchDiagnostics(warnings, budget) },
   });
 }
 
@@ -206,7 +210,9 @@ export type GrepFacts = Pick<
   Report,
   | "matches"
   | "files"
+  | "candidates"
   | "matchLimit"
+  | "scanLimit"
   | "outputLimit"
   | "linePreviewLimit"
   | "invalidUtf8"
@@ -219,6 +225,7 @@ interface AssembleGrepOutputOptions {
   outputMode: "content" | "files" | "count";
   matchLimitReached: boolean;
   effectiveLimit: number;
+  searchFacts?: SearchFacts;
   budget?: OutputBudgets;
 }
 
@@ -233,12 +240,13 @@ export function assembleGrepOutput(options: AssembleGrepOutputOptions): {
     outputMode,
     matchLimitReached,
     effectiveLimit,
+    searchFacts = {},
     budget = DEFAULT_OUTPUT_BUDGETS,
   } = options;
   const { blocks, linesTruncated, invalidUtf8, matches, files } = formatted;
 
   if (!blocks.length && warnings.length) {
-    throw searchIncompleteError("No matches could be displayed.", warnings, budget);
+    throw searchIncompleteError("No matches could be displayed.", warnings, budget, searchFacts);
   }
   const truncation = truncateHead(blocks.join(outputMode === "content" ? "\n\n" : "\n"), {
     maxBytes: budget.grepBytes,
@@ -249,6 +257,7 @@ export function assembleGrepOutput(options: AssembleGrepOutputOptions): {
     facts: {
       matches,
       files,
+      ...searchFacts,
       matchLimit: matchLimitReached ? effectiveLimit : undefined,
       outputLimit: truncation.truncated ? formatSize(budget.grepBytes) : undefined,
       linePreviewLimit: linesTruncated ? budget.grepPreviewUnits : undefined,

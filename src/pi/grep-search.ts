@@ -108,6 +108,14 @@ const MAX_SEARCH_WORKERS = 4;
 /** Beyond this many candidate lines, a file's every line is checked instead. */
 const MAX_CANDIDATE_LINES = 64 * 1024;
 const SEARCH_WORKERS = Math.max(1, Math.min(MAX_SEARCH_WORKERS, availableParallelism() - 1));
+/**
+ * When every file in scope is a candidate, files stop being listed once this many bytes of
+ * them were queued; README's search limits link here.
+ */
+export const MAX_UNNARROWED_SCAN_BYTES = 256 * 1024 * 1024;
+
+/** How candidates were selected: rg's candidate lines, or whole files (see Prefilter). */
+export type CandidateSource = "lines" | "files" | "all";
 
 class SearchFileLimitError extends Error {
   constructor(multiline: boolean) {
@@ -375,6 +383,21 @@ export async function searchFiles(options: {
       await new Promise<void>((wake) => space.push(wake));
     return !stopped();
   };
+  let candidates: CandidateSource = "lines";
+  let scanned = 0;
+  let scanLimitReached = false;
+  /** Every file is a candidate: stop listing once the scan budget is spent. */
+  const enqueueWithinBudget = async (path: string) => {
+    if (scanned >= MAX_UNNARROWED_SCAN_BYTES) {
+      scanLimitReached = true;
+      return false;
+    }
+    scanned += await stat(resolve(path)).then(
+      ({ size }) => size,
+      () => 0,
+    );
+    return enqueue(path);
+  };
   const scoped = [...scopeArgs(scope), "--", ...scope.searchPaths];
   try {
     const patterns = query.multiline ? undefined : lineCandidatePatterns(query);
@@ -396,15 +419,18 @@ export async function searchFiles(options: {
         )
       : undefined;
     // rg reports a pattern it cannot compile, such as one beyond its size limit, before any file.
-    if (!listing || (listing.code === 2 && !listedAny))
+    if (!listing || (listing.code === 2 && !listedAny)) {
+      const prefilter = extractPrefilter(query);
+      candidates = prefilter.kind === "all" ? "all" : "files";
       listing = await runCandidatePaths(
         backend.runRgPaths,
         rgPath,
-        extractPrefilter(query),
+        prefilter,
         scoped,
         poolSignal,
-        (path) => enqueue(path),
+        candidates === "all" ? enqueueWithinBudget : (path) => enqueue(path),
       );
+    }
     recordSearchDiagnostics(listing, warnings);
   } catch (error) {
     fail(error);
@@ -415,5 +441,5 @@ export async function searchFiles(options: {
   await Promise.all(workers);
   throwIfCancelled(signal);
   if (failure) throw failure.error;
-  return { raw, snapshots, matchLimitReached };
+  return { raw, snapshots, matchLimitReached, candidates, scanLimitReached };
 }

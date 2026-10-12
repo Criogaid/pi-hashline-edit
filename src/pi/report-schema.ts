@@ -183,7 +183,15 @@ export const FACT_FIELDS = {
   // grep outcome; `matches` is also replace's match count.
   matches: Type.Integer({ minimum: 0 }),
   files: Type.Integer({ minimum: 0 }),
+  candidates: Type.Union([Type.Literal("files"), Type.Literal("all")], {
+    description:
+      "Without line candidates, the files searched whole: those containing text every match needs, or every file in scope.",
+  }),
   matchLimit: Type.Integer({ minimum: 1, description: "The match limit that stopped the search." }),
+  scanLimit: Type.String({
+    description:
+      "Bytes of files read when every file was a candidate; later files were not searched.",
+  }),
   outputLimit: Type.String({ description: "Pi's output byte limit that cut the result." }),
   linePreviewLimit: Type.Integer({ description: "UTF-16 units kept in a cut line preview." }),
   invalidUtf8: Type.Array(Type.String(), {
@@ -320,7 +328,7 @@ export const ERROR_DEFINITIONS = {
     },
   },
   SEARCH_INCOMPLETE: {
-    facts: facts(["diagnostics"]),
+    facts: facts(["diagnostics"], ["candidates", "scanLimit"]),
   },
   RIPGREP_FAILED: {
     facts: facts([], ["exitCode"]),
@@ -379,6 +387,10 @@ export const OUTCOME_NEXT = [
   ],
   ["pagination", "Continue with offset set to pagination.nextOffset."],
   ["matchLimit", "Raise limit or refine the pattern for more matches."],
+  [
+    "scanLimit",
+    "Narrow path or glob, or add text every match must contain, to search the remaining files.",
+  ],
   ["outputLimit", "Narrow path, glob, or pattern to see the omitted output."],
   ["linePreviewLimit", "Read the full line before rewriting it from a partial preview."],
   ["notForgettable", NOT_FORGETTABLE_NEXT],
@@ -408,7 +420,9 @@ const SUCCESS_DEFINITIONS = {
     [
       "matches",
       "files",
+      "candidates",
       "matchLimit",
+      "scanLimit",
       "outputLimit",
       "linePreviewLimit",
       "invalidUtf8",

@@ -349,7 +349,7 @@ export function parseQueryPattern(
 export function smartIgnoreCase(
   patterns: readonly string[],
   literal: boolean,
-  flags: string,
+  flags = "",
 ): boolean {
   return !patterns.some((pattern) => {
     const parsed = parseQueryPattern(pattern, literal, flags);
