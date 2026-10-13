@@ -16,6 +16,7 @@ import { fileReadWarning, searchChangedError } from "./error-text.ts";
 import { HashlineError } from "../core/errors.ts";
 import { serializePath } from "./path.ts";
 import type { Report } from "./report-schema.ts";
+import type { GrepOutputMode } from "./grep-tool.ts";
 
 /** UTF-16 units kept before the match column when a preview window is cut. */
 const GREP_PREVIEW_LEAD = 100;
@@ -75,7 +76,7 @@ function previewLine(
 interface FormatMatchesOptions {
   cwd: string;
   files: readonly GrepFileMatch[];
-  outputMode: "content" | "files" | "count";
+  outputMode: GrepOutputMode;
   context: number;
   anchors: ReturnType<typeof createAnchorFormatter>;
   signal?: AbortSignal;
@@ -109,8 +110,7 @@ async function formatMatches(options: FormatMatchesOptions) {
     let nextIndex = 0;
     const workerAbort = new AbortController();
     const scanSignal = signal ? AbortSignal.any([signal, workerAbort.signal]) : workerAbort.signal;
-    let failed = false;
-    let failure: unknown;
+    let failure: { error: unknown } | undefined;
     const workers = Array.from(
       { length: Math.min(MAX_CONCURRENT_FILE_READS, files.length) },
       async () => {
@@ -171,16 +171,13 @@ async function formatMatches(options: FormatMatchesOptions) {
             }
           }
         } catch (error) {
-          if (!failed) {
-            failed = true;
-            failure = error;
-            workerAbort.abort();
-          }
+          failure ??= { error };
+          workerAbort.abort();
         }
       },
     );
     await Promise.all(workers);
-    if (failed) throw failure;
+    if (failure) throw failure.error;
     for (const [index, result] of fileResults.entries()) {
       if (result.warning) {
         warnings.push(result.warning);
@@ -217,7 +214,7 @@ type GrepFacts = Pick<
 interface AssembleGrepOutputOptions {
   formatted: Awaited<ReturnType<typeof formatMatches>>;
   warnings: readonly string[];
-  outputMode: "content" | "files" | "count";
+  outputMode: GrepOutputMode;
   matchLimitReached: boolean;
   effectiveLimit: number;
   searchFacts?: SearchFacts;

@@ -100,3 +100,10 @@ export function detectLineEnding(text: string): LineEnding {
 export function hasFinalNewline(text: string): boolean {
   return text === "" || text.endsWith("\n");
 }
+
+/** Physical lines that line feeds separate; a trailing line feed ends the last line. */
+export function countLines(text: string): number {
+  let lines = 0;
+  for (let at = text.indexOf("\n"); at !== -1; at = text.indexOf("\n", at + 1)) lines++;
+  return lines + (text && !text.endsWith("\n") ? 1 : 0);
+}

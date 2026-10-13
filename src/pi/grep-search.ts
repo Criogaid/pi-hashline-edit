@@ -8,6 +8,7 @@
 import { createHash } from "node:crypto";
 import { stat } from "node:fs/promises";
 import { availableParallelism } from "node:os";
+import { countLines } from "../core/lines.ts";
 import type { GrepQuery, LineSearchInput, SearchInput } from "../core/search.ts";
 import { SEARCH_RESULT_SCHEMA, type SearchResult } from "../core/search-schema.ts";
 import { scanTextFile } from "./text-stream.ts";
@@ -92,12 +93,6 @@ function selectLines(source: string, offset: number, wanted: readonly number[], 
   return { numbers, lengths, lines: texts.join("") };
 }
 
-function physicalLines(text: string): number {
-  let lines = 0;
-  for (let at = text.indexOf("\n"); at !== -1; at = text.indexOf("\n", at + 1)) lines++;
-  return lines + (text && !text.endsWith("\n") ? 1 : 0);
-}
-
 /**
  * Match one file. Without multiline each line matches alone, so requests split after a
  * line feed; a multiline query sends the whole file. Undefined when the file has NUL.
@@ -132,7 +127,7 @@ async function searchFile(
     return result.lines;
   };
   const send = async (source: string) => {
-    const lines = physicalLines(source);
+    const lines = countLines(source);
     let candidates = lines;
     if (wanted) {
       let end = nextWanted;

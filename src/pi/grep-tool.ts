@@ -114,6 +114,8 @@ function createGrepSchema({ defaultLimit, defaultContext }: HashlineEditConfig["
   );
 }
 type GrepSchema = ReturnType<typeof createGrepSchema>;
+/** How grep presents matches; grep-output formats each mode. */
+export type GrepOutputMode = NonNullable<Static<GrepSchema>["outputMode"]>;
 type GrepTool = ToolDefinition<
   GrepSchema,
   ({ incomplete?: true } & ForgetReceiptDetails & Partial<ReportDetails>) | undefined

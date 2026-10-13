@@ -1,5 +1,5 @@
 /** JavaScript matching on the LF view, returning bounded physical rows rather than match objects. */
-import { normalizeLineEndings } from "./lines.ts";
+import { countLines, normalizeLineEndings } from "./lines.ts";
 import { buildRegex } from "./regex.ts";
 import type { SearchResult } from "./search-schema.ts";
 
@@ -86,17 +86,6 @@ function lineColumn(regexes: readonly RegExp[], text: string): number | undefine
     if (match) column = Math.min(column, match.index);
   }
   return column === Infinity ? undefined : column;
-}
-
-function countLines(source: string): number {
-  let totalLines = 0;
-  for (let start = 0; start < source.length; ) {
-    totalLines++;
-    const end = source.indexOf("\n", start);
-    if (end === -1) break;
-    start = end + 1;
-  }
-  return totalLines;
 }
 
 /** Each line of source, as line feeds separate it, matched alone. */
