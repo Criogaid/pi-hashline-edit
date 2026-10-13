@@ -110,7 +110,7 @@ export type ApplyFailure =
     };
 
 /**
- * Apply result. Byte-identical output succeeds with changed=false.
+ * Apply result. Byte-identical output is a success; the commit layer detects the no-op.
  * On failure, `failure` is either the collected set of anchor failures
  * (each with recovery) or a range error, plus per-input anchor checks.
  * Nothing is written on failure.
@@ -119,6 +119,5 @@ export type ApplyResult =
   | {
       readonly ok: true;
       readonly text: string;
-      readonly changed: boolean;
     }
   | { readonly ok: false; readonly failure: ApplyFailure };

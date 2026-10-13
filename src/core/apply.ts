@@ -22,7 +22,7 @@
  *
  * Other strict semantics:
  * - Operation ranges must not overlap (including the same insertion point).
- * - Byte-identical output succeeds with changed=false.
+ * - Byte-identical output is a success; the commit layer reports it as a no-op.
  *
  * @module pi-hashline-edit/core
  */
@@ -381,5 +381,5 @@ export function applyEdits(
             : ""),
       )
       .join("");
-  return { ok: true, text: newText, changed: newText !== text };
+  return { ok: true, text: newText };
 }
