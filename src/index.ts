@@ -1,13 +1,11 @@
 /**
  * pi-hashline-edit extension entry.
  *
- * Overrides the built-in read/edit: read outputs "lineNo#hash│content";
- * edit accepts structured hashline ops (edits[] with LINE#HASH anchors), and
- * legacy oldText/newText is rejected by the schema. grep
- * is overridden the same way so results carry usable anchors. A separate
- * `replace` tool adds location-blind bulk + regex replacement (replaceAll and
- * full JS regex with capture groups) for renames/pattern transforms that
- * would need many individual edits. Each tool carries its own renderer.
+ * Overrides Pi's built-in read, grep, edit, and write: read and grep output
+ * `LINE#HASH│content` anchors, edit applies structured ops on those anchors, and
+ * write publishes whole files through the same commit layer. Adds `replace`
+ * (literal or JavaScript-regex replacement across a file) and, when enabled,
+ * `forget`. Each tool carries its own renderer; src/pi/AGENTS.md maps the modules.
  *
  * @module pi-hashline-edit
  */
@@ -33,7 +31,7 @@ export default function (pi: ExtensionAPI) {
   const config = loadConfig(cwd);
 
   // `enabled: false` leaves the extension fully inert — pi's built-in
-  // read/edit/grep/replace/write stay in place, as if this package were not installed.
+  // read/grep/edit/write stay in place, as if this package were not installed.
   if (config.enabled) {
     const budgets = registerModelBudgets(pi);
     const reportProgress = registerFusionCards(pi);
