@@ -177,7 +177,13 @@ test("standalone and Fusion finalizers → take freshness from commit facts", as
             observedRevision: "ignored",
           },
           facts: {},
-          commit: { publication, publishedRevision: "published", observedRevision, created: false },
+          commit: {
+            publication,
+            baseRevision: "published",
+            publishedRevision: "published",
+            observedRevision,
+            created: false,
+          },
         } satisfies MutationOutcome<object>;
         const fresh = observedRevision === "published";
         const observation = commitFreshness(mutation.commit);

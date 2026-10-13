@@ -614,9 +614,9 @@ PUBLISHED, even if a step after publication fails
 | Field | Meaning |
 | --- | --- |
 | `publication` | `NOT_PUBLISHED`, `PUBLISHED`, or `UNKNOWN`. Fusion also reports it in `actionFusion.publication`. |
-| `baseRevision` | SHA-256 of bytes read before mutation, when available. |
+| `baseRevision` | SHA-256 of bytes read before mutation. Existing targets retain it; creation has no base revision. |
 | `publishedRevision` | SHA-256 of intended published bytes. |
-| `observedRevision` | SHA-256 observed by the commit layer after publication, or at the no-op check. Absent when a concurrent change prevented a stable observation after publication; the target is then not confirmed unchanged. |
+| `observedRevision` | SHA-256 observed by the commit layer after publication, or at the no-op check. A no-op always includes it. Absent when a concurrent change prevented a stable observation after publication; the target is then not confirmed unchanged. |
 | `actionFusion.command` | `not_requested`, `skipped`, `succeeded`, `failed`, `timeout`, or `cancelled`. |
 | `actionFusion.freshness` | `unchanged`, `changed`, `missing`, or `unknown`, relative to the published revision. |
 | `actionFusion.mutationCompleted` | Progress flag set after mutation execution and result generation succeed; publication alone is not mutation success. |

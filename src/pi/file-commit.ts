@@ -42,10 +42,17 @@ export interface MutationVersions {
   observedRevision?: string;
 }
 
-export interface CommitResult extends MutationVersions {
-  created: boolean;
-  publication: "NOT_PUBLISHED" | "PUBLISHED";
-}
+export type CommitResult = MutationVersions &
+  (
+    | { readonly created: true; readonly publication: "PUBLISHED"; readonly baseRevision?: never }
+    | { readonly created: false; readonly publication: "PUBLISHED"; readonly baseRevision: string }
+    | {
+        readonly created: false;
+        readonly publication: "NOT_PUBLISHED";
+        readonly baseRevision: string;
+        readonly observedRevision: string;
+      }
+  );
 
 /**
  * A mutation failure with the stage it reached and what it published. Other
@@ -150,12 +157,10 @@ function stepError(step: string, error: unknown): FileMutationError {
   return prepareError(causeCode(error, "FILESYSTEM_ERROR"), step, { cause: error });
 }
 
-interface TargetInfo {
-  readonly existed: boolean;
-  readonly publishPath: string;
-  readonly beforeRevision?: string;
-  readonly modeBits?: number;
-}
+type TargetInfo = { readonly publishPath: string } & (
+  | { readonly existed: true; readonly beforeRevision: string; readonly modeBits: number }
+  | { readonly existed: false; readonly beforeRevision?: never; readonly modeBits?: never }
+);
 
 /** The target's state before publication; a known revision stands in for hashing it again. */
 async function inspectTarget(path: string, knownRevision?: string): Promise<TargetInfo> {
@@ -367,12 +372,13 @@ export async function commitFile(
     else await publishReplace(tempPath, publishPath, options.signal);
     published = true;
     await syncDirectory(publishDirectory);
-    const committed = {
-      created: mode === "create",
-      baseRevision: target.beforeRevision,
+    const committed: CommitResult = {
+      ...(target.existed
+        ? { created: false, baseRevision: target.beforeRevision }
+        : { created: true, baseRevision: target.beforeRevision }),
       publishedRevision,
       publication: "PUBLISHED",
-    } as const;
+    };
     try {
       return { ...committed, observedRevision: await fileRevision(publishPath) };
     } catch (error) {
@@ -433,11 +439,13 @@ export async function commitFile(
 }
 
 /** What the commit layer knows about the target relative to its published revision. */
-export interface FreshnessObservation {
-  readonly freshness: Freshness;
-  /** Why the revision could not be read, when freshness is unknown. */
-  readonly error?: unknown;
-}
+export type FreshnessObservation =
+  | { readonly freshness: Exclude<Freshness, "unknown">; readonly error?: never }
+  | {
+      readonly freshness: "unknown";
+      /** Why the revision could not be read. */
+      readonly error: unknown;
+    };
 
 /** Freshness known from the commit result alone, before any later observation. */
 export function commitFreshness(commit: MutationVersions): FreshnessObservation {

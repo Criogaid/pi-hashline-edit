@@ -13,6 +13,7 @@ export function publishedMutation<T extends object | undefined>(
     facts: {},
     commit: {
       publication: "PUBLISHED",
+      baseRevision: byteRevision("before\n"),
       publishedRevision: revision,
       observedRevision: revision,
       created: false,

@@ -597,9 +597,10 @@ test("Fusion uses commit facts when details omit or contradict publication and r
     await writeFile(target, "same\n");
     const commit = {
       publication: "NOT_PUBLISHED" as const,
+      baseRevision: byteRevision("same\n"),
       publishedRevision: byteRevision("same\n"),
       observedRevision: byteRevision("same\n"),
-      created: false,
+      created: false as const,
     };
     for (const details of [
       undefined,

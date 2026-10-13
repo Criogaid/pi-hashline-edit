@@ -24,11 +24,43 @@ import {
   FileMutationError,
   fileRevision,
   readEditableSnapshot,
+  type CommitResult,
+  type FreshnessObservation,
 } from "./file-commit.ts";
 import { createActionFusionExecutor } from "./action-fusion.ts";
 import { makeWriteOverride } from "./write-tool.ts";
 import { callTool } from "./tool-call.testing.ts";
 import { reportOf } from "./report.ts";
+
+// Checked by tsc; these states cannot be returned by the commit layer.
+function invalidCommitStates() {
+  // @ts-expect-error A newly created target is always published.
+  const unpublishedCreate: CommitResult = {
+    created: true,
+    publication: "NOT_PUBLISHED",
+    publishedRevision: "r",
+  };
+  // @ts-expect-error Replacing an existing target retains its base revision.
+  const missingBase: CommitResult = {
+    created: false,
+    publication: "PUBLISHED",
+    publishedRevision: "r",
+  };
+  // @ts-expect-error A no-op has a confirmed observed revision.
+  const unobservedNoop: CommitResult = {
+    created: false,
+    publication: "NOT_PUBLISHED",
+    baseRevision: "r",
+    publishedRevision: "r",
+  };
+  // @ts-expect-error A known freshness state cannot carry a read error.
+  const knownError: FreshnessObservation = {
+    freshness: "changed",
+    error: new Error("read failed"),
+  };
+  // @ts-expect-error Unknown freshness records the error that prevented observation.
+  const unexplainedUnknown: FreshnessObservation = { freshness: "unknown" };
+}
 
 async function withTemp<T>(run: (dir: string) => Promise<T>): Promise<T> {
   const dir = await mkdtemp(join(tmpdir(), "hashline-commit-"));
