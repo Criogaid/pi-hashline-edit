@@ -33,7 +33,7 @@ import {
   type FreshnessObservation,
 } from "./file-commit.ts";
 import { finalizeMutation, type CommandFacts, type MutationOutcome } from "./mutation-result.ts";
-import { errorMessage } from "../core/errors.ts";
+import { errnoCode, errorMessage } from "../core/errors.ts";
 import { throwIfCancelled } from "./error-text.ts";
 import { causeOf, CommandNotRun, type ReportDetails } from "./report.ts";
 import { DEFAULT_OUTPUT_BUDGETS, type OutputBudgets } from "./budgets.ts";
@@ -180,15 +180,8 @@ async function canonicalQueueKey(path: string): Promise<string> {
       const canonical = resolve(await realpath(current), ...missing);
       return process.platform === "win32" ? canonical.toLowerCase() : canonical;
     } catch (error) {
-      if (
-        !(
-          typeof error === "object" &&
-          error !== null &&
-          "code" in error &&
-          (error.code === "ENOENT" || error.code === "ENOTDIR")
-        )
-      )
-        throw error;
+      const code = errnoCode(error);
+      if (code !== "ENOENT" && code !== "ENOTDIR") throw error;
       const parent = dirname(current);
       if (parent === current)
         return process.platform === "win32" ? resolved.toLowerCase() : resolved;

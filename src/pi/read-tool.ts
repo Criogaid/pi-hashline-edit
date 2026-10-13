@@ -29,6 +29,7 @@ import { canonicalPath } from "./path.ts";
 import { renderToolError, reportLines, withoutReport } from "./render.ts";
 import { type ForgetReceiptDetails, readReceipt, withResultTag } from "./forget-tool.ts";
 import { POSITIVE_SAFE_INTEGER } from "./schema.ts";
+import { errnoCode } from "../core/errors.ts";
 import { throwIfCancelled } from "./error-text.ts";
 import { runTool, type Report, type ReportDetails } from "./report.ts";
 import { defaultOutputBudgets, formatKiB, type OutputBudgetProvider } from "./budgets.ts";
@@ -256,7 +257,7 @@ export function makeReadOverride(
           );
         } catch (error) {
           // Keep native filesystem diagnostics without retrying decoding or cancellation failures.
-          if (!signal?.aborted && error instanceof Error && "code" in error) {
+          if (!signal?.aborted && errnoCode(error) !== undefined) {
             return readNative();
           }
           throw error;

@@ -1,6 +1,7 @@
 /** Guard file reads with metadata observations; byte revisions still own search and commit freshness. */
 import { constants, type BigIntStats } from "node:fs";
 import { open, stat, type FileHandle } from "node:fs/promises";
+import { errnoCode } from "../core/errors.ts";
 import { Utf8DecodingError } from "../core/text.ts";
 import { FileChangedDuringReadError, throwIfCancelled } from "./error-text.ts";
 
@@ -41,7 +42,7 @@ export async function withFileRead<T>(
       try {
         current = await stat(path, { bigint: true });
       } catch (error) {
-        if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+        if (errnoCode(error) === "ENOENT") {
           throw new FileChangedDuringReadError();
         }
         throw error;

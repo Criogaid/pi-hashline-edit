@@ -1,4 +1,4 @@
-import { HashlineError } from "../core/errors.ts";
+import { errnoCode, HashlineError } from "../core/errors.ts";
 
 /**
  * Cancellation, worded like Pi's built-in tools. A mutation report's
@@ -44,6 +44,6 @@ export function fileReadWarning(
 ): string | undefined {
   if (signal?.aborted || !(error instanceof Error)) return undefined;
   const changed = error instanceof HashlineError && error.errorCode === "FILE_CHANGED";
-  if (!changed && !("code" in error)) return undefined;
+  if (!changed && errnoCode(error) === undefined) return undefined;
   return `Could not read ${filePath}: ${error.message}`;
 }
