@@ -10,6 +10,7 @@
  * @module pi-hashline-edit/pi
  */
 
+import { isDeepStrictEqual } from "node:util";
 import {
   renderDiff,
   type Theme,
@@ -20,6 +21,7 @@ import { Text, type Component } from "@earendil-works/pi-tui";
 import type { ActionFusionProgress } from "./action-fusion.ts";
 import {
   renderReport,
+  decodeReport,
   reportEntries,
   reportOf,
   type Report,
@@ -235,7 +237,10 @@ export function withoutReport<T extends Pick<AgentToolResult<unknown>, "content"
 ): T {
   const report = (result.details as Partial<ReportDetails> | undefined)?.report;
   const last = result.content.at(-1);
-  if (!report || last?.type !== "text" || last.text !== renderReport(report)) return result;
+  if (!report || last?.type !== "text") return result;
+  // Saved successes include the call fields that current model text omits.
+  if (last.text !== renderReport(report) && !isDeepStrictEqual(decodeReport(last.text), report))
+    return result;
   return { ...result, content: result.content.slice(0, -1) };
 }
 

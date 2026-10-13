@@ -4,7 +4,7 @@ import { stripVTControlCharacters } from "node:util";
 import { formatSize, initTheme } from "@earendil-works/pi-coding-agent";
 import { theme } from "../../node_modules/@earendil-works/pi-coding-agent/dist/modes/interactive/theme/theme.js";
 import { formatArgumentError } from "./argument-error.ts";
-import { renderToolError } from "./render.ts";
+import { renderToolError, withoutReport } from "./render.ts";
 import {
   causeOf,
   decodeReport,
@@ -154,11 +154,50 @@ test("native filesystem failure → reports its diagnostic once without a synthe
   }
 });
 
-test("report-contract: current reports → serialize facts without a protocol marker", () => {
-  const report = { tool: "write", publication: "PUBLISHED", created: true } satisfies Parameters<
-    typeof renderReport
-  >[0];
-  assert.deepEqual(JSON.parse(renderReport(report)), report);
+test("success reports → omit repeated call fields while retaining details and payload", () => {
+  const report: Report = {
+    tool: "write",
+    path: "target.txt",
+    publication: "PUBLISHED",
+    created: true,
+  };
+  const payload = [text("payload")];
+  const result = reportResult(report, payload);
+  const last = result.content.at(-1);
+  assert.ok(last?.type === "text");
+  assert.deepEqual(JSON.parse(last.text), { publication: "PUBLISHED", created: true });
+  assert.deepEqual(result.details.report, report);
+  assert.deepEqual(withoutReport(result).content, payload);
+  assert.equal(result.content.length, 2);
+});
+
+test("success facts without a tool → require call context and still enforce tool-specific fields", () => {
+  const report: Report = { tool: "write", publication: "PUBLISHED", created: true };
+  const serialized = renderReport(report);
+  assert.equal(decodeReport(serialized), undefined);
+  assert.deepEqual(decodeReport(serialized, "write"), report);
+  for (const tool of ["read", "foreign"]) assert.equal(decodeReport(serialized, tool), undefined);
+  for (const invalid of [
+    '{"created":true,"foreign":true}',
+    '{"error":"TARGET_EXISTS","message":"exists"}',
+    '{"tool":"foreign","created":true}',
+    "[]",
+    "null",
+  ])
+    assert.equal(decodeReport(invalid, "write"), undefined);
+});
+
+test("saved success envelopes → remain readable without duplicating the report in the TUI", () => {
+  const saved: Report = { tool: "write", path: "saved.txt", publication: "PUBLISHED" };
+  assert.deepEqual(decodeReport(JSON.stringify(saved)), saved);
+  const payload = [text("saved payload")];
+  const result = {
+    content: [...payload, text(JSON.stringify(saved, null, 2))],
+    details: { report: saved },
+  };
+  assert.deepEqual(withoutReport(result).content, payload);
+  const different = { ...result, details: { report: { ...saved, path: "another.txt" } } };
+  assert.deepEqual(withoutReport(different), different);
 });
 
 test("report-contract: native failure with an independent cause → retains the underlying diagnostic", () => {
@@ -190,8 +229,8 @@ test("grep success and incomplete candidate facts → survive report serializati
     },
   ] satisfies Report[]) {
     const serialized = renderReport(report);
-    assert.deepEqual(decodeReport(serialized), report);
-    assert.deepEqual(reportOf({ content: [text(serialized)] }), report);
+    assert.deepEqual(decodeReport(serialized, report.tool), report);
+    assert.deepEqual(reportOf({ content: [text(serialized)], toolName: report.tool }), report);
   }
 });
 
@@ -206,4 +245,10 @@ test("match and scan limits → recovery prioritizes the match limit", () => {
     scanLimit: formatSize(MAX_UNNARROWED_SCAN_BYTES),
   });
   assert.equal(reportOf(result)?.next, next);
+});
+
+test("text-only error resembles success facts → preserves the raw error diagnostic", () => {
+  const result = { toolName: "read", isError: true, content: [text("{}")] };
+  assert.equal(reportOf(result), undefined);
+  assert.equal(displayed(result).trimEnd(), "{}");
 });

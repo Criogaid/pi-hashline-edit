@@ -82,7 +82,7 @@ test("packed extension completes file, worker, command, and context operations",
     () => {
       const tag = result("log-read")
         .content.map((block) =>
-          block.type === "text" ? decodeReport(block.text)?.resultId : undefined,
+          block.type === "text" ? decodeReport(block.text, "read")?.resultId : undefined,
         )
         .find((id) => id !== undefined);
       assert.ok(tag);
@@ -101,7 +101,7 @@ test("packed extension completes file, worker, command, and context operations",
     assert.doesNotMatch(JSON.stringify(forgotten.content), /PACKAGE_LOG_CONTENT/);
     const receipt = forgotten.content[0];
     assert.ok(receipt.type === "text");
-    assert.equal(decodeReport(receipt.text)?.contentForgotten, true);
+    assert.equal(decodeReport(receipt.text, forgotten.toolName)?.contentForgotten, true);
     return responseStream(model, {
       content: [{ type: "text", text: "Done." }],
       stopReason: "stop",
@@ -113,7 +113,7 @@ test("packed extension completes file, worker, command, and context operations",
   for (const id of ["write", "read", "grep", "edit", "replace", "forget"]) result(id);
   const command = result("write")
     .content.map((block) =>
-      block.type === "text" ? decodeReport(block.text)?.then_run : undefined,
+      block.type === "text" ? decodeReport(block.text, "write")?.then_run : undefined,
     )
     .find((facts) => facts !== undefined);
   assert.equal(command?.status, "succeeded");

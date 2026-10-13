@@ -9,7 +9,7 @@ import { normalizeContext } from "@earendil-works/pi-ai/utils/transcript";
 import { stream as streamCompletions } from "@earendil-works/pi-ai/api/openai-completions";
 import { initTheme } from "@earendil-works/pi-coding-agent";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { decodeReport } from "./report.ts";
+import { decodeReport, reportOf } from "./report.ts";
 import { openTestSession, responseStream, type TestResponse } from "../testing/session.testing.ts";
 import { DEFAULT_CONFIG } from "./config.ts";
 import { registerForgetTool } from "./forget-tool.ts";
@@ -31,11 +31,17 @@ export const toolResponse = (...content: ToolCall[]): Response => ({
 });
 
 /** Extract a public id from supported current or historical inspection tags, excluding receipts. */
-export function taggedResultId(result: Pick<AgentToolResult<unknown>, "content">) {
+export function taggedResultId(
+  result: Pick<AgentToolResult<unknown>, "content"> & {
+    readonly toolName?: string;
+    readonly details?: unknown;
+  },
+) {
+  const toolName = result.toolName ?? reportOf(result)?.tool;
   const ids = result.content.flatMap((block) => {
     if (block.type !== "text") return [];
     const native = /^\[result (r[0-9a-f]{5})\]$/.exec(block.text)?.[1];
-    const report = decodeReport(block.text);
+    const report = decodeReport(block.text, toolName);
     const id = native ?? (report?.contentForgotten ? undefined : report?.resultId);
     return id ? [id] : [];
   });
@@ -189,7 +195,8 @@ export function assertForgotten(result: ReturnType<typeof toolResult>, id: strin
   assert.equal(result.content.length, 1);
   const receipt = result.content[0];
   assert.equal(receipt.type, "text");
-  assert.equal(receipt.type === "text" && decodeReport(receipt.text)?.resultId, id);
-  assert.equal(receipt.type === "text" && decodeReport(receipt.text)?.contentForgotten, true);
+  const report = receipt.type === "text" ? decodeReport(receipt.text, result.toolName) : undefined;
+  assert.equal(report?.resultId, id);
+  assert.equal(report?.contentForgotten, true);
   assert.equal(taggedResultId(result), undefined);
 }

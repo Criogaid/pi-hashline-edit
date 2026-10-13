@@ -7,7 +7,7 @@
  * failure report is the entire result; a success report follows the tool's
  * content payload (read rows, grep rows). Each field has one
  * owning layer (README "Reports"), so no fact can be stated twice. report.ts
- * renders a report for the model; render.ts renders the same object for the TUI.
+ * omits tool and path from success text; render.ts uses the full report for the TUI.
  *
  * Types derive from these schemas. src/core imports only types from this module,
  * so engines stay independent of Pi. The worker loads TypeBox at its data boundary.
@@ -476,5 +476,5 @@ const SUCCESS_SCHEMAS = Object.entries(SUCCESS_DEFINITIONS).map(([tool, schema])
     { additionalProperties: false },
   ),
 );
-/** Closed current records preserve code-specific facts without transport-only fields. */
+/** Closed records after call context supplies a missing success tool; failure facts remain code-specific. */
 export const WIRE_REPORT_SCHEMA = Type.Union([...FAILURE_SCHEMAS, ...SUCCESS_SCHEMAS]);

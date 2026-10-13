@@ -151,8 +151,6 @@ test("successful mutation → returns one report without anchor payload", async 
           assert.equal(result.content.length, 1);
           assert.equal(result.content[0].type, "text");
           assert.deepEqual(JSON.parse(result.content[0].text), {
-            tool,
-            path,
             publication: "PUBLISHED",
             ...(tool === "replace" ? { matches: count } : {}),
           });

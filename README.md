@@ -78,9 +78,9 @@ Valid UTF-8 text inspection and matching uses one logical representation: CRLF b
 
 ### Reports
 
-Every result of every tool (`read`, `grep`, `edit`, `replace`, `write`, and `forget`) states its facts in one **report**: a single JSON object, the only form the plugin uses for facts the model reads. A successful result is the tool's content payload (anchored `read` rows or `grep` rows) followed by its report; successful mutations return the report alone. The report is omitted when it would state nothing beyond `tool` and `path`. A failure — including argument rejection, filesystem errors, cancellation, and a mutation failure under Action Fusion — is the report alone, returned as an error result.
+Every result of every tool (`read`, `grep`, `edit`, `replace`, `write`, and `forget`) states its facts in one **report**: a single JSON object, the only form the plugin uses for facts the model reads. A successful result is the tool's content payload (anchored `read` rows or `grep` rows) followed by its report; successful mutations return the report alone. Successful reports omit `tool` and `path`, which the call already supplies, while `details.report` retains them for display. A report with no outcome facts is omitted when there is a payload. A failure — including argument rejection, filesystem errors, cancellation, and a mutation failure under Action Fusion — is the full report alone, returned as an error result.
 
-Reports serialize only their facts, without a protocol marker. The closed wire schemas in [`report-schema.ts`](src/pi/report-schema.ts) accept only registered tools and the `codemode` output tag, reject unknown fields, and require the facts associated with each error code. The TUI reads live reports from `details.report`; Pi's text-only argument rejections and forget tags decode from the final content block. Progress updates remain separate: Fusion sends command progress and publication in details. Their type derives from `ACTION_FUSION_PROGRESS_SCHEMA`; saved command cards validate a closed projection on restore. Malformed snapshots are ignored, while historical cards lacking freshness or mutation-completion facts retain their unknown state.
+Reports serialize only their facts, without a protocol marker. Text-only success reports use the originating call's tool name for decoding; saved reports that include it remain readable. The closed wire schemas in [`report-schema.ts`](src/pi/report-schema.ts) accept only registered tools and the `codemode` output tag, reject unknown fields, and require the facts associated with each error code. The TUI reads live reports from `details.report`; Pi's text-only argument rejections and forget tags decode from the final content block. Progress updates remain separate: Fusion sends command progress and publication in details. Their type derives from `ACTION_FUSION_PROGRESS_SCHEMA`; saved command cards validate a closed projection on restore. Malformed snapshots are ignored, while historical cards lacking freshness or mutation-completion facts retain their unknown state.
 
 ```json
 {
@@ -107,8 +107,6 @@ A successful edit whose `then_run` command failed:
 
 ```json
 {
-  "tool": "edit",
-  "path": "src/foo.ts",
   "publication": "PUBLISHED",
   "then_run": { "status": "failed", "output": "…Bash output…\n\nCommand exited with code 1" }
 }
@@ -119,7 +117,7 @@ Fields appear in this order and are omitted when they do not apply. Each has one
 | Field | Owner | Meaning |
 | --- | --- | --- |
 | `error` | Throwing layer | The error code of a failure (see below); absent on success. |
-| `tool`, `path` | Tool | The tool and the call's `path` argument as supplied; a grep call may name several. |
+| `tool`, `path` | Tool | The tool and the call's `path` argument as supplied; a grep call may name several. Included in failures and structured `details.report`; omitted from success text. |
 | `publication` | Commit layer | Mutation tools only: `NOT_PUBLISHED`, `PUBLISHED`, or `UNKNOWN`. On success, `NOT_PUBLISHED` means no net change. See [Publication](#publication). |
 | `stage` | Commit layer | Failures of mutation tools only: `prepare`, `commit`, or `post_process`. |
 | `message` | Throwing layer | What the failing step found, in its own words; never advice, and never a restatement of a deeper failure. Uses the [text-field budget](#output-budgets). |

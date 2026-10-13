@@ -64,9 +64,11 @@ function resultId(toolCallId: string): string {
 type ResultContent = AgentToolResult<unknown>["content"];
 
 /** Whether the model saw this result tagged: its last block is a report naming the call's id. */
-function isTagged(content: ResultContent, toolCallId: string): boolean {
+function isTagged(content: ResultContent, toolCallId: string, toolName: string): boolean {
   const last = content.at(-1);
-  return last?.type === "text" && decodeReport(last.text)?.resultId === resultId(toolCallId);
+  return (
+    last?.type === "text" && decodeReport(last.text, toolName)?.resultId === resultId(toolCallId)
+  );
 }
 
 /** Text results below the threshold save too little to be worth forgetting; images always qualify. */
@@ -180,7 +182,7 @@ export function registerForgetTool(
     if (
       !event.parentToolCallId ||
       (event.toolName !== "read" && event.toolName !== "grep") ||
-      !isTagged(event.content, event.toolCallId)
+      !isTagged(event.content, event.toolCallId, event.toolName)
     )
       return;
     // A nested id cannot identify a transcript entry: rebuild the report without it.
@@ -243,7 +245,7 @@ export function registerForgetTool(
       if (
         message.role !== "toolResult" ||
         message.isError ||
-        !isTagged(message.content, message.toolCallId)
+        !isTagged(message.content, message.toolCallId, message.toolName)
       )
         return;
       const id = resultId(message.toolCallId);
