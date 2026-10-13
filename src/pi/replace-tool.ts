@@ -31,7 +31,8 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import type { AgentToolResult, AgentToolUpdateCallback } from "@earendil-works/pi-agent-core";
 import { Type, type Static } from "typebox";
-import { applyReplacements, buildRegex } from "../core/replace.ts";
+import { applyReplacements } from "../core/replace.ts";
+import { buildRegex } from "../core/regex.ts";
 import { REPLACEMENTS_SCHEMA, REGEX_FLAGS_PATTERN } from "../core/replace-schema.ts";
 import { runRegexReplacements } from "./replace-regex.ts";
 import { unwritableTextError } from "../core/text.ts";

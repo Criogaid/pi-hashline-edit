@@ -6,6 +6,7 @@ Internal pure engine: no Pi imports and no public API. It trusts input already f
 
 - `hash.ts` computes position-dependent line checksums (line number + content → `LINE#HASH`). `lines.ts` handles splitting and line-ending detection. `text.ts` does strict UTF-8 decoding.
 - `apply.ts` `applyEdits` validates a whole batch of `Edit` ops (see `types.ts`) against a single snapshot: anchor checks, overlap and conflict detection, and shifted-anchor recovery (`AnchorRecovery`: local `shiftRadius` search, then full file). It returns new text or structured failures and never touches the filesystem.
+- `regex.ts` builds JavaScript regexes on the LF view (`regexSource`, `buildRegex`) for both grep and replace; neither engine imports the other.
 - `replace.ts` is replace's engine: literal and JavaScript-regex matching on the LF view, separator restoration, and overlap rejection. `replace-schema.ts` defines the tool's replacement schema and the engine's derived rule type.
 - `search.ts` evaluates native JavaScript queries on the LF view and returns bounded physical rows; `search-schema.ts` defines its result.
 - `search-analysis.ts` parses patterns with regexpp (V8 has already accepted them at tool entry), decides smart case, and derives the literals every match must contain; `case-fold.ts` supplies JavaScript's case equivalence; `character-set.ts` owns character-class sets.

@@ -1,6 +1,6 @@
 /** JavaScript matching on the LF view, returning bounded physical rows rather than match objects. */
 import { normalizeLineEndings } from "./lines.ts";
-import { buildRegex } from "./replace.ts";
+import { buildRegex } from "./regex.ts";
 import type { SearchResult } from "./search-schema.ts";
 
 /** README's grep flags default links here; explicit flags replace this default. */

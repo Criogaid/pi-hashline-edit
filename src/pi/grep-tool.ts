@@ -25,7 +25,7 @@ import { searchFiles } from "./grep-search.ts";
 import { toDisplayLines } from "./grep-render.ts";
 import { runRgLines, runRgPaths, type GrepBackend } from "./rg-process.ts";
 import { smartIgnoreCase } from "../core/search-analysis.ts";
-import { buildRegex } from "../core/replace.ts";
+import { buildRegex } from "../core/regex.ts";
 import { DEFAULT_GREP_FLAGS } from "../core/search.ts";
 import { errorMessage } from "../core/errors.ts";
 import { GREP_CONTEXT_RANGE, POSITIVE_SAFE_INTEGER } from "./schema.ts";

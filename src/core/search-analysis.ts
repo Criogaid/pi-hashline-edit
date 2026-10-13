@@ -17,7 +17,7 @@ import {
   total,
   type CharacterNode,
 } from "./character-set.ts";
-import { regexSource } from "./replace.ts";
+import { regexSource } from "./regex.ts";
 import type { GrepQuery } from "./search.ts";
 
 /** One literal position: the characters JavaScript may match there. */
