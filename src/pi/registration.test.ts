@@ -73,6 +73,11 @@ test("mutation cards use Fusion by default and explicit false removes command su
         tool.parameters.properties.then_run,
         `${tool.name} should expose then_run when actionFusion is enabled`,
       );
+      assert.match(
+        tool.description,
+        /then_run/,
+        `${tool.name} description should mention then_run when actionFusion is enabled`,
+      );
     }
     initTheme("dark");
     const cases = [
@@ -290,6 +295,7 @@ test("mutation cards use Fusion by default and explicit false removes command su
     )) {
       assert.equal(tool.parameters.properties.then_run, undefined);
       assert.equal(tool.renderShell, "default");
+      assert.doesNotMatch(tool.description, /then_run/);
       // Without Action Fusion the schema has no then_run, so Pi rejects it before execute.
       await assert.rejects(
         callTool(
