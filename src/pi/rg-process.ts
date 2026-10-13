@@ -124,7 +124,7 @@ function startRg(rgPath: string, args: readonly string[], signal?: AbortSignal):
   return { child, done, kill };
 }
 
-async function* delimitedRecords(stream: Readable, delimiter: number): AsyncGenerator<Buffer> {
+async function* nulDelimitedRecords(stream: Readable): AsyncGenerator<Buffer> {
   let pending = Buffer.alloc(0);
   for await (const value of stream) {
     const chunk = Buffer.isBuffer(value) ? value : Buffer.from(value);
@@ -132,7 +132,7 @@ async function* delimitedRecords(stream: Readable, delimiter: number): AsyncGene
     let buf = pending.length ? Buffer.concat([pending, chunk]) : chunk;
     pending = Buffer.alloc(0);
     let at: number;
-    while ((at = buf.indexOf(delimiter)) !== -1) {
+    while ((at = buf.indexOf("\0")) !== -1) {
       if (at > MAX_RG_RECORD_BYTES) throw ripgrepFailure(RG_RECORD_LIMIT_MESSAGE);
       yield buf.subarray(0, at);
       buf = buf.subarray(at + 1);
@@ -147,12 +147,11 @@ async function* delimitedRecords(stream: Readable, delimiter: number): AsyncGene
 async function runRg(
   rgPath: string,
   args: readonly string[],
-  input: Buffer | undefined,
   signal: AbortSignal | undefined,
   read: (stdout: Readable) => Promise<boolean>,
 ): Promise<RgRunResult> {
   const process = startRg(rgPath, args, signal);
-  process.child.stdin.end(input);
+  process.child.stdin.end();
   try {
     const stopped = !(await read(process.child.stdout));
     if (stopped) process.kill();
@@ -166,23 +165,6 @@ async function runRg(
   }
 }
 
-function runDelimited(
-  rgPath: string,
-  args: readonly string[],
-  input: Buffer | undefined,
-  delimiter: number,
-  signal: AbortSignal | undefined,
-  onRecord: (record: Buffer) => boolean | Promise<boolean>,
-): Promise<RgRunResult> {
-  return runRg(rgPath, args, input, signal, async (stdout) => {
-    for await (const record of delimitedRecords(stdout, delimiter)) {
-      throwIfCancelled(signal);
-      if (!(await onRecord(record))) return false;
-    }
-    return true;
-  });
-}
-
 /** @internal — read NUL-delimited UTF-8 paths from an owned rg process. */
 export function runRgPaths(
   rgPath: string,
@@ -190,7 +172,13 @@ export function runRgPaths(
   signal: AbortSignal | undefined,
   onPath: (path: string) => boolean | Promise<boolean>,
 ): Promise<RgRunResult> {
-  return runDelimited(rgPath, args, undefined, 0, signal, (record) => onPath(decodePath(record)));
+  return runRg(rgPath, args, signal, async (stdout) => {
+    for await (const record of nulDelimitedRecords(stdout)) {
+      throwIfCancelled(signal);
+      if (!(await onPath(decodePath(record)))) return false;
+    }
+    return true;
+  });
 }
 
 function decodePath(record: Buffer): string {
@@ -222,7 +210,7 @@ export function runRgLines(
   maxLines: number,
   onFile: (path: string, lines: readonly number[] | undefined) => boolean | Promise<boolean>,
 ): Promise<RgRunResult> {
-  return runRg(rgPath, args, undefined, signal, async (stdout) => {
+  return runRg(rgPath, args, signal, async (stdout) => {
     let path: string | undefined;
     let lines: number[] | undefined = [];
     let pending: Buffer = Buffer.alloc(0);
