@@ -25,7 +25,7 @@ import {
   reportEntries,
   reportOf,
   type Report,
-  type ReportDetails,
+  detailsReport,
 } from "./report.ts";
 
 /** Max diff lines shown when a result is rendered collapsed. */
@@ -235,7 +235,7 @@ export function reportLines(
 export function withoutReport<T extends Pick<AgentToolResult<unknown>, "content" | "details">>(
   result: T,
 ): T {
-  const report = (result.details as Partial<ReportDetails> | undefined)?.report;
+  const report = detailsReport(result.details);
   const last = result.content.at(-1);
   if (!report || last?.type !== "text") return result;
   // Saved successes include the call fields that current model text omits.

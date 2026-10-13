@@ -88,6 +88,18 @@ export function decodeReport(text: string, contextTool?: string): WireReport | u
   }
 }
 
+/**
+ * The report a result's details carry, checked once against the wire schema: details also
+ * come from saved sessions and other extensions' result hooks, so their shape is unknown.
+ */
+export function detailsReport(details: unknown): WireReport | undefined {
+  const report: unknown =
+    typeof details === "object" && details !== null ? Reflect.get(details, "report") : undefined;
+  return report !== undefined && Value.Check(WIRE_REPORT_SCHEMA, report)
+    ? (report as WireReport)
+    : undefined;
+}
+
 /** Tool results carry their report in details; Pi argument failures carry it as their final text block. */
 export function reportOf(result: {
   readonly content?: Content;
@@ -95,8 +107,8 @@ export function reportOf(result: {
   readonly toolName?: string;
   readonly isError?: boolean;
 }): WireReport | undefined {
-  const details = result.details as Partial<ReportDetails> | undefined;
-  if (details?.report) return details.report;
+  const report = detailsReport(result.details);
+  if (report) return report;
   const last = result.content?.at(-1);
   return last?.type === "text"
     ? decodeReport(last.text, result.isError ? undefined : result.toolName)
