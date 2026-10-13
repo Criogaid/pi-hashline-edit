@@ -1,3 +1,12 @@
+/**
+ * Replacement engine: apply literal or regex rules (built by regex.ts) over the
+ * shared LF view, expand JavaScript replacement tokens, reject rules that match
+ * nothing or overlap, and map each change back to the original text with its
+ * line endings restored.
+ *
+ * @module pi-hashline-edit/core
+ */
+
 import { buildRegex } from "./regex.ts";
 import {
   createLfTextView,

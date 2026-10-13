@@ -1,3 +1,10 @@
+/**
+ * Path canonicalization and lossless re-serialization for cross-platform tool
+ * input.
+ *
+ * @module pi-hashline-edit/pi
+ */
+
 import { homedir } from "node:os";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";

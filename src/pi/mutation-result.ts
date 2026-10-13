@@ -1,3 +1,10 @@
+/**
+ * Mutation report building: details, diffs, and post-process outcome
+ * classification.
+ *
+ * @module pi-hashline-edit/pi
+ */
+
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import {
   FileMutationError,

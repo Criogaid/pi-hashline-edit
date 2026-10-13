@@ -1,3 +1,10 @@
+/**
+ * File mutation commit: target checks, atomic publication, freshness, and
+ * revision tracking.
+ *
+ * @module pi-hashline-edit/pi
+ */
+
 import {
   chmod,
   lstat,

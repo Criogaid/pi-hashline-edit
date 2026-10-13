@@ -1,3 +1,12 @@
+/**
+ * Anchor parsing and row rendering: anchored rows for read, grep, and edit
+ * failure diagnostics, plain rows for invalid UTF-8 grep previews, display-row
+ * parsing for the grep card, and the carriage-return display shared with
+ * mutation diffs.
+ *
+ * @module pi-hashline-edit/pi
+ */
+
 import { computeLineHash, HASH_ALPHABET, HASH_LEN_MIN, HASH_LEN_MAX } from "../core/hash.ts";
 
 function anchorSource(hashQuantifier: string): string {
