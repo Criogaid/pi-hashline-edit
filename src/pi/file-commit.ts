@@ -25,15 +25,15 @@ import { cancellationError, FileChangedDuringReadError, throwIfCancelled } from 
 import { withFileRead } from "./file-read.ts";
 import type { Freshness, MutationStage, PublicationStatus } from "./report-schema.ts";
 
-export type CommitMode = "create" | "overwrite";
-
-export interface CommitOptions {
-  mode: CommitMode;
-  expectedRevision?: string;
-  signal?: AbortSignal;
-  /** Caller-supplied revision of the current file, skipping the readFile + SHA-256 in inspectTarget. */
-  knownBeforeRevision?: string;
-}
+/**
+ * How a commit treats the target. `create` requires that it not exist. `overwrite` requires
+ * that it exist; with `baseRevision` (read-modify-write), the target must still hold the bytes
+ * that revision names, and that revision stands in for hashing the target again.
+ */
+export type CommitOptions = { readonly signal?: AbortSignal } & (
+  | { readonly mode: "create" }
+  | { readonly mode: "overwrite"; readonly baseRevision?: string }
+);
 
 export interface MutationVersions {
   baseRevision?: string;
@@ -107,12 +107,7 @@ export function commitReplacement(
   baseRevision: string,
   signal?: AbortSignal,
 ): Promise<CommitResult> {
-  return commitFile(path, text, {
-    mode: "overwrite",
-    expectedRevision: baseRevision,
-    knownBeforeRevision: baseRevision,
-    signal,
-  });
+  return commitFile(path, text, { mode: "overwrite", baseRevision, signal });
 }
 
 function prepareError<C extends ErrorCode>(
@@ -156,13 +151,14 @@ function stepError(step: string, error: unknown): FileMutationError {
 }
 
 interface TargetInfo {
-  existed: boolean;
-  publishPath: string;
-  beforeRevision?: string;
-  modeBits?: number;
+  readonly existed: boolean;
+  readonly publishPath: string;
+  readonly beforeRevision?: string;
+  readonly modeBits?: number;
 }
 
-async function inspectTarget(path: string, knownBeforeRevision?: string): Promise<TargetInfo> {
+/** The target's state before publication; a known revision stands in for hashing it again. */
+async function inspectTarget(path: string, knownRevision?: string): Promise<TargetInfo> {
   let entry;
   try {
     entry = await lstat(path);
@@ -196,8 +192,8 @@ async function inspectTarget(path: string, knownBeforeRevision?: string): Promis
     );
 
   let beforeRevision: string;
-  if (knownBeforeRevision !== undefined) {
-    beforeRevision = knownBeforeRevision;
+  if (knownRevision !== undefined) {
+    beforeRevision = knownRevision;
   } else {
     try {
       beforeRevision = await fileRevision(publishPath);
@@ -303,26 +299,20 @@ export async function commitFile(
   const unwritable = unwritableTextError(content);
   if (unwritable) throw asPrepareError(unwritable);
   const bytes = Buffer.from(content, "utf8");
-  const target = await inspectTarget(path, options.knownBeforeRevision);
   const { mode } = options;
+  const baseRevision = mode === "overwrite" ? options.baseRevision : undefined;
+  const target = await inspectTarget(path, baseRevision);
   if (mode === "create" && target.existed)
     throw prepareError("TARGET_EXISTS", "Target already exists.");
   if (mode === "overwrite" && !target.existed)
     throw prepareError("PATH_NOT_FOUND", "Target does not exist.", { next: "useCreate" });
-  if (mode === "create" && options.expectedRevision !== undefined)
-    throw prepareError("UNCLASSIFIED", "expectedRevision cannot be combined with mode=create.");
-  if (
-    options.expectedRevision !== undefined &&
-    (!target.beforeRevision || target.beforeRevision !== options.expectedRevision)
-  ) {
-    throw prepareError("FILE_CHANGED", "File changed after it was read.");
-  }
   throwIfCancelledBeforePublication(options.signal);
   const publishedRevision = byteRevision(bytes);
   // Mode, revision, target safety, and cancellation checks still apply to no-ops.
   if (target.beforeRevision === publishedRevision) {
-    let currentRevision = target.beforeRevision;
-    if (options.knownBeforeRevision !== undefined) {
+    // A base revision was not hashed from the target here; confirm the target still holds it.
+    if (baseRevision !== undefined) {
+      let currentRevision: string;
       try {
         throwIfCancelledBeforePublication(options.signal);
         currentRevision = await fileRevision(target.publishPath);
@@ -331,22 +321,16 @@ export async function commitFile(
         if (options.signal?.aborted) throw asPrepareError(cancellationError());
         throw stepError("Unable to read target revision.", error);
       }
-      if (options.expectedRevision !== undefined && currentRevision !== options.expectedRevision) {
+      if (currentRevision !== baseRevision)
         throw prepareError("FILE_CHANGED", "File changed after it was read.");
-      }
-      if (currentRevision !== publishedRevision) {
-        target.beforeRevision = currentRevision;
-      }
     }
-    if (target.beforeRevision === publishedRevision) {
-      return {
-        created: false,
-        baseRevision: target.beforeRevision,
-        publishedRevision,
-        observedRevision: currentRevision,
-        publication: "NOT_PUBLISHED",
-      };
-    }
+    return {
+      created: false,
+      baseRevision: target.beforeRevision,
+      publishedRevision,
+      observedRevision: publishedRevision,
+      publication: "NOT_PUBLISHED",
+    };
   }
 
   const publishPath = target.publishPath;
@@ -369,14 +353,14 @@ export async function commitFile(
   let failure: unknown;
   try {
     await writeAndSyncTemp(tempPath, bytes, target.modeBits, options.signal);
-    if (mode === "overwrite" && options.expectedRevision !== undefined) {
+    if (baseRevision !== undefined) {
       let currentRevision: string;
       try {
         currentRevision = await fileRevision(publishPath);
       } catch (error) {
         throw stepError("Unable to recheck target revision.", error);
       }
-      if (currentRevision !== options.expectedRevision)
+      if (currentRevision !== baseRevision)
         throw prepareError("FILE_CHANGED", "File changed before publication.");
     }
     if (mode === "create") await publishCreate(tempPath, publishPath, options.signal);
