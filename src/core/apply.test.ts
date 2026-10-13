@@ -176,7 +176,8 @@ test("byte-identical edits → validate anchors and preserve the source bytes", 
   for (const text of ["a\nb\n", "\uFEFFa\r\nb\n"]) {
     const body = text.startsWith("\uFEFF") ? "\uFEFFa" : "a";
     const r = applyEdits(text, [{ op: "replace", start: at(text, 1), body: [body] }], 4, 15);
-    assert.deepEqual(r, { ok: true, text, changed: false });
+    assert.ok(r.ok);
+    assert.equal(r.text, text);
     const invalid = applyEdits(
       text,
       [{ op: "replace", start: at("wrong\nb\n", 1), body: [body] }],
@@ -329,7 +330,8 @@ test("large replacement bodies retain snapshot boundaries without a function arg
 test("noop is still detected when the file lacks a final newline", () => {
   const text = "a\nb";
   const r = applyEdits(text, [{ op: "replace", start: at(text, 1), body: ["a"] }], 4, 15);
-  assert.deepEqual(r, { ok: true, text, changed: false });
+  assert.ok(r.ok);
+  assert.equal(r.text, text);
 });
 
 // --- shifted-anchor recovery ---
@@ -713,7 +715,6 @@ test("move to either adjacent gap → byte-identical no-op", () => {
     );
     assert(result.ok);
     assert.equal(result.text, text);
-    assert.equal(result.changed, false);
   }
 });
 

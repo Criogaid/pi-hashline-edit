@@ -12,7 +12,7 @@ import {
   pairedMatrixCases,
   MATRIX_INPUTS,
 } from "../core/search-matrix.testing.ts";
-import { assertRgSucceeded, runRgPaths } from "../pi/rg-process.ts";
+import { runRgPaths } from "../pi/rg-process.ts";
 import { runCandidatePaths } from "../pi/grep-candidates.ts";
 
 interface CandidateCase {
@@ -77,7 +77,7 @@ async function checkCandidates(t: TestContext, queries: Iterable<{ readonly quer
             return true;
           },
         );
-        assertRgSucceeded(result);
+        assert.ok(result.code === 0 || result.code === 1, JSON.stringify(result));
         for (const [name, query] of required) {
           checkedFiles++;
           if (actual.has(name)) continue;

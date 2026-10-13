@@ -12,7 +12,7 @@ import {
   MATRIX_SYNTAX,
 } from "../core/search-matrix.testing.ts";
 import { searchText, type GrepQuery } from "../core/search.ts";
-import { assertRgSucceeded, runRgPaths } from "../pi/rg-process.ts";
+import { runRgPaths } from "../pi/rg-process.ts";
 import { runCandidatePaths } from "../pi/grep-candidates.ts";
 
 const syntaxCases = [
@@ -151,7 +151,7 @@ test("Cartesian prefilter coverage × composition × flags × bytes → real rg 
             return true;
           },
         );
-        assertRgSucceeded(result);
+        assert.ok(result.code === 0 || result.code === 1, JSON.stringify(result));
         for (const [name, query] of group.required) {
           checkedFiles++;
           assert.ok(actual.has(name), JSON.stringify({ name, query, prefilter: group.prefilter }));

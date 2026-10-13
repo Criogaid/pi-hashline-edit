@@ -104,9 +104,12 @@ async function formatMatches(options: FormatMatchesOptions) {
   let fileCount = files.length;
   let matches = files.reduce((sum, file) => sum + file.rows.length, 0);
   if (outputMode === "content" && files.length) {
-    const fileResults = new Array<{ block?: string; invalidUtf8?: boolean; warning?: string }>(
-      files.length,
-    );
+    const fileResults = new Array<{
+      block?: string;
+      invalidUtf8?: boolean;
+      linesTruncated?: boolean;
+      warning?: string;
+    }>(files.length);
     let nextIndex = 0;
     const workerAbort = new AbortController();
     const scanSignal = signal ? AbortSignal.any([signal, workerAbort.signal]) : workerAbort.signal;
@@ -127,6 +130,8 @@ async function formatMatches(options: FormatMatchesOptions) {
               }
               const rows: string[] = [];
               const matchedRows = new Set<number>();
+              // Counted only if this file passes verification and joins the output.
+              let truncated = false;
               const hash = createHash("sha256");
               const stats = await scanTextLines(
                 filePath,
@@ -139,7 +144,7 @@ async function formatMatches(options: FormatMatchesOptions) {
                     columns.get(line.number),
                     budget.grepPreviewUnits,
                   );
-                  if (wasTruncated) linesTruncated = true;
+                  if (wasTruncated) truncated = true;
                   rows.push(
                     snapshot.validUtf8
                       ? anchors.row(line.number, line.text, display)
@@ -163,6 +168,7 @@ async function formatMatches(options: FormatMatchesOptions) {
               fileResults[current] = {
                 block: header + rows.join("\n"),
                 invalidUtf8: !snapshot.validUtf8,
+                linesTruncated: truncated,
               };
             } catch (error) {
               const warning = fileReadWarning(filePath, error, scanSignal);
@@ -185,6 +191,7 @@ async function formatMatches(options: FormatMatchesOptions) {
         matches -= files[index].rows.length;
       } else if (result.block) {
         blocks.push(result.block);
+        if (result.linesTruncated) linesTruncated = true;
         if (result.invalidUtf8) invalidUtf8.push(formatPath(files[index].filePath));
       }
     }

@@ -1,26 +1,21 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { assertRgSucceeded, runRgLines } from "./rg-process.ts";
+import { recordSearchDiagnostics, runRgLines } from "./rg-process.ts";
 import { fileURLToPath } from "node:url";
 import { HashlineError } from "../core/errors.ts";
 
-test("grep search exit status accepts no matches and preserves failure diagnostics", () => {
-  for (const code of [0, 1]) assert.doesNotThrow(() => assertRgSucceeded({ code, stderr: "" }));
-  assert.throws(
-    () => assertRgSucceeded({ code: 2, stderr: "  regex parse error\n" }),
-    (error: unknown) =>
-      error instanceof HashlineError &&
-      error.errorCode === "RIPGREP_FAILED" &&
-      error.facts?.exitCode === 2 &&
-      error.cause === "regex parse error",
-  );
-  assert.throws(
-    () => assertRgSucceeded({ code: null, stderr: "" }),
-    (error: unknown) =>
-      error instanceof HashlineError &&
-      error.errorCode === "RIPGREP_FAILED" &&
-      error.facts?.exitCode === null,
-  );
+test("grep search exit status → accepts no matches and preserves failure diagnostics", () => {
+  for (const code of [0, 1]) {
+    const warnings: string[] = [];
+    recordSearchDiagnostics({ code, stderr: "", stopped: false }, warnings);
+    assert.deepEqual(warnings, []);
+  }
+  const warnings: string[] = [];
+  recordSearchDiagnostics({ code: 2, stderr: "  regex parse error\n", stopped: false }, warnings);
+  recordSearchDiagnostics({ code: null, stderr: "", stopped: false }, warnings);
+  assert.equal(warnings.length, 2);
+  assert.equal(warnings[0], "regex parse error");
+  assert.match(warnings[1], /null/);
 });
 
 const listingFixture = fileURLToPath(

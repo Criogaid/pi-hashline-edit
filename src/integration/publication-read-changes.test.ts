@@ -285,9 +285,7 @@ test("concurrent change during pre-publication revision read → rejects without
           await assert.rejects(
             commitFile(path, phase === "no-op check" ? BEFORE : PUBLISHED, {
               mode: "overwrite",
-              ...(phase !== "inspect target"
-                ? { expectedRevision: revision, knownBeforeRevision: revision }
-                : {}),
+              ...(phase !== "inspect target" ? { baseRevision: revision } : {}),
             }),
             (error: unknown) => {
               assert.ok(error instanceof FileMutationError);
