@@ -1,7 +1,7 @@
 /**
  * ripgrep process layer: spawning and cancelling rg, bounded record and
- * stderr reading, shared arguments, and the candidate-file listing arguments.
- * Knows nothing about anchors or output formatting.
+ * stderr reading, shared arguments, and the output protocols it parses.
+ * Knows nothing about candidate strategy, anchors, or output formatting.
  *
  * @module pi-hashline-edit/pi
  */
@@ -12,7 +12,6 @@ import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import type { Readable } from "node:stream";
 import { HashlineError } from "../core/errors.ts";
 import { throwIfCancelled } from "./error-text.ts";
-import type { Literal, Prefilter } from "../core/search-analysis.ts";
 
 export const COMMON_RG_ARGS = ["--no-config", "--color=never"];
 export const MAX_RG_RECORD_BYTES = 16 * 1024 * 1024;
@@ -268,88 +267,4 @@ export function runRgLines(
 /** Accept both matches and no matches; callers handle intentional early stops separately. */
 export function assertRgSucceeded(result: Pick<RgRunResult, "code" | "stderr">): void {
   if (result.code !== 0 && result.code !== 1) throw ripgrepFailure("ripgrep failed.", result);
-}
-
-/** A literal's characters as one rg pattern; every non-word character is a code point escape. */
-function literalPattern(literal: Literal): string {
-  const escape = (char: string) =>
-    /^[0-9A-Za-z_]$/.test(char) ? char : `\\x{${char.codePointAt(0)!.toString(16)}}`;
-  return literal
-    .map((chars) => (chars.length === 1 ? escape(chars[0]) : `[${chars.map(escape).join("")}]`))
-    .join("");
-}
-
-/**
- * List candidate files: those whose original bytes contain a prefilter literal, or every
- * file in scope. Literals never contain a line break, so line-oriented matching finds them.
- */
-export function candidateArgs(prefilter: Prefilter): string[] {
-  if (prefilter.kind === "and") return candidateArgs(prefilter.filters[0]);
-  if (prefilter.kind === "all") return [...COMMON_RG_ARGS, "--files"];
-  return [
-    ...COMMON_RG_ARGS,
-    "--files-with-matches",
-    "--engine=default",
-    "--case-sensitive",
-    "--encoding=none",
-    "-e",
-    prefilter.literals.map(literalPattern).join("|"),
-  ];
-}
-
-/** Maximum retained paths while intersecting necessary file conditions. */
-export const MAX_PREFILTER_PATH_BYTES = 4 * 1024 * 1024;
-
-/** Execute AND-of-OR file conditions, falling back to one necessary clause if retention fills. */
-export async function runCandidatePaths(
-  run: typeof runRgPaths,
-  rgPath: string,
-  prefilter: Prefilter,
-  scopedArgs: readonly string[],
-  signal: AbortSignal | undefined,
-  onFile: (path: string) => boolean | Promise<boolean>,
-): Promise<RgRunResult> {
-  const filters = prefilter.kind === "and" ? prefilter.filters : [prefilter];
-  const diagnostics = new DiagnosticBuffer(MAX_RG_STDERR_BYTES);
-  let allowed: ReadonlySet<string> | undefined;
-  for (const [index, filter] of filters.entries()) {
-    const last = index === filters.length - 1;
-    const paths = new Set<string>();
-    let bytes = 0;
-    let overflow = false;
-    const result = await run(
-      rgPath,
-      [...candidateArgs(filter), "--null", ...scopedArgs],
-      signal,
-      async (path) => {
-        if (allowed && !allowed.has(path)) return true;
-        if (last) return onFile(path);
-        if (!paths.has(path)) {
-          paths.add(path);
-          bytes += Buffer.byteLength(path);
-        }
-        overflow = bytes > MAX_PREFILTER_PATH_BYTES;
-        return !overflow;
-      },
-    );
-    if (result.stderr) diagnostics.append(`${result.stderr}\n`);
-    if (overflow) {
-      const fallback = await run(
-        rgPath,
-        [...candidateArgs(filters[0]), "--null", ...scopedArgs],
-        signal,
-        onFile,
-      );
-      if (fallback.stderr) diagnostics.append(fallback.stderr);
-      return { ...fallback, stderr: diagnostics.toString() };
-    }
-    if (last || result.stopped || (result.code !== 0 && result.code !== 1)) {
-      // An incomplete intermediate listing cannot exclude its already reported candidates.
-      if (!last) for (const path of paths) if (!(await onFile(path))) break;
-      return { ...result, stderr: diagnostics.toString() };
-    }
-    if (!paths.size) return { code: 1, stderr: diagnostics.toString(), stopped: false };
-    allowed = paths;
-  }
-  return { code: 1, stderr: diagnostics.toString(), stopped: false };
 }
