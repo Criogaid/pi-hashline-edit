@@ -159,9 +159,8 @@ async function searchFile(
   /** Length of pending through its last line feed. */
   let complete = 0;
   let bytes = 0;
-  const stats = await scanTextFile(
-    filePath,
-    async (text) => {
+  const stats = await scanTextFile(filePath, {
+    onChunk: async (text) => {
       if (query.multiline) {
         if (bytes <= MAX_MULTILINE_SEARCH_BYTES) pending += text;
         return;
@@ -178,12 +177,12 @@ async function searchFile(
       }
     },
     signal,
-    (chunk) => {
+    onBytes: (chunk) => {
       bytes += chunk.length;
       hash.update(chunk);
     },
-    "lossy",
-  );
+    decoding: "lossy",
+  });
   if (stats.hasNul) return undefined;
   if (bytes > MAX_MULTILINE_SEARCH_BYTES && query.multiline) throw new SearchFileLimitError(true);
   await send(pending);

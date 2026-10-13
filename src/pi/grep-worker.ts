@@ -1,3 +1,4 @@
+/** grep's regex worker: runs core/search on the requests of grep-search's pool. */
 import { parentPort } from "node:worker_threads";
 import { searchLines, searchText, type LineSearchInput, type SearchInput } from "../core/search.ts";
 import { workerFailure } from "./report-cause.ts";

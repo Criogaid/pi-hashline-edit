@@ -4,9 +4,9 @@
  *
  * @module pi-hashline-edit/pi
  */
+import { createHash } from "node:crypto";
 import { truncateHead, formatSize } from "@earendil-works/pi-coding-agent";
 import { DiagnosticBuffer } from "./diagnostic-buffer.ts";
-import { createHash } from "node:crypto";
 import { createAnchorFormatter, displayCarriageReturns, plainRow } from "./anchor-format.ts";
 import type { GrepFileMatch, searchFiles } from "./grep-search.ts";
 import { MAX_UNNARROWED_SCAN_BYTES } from "./grep-candidates.ts";
@@ -74,14 +74,14 @@ function previewLine(
 }
 
 interface FormatMatchesOptions {
-  cwd: string;
-  files: readonly GrepFileMatch[];
-  outputMode: GrepOutputMode;
-  context: number;
-  anchors: ReturnType<typeof createAnchorFormatter>;
-  signal?: AbortSignal;
-  warnings: string[];
-  budget?: OutputBudgets;
+  readonly cwd: string;
+  readonly files: readonly GrepFileMatch[];
+  readonly outputMode: GrepOutputMode;
+  readonly context: number;
+  readonly anchors: ReturnType<typeof createAnchorFormatter>;
+  readonly signal?: AbortSignal;
+  readonly warnings: string[];
+  readonly budget?: OutputBudgets;
 }
 
 async function formatMatches(options: FormatMatchesOptions) {
@@ -212,13 +212,13 @@ type GrepFacts = Pick<
 > & { matches: number; files: number };
 
 interface AssembleGrepOutputOptions {
-  formatted: Awaited<ReturnType<typeof formatMatches>>;
-  warnings: readonly string[];
-  outputMode: GrepOutputMode;
-  matchLimitReached: boolean;
-  effectiveLimit: number;
-  searchFacts?: SearchFacts;
-  budget?: OutputBudgets;
+  readonly formatted: Awaited<ReturnType<typeof formatMatches>>;
+  readonly warnings: readonly string[];
+  readonly outputMode: GrepOutputMode;
+  readonly matchLimitReached: boolean;
+  readonly effectiveLimit: number;
+  readonly searchFacts?: SearchFacts;
+  readonly budget?: OutputBudgets;
 }
 
 /** Join the payload within the call's byte budget and state each limit, omission, and diagnostic once. */

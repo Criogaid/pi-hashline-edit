@@ -1,3 +1,9 @@
+/**
+ * Streaming text scans: one read of a file yields its bytes, its NUL and UTF-8 validity, line
+ * statistics, and the decoded text or selected lines.
+ *
+ * @module pi-hashline-edit/pi
+ */
 import { createReadStream } from "node:fs";
 import { createUtf8Decoder, Utf8DecodingError, type Utf8Decoding } from "../core/text.ts";
 import { throwIfCancelled } from "./error-text.ts";
@@ -8,11 +14,14 @@ const TEXT_READ_CHUNK_BYTES = 64 * 1024;
 /** Scan whole-file bytes; lossy decoding reports validity without rejecting malformed UTF-8. */
 export async function scanTextFile(
   path: string,
-  onChunk?: (text: string) => void | Promise<void>,
-  signal?: AbortSignal,
-  onBytes?: (bytes: Buffer) => void,
-  decoding: Utf8Decoding = "strict",
+  options: {
+    readonly onChunk?: (text: string) => void | Promise<void>;
+    readonly signal?: AbortSignal;
+    readonly onBytes?: (bytes: Buffer) => void;
+    readonly decoding?: Utf8Decoding;
+  } = {},
 ) {
+  const { onChunk, signal, onBytes, decoding = "strict" } = options;
   return withFileRead(path, signal, async (handle) => {
     const decode = createUtf8Decoder();
     // Strict decoding always decides validity; lossy text is decoded only for a chunk consumer.
@@ -134,9 +143,12 @@ export async function scanTextLines(
     number++;
     selected = select(number);
   };
-  const stats = await scanTextFile(
-    path,
-    (text) => {
+  const { signal, onBytes, decoding } = options;
+  const stats = await scanTextFile(path, {
+    signal,
+    onBytes,
+    decoding,
+    onChunk: (text) => {
       let start = 0;
       while (start < text.length) {
         const lf = text.indexOf("\n", start);
@@ -159,10 +171,7 @@ export async function scanTextLines(
         start = lf + 1;
       }
     },
-    options.signal,
-    options.onBytes,
-    options.decoding,
-  );
+  });
   if (!stats.hasNul && byteLength > 0) finish(false);
   return stats;
 }

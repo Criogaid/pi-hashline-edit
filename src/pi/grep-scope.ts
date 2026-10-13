@@ -1,3 +1,9 @@
+/**
+ * grep's search scope: path resolution, explicit-file admission under the caller's globs, and
+ * the only conversion of a scope into rg flags.
+ *
+ * @module pi-hashline-edit/pi
+ */
 import { stat } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { canonicalPath } from "./path.ts";
@@ -5,10 +11,10 @@ import { COMMON_RG_ARGS, recordSearchDiagnostics, type GrepBackend } from "./rg-
 import { errnoCode, HashlineError } from "../core/errors.ts";
 
 export interface SearchScope {
-  globs: readonly string[];
-  noIgnore: boolean;
-  follow: boolean;
-  searchPaths: readonly string[];
+  readonly globs: readonly string[];
+  readonly noIgnore: boolean;
+  readonly follow: boolean;
+  readonly searchPaths: readonly string[];
 }
 
 /**
@@ -33,10 +39,11 @@ export function toArray(v: string | string[] | undefined): string[] {
 }
 
 export interface SearchPathInfo {
-  path: string;
-  isFile: boolean;
+  readonly path: string;
+  readonly isFile: boolean;
 }
 
+/** Canonical search paths, the working directory when none is given; a missing one fails. */
 export async function resolveSearchPaths(cwd: string, path: string | string[] | undefined) {
   const searchPaths = (() => {
     const values = toArray(path);
@@ -78,6 +85,7 @@ async function isListed(path: string, listed: ReadonlyMap<string, readonly strin
   return false;
 }
 
+/** Keep directories and the explicitly named files that the ordered globs admit. */
 export async function filterExplicitFilesByGlob(
   backend: GrepBackend,
   rgPath: string,
