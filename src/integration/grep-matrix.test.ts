@@ -12,7 +12,8 @@ import {
   pairedMatrixCases,
   MATRIX_INPUTS,
 } from "../core/search-matrix.testing.ts";
-import { assertRgSucceeded, runCandidatePaths, runRgPaths } from "../pi/rg-process.ts";
+import { assertRgSucceeded, runRgPaths } from "../pi/rg-process.ts";
+import { runCandidatePaths } from "../pi/grep-candidates.ts";
 
 interface CandidateCase {
   readonly prefilter: Prefilter;

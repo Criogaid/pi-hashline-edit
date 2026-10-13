@@ -58,7 +58,7 @@ test("streamed byte digests preserve the source revision across BOM, CRLF, and c
     const source = Buffer.from(`\uFEFFfirst\r\n${"a".repeat(65536)}\r\nlast\r`);
     await writeFile(path, source);
     const first = createHash("sha256");
-    const stats = await scanTextFile(path, undefined, undefined, (bytes) => first.update(bytes));
+    const stats = await scanTextFile(path, { onBytes: (bytes) => first.update(bytes) });
     assert.equal(stats.hasCrLf, true);
     assert.equal(first.digest("hex"), byteRevision(source));
     const second = createHash("sha256");
@@ -117,7 +117,7 @@ test("streamed reads propagate cancellation", async () =>
     await writeFile(path, "a".repeat(2 * 65536));
     const controller = new AbortController();
     await assert.rejects(
-      scanTextFile(path, () => controller.abort(), controller.signal),
+      scanTextFile(path, { onChunk: () => controller.abort(), signal: controller.signal }),
       (error: unknown) => error instanceof HashlineError && error.errorCode === "OPERATION_ABORTED",
     );
   }));
@@ -165,14 +165,12 @@ test("strict scans read all bytes but stop emitting text after a decoding error"
     const emitted: string[] = [];
     const scanned: Buffer[] = [];
     await assert.rejects(
-      scanTextFile(
-        path,
-        (text) => {
+      scanTextFile(path, {
+        onChunk: (text) => {
           emitted.push(text);
         },
-        undefined,
-        (bytes) => scanned.push(bytes),
-      ),
+        onBytes: (bytes) => scanned.push(bytes),
+      }),
       (error: unknown) => error instanceof Utf8DecodingError,
     );
     assert.equal(emitted.join(""), prefix.toString("utf8"));
@@ -186,15 +184,12 @@ test("lossy scans flush a multibyte sequence split across chunks and incomplete 
     const source = Buffer.concat([prefix, Buffer.from([0xf0, 0x9f])]);
     await writeFile(path, source);
     const emitted: string[] = [];
-    const stats = await scanTextFile(
-      path,
-      (text) => {
+    const stats = await scanTextFile(path, {
+      onChunk: (text) => {
         emitted.push(text);
       },
-      undefined,
-      undefined,
-      "lossy",
-    );
+      decoding: "lossy",
+    });
     assert.equal(emitted.join(""), prefix.toString("utf8") + "�");
     assert.equal(emitted.at(-1), "�");
     assert.equal(stats.validUtf8, false);
@@ -210,13 +205,10 @@ test("lossy scans without a text consumer report validity and retain all raw byt
     ]);
     await writeFile(path, source);
     const scanned: Buffer[] = [];
-    const stats = await scanTextFile(
-      path,
-      undefined,
-      undefined,
-      (bytes) => scanned.push(bytes),
-      "lossy",
-    );
+    const stats = await scanTextFile(path, {
+      onBytes: (bytes) => scanned.push(bytes),
+      decoding: "lossy",
+    });
     assert.deepEqual(Buffer.concat(scanned), source);
     assert.equal(stats.validUtf8, false);
     assert.equal(stats.hasNul, false);
@@ -239,15 +231,13 @@ test("NUL suppresses its chunk and all later text without flushing a pending seq
     for (const decoding of ["strict", "lossy"] as const) {
       const emitted: string[] = [];
       const scanned: Buffer[] = [];
-      const stats = await scanTextFile(
-        path,
-        (text) => {
+      const stats = await scanTextFile(path, {
+        onChunk: (text) => {
           emitted.push(text);
         },
-        undefined,
-        (bytes) => scanned.push(bytes),
+        onBytes: (bytes) => scanned.push(bytes),
         decoding,
-      );
+      });
       assert.equal(stats.hasNul, true);
       assert.equal(emitted.join(""), prefix.toString("utf8"));
       assert.deepEqual(Buffer.concat(scanned), source);
@@ -263,15 +253,12 @@ test("NUL takes precedence over earlier malformed UTF-8 in strict and lossy scan
     await writeFile(path, source);
     for (const decoding of ["strict", "lossy"] as const) {
       const emitted: string[] = [];
-      const stats = await scanTextFile(
-        path,
-        (text) => {
+      const stats = await scanTextFile(path, {
+        onChunk: (text) => {
           emitted.push(text);
         },
-        undefined,
-        undefined,
         decoding,
-      );
+      });
       assert.equal(stats.hasNul, true);
       assert.equal(stats.validUtf8, false);
       assert.equal(emitted.join(""), decoding === "strict" ? "" : invalid.toString("utf8"));
@@ -293,17 +280,14 @@ test("valid file truncated across a pending UTF-8 sequence → scans report a ch
       await writeFile(path, source);
       let changed = false;
       await assert.rejects(
-        scanTextFile(
-          path,
-          undefined,
-          undefined,
-          () => {
+        scanTextFile(path, {
+          onBytes: () => {
             if (changed) return;
             changed = true;
             truncateSync(path, chunkBytes - 1);
           },
           decoding,
-        ),
+        }),
         (error: unknown) => {
           assert.ok(error instanceof Error);
           assert.match(error.message, /File changed/);

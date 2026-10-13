@@ -12,7 +12,8 @@ import {
   MATRIX_SYNTAX,
 } from "../core/search-matrix.testing.ts";
 import { searchText, type GrepQuery } from "../core/search.ts";
-import { assertRgSucceeded, runCandidatePaths, runRgPaths } from "../pi/rg-process.ts";
+import { assertRgSucceeded, runRgPaths } from "../pi/rg-process.ts";
+import { runCandidatePaths } from "../pi/grep-candidates.ts";
 
 const syntaxCases = [
   ...MATRIX_SYNTAX,

@@ -25,12 +25,8 @@ import { taggedResultId } from "./forget.testing.ts";
 import { reportOf } from "./report.ts";
 import { expectToolFailure } from "./report-failure.testing.ts";
 import { RegExpParser } from "@eslint-community/regexpp";
-import {
-  candidateArgs,
-  COMMON_RG_ARGS,
-  LINE_LISTING_ARGS,
-  type GrepBackend,
-} from "./rg-process.ts";
+import { COMMON_RG_ARGS, LINE_LISTING_ARGS, type GrepBackend } from "./rg-process.ts";
+import { candidateArgs } from "./grep-candidates.ts";
 import { extractPrefilter } from "../core/search-analysis.ts";
 import { lineCandidatePatterns } from "./rg-regex.ts";
 
