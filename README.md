@@ -399,7 +399,7 @@ In both cases `next` names the other mode.
 
 Write results report the write outcome without returning line anchors. Use `read` or content-mode `grep` to obtain anchors for a later `edit`.
 
-Normal write result text omits the revision. Programmatic callers can read `details.publishedRevision`; edit and replace use source revisions internally to reject stale writes.
+Normal write result text omits the revision. After a successful mutation, programmatic callers can read `details.publishedRevision`; edit and replace use source revisions internally to reject stale writes.
 
 With Action Fusion enabled, `edit`, `replace`, and `write` also accept `then_run`.
 

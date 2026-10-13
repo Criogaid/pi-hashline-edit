@@ -19,11 +19,16 @@ import { MAX_UNNARROWED_SCAN_BYTES } from "./grep-candidates.ts";
 import { OUTCOME_NEXT, type Report, type SuccessReport } from "./report-schema.ts";
 
 // npm run typecheck checks these invalid callers; they must never run.
-function invalidReportConstruction() {
+function invalidReportConstruction(report: NonNullable<ReturnType<typeof decodeReport>>) {
   // @ts-expect-error Grep successes cannot contain write-only facts.
   reportResult({ tool: "grep", created: true });
   // @ts-expect-error NO_MATCH requires its rule fact.
   failureResult({ tool: "replace", error: "NO_MATCH", message: "No replacement matched." });
+  if (report.error === "NO_MATCH") {
+    const rule: number = report.rule;
+    // @ts-expect-error NO_MATCH cannot carry a search-total fact.
+    const matches: number = report.matches;
+  }
 }
 
 const text = (value: string) => ({ type: "text" as const, text: value });

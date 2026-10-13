@@ -110,6 +110,7 @@ test("copy/move a 150,000-line block → publish every captured line", async (t)
       "utf8",
     );
     assert.deepEqual(await readFile(path), expected);
+    assert.ok("publishedRevision" in result.details);
     assert.equal(result.details.publishedRevision, byteRevision(expected));
     assert.equal(result.details.publication, "PUBLISHED");
   }

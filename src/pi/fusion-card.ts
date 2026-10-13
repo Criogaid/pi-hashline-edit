@@ -211,10 +211,20 @@ interface FusedMutationRenderState extends MutationRenderState {
   };
 }
 
+type MutationCardTool<TParams extends TSchema, TDetails, TRenderDetails> = Omit<
+  ToolDefinition<TParams, TDetails, FusedMutationRenderState>,
+  "renderResult"
+> &
+  Pick<ToolDefinition<TParams, TRenderDetails, FusedMutationRenderState>, "renderResult">;
+
 /** Finish the mutation card independently while the fused command remains active. */
-export function withMutationStatus<TParams extends TSchema, TDetails>(
-  tool: ToolDefinition<TParams, TDetails, FusedMutationRenderState>,
-): ToolDefinition<TParams, TDetails, FusedMutationRenderState> {
+export function withMutationStatus<
+  TParams extends TSchema,
+  TDetails extends TRenderDetails,
+  TRenderDetails,
+>(
+  tool: MutationCardTool<TParams, TDetails, TRenderDetails>,
+): MutationCardTool<TParams, TDetails, TRenderDetails> {
   return {
     ...tool,
     renderShell: "self",

@@ -42,8 +42,8 @@ import {
 export type { Report } from "./report-schema.ts";
 
 /** Every result's details carry its report for the TUI; Pi does not send details to the model. */
-export interface ReportDetails {
-  readonly report: Report;
+export interface ReportDetails<TReport extends Report = Report> {
+  readonly report: TReport;
 }
 
 type Content = AgentToolResult<unknown>["content"];
@@ -129,7 +129,7 @@ export function reportResult<TDetails extends object | undefined>(
   report: SuccessReport,
   payload: Content = [],
   details?: TDetails,
-): AgentToolResult<TDetails & ReportDetails> {
+): AgentToolResult<TDetails & ReportDetails<SuccessReport>> {
   const complete = Object.fromEntries(
     reportEntries({ ...report, next: outcomeNext(report) }),
   ) as SuccessReport;
@@ -141,12 +141,14 @@ export function reportResult<TDetails extends object | undefined>(
       stated || payload.length === 0
         ? [...payload, { type: "text", text: renderReport(complete) }]
         : payload,
-    details: { ...details, report: complete } as TDetails & ReportDetails,
+    details: { ...details, report: complete } as TDetails & ReportDetails<SuccessReport>,
   };
 }
 
 /** A failed result: the report is its entire content, flagged so Pi reports it as an error. */
-export function failureResult(report: FailureReport): AgentToolResult<ReportDetails> {
+export function failureResult(
+  report: FailureReport,
+): AgentToolResult<ReportDetails<FailureReport>> {
   const complete = Object.fromEntries(reportEntries(report)) as FailureReport;
   return {
     content: [{ type: "text", text: renderReport(complete) }],
@@ -258,7 +260,7 @@ export async function runTool<T>(
   tool: ReportTool,
   context: FailureContext,
   run: () => Promise<T>,
-): Promise<T | AgentToolResult<ReportDetails>> {
+): Promise<T | AgentToolResult<ReportDetails<FailureReport>>> {
   try {
     return await run();
   } catch (error) {

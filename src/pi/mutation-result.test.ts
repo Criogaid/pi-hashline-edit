@@ -1,9 +1,28 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { generateDiffString, generateUnifiedPatch } from "@earendil-works/pi-coding-agent";
-import { generateMutationDetails } from "./mutation-result.ts";
+import {
+  finalizeMutation,
+  generateMutationDetails,
+  type MutationFacts,
+  type MutationFinalDetails,
+  type MutationOutcome,
+} from "./mutation-result.ts";
 import { displayCarriageReturns } from "./anchor-format.ts";
 import { byteRevision } from "./file-commit.ts";
+
+// Checked by tsc; these callers must never run.
+function invalidMutationConstruction(
+  replacement: MutationOutcome<object, "replace">,
+  result: MutationFinalDetails<{ diff: string }>,
+) {
+  // @ts-expect-error edit has no replacement-count fact.
+  const editFacts: MutationFacts<"edit"> = { matches: 1 };
+  // @ts-expect-error Replacement facts cannot be finalized as edit facts.
+  finalizeMutation("edit", "file.txt", replacement, { freshness: "unchanged" });
+  // @ts-expect-error A failed mutation has no diff details.
+  const diff: string = result.diff;
+}
 
 for (const [name, before, after] of [
   ["LF", "guard\nold\ntail\n", "guard\nnew\ntail\n"],

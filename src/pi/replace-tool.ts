@@ -29,7 +29,7 @@ import {
   type ToolDefinition,
   type ToolRenderResultOptions,
 } from "@earendil-works/pi-coding-agent";
-import type { AgentToolResult, AgentToolUpdateCallback } from "@earendil-works/pi-agent-core";
+import type { AgentToolUpdateCallback } from "@earendil-works/pi-agent-core";
 import { Type, type Static } from "typebox";
 import { applyReplacements } from "../core/replace.ts";
 import { buildRegex } from "../core/regex.ts";
@@ -56,6 +56,7 @@ import {
   type MutationTarget,
   type TextMutationDetails,
 } from "./mutation-runner.ts";
+import type { MutationResultDetails } from "./mutation-result.ts";
 import { errorMessage } from "../core/errors.ts";
 import { defaultOutputBudgets, type OutputBudgetProvider } from "./budgets.ts";
 import {
@@ -63,7 +64,7 @@ import {
   createArgumentPreparer,
   type ReportArgumentIssue,
 } from "./argument-validation.ts";
-type ReplaceDetails = TextMutationDetails;
+type ReplaceDetails = MutationResultDetails<TextMutationDetails>;
 type ReplaceRenderContext = Parameters<
   NonNullable<ToolDefinition<typeof replaceSchema>["renderCall"]>
 >[2];
@@ -142,7 +143,7 @@ export function makeReplaceTool(
     },
 
     renderResult(
-      result: AgentToolResult<ReplaceDetails>,
+      result: Parameters<typeof renderMutationResult>[0],
       options: ToolRenderResultOptions,
       theme: Theme,
       context: ReplaceRenderContext,
@@ -157,7 +158,7 @@ export function makeReplaceTool(
       onUpdate: AgentToolUpdateCallback<ReplaceDetails> | undefined,
       ctx: ExtensionToolContext,
     ) {
-      return executeMutation<Omit<ReplaceParams, "then_run">, ReplaceDetails>(
+      return executeMutation<ReplaceParams, TextMutationDetails, "replace">(
         {
           tool: "replace",
           cwd,
@@ -176,7 +177,7 @@ function runReplace(
   rules: ReplaceParams["replacements"],
   config: HashlineEditConfig,
 ) {
-  return runTextMutation(target, async (currentText) => {
+  return runTextMutation<"replace">(target, async (currentText) => {
     // The regex worker reports its own cancellation; a literal batch runs synchronously.
     const { text, count } = rules.some((rule) => rule.regex === true)
       ? await runRegexReplacements(currentText, rules, config.replace.regexTimeoutMs, target.signal)

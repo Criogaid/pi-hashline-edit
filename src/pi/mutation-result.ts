@@ -10,13 +10,25 @@ import { displayCarriageReturns } from "./anchor-format.ts";
 import { normalizeLineEndings } from "../core/lines.ts";
 import type {
   CommandStatus,
+  FailureReport,
   MutationToolName,
   PublicationStatus,
-  Report,
+  SuccessFacts,
   SuccessReport,
 } from "./report-schema.ts";
 import { causeOf, reportResult, type ReportDetails } from "./report.ts";
 import { DEFAULT_OUTPUT_BUDGETS, type OutputBudgets } from "./budgets.ts";
+import type { ActionFusionDetails, ActionFusionProgress } from "./action-fusion.ts";
+
+/** Final success carries tool details; final failure carries only its report. */
+export type MutationFinalDetails<TDetails> =
+  | (TDetails & ReportDetails<SuccessReport> & { actionFusion?: ActionFusionDetails })
+  | (ReportDetails<FailureReport> & { actionFusion?: never });
+
+/** Progress can precede the mutation and carries no final report yet. */
+export type MutationResultDetails<TDetails> =
+  | MutationFinalDetails<TDetails>
+  | (Partial<TDetails> & { actionFusion: ActionFusionProgress });
 
 /** Keep byte-faithful diff/patch data and a separate preview of the shared logical text. */
 export function generateMutationDetails(
@@ -59,14 +71,18 @@ export function postProcessMutation<T>(publication: PublicationStatus, build: ()
 }
 
 /** The facts a mutation tool states about its own outcome. */
-export type MutationFacts = Pick<Report, "matches" | "created">;
+export type MutationFacts<TTool extends MutationToolName = MutationToolName> = {
+  [T in TTool]: SuccessFacts<T> & {
+    [K in Exclude<"matches" | "created", keyof SuccessFacts<T>>]?: never;
+  };
+}[TTool];
 
 /** A published (or no-op) mutation with its commit facts, before freshness is known. */
-export interface MutationOutcome<TDetails> {
+export interface MutationOutcome<TDetails, TTool extends MutationToolName = MutationToolName> {
   /** Publication and revisions from the commit layer; later steps never read them back from details. */
   readonly commit: CommitResult;
   readonly details: TDetails;
-  readonly facts: MutationFacts;
+  readonly facts: MutationFacts<TTool>;
 }
 
 /** What Action Fusion states about the command; it never restates file state. */
@@ -78,16 +94,17 @@ export interface CommandFacts {
 }
 
 /** Build the mutation report from commit, freshness, and command facts; the TUI uses its diff details. */
-export function finalizeMutation<TDetails extends object>(
-  tool: MutationToolName,
+export function finalizeMutation<TDetails extends object, TTool extends MutationToolName>(
+  tool: TTool,
   path: string,
-  { commit, details, facts }: MutationOutcome<TDetails>,
+  { commit, details, facts }: MutationOutcome<TDetails, NoInfer<TTool>>,
   observation: FreshnessObservation,
   command?: CommandFacts,
   budget: OutputBudgets = DEFAULT_OUTPUT_BUDGETS,
-): AgentToolResult<TDetails & ReportDetails> {
+): AgentToolResult<TDetails & ReportDetails<SuccessReport>> {
   const fresh = observation.freshness === "unchanged";
-  const report: SuccessReport = {
+  // Tool-indexed facts preserve the correlation that object spread loses.
+  const report = {
     tool,
     path,
     publication: commit.publication,
@@ -98,6 +115,6 @@ export function finalizeMutation<TDetails extends object>(
       ? { status: command.status, ...(command.output ? { output: command.output } : {}) }
       : undefined,
     progressError: causeOf(command?.progressError, budget.fieldBytes),
-  };
+  } as SuccessReport;
   return reportResult(report, [], details);
 }

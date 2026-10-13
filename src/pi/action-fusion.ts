@@ -32,7 +32,12 @@ import {
   observeFreshness,
   type FreshnessObservation,
 } from "./file-commit.ts";
-import { finalizeMutation, type CommandFacts, type MutationOutcome } from "./mutation-result.ts";
+import {
+  finalizeMutation,
+  type CommandFacts,
+  type MutationOutcome,
+  type MutationResultDetails,
+} from "./mutation-result.ts";
 import { errnoCode, errorMessage } from "../core/errors.ts";
 import { throwIfCancelled } from "./error-text.ts";
 import { causeOf, CommandNotRun, type ReportDetails } from "./report.ts";
@@ -43,6 +48,7 @@ import type {
   Freshness,
   MutationToolName,
   PublicationStatus,
+  SuccessReport,
 } from "./report-schema.ts";
 export type { ActionFusionProgress } from "./report-schema.ts";
 
@@ -215,7 +221,7 @@ export function createActionFusionExecutor(
     }
   }
 
-  return async function execute<TDetails extends object>({
+  return async function execute<TDetails extends object, TTool extends MutationToolName>({
     toolCallId,
     tool,
     displayPath,
@@ -228,18 +234,20 @@ export function createActionFusionExecutor(
     onUpdate,
   }: {
     toolCallId: string;
-    tool: MutationToolName;
+    tool: TTool;
     /** The caller-supplied path, as the report states it. */
     displayPath: string;
     absolutePath: string;
     thenRun: ThenRunInput | undefined;
     budget?: OutputBudgets;
-    mutate: () => Promise<MutationOutcome<TDetails>>;
+    mutate: () => Promise<MutationOutcome<TDetails, NoInfer<TTool>>>;
     signal: AbortSignal | undefined;
     ctx: ExtensionToolContext;
-    onUpdate?: AgentToolUpdateCallback<TDetails>;
-  }): Promise<AgentToolResult<TDetails & ReportDetails & { actionFusion: ActionFusionDetails }>> {
-    let completedMutation: MutationOutcome<TDetails> | undefined;
+    onUpdate?: AgentToolUpdateCallback<MutationResultDetails<TDetails>>;
+  }): Promise<
+    AgentToolResult<TDetails & ReportDetails<SuccessReport> & { actionFusion: ActionFusionDetails }>
+  > {
+    let completedMutation: MutationOutcome<TDetails, TTool> | undefined;
     let progressFailure: unknown;
     let commandTiming: { readonly timeoutSeconds: number; readonly deadlineMs: number } | undefined;
     const report = (
@@ -277,7 +285,7 @@ export function createActionFusionExecutor(
           onUpdate?.({
             content: [],
             details: { ...completedMutation?.details, actionFusion: progress },
-          } as unknown as AgentToolResult<TDetails>),
+          }),
       ]) {
         try {
           notify();
@@ -300,7 +308,7 @@ export function createActionFusionExecutor(
         if (thenRun !== undefined) throw notRun(error, "cancelled");
         throw error;
       }
-      let outcome: MutationOutcome<TDetails>;
+      let outcome: MutationOutcome<TDetails, TTool>;
       try {
         outcome = await mutate();
         completedMutation = outcome;

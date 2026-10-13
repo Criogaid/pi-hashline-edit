@@ -12,7 +12,6 @@ import {
   withThenRunDescription,
   withThenRunSchema,
   type ThenRunInput,
-  type ActionFusionDetails,
 } from "./action-fusion.ts";
 import { commitFile, type CommitResult } from "./file-commit.ts";
 import { executeMutation, type ActionFusionExecutor } from "./mutation-runner.ts";
@@ -21,6 +20,7 @@ import { createArgumentPreparer } from "./argument-validation.ts";
 import { defaultOutputBudgets, type OutputBudgetProvider } from "./budgets.ts";
 import { unwritableTextError } from "../core/text.ts";
 import { reportLines, renderToolError } from "./render.ts";
+import type { MutationResultDetails } from "./mutation-result.ts";
 import type { ReportDetails } from "./report.ts";
 
 const writeSchema = Type.Object(
@@ -41,10 +41,8 @@ function createWriteSchema(actionFusion: boolean) {
   return withThenRunSchema(writeSchema, "write", actionFusion);
 }
 type WriteParams = Static<typeof writeSchema> & { then_run?: ThenRunInput };
-type WriteDetails = CommitResult & {
-  path: string;
-  actionFusion?: ActionFusionDetails;
-} & Partial<ReportDetails>;
+type WriteMutationDetails = CommitResult & { path: string };
+type WriteDetails = MutationResultDetails<WriteMutationDetails>;
 /** The write card's call line shows the content; the command card owns then_run. */
 const WRITE_CARD_SHOWN = new Set(["publication", "created", "then_run", "progressError"]);
 type WriteRenderContext = Parameters<
@@ -83,7 +81,7 @@ export function makeWriteOverride(
       return builtin.renderCall!(args, theme, context);
     },
     renderResult(
-      result: AgentToolResult<WriteDetails>,
+      result: AgentToolResult<(Partial<WriteMutationDetails> & Partial<ReportDetails>) | undefined>,
       options: ToolRenderResultOptions,
       theme: Theme,
       context: WriteRenderContext,
@@ -101,7 +99,7 @@ export function makeWriteOverride(
       onUpdate: AgentToolUpdateCallback<WriteDetails> | undefined,
       ctx: ExtensionToolContext,
     ) {
-      return executeMutation<Omit<WriteParams, "then_run">, WriteDetails>(
+      return executeMutation<WriteParams, WriteMutationDetails, "write">(
         {
           tool: "write",
           cwd,

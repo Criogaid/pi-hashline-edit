@@ -21,7 +21,7 @@ import {
   type ToolDefinition,
   type ToolRenderResultOptions,
 } from "@earendil-works/pi-coding-agent";
-import type { AgentToolResult, AgentToolUpdateCallback } from "@earendil-works/pi-agent-core";
+import type { AgentToolUpdateCallback } from "@earendil-works/pi-agent-core";
 import { Type, type Static } from "typebox";
 import {
   ACTION_FUSION_GUIDELINES,
@@ -49,12 +49,13 @@ import {
   type MutationTarget,
   type TextMutationDetails,
 } from "./mutation-runner.ts";
+import type { MutationResultDetails } from "./mutation-result.ts";
 import {
   argumentItems,
   createArgumentPreparer,
   type ReportArgumentIssue,
 } from "./argument-validation.ts";
-type EditDetails = TextMutationDetails;
+type EditDetails = MutationResultDetails<TextMutationDetails>;
 type EditRenderContext = Parameters<NonNullable<ToolDefinition<EditSchema>["renderCall"]>>[2];
 
 /** Split a validated anchor token; prepareArguments and the schema already checked it. */
@@ -323,7 +324,7 @@ export function makeEditOverride(
     },
 
     renderResult(
-      result: AgentToolResult<EditDetails>,
+      result: Parameters<typeof renderMutationResult>[0],
       options: ToolRenderResultOptions,
       theme: Theme,
       context: EditRenderContext,
@@ -338,7 +339,7 @@ export function makeEditOverride(
       onUpdate: AgentToolUpdateCallback<EditDetails> | undefined,
       ctx: ExtensionToolContext,
     ) {
-      return executeMutation<Omit<EditParams, "then_run">, EditDetails>(
+      return executeMutation<EditParams, TextMutationDetails, "edit">(
         {
           tool: "edit",
           cwd,
@@ -361,7 +362,7 @@ function runEdit(
 ) {
   const anchorFormatter = createAnchorFormatter(hashLen);
 
-  return runTextMutation(target, (currentText) => {
+  return runTextMutation<"edit">(target, (currentText) => {
     const translated = toCoreEdits(editOps);
 
     // Recovery reports checksum candidates from nearby lines, then the whole file
@@ -379,6 +380,7 @@ function runEdit(
 
     return {
       text: result.text,
+      facts: {},
     };
   });
 }

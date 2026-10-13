@@ -1333,6 +1333,7 @@ test("copy/move through read anchors → publish bytes bound to the read revisio
       const expected = op === "copy" ? source + "A\r\nB\n" : "\uFEFFC\r\nD\nA\r\nB\n";
       const bytes = Buffer.from(expected, "utf8");
       assert.deepEqual(await readFile(file), bytes);
+      assert.ok("publishedRevision" in result.details);
       assert.equal(result.details.baseRevision, byteRevision(Buffer.from(source, "utf8")));
       assert.equal(result.details.publication, "PUBLISHED");
       assert.equal(result.details.publishedRevision, byteRevision(bytes));
@@ -1395,6 +1396,7 @@ test("copy/move with fused command → execute after the complete transfer and p
         },
         { ctx: { cwd: dir } },
       );
+      assert.ok("publishedRevision" in result.details);
       assert.equal(result.details.actionFusion?.command, "failed");
       assert.equal(result.details.publication, "PUBLISHED");
       assert.equal(result.details.publishedRevision, byteRevision(Buffer.from(expected, "utf8")));

@@ -20,11 +20,7 @@
 
 import { withFileMutationQueue, type ExtensionToolContext } from "@earendil-works/pi-coding-agent";
 import type { AgentToolResult, AgentToolUpdateCallback } from "@earendil-works/pi-agent-core";
-import type {
-  ActionFusionDetails,
-  createActionFusionExecutor,
-  ThenRunInput,
-} from "./action-fusion.ts";
+import type { createActionFusionExecutor, ThenRunInput } from "./action-fusion.ts";
 import type { MutationToolName } from "./report-schema.ts";
 import { commitFreshness, commitReplacement, readEditableSnapshot } from "./file-commit.ts";
 import {
@@ -32,18 +28,19 @@ import {
   generateMutationDetails,
   postProcessMutation,
   type MutationOutcome,
+  type MutationFinalDetails,
+  type MutationResultDetails,
+  type MutationFacts,
 } from "./mutation-result.ts";
 import { canonicalPath } from "./path.ts";
 import { throwIfCancelled } from "./error-text.ts";
-import { runTool, type ReportDetails } from "./report.ts";
+import { runTool } from "./report.ts";
 import { defaultOutputBudgets, type OutputBudgetProvider, type OutputBudgets } from "./budgets.ts";
 
 export type ActionFusionExecutor = ReturnType<typeof createActionFusionExecutor>;
 
 /** Result details shared by the read-modify-write tools. */
-export type TextMutationDetails = ReturnType<typeof generateMutationDetails> & {
-  actionFusion?: ActionFusionDetails;
-};
+export type TextMutationDetails = ReturnType<typeof generateMutationDetails>;
 
 /** The file a mutation targets, resolved once per call. */
 export interface MutationTarget {
@@ -54,13 +51,20 @@ export interface MutationTarget {
   readonly budget: OutputBudgets;
 }
 
-export interface MutationToolSpec<TParams extends { path: string }, TDetails> {
-  readonly tool: MutationToolName;
+export interface MutationToolSpec<
+  TParams extends { path: string },
+  TDetails,
+  TTool extends MutationToolName,
+> {
+  readonly tool: TTool;
   readonly cwd: string;
   readonly fusion: ActionFusionExecutor | undefined;
   readonly budgets?: OutputBudgetProvider;
   /** Perform the mutation. Runs inside the file mutation queue. */
-  run(params: TParams, target: MutationTarget): Promise<MutationOutcome<TDetails>>;
+  run(
+    params: Omit<TParams, "then_run">,
+    target: MutationTarget,
+  ): Promise<MutationOutcome<TDetails, TTool>>;
 }
 
 export interface MutationCall<TParams, TDetails> {
@@ -68,74 +72,71 @@ export interface MutationCall<TParams, TDetails> {
   /** Arguments already prepared and validated by Pi against the tool schema. */
   readonly params: TParams & { then_run?: ThenRunInput };
   readonly signal: AbortSignal | undefined;
-  readonly onUpdate: AgentToolUpdateCallback<TDetails> | undefined;
+  readonly onUpdate: AgentToolUpdateCallback<MutationResultDetails<TDetails>> | undefined;
   readonly ctx: ExtensionToolContext;
 }
 
 /** Queue and publish one validated mutation call, then run its then_run command when fused. */
-export async function executeMutation<TParams extends { path: string }, TDetails extends object>(
-  spec: MutationToolSpec<TParams, TDetails>,
+export async function executeMutation<
+  TParams extends { path: string },
+  TDetails extends object,
+  TTool extends MutationToolName,
+>(
+  spec: MutationToolSpec<TParams, TDetails, TTool>,
   call: MutationCall<TParams, TDetails>,
-): Promise<AgentToolResult<TDetails & Partial<ReportDetails>>> {
+): Promise<AgentToolResult<MutationFinalDetails<TDetails>>> {
   const { cwd, fusion, tool } = spec;
   const { toolCallId, signal, onUpdate, ctx } = call;
   const { then_run, ...mutationParams } = call.params;
   const displayPath = mutationParams.path;
   const budget = (spec.budgets ?? defaultOutputBudgets)();
-  const result = await runTool(
-    tool,
-    { path: displayPath, mutation: true, signal, budget },
-    async () => {
-      const absolutePath = canonicalPath(cwd, displayPath);
-      const target: MutationTarget = { absolutePath, displayPath, signal, budget };
-      const mutate = (): Promise<MutationOutcome<TDetails>> =>
-        withFileMutationQueue(absolutePath, () =>
-          spec.run(mutationParams as unknown as TParams, target),
-        );
-      if (!fusion) {
-        const outcome = await mutate();
-        return finalizeMutation(
-          tool,
-          displayPath,
-          outcome,
-          commitFreshness(outcome.commit),
-          undefined,
-          budget,
-        );
-      }
-      return fusion({
-        toolCallId,
+  return runTool(tool, { path: displayPath, mutation: true, signal, budget }, async () => {
+    const absolutePath = canonicalPath(cwd, displayPath);
+    const target: MutationTarget = { absolutePath, displayPath, signal, budget };
+    const mutate = (): Promise<MutationOutcome<TDetails, TTool>> =>
+      withFileMutationQueue(absolutePath, () => spec.run(mutationParams, target));
+    if (!fusion) {
+      const outcome = await mutate();
+      return finalizeMutation(
         tool,
         displayPath,
-        absolutePath,
-        thenRun: then_run,
+        outcome,
+        commitFreshness(outcome.commit),
+        undefined,
         budget,
-        mutate,
-        signal,
-        ctx,
-        onUpdate,
-      });
-    },
-  );
-  return result as AgentToolResult<TDetails & Partial<ReportDetails>>;
+      );
+    }
+    return fusion({
+      toolCallId,
+      tool,
+      displayPath,
+      absolutePath,
+      thenRun: then_run,
+      budget,
+      mutate,
+      signal,
+      ctx,
+      onUpdate,
+    });
+  });
 }
 
 /** A whole-file text transformation produced from one snapshot. */
-export interface TextChange {
+export interface TextChange<TTool extends MutationToolName> {
   /** Complete replacement text; equal to the snapshot for a no-op. */
   readonly text: string;
   /** The tool's own outcome facts, such as replace's match count. */
-  readonly facts?: MutationOutcome<unknown>["facts"];
+  readonly facts: MutationFacts<TTool>;
 }
 
 /**
  * Read-modify-write against the bytes read: the commit is rejected if the file
  * changed since the snapshot, and result-generation failures keep publication.
  */
-export async function runTextMutation(
+export async function runTextMutation<TTool extends MutationToolName>(
   target: MutationTarget,
-  change: (currentText: string) => TextChange | Promise<TextChange>,
-): Promise<MutationOutcome<TextMutationDetails>> {
+  change: (currentText: string) => TextChange<TTool> | Promise<TextChange<TTool>>,
+): Promise<MutationOutcome<TextMutationDetails, TTool>> {
   const { absolutePath, displayPath, signal } = target;
 
   const { text: currentText, baseRevision } = await readEditableSnapshot(absolutePath, signal);
@@ -157,6 +158,6 @@ export async function runTextMutation(
       commit,
       commit.publication,
     ),
-    facts: next.facts ?? {},
+    facts: next.facts,
   }));
 }

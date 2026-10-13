@@ -412,7 +412,7 @@ export const REPORT_SCHEMA = Type.Object({
   ) as { [K in FactName]: ReturnType<typeof Type.Optional<(typeof FACT_FIELDS)[K]>> }),
   next: opt(Type.String()),
 });
-export type Report = Omit<Static<typeof REPORT_SCHEMA>, "error"> & { error?: ErrorCode };
+type ReportFields = Omit<Static<typeof REPORT_SCHEMA>, "error"> & { error?: ErrorCode };
 
 const SUCCESS_DEFINITIONS = {
   read: facts([], ["pagination", "truncatedAt", "lineTooLong", "resultId", "contentForgotten"]),
@@ -494,18 +494,29 @@ type Fields<P extends TProperties> = Static<TObject<P>>;
 type Envelope = Omit<Fields<typeof COMMON_WIRE_FIELDS>, "tool">;
 type MutationFields = Fields<typeof MUTATION_WIRE_FIELDS>;
 
+/** Facts owned by one successful tool, derived from its wire schema. */
+export type SuccessFacts<T extends ReportTool> = Static<(typeof SUCCESS_DEFINITIONS)[T]>;
+
+// Absent fields stay readable as undefined without admitting another variant's facts.
+type ReportVariant<T> = T & { [K in Exclude<keyof ReportFields, keyof T>]?: never };
+
 /** A success report a tool may produce: its own facts, and mutation facts only for mutation tools. */
 export type SuccessReport = {
-  [T in ReportTool]: Envelope & { tool: T } & (T extends MutationToolName
-      ? MutationFields
-      : unknown) &
-    Static<(typeof SUCCESS_DEFINITIONS)[T]>;
+  [T in ReportTool]: ReportVariant<
+    Envelope & { tool: T } & (T extends MutationToolName ? MutationFields : unknown) &
+      SuccessFacts<T>
+  >;
 }[ReportTool];
 
 /** A failure report: its code's facts, with message required except where MESSAGE_OPTIONAL allows. */
 export type FailureReport = {
-  [C in ErrorCode]: Envelope & { tool: ReportTool; error: C } & MutationFields &
-    Fields<typeof FAILURE_WIRE_FIELDS> &
-    (C extends typeof MESSAGE_OPTIONAL ? { message?: string } : { message: string }) &
-    Static<Definitions[C]["facts"]>;
+  [C in ErrorCode]: ReportVariant<
+    Envelope & { tool: ReportTool; error: C } & MutationFields &
+      Fields<typeof FAILURE_WIRE_FIELDS> &
+      (C extends typeof MESSAGE_OPTIONAL ? { message?: string } : { message: string }) &
+      Static<Definitions[C]["facts"]>
+  >;
 }[ErrorCode];
+
+/** A checked report retains the tool or error code that determines its facts. */
+export type Report = SuccessReport | FailureReport;

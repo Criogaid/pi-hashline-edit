@@ -39,7 +39,7 @@ const versions = { publishedRevision: "r", observedRevision: "r" };
 const mutationDetails = (actionFusion?: ActionFusionDetails) => ({
   ...generateMutationDetails("a.txt", "old\n", "new\n", versions, "PUBLISHED"),
   report: {
-    tool: "edit",
+    tool: "edit" as const,
     path: "a.txt",
     publication: actionFusion?.publication,
     freshness: actionFusion?.freshness === "unchanged" ? undefined : actionFusion?.freshness,
