@@ -180,7 +180,7 @@ const forgetSchema = Type.Object(
   { additionalProperties: false },
 );
 type ForgetParams = Static<typeof forgetSchema>;
-/** One line per forgotten result; receipt is absent for results tagged before receipts existed. */
+/** One line per forgotten result; receipt is absent when another extension's result hook replaced the details. */
 type ForgetDetails = { forgotten?: { id: string; receipt?: string }[] } & Partial<ReportDetails>;
 
 /** Register the forget tool and the context hooks that apply it. */

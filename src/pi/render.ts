@@ -249,7 +249,6 @@ export function renderMutationResult<TArgs>(
   result: AgentToolResult<
     | {
         displayDiff?: string;
-        diff?: string;
         report?: Report;
         actionFusion?: Partial<Pick<ActionFusionProgress, "publication" | "mutationCompleted">>;
       }
@@ -264,7 +263,7 @@ export function renderMutationResult<TArgs>(
   if (isPartial && result.details?.actionFusion?.mutationCompleted !== true)
     return new Text(theme.fg("warning", pending), 0, 0);
   if (context.isError) return renderToolError(result, theme, expanded);
-  const diff: string | undefined = result.details?.displayDiff ?? result.details?.diff;
+  const diff = result.details?.displayDiff;
   // Refresh in place: invalidation inside a renderer re-enters updateDisplay.
   publishDiffCounts(diff, context, (counts) => {
     context.state?.callText?.setText(header(context.args, theme, counts));
