@@ -58,7 +58,6 @@ import {
 } from "./mutation-runner.ts";
 import { errorMessage } from "../core/errors.ts";
 import { defaultOutputBudgets, type OutputBudgetProvider } from "./budgets.ts";
-import { cancellationError } from "./error-text.ts";
 import {
   argumentItems,
   createArgumentPreparer,
@@ -153,7 +152,7 @@ export function makeReplaceTool(
 
     async execute(
       toolCallId: string,
-      params: ReplaceParams & { then_run?: ThenRunInput },
+      params: ReplaceParams,
       signal: AbortSignal | undefined,
       onUpdate: AgentToolUpdateCallback<ReplaceDetails> | undefined,
       ctx: ExtensionToolContext,
@@ -178,24 +177,10 @@ function runReplace(
   config: HashlineEditConfig,
 ) {
   return runTextMutation(target, async (currentText) => {
-    let newText: string;
-    let count: number;
-    try {
-      ({ text: newText, count } = rules.some((rule) => rule.regex === true)
-        ? await runRegexReplacements(
-            currentText,
-            rules,
-            config.replace.regexTimeoutMs,
-            target.signal,
-          )
-        : applyReplacements(currentText, rules));
-    } catch (error) {
-      if (target.signal?.aborted) throw cancellationError();
-      throw error;
-    }
-    return {
-      text: newText,
-      facts: { matches: count },
-    };
+    // The regex worker reports its own cancellation; a literal batch runs synchronously.
+    const { text, count } = rules.some((rule) => rule.regex === true)
+      ? await runRegexReplacements(currentText, rules, config.replace.regexTimeoutMs, target.signal)
+      : applyReplacements(currentText, rules);
+    return { text, facts: { matches: count } };
   });
 }
