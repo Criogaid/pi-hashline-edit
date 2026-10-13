@@ -97,11 +97,11 @@ export async function scanTextFile(
 }
 
 interface ScannedLine {
-  number: number;
-  byteLength: number;
-  carriageReturns: number;
+  readonly number: number;
+  readonly byteLength: number;
+  readonly carriageReturns: number;
   /** Absent when the selected line exceeds maxLineBytes. */
-  text: string | undefined;
+  readonly text: string | undefined;
 }
 
 /** Visit selected logical lines, retaining at most maxLineBytes of content per line. */
@@ -110,10 +110,10 @@ export async function scanTextLines(
   select: (number: number) => boolean,
   onLine: (line: ScannedLine) => void,
   options: {
-    signal?: AbortSignal;
-    maxLineBytes?: number;
-    onBytes?: (bytes: Buffer) => void;
-    decoding?: Utf8Decoding;
+    readonly signal?: AbortSignal;
+    readonly maxLineBytes?: number;
+    readonly onBytes?: (bytes: Buffer) => void;
+    readonly decoding?: Utf8Decoding;
   } = {},
 ) {
   const maxBytes = options.maxLineBytes ?? Infinity;

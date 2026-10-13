@@ -345,7 +345,7 @@ export function makeEditOverride(
           fusion,
           budgets,
           run: (mutationParams, target) =>
-            runHashline(target, mutationParams.edits, hashLen, shiftRadius),
+            runEdit(target, mutationParams.edits, hashLen, shiftRadius),
         },
         { toolCallId, params, signal, onUpdate, ctx },
       );
@@ -353,7 +353,7 @@ export function makeEditOverride(
   };
 }
 
-function runHashline(
+function runEdit(
   target: MutationTarget,
   editOps: readonly EditOpInput[],
   hashLen: number,

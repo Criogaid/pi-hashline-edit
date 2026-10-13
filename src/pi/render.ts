@@ -53,8 +53,8 @@ export function renderDiffPreview(diff: string, expanded: boolean, theme: Theme)
 
 /** Added/removed line counts of a pi-format diff string (`+N`/`-N` leading char). */
 export interface DiffCounts {
-  added: number;
-  removed: number;
+  readonly added: number;
+  readonly removed: number;
 }
 
 /** Row-local render state shared by the mutation call and result renderers. */

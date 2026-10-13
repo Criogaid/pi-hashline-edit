@@ -191,7 +191,7 @@ export function makeReadOverride(
         config.read.maxKiB === undefined ? budget.readBytes : config.read.maxKiB * 1024;
       return runTool("read", { path: params.path, signal, budget }, async () => {
         throwIfCancelled(signal);
-        const offset = params.offset ?? DEFAULT_OFFSET;
+        const start = params.offset ?? DEFAULT_OFFSET;
         const limit = params.limit ?? defaultLimit;
         const anchors = createAnchorFormatter(hashLen);
         const report = { tool: "read", path: params.path };
@@ -215,7 +215,7 @@ export function makeReadOverride(
           );
         };
 
-        const absPath = canonicalPath(cwd, params.path as string);
+        const absPath = canonicalPath(cwd, params.path);
         try {
           if (await detectSupportedImageMimeTypeFromFile(absPath)) {
             return readNative();
@@ -224,7 +224,6 @@ export function makeReadOverride(
           return readNative();
         }
 
-        const start = offset;
         const rows: string[] = [];
         const crExpansion = Buffer.byteLength(displayCarriageReturns("\r")) - 1;
         let totalRows = 0;

@@ -63,9 +63,9 @@ export const ACTION_FUSION_GUIDELINES = [
 ];
 
 export interface ActionFusionDetails {
-  publication: PublicationStatus;
-  command: CommandStatus | "not_requested";
-  freshness: Freshness;
+  readonly publication: PublicationStatus;
+  readonly command: CommandStatus | "not_requested";
+  readonly freshness: Freshness;
 }
 
 type ProgressReporter = (progress: ActionFusionProgress, ctx: ExtensionToolContext) => void;

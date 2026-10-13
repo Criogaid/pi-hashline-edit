@@ -88,7 +88,7 @@ const MAX_RECEIPT_PATTERN_CHARS = 60;
  * to the model, so the forget card can name what was forgotten without adding context.
  */
 export interface ForgetReceiptDetails {
-  forgetReceipt?: string;
+  readonly forgetReceipt?: string;
 }
 
 function plural(count: number, noun: string, pluralForm = `${noun}s`): string {
