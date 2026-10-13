@@ -20,7 +20,7 @@ import { Worker } from "node:worker_threads";
 import { makeEditOverride } from "./edit-tool.ts";
 import { callTool } from "./tool-call.testing.ts";
 import { DEFAULT_CONFIG } from "./config.ts";
-import { FORGET_MIN_BYTES } from "./budgets.ts";
+import { DEFAULT_OUTPUT_BUDGETS, FORGET_MIN_BYTES } from "./budgets.ts";
 import { taggedResultId } from "./forget.testing.ts";
 import { reportOf } from "./report.ts";
 import { expectToolFailure } from "./report-failure.testing.ts";
@@ -350,6 +350,54 @@ test("file changes after matching → summary modes retain the snapshot and cont
         }
       }
     }
+  });
+});
+
+test("excluded changed file → contributes no preview limit or recovery to complete output", async (t) => {
+  await withDir(async (dir) => {
+    const changedFile = join(dir, "changed.txt");
+    const stableFile = join(dir, "stable.txt");
+    const stableLines = ["before", "needle stable", "after"];
+    await writeFile(changedFile, "needle\n");
+    await writeFile(stableFile, `${stableLines.join("\n")}\n`);
+    const paths = [changedFile, stableFile];
+    const emit = Worker.prototype.emit;
+    let replies = 0;
+    t.mock.method(
+      Worker.prototype,
+      "emit",
+      function (this: Worker, event: string | symbol, ...args: unknown[]) {
+        if (event === "message" && ++replies === paths.length) {
+          fs.writeFileSync(
+            changedFile,
+            `needle${"x".repeat(DEFAULT_OUTPUT_BUDGETS.grepPreviewUnits)}\n`,
+          );
+        }
+        return emit.call(this, event, ...args);
+      },
+    );
+    const { backend } = fakeBackend({ paths });
+    const result = await callTool(makeGrepOverrideWithBackend(dir, DEFAULT_CONFIG, backend), {
+      pattern: "needle",
+      literal: true,
+      outputMode: "content",
+      context: 1,
+    });
+    const report = reportOf(result);
+    assert.equal(result.isError, undefined);
+    assert.equal(report?.matches, 1);
+    assert.equal(report?.files, 1);
+    assert.match(report?.diagnostics ?? "", /changed\.txt: File changed during search\./);
+    assert.match(text(result), /^stable\.txt · 1 match\n/);
+    assert.deepEqual(
+      text(result).split("\n").slice(1),
+      stableLines.map(
+        (line, index) =>
+          `${index + 1}#${computeLineHash(index + 1, line, DEFAULT_CONFIG.hashLen)}│${line}`,
+      ),
+    );
+    assert.equal(report?.linePreviewLimit, undefined);
+    assert.equal(report?.next, undefined);
   });
 });
 

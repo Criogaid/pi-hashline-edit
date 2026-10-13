@@ -18,6 +18,14 @@ import { DEFAULT_OUTPUT_BUDGETS } from "./budgets.ts";
 import { MAX_UNNARROWED_SCAN_BYTES } from "./grep-candidates.ts";
 import { OUTCOME_NEXT, type Report, type SuccessReport } from "./report-schema.ts";
 
+// npm run typecheck checks these invalid callers; they must never run.
+function invalidReportConstruction() {
+  // @ts-expect-error Grep successes cannot contain write-only facts.
+  reportResult({ tool: "grep", created: true });
+  // @ts-expect-error NO_MATCH requires its rule fact.
+  failureResult({ tool: "replace", error: "NO_MATCH", message: "No replacement matched." });
+}
+
 const text = (value: string) => ({ type: "text" as const, text: value });
 function displayed(result: Parameters<typeof renderToolError>[0]) {
   initTheme("dark");
@@ -251,4 +259,16 @@ test("text-only error resembles success facts → preserves the raw error diagno
   const result = { toolName: "read", isError: true, content: [text("{}")] };
   assert.equal(reportOf(result), undefined);
   assert.equal(displayed(result).trimEnd(), "{}");
+});
+
+test("invalid details report → falls back to valid text and leaves content intact", () => {
+  const details = { report: { tool: "grep", matches: "x" } };
+  const fallback: SuccessReport = { tool: "grep", matches: 1, files: 1 };
+  for (const expected of [undefined, fallback]) {
+    const last = expected ? renderReport(expected) : JSON.stringify({ matches: "x" }, null, 2);
+    const result = { toolName: "grep", details, content: [text("payload"), text(last)] };
+    assert.deepEqual(reportOf(result), expected);
+    assert.deepEqual(withoutReport(result).content, result.content);
+    assert.equal(result.content.length, 2);
+  }
 });
