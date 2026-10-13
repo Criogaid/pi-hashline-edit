@@ -41,8 +41,15 @@ import {
   type OutputBudgetProvider,
 } from "./budgets.ts";
 import { renderToolError } from "./render.ts";
-import { decodeReport, reportOf, reportResult, runTool, type ReportDetails } from "./report.ts";
-import type { SuccessReport, WireReport } from "./report-schema.ts";
+import {
+  decodeReport,
+  reportOf,
+  reportResult,
+  runTool,
+  type Report,
+  type ReportDetails,
+} from "./report.ts";
+import type { SuccessReport } from "./report-schema.ts";
 import { HashlineError } from "../core/errors.ts";
 import { createArgumentPreparer } from "./argument-validation.ts";
 
@@ -60,11 +67,9 @@ type ResultContent = AgentToolResult<unknown>["content"];
 /** A success report of a tool whose results can be tagged. */
 type TaggedReport = Extract<SuccessReport, { tool: "read" | "grep" | "codemode" }>;
 
-/** The report if it carries the call's id; only taggable results declare one. */
-function tagOf(report: WireReport | undefined, toolCallId: string): TaggedReport | undefined {
-  return report !== undefined && "resultId" in report && report.resultId === resultId(toolCallId)
-    ? report
-    : undefined;
+/** The report if it carries the call's id; the wire schema admits resultId only on taggable successes. */
+function tagOf(report: Report | undefined, toolCallId: string): TaggedReport | undefined {
+  return report?.resultId === resultId(toolCallId) ? (report as TaggedReport) : undefined;
 }
 
 /** The report the model saw tagged: the result's last block, naming the call's id. */
@@ -327,8 +332,7 @@ export function registerForgetTool(
           (expanded && receipt ? theme.fg("dim", `${id} · `) : "") +
           theme.fg("toolOutput", receipt ?? id),
       );
-      const report = result.details?.report;
-      const notForgettable = (report && "notForgettable" in report && report.notForgettable) || [];
+      const notForgettable = result.details?.report?.notForgettable ?? [];
       if (notForgettable.length > 0)
         lines.push(theme.fg("warning", `not forgettable: ${notForgettable.join(", ")}`));
       return new Text(lines.join("\n"), 0, 0);

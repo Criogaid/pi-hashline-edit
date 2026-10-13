@@ -509,6 +509,3 @@ export type FailureReport = {
     (C extends typeof MESSAGE_OPTIONAL ? { message?: string } : { message: string }) &
     Static<Definitions[C]["facts"]>;
 }[ErrorCode];
-
-/** Every report WIRE_REPORT_SCHEMA accepts. */
-export type WireReport = SuccessReport | FailureReport;

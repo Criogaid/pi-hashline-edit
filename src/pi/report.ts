@@ -37,14 +37,13 @@ import {
   type Report,
   type ReportTool,
   type SuccessReport,
-  type WireReport,
 } from "./report-schema.ts";
 
 export type { Report } from "./report-schema.ts";
 
 /** Every result's details carry its report for the TUI; Pi does not send details to the model. */
 export interface ReportDetails {
-  readonly report: WireReport;
+  readonly report: Report;
 }
 
 type Content = AgentToolResult<unknown>["content"];
@@ -66,7 +65,7 @@ export function renderReport(report: Report): string {
 }
 
 /** Decode saved reports or current success facts with the originating call's tool name. */
-export function decodeReport(text: string, contextTool?: string): WireReport | undefined {
+export function decodeReport(text: string, contextTool?: string): Report | undefined {
   if (!text.startsWith("{")) return undefined;
   try {
     let value: unknown = JSON.parse(text);
@@ -80,7 +79,7 @@ export function decodeReport(text: string, contextTool?: string): WireReport | u
     ) {
       value = { tool: contextTool, ...value };
     }
-    return Value.Check(WIRE_REPORT_SCHEMA, value) ? (value as WireReport) : undefined;
+    return Value.Check(WIRE_REPORT_SCHEMA, value) ? (value as Report) : undefined;
   } catch (error) {
     if (error instanceof SyntaxError || error instanceof RangeError || error instanceof TypeError)
       return undefined;
@@ -92,11 +91,11 @@ export function decodeReport(text: string, contextTool?: string): WireReport | u
  * The report a result's details carry, checked once against the wire schema: details also
  * come from saved sessions and other extensions' result hooks, so their shape is unknown.
  */
-export function detailsReport(details: unknown): WireReport | undefined {
+export function detailsReport(details: unknown): Report | undefined {
   const report: unknown =
     typeof details === "object" && details !== null ? Reflect.get(details, "report") : undefined;
   return report !== undefined && Value.Check(WIRE_REPORT_SCHEMA, report)
-    ? (report as WireReport)
+    ? (report as Report)
     : undefined;
 }
 
@@ -106,7 +105,7 @@ export function reportOf(result: {
   readonly details?: unknown;
   readonly toolName?: string;
   readonly isError?: boolean;
-}): WireReport | undefined {
+}): Report | undefined {
   const report = detailsReport(result.details);
   if (report) return report;
   const last = result.content?.at(-1);
