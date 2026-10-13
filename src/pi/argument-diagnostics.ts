@@ -231,18 +231,35 @@ function propertyPath(path: string, key: string): string {
     : `${path}[${JSON.stringify(key)}]`;
 }
 
+const unescapePointer = (part: string) => part.replaceAll("~1", "/").replaceAll("~0", "~");
+
 function pointerParts(pointer: string): readonly string[] {
-  return pointer
-    .split("/")
-    .slice(1)
-    .map((part) => part.replaceAll("~1", "/").replaceAll("~0", "~"));
+  return pointer.split("/").slice(1).map(unescapePointer);
 }
 
-/** The projection path of the value at `pointer`; the root is "". */
+/**
+ * The projection path of the value at `pointer`; the root is "". Pi's TypeBox leaves `/` and
+ * `~` in property names unescaped, so a name spans the fewest segments that form an own key,
+ * read escaped or as is.
+ */
 function valuePath(pointer: string, prepared: unknown): string {
+  const segments = pointer.split("/").slice(1);
   let value = prepared;
   let path = "";
-  for (const part of pointerParts(pointer)) {
+  for (let index = 0; index < segments.length; index++) {
+    let part = unescapePointer(segments[index]);
+    if (typeof value === "object" && value !== null && !Array.isArray(value)) {
+      const object = value;
+      for (let end = index + 1; end <= segments.length; end++) {
+        const raw = segments.slice(index, end).join("/");
+        const key = [unescapePointer(raw), raw].find((name) => Object.hasOwn(object, name));
+        if (key !== undefined) {
+          part = key;
+          index = end - 1;
+          break;
+        }
+      }
+    }
     path = Array.isArray(value) ? `${path}[${part}]` : propertyPath(path, part);
     value = typeof value === "object" && value !== null ? Reflect.get(value, part) : undefined;
   }
