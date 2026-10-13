@@ -289,7 +289,7 @@ export function makeGrepOverrideWithBackend(
           budget,
         });
         const parts = {
-          report: { tool: "grep", path: params.path, ...facts },
+          report: { tool: "grep" as const, path: params.path, ...facts },
           payload: payload === undefined ? [] : [{ type: "text" as const, text: payload }],
           details: incomplete ? { incomplete: true as const } : undefined,
         };

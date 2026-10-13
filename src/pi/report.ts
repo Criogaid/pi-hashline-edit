@@ -33,14 +33,18 @@ import {
   type Cause,
   type CommandStatus,
   type ErrorCode,
+  type FailureReport,
   type Report,
+  type ReportTool,
+  type SuccessReport,
+  type WireReport,
 } from "./report-schema.ts";
 
 export type { Report } from "./report-schema.ts";
 
 /** Every result's details carry its report for the TUI; Pi does not send details to the model. */
 export interface ReportDetails {
-  readonly report: Report;
+  readonly report: WireReport;
 }
 
 type Content = AgentToolResult<unknown>["content"];
@@ -62,7 +66,7 @@ export function renderReport(report: Report): string {
 }
 
 /** Decode saved reports or current success facts with the originating call's tool name. */
-export function decodeReport(text: string, contextTool?: string): Report | undefined {
+export function decodeReport(text: string, contextTool?: string): WireReport | undefined {
   if (!text.startsWith("{")) return undefined;
   try {
     let value: unknown = JSON.parse(text);
@@ -76,7 +80,7 @@ export function decodeReport(text: string, contextTool?: string): Report | undef
     ) {
       value = { tool: contextTool, ...value };
     }
-    return Value.Check(WIRE_REPORT_SCHEMA, value) ? (value as Report) : undefined;
+    return Value.Check(WIRE_REPORT_SCHEMA, value) ? (value as WireReport) : undefined;
   } catch (error) {
     if (error instanceof SyntaxError || error instanceof RangeError || error instanceof TypeError)
       return undefined;
@@ -90,7 +94,7 @@ export function reportOf(result: {
   readonly details?: unknown;
   readonly toolName?: string;
   readonly isError?: boolean;
-}): Report | undefined {
+}): WireReport | undefined {
   const details = result.details as Partial<ReportDetails> | undefined;
   if (details?.report) return details.report;
   const last = result.content?.at(-1);
@@ -111,13 +115,13 @@ function outcomeNext(report: Report): string | undefined {
  * anything beyond tool and path or when there is no payload.
  */
 export function reportResult<TDetails extends object | undefined>(
-  report: Report,
+  report: SuccessReport,
   payload: Content = [],
   details?: TDetails,
 ): AgentToolResult<TDetails & ReportDetails> {
   const complete = Object.fromEntries(
     reportEntries({ ...report, next: outcomeNext(report) }),
-  ) as Report;
+  ) as SuccessReport;
   const stated = Object.entries(complete).some(
     ([key, value]) => value !== undefined && !ENVELOPE.has(key),
   );
@@ -131,8 +135,8 @@ export function reportResult<TDetails extends object | undefined>(
 }
 
 /** A failed result: the report is its entire content, flagged so Pi reports it as an error. */
-export function failureResult(report: Report): AgentToolResult<ReportDetails> {
-  const complete = Object.fromEntries(reportEntries(report)) as Report;
+export function failureResult(report: FailureReport): AgentToolResult<ReportDetails> {
+  const complete = Object.fromEntries(reportEntries(report)) as FailureReport;
   return {
     content: [{ type: "text", text: renderReport(complete) }],
     details: { report: complete },
@@ -199,7 +203,11 @@ function failureNext(
 }
 
 /** Classify a caught failure as the report the model receives. */
-export function describeFailure(tool: string, caught: unknown, context: FailureContext): Report {
+export function describeFailure(
+  tool: ReportTool,
+  caught: unknown,
+  context: FailureContext,
+): FailureReport {
   let error = caught;
   let command: CommandNotRun | undefined;
   if (error instanceof CommandNotRun) {
@@ -218,6 +226,7 @@ export function describeFailure(tool: string, caught: unknown, context: FailureC
       ? failure.stage
       : ("prepare" as const)
     : undefined;
+  // HashlineError's constructor ties its facts to its code; the union cannot carry that link.
   return {
     error: failure.errorCode,
     tool,
@@ -230,12 +239,12 @@ export function describeFailure(tool: string, caught: unknown, context: FailureC
     then_run: command ? { status: command.status } : undefined,
     progressError: command?.progressError,
     next: failureNext(failure, publication),
-  };
+  } as FailureReport;
 }
 
 /** Run one tool execution, returning any failure as its report. */
 export async function runTool<T>(
-  tool: string,
+  tool: ReportTool,
   context: FailureContext,
   run: () => Promise<T>,
 ): Promise<T | AgentToolResult<ReportDetails>> {

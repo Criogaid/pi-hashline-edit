@@ -194,7 +194,7 @@ export function makeReadOverride(
         const start = params.offset ?? DEFAULT_OFFSET;
         const limit = params.limit ?? defaultLimit;
         const anchors = createAnchorFormatter(hashLen);
-        const report = { tool: "read", path: params.path };
+        const report = { tool: "read" as const, path: params.path };
         const readNative = async () => {
           const result = await builtin.execute(toolCallId, params, signal, onUpdate, ctx);
           return withResultTag(

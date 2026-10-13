@@ -41,14 +41,8 @@ import {
   type OutputBudgetProvider,
 } from "./budgets.ts";
 import { renderToolError } from "./render.ts";
-import {
-  decodeReport,
-  reportOf,
-  reportResult,
-  runTool,
-  type Report,
-  type ReportDetails,
-} from "./report.ts";
+import { decodeReport, reportOf, reportResult, runTool, type ReportDetails } from "./report.ts";
+import type { SuccessReport, WireReport } from "./report-schema.ts";
 import { HashlineError } from "../core/errors.ts";
 import { createArgumentPreparer } from "./argument-validation.ts";
 
@@ -63,12 +57,24 @@ function resultId(toolCallId: string): string {
 
 type ResultContent = AgentToolResult<unknown>["content"];
 
-/** Whether the model saw this result tagged: its last block is a report naming the call's id. */
-function isTagged(content: ResultContent, toolCallId: string, toolName: string): boolean {
+/** A success report of a tool whose results can be tagged. */
+type TaggedReport = Extract<SuccessReport, { tool: "read" | "grep" | "codemode" }>;
+
+/** The report if it carries the call's id; only taggable results declare one. */
+function tagOf(report: WireReport | undefined, toolCallId: string): TaggedReport | undefined {
+  return report !== undefined && "resultId" in report && report.resultId === resultId(toolCallId)
+    ? report
+    : undefined;
+}
+
+/** The report the model saw tagged: the result's last block, naming the call's id. */
+function taggedReport(
+  content: ResultContent,
+  toolCallId: string,
+  toolName: string,
+): TaggedReport | undefined {
   const last = content.at(-1);
-  return (
-    last?.type === "text" && decodeReport(last.text, toolName)?.resultId === resultId(toolCallId)
-  );
+  return last?.type === "text" ? tagOf(decodeReport(last.text, toolName), toolCallId) : undefined;
 }
 
 /** Text results below the threshold save too little to be worth forgetting; images always qualify. */
@@ -129,7 +135,11 @@ export function grepReceipt(
  */
 export function withResultTag<TDetails extends object | undefined>(
   toolCallId: string,
-  parts: { report: Report; payload: ResultContent; details?: TDetails },
+  parts: {
+    report: Extract<TaggedReport, { tool: "read" | "grep" }>;
+    payload: ResultContent;
+    details?: TDetails;
+  },
   enabled: boolean,
   createReceipt: () => string,
 ): AgentToolResult<TDetails & ReportDetails & ForgetReceiptDetails> {
@@ -182,11 +192,12 @@ export function registerForgetTool(
     if (
       !event.parentToolCallId ||
       (event.toolName !== "read" && event.toolName !== "grep") ||
-      !isTagged(event.content, event.toolCallId, event.toolName)
+      !taggedReport(event.content, event.toolCallId, event.toolName)
     )
       return;
     // A nested id cannot identify a transcript entry: rebuild the report without it.
-    const report = reportOf(event)!;
+    const report = tagOf(reportOf(event), event.toolCallId);
+    if (!report) return;
     const { forgetReceipt: _receipt, ...details } = (event.details ?? {}) as ForgetReceiptDetails;
     const result = reportResult(
       { ...report, resultId: undefined },
@@ -245,7 +256,7 @@ export function registerForgetTool(
       if (
         message.role !== "toolResult" ||
         message.isError ||
-        !isTagged(message.content, message.toolCallId, message.toolName)
+        !taggedReport(message.content, message.toolCallId, message.toolName)
       )
         return;
       const id = resultId(message.toolCallId);
@@ -271,13 +282,15 @@ export function registerForgetTool(
         (candidate) => candidate.role === "toolResult" && targets.has(candidate.toolCallId),
       );
       if (message?.role !== "toolResult") continue;
+      const tagged = taggedReport(message.content, message.toolCallId, message.toolName);
+      if (!tagged) continue;
       entries.push({
         type: "context_edit",
         targetId: sourceEntry.id,
         replacement: {
           content: reportResult({
-            tool: message.toolName,
-            resultId: resultId(message.toolCallId),
+            tool: tagged.tool,
+            resultId: tagged.resultId,
             contentForgotten: true,
           }).content,
         },
@@ -314,7 +327,8 @@ export function registerForgetTool(
           (expanded && receipt ? theme.fg("dim", `${id} · `) : "") +
           theme.fg("toolOutput", receipt ?? id),
       );
-      const notForgettable = result.details?.report?.notForgettable ?? [];
+      const report = result.details?.report;
+      const notForgettable = (report && "notForgettable" in report && report.notForgettable) || [];
       if (notForgettable.length > 0)
         lines.push(theme.fg("warning", `not forgettable: ${notForgettable.join(", ")}`));
       return new Text(lines.join("\n"), 0, 0);

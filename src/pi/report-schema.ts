@@ -438,6 +438,13 @@ const SUCCESS_DEFINITIONS = {
   forget: facts(["forgotten"], ["notForgettable"]),
   codemode: facts([], ["resultId", "forgetScope", "contentForgotten"]),
 } as const;
+export type ReportTool = keyof typeof SUCCESS_DEFINITIONS;
+/** Tools whose reports carry publication, freshness, and the then_run outcome. */
+export const MUTATION_TOOLS = ["edit", "replace", "write"] as const satisfies readonly ReportTool[];
+export type MutationToolName = (typeof MUTATION_TOOLS)[number];
+/** Argument rejections may omit message; Pi supplies none for them. */
+const MESSAGE_OPTIONAL = "INVALID_ARGUMENTS" satisfies ErrorCode;
+
 const TOOL_SCHEMA = Type.Union(Object.keys(SUCCESS_DEFINITIONS).map((tool) => Type.Literal(tool)));
 const COMMON_WIRE_FIELDS = {
   tool: TOOL_SCHEMA,
@@ -451,15 +458,18 @@ const MUTATION_WIRE_FIELDS = {
   then_run: REPORT_SCHEMA.properties.then_run,
   progressError: REPORT_SCHEMA.properties.progressError,
 };
+const FAILURE_WIRE_FIELDS = {
+  stage: REPORT_SCHEMA.properties.stage,
+  cause: REPORT_SCHEMA.properties.cause,
+};
 const FAILURE_SCHEMAS = ERROR_CODES.map((code) =>
   Type.Object(
     {
       ...COMMON_WIRE_FIELDS,
       ...MUTATION_WIRE_FIELDS,
-      stage: REPORT_SCHEMA.properties.stage,
+      ...FAILURE_WIRE_FIELDS,
       error: Type.Literal(code),
-      message: code === "INVALID_ARGUMENTS" ? opt(Type.String()) : Type.String(),
-      cause: REPORT_SCHEMA.properties.cause,
+      message: code === MESSAGE_OPTIONAL ? opt(Type.String()) : Type.String(),
       ...ERROR_DEFINITIONS[code].facts.properties,
     },
     { additionalProperties: false },
@@ -470,7 +480,7 @@ const SUCCESS_SCHEMAS = Object.entries(SUCCESS_DEFINITIONS).map(([tool, schema])
     {
       ...COMMON_WIRE_FIELDS,
       tool: Type.Literal(tool),
-      ...(["edit", "replace", "write"].includes(tool) ? MUTATION_WIRE_FIELDS : {}),
+      ...((MUTATION_TOOLS as readonly string[]).includes(tool) ? MUTATION_WIRE_FIELDS : {}),
       ...schema.properties,
     },
     { additionalProperties: false },
@@ -478,3 +488,27 @@ const SUCCESS_SCHEMAS = Object.entries(SUCCESS_DEFINITIONS).map(([tool, schema])
 );
 /** Closed records after call context supplies a missing success tool; failure facts remain code-specific. */
 export const WIRE_REPORT_SCHEMA = Type.Union([...FAILURE_SCHEMAS, ...SUCCESS_SCHEMAS]);
+
+// Static counterparts of the per-tool and per-code wire schemas above, built from the same fields.
+type Fields<P extends TProperties> = Static<TObject<P>>;
+type Envelope = Omit<Fields<typeof COMMON_WIRE_FIELDS>, "tool">;
+type MutationFields = Fields<typeof MUTATION_WIRE_FIELDS>;
+
+/** A success report a tool may produce: its own facts, and mutation facts only for mutation tools. */
+export type SuccessReport = {
+  [T in ReportTool]: Envelope & { tool: T } & (T extends MutationToolName
+      ? MutationFields
+      : unknown) &
+    Static<(typeof SUCCESS_DEFINITIONS)[T]>;
+}[ReportTool];
+
+/** A failure report: its code's facts, with message required except where MESSAGE_OPTIONAL allows. */
+export type FailureReport = {
+  [C in ErrorCode]: Envelope & { tool: ReportTool; error: C } & MutationFields &
+    Fields<typeof FAILURE_WIRE_FIELDS> &
+    (C extends typeof MESSAGE_OPTIONAL ? { message?: string } : { message: string }) &
+    Static<Definitions[C]["facts"]>;
+}[ErrorCode];
+
+/** Every report WIRE_REPORT_SCHEMA accepts. */
+export type WireReport = SuccessReport | FailureReport;

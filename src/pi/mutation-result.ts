@@ -8,7 +8,13 @@ import {
 import { generateDiffString, generateUnifiedPatch } from "@earendil-works/pi-coding-agent";
 import { displayCarriageReturns } from "./anchor-format.ts";
 import { normalizeLineEndings } from "../core/lines.ts";
-import type { CommandStatus, PublicationStatus, Report } from "./report-schema.ts";
+import type {
+  CommandStatus,
+  MutationToolName,
+  PublicationStatus,
+  Report,
+  SuccessReport,
+} from "./report-schema.ts";
 import { causeOf, reportResult, type ReportDetails } from "./report.ts";
 import { DEFAULT_OUTPUT_BUDGETS, type OutputBudgets } from "./budgets.ts";
 
@@ -73,7 +79,7 @@ export interface CommandFacts {
 
 /** Build the mutation report from commit, freshness, and command facts; the TUI uses its diff details. */
 export function finalizeMutation<TDetails extends object>(
-  tool: string,
+  tool: MutationToolName,
   path: string,
   { commit, details, facts }: MutationOutcome<TDetails>,
   observation: FreshnessObservation,
@@ -81,7 +87,7 @@ export function finalizeMutation<TDetails extends object>(
   budget: OutputBudgets = DEFAULT_OUTPUT_BUDGETS,
 ): AgentToolResult<TDetails & ReportDetails> {
   const fresh = observation.freshness === "unchanged";
-  const report: Report = {
+  const report: SuccessReport = {
     tool,
     path,
     publication: commit.publication,

@@ -4,8 +4,10 @@
  * so it travels as the thrown message only. Oversized issues are omitted whole.
  */
 import { DEFAULT_OUTPUT_BUDGETS, type OutputBudgets } from "./budgets.ts";
-import { boundedText, renderReport, type Report } from "./report.ts";
-import type { ArgumentIssue } from "./report-schema.ts";
+import { boundedText, renderReport } from "./report.ts";
+import type { ArgumentIssue, FailureReport, ReportTool } from "./report-schema.ts";
+
+type ArgumentRejection = Extract<FailureReport, { error: "INVALID_ARGUMENTS" }>;
 
 /**
  * State each distinct fix once, on the first reported issue that needs it:
@@ -21,13 +23,13 @@ function fixesOnce(issues: readonly ArgumentIssue[]): ArgumentIssue[] {
 }
 
 /** One rejection as text; issues are deduplicated after any omission so no kept issue loses its fix. */
-function encode(report: Report & { issues: readonly ArgumentIssue[] }): string {
+function encode(report: ArgumentRejection): string {
   return renderReport({ ...report, issues: fixesOnce(report.issues) });
 }
 
 /** Encode actionable field diagnostics without repeating the call's arguments. */
 export function formatArgumentError(
-  tool: string,
+  tool: ReportTool,
   issues: readonly ArgumentIssue[],
   schemaLimited: boolean,
   budget: OutputBudgets = DEFAULT_OUTPUT_BUDGETS,
@@ -37,8 +39,8 @@ export function formatArgumentError(
     reason: boundedText(reason, budget.fieldBytes),
     ...(fix === undefined ? {} : { fix: boundedText(fix, budget.fieldBytes) }),
   }));
-  const base: Report = {
-    error: "INVALID_ARGUMENTS",
+  const base = {
+    error: "INVALID_ARGUMENTS" as const,
     tool,
     ...(schemaLimited ? { schemaLimited: true as const } : {}),
   };

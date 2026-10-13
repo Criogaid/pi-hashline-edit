@@ -23,9 +23,9 @@ import type { AgentToolResult, AgentToolUpdateCallback } from "@earendil-works/p
 import type {
   ActionFusionDetails,
   createActionFusionExecutor,
-  MutationToolName,
   ThenRunInput,
 } from "./action-fusion.ts";
+import type { MutationToolName } from "./report-schema.ts";
 import { commitFreshness, commitReplacement, readEditableSnapshot } from "./file-commit.ts";
 import {
   finalizeMutation,

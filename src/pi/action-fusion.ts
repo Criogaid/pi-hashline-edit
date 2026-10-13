@@ -41,6 +41,7 @@ import type {
   ActionFusionProgress,
   CommandStatus,
   Freshness,
+  MutationToolName,
   PublicationStatus,
 } from "./report-schema.ts";
 export type { ActionFusionProgress } from "./report-schema.ts";
@@ -71,7 +72,6 @@ export interface ActionFusionDetails {
 type ProgressReporter = (progress: ActionFusionProgress, ctx: ExtensionToolContext) => void;
 
 /** The tools that accept then_run. */
-export type MutationToolName = "edit" | "replace" | "write";
 
 export function createThenRunSchema(tool: MutationToolName) {
   return Type.Optional(
