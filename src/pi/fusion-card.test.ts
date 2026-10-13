@@ -9,19 +9,13 @@ const theme = {
   bg: (_color: string, text: string) => text,
   bold: (text: string) => text,
 };
-const themeKeys = [
-  Symbol.for("@earendil-works/pi-coding-agent:theme"),
-  Symbol.for("@mariozechner/pi-coding-agent:theme"),
-];
-const originalThemes = themeKeys.map((key) => Object.getOwnPropertyDescriptor(globalThis, key));
+const themeKey = Symbol.for("@earendil-works/pi-coding-agent:theme");
+const originalTheme = Object.getOwnPropertyDescriptor(globalThis, themeKey);
 before(() => initTheme("dark"));
-after(() =>
-  themeKeys.forEach((key, index) => {
-    const original = originalThemes[index];
-    if (original) Object.defineProperty(globalThis, key, original);
-    else Reflect.deleteProperty(globalThis, key);
-  }),
-);
+after(() => {
+  if (originalTheme) Object.defineProperty(globalThis, themeKey, originalTheme);
+  else Reflect.deleteProperty(globalThis, themeKey);
+});
 
 function harness(entries: any[] = []) {
   const renderers = new Map<string, any>();
@@ -174,6 +168,13 @@ test("invalid persisted command snapshots → do not replace valid progress or b
   original.report(waiting);
   const initial = original.entries[0];
   for (const invalid of [
+    ...["mutationCompleted", "freshness"].map((missing) =>
+      Object.fromEntries(
+        Object.entries({ ...initial.data, command: "succeeded" }).filter(
+          ([key]) => key !== missing,
+        ),
+      ),
+    ),
     { ...initial.data, command: "not-a-command-status" },
     { ...initial.data, freshness: "fresh" },
     { ...initial.data, mutationCompleted: "yes" },

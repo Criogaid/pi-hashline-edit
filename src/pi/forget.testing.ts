@@ -30,7 +30,7 @@ export const toolResponse = (...content: ToolCall[]): Response => ({
   stopReason: "toolUse",
 });
 
-/** Extract a public id from supported current or historical inspection tags, excluding receipts. */
+/** Extract a public id from JSON inspection reports, excluding forgotten receipts. */
 export function taggedResultId(
   result: Pick<AgentToolResult<unknown>, "content"> & {
     readonly toolName?: string;
@@ -40,9 +40,8 @@ export function taggedResultId(
   const toolName = result.toolName ?? reportOf(result)?.tool;
   const ids = result.content.flatMap((block) => {
     if (block.type !== "text") return [];
-    const native = /^\[result (r[0-9a-f]{5})\]$/.exec(block.text)?.[1];
     const report = decodeReport(block.text, toolName);
-    const id = native ?? (report?.contentForgotten ? undefined : report?.resultId);
+    const id = report?.contentForgotten ? undefined : report?.resultId;
     return id ? [id] : [];
   });
   return ids.length === 1 ? ids[0] : undefined;

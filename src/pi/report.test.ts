@@ -65,7 +65,7 @@ test("Pi argument failure transported as text → renders field facts after seri
   assert.doesNotMatch(shown, /"issues":/);
 });
 
-test("persisted argument copies and omission markers → remain readable on replay", () => {
+test("argument reports with obsolete fields → remain raw on replay", () => {
   for (const facts of [{ arguments: { path: "saved.txt" } }, { argumentsOmitted: true }]) {
     const report = {
       tool: "edit",
@@ -74,10 +74,10 @@ test("persisted argument copies and omission markers → remain readable on repl
       ...facts,
     };
     const diagnostic = JSON.stringify(report);
-    assert.deepEqual(decodeReport(diagnostic), report);
-    const shown = displayed({ content: [text(diagnostic)] });
-    assert.match(shown, /edits\[0\]\.body: is empty/);
-    assert.match(shown, "arguments" in facts ? /saved\.txt/ : /arguments omitted/);
+    const result = { content: [text(diagnostic)], details: { report } };
+    assert.equal(decodeReport(diagnostic), undefined);
+    assert.equal(reportOf(result), undefined);
+    assert.equal(displayed(result).trimEnd(), diagnostic);
   }
 });
 
@@ -200,17 +200,14 @@ test("success facts without a tool → require call context and still enforce to
     assert.equal(decodeReport(invalid, "write"), undefined);
 });
 
-test("saved success envelopes → remain readable without duplicating the report in the TUI", () => {
+test("success text with a tool field → remains in content on replay", () => {
   const saved: Report = { tool: "write", path: "saved.txt", publication: "PUBLISHED" };
-  assert.deepEqual(decodeReport(JSON.stringify(saved)), saved);
   const payload = [text("saved payload")];
   const result = {
     content: [...payload, text(JSON.stringify(saved, null, 2))],
     details: { report: saved },
   };
-  assert.deepEqual(withoutReport(result).content, payload);
-  const different = { ...result, details: { report: { ...saved, path: "another.txt" } } };
-  assert.deepEqual(withoutReport(different), different);
+  assert.deepEqual(withoutReport(result).content, result.content);
 });
 
 test("report-contract: native failure with an independent cause → retains the underlying diagnostic", () => {
