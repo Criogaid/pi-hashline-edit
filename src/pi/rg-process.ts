@@ -263,8 +263,3 @@ export function runRgLines(
     return path === undefined || flush();
   });
 }
-
-/** Accept both matches and no matches; callers handle intentional early stops separately. */
-export function assertRgSucceeded(result: Pick<RgRunResult, "code" | "stderr">): void {
-  if (result.code !== 0 && result.code !== 1) throw ripgrepFailure("ripgrep failed.", result);
-}
