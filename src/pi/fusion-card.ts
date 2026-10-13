@@ -29,9 +29,8 @@ const COMMAND_CARD_SCHEMA = Type.Object(
     command: CARD_PROPERTIES.command,
     output: CARD_PROPERTIES.output,
     timing: CARD_PROPERTIES.timing,
-    // Historical transcript cards predate the two facts used to explain skipped commands.
-    mutationCompleted: Type.Optional(CARD_PROPERTIES.mutationCompleted),
-    freshness: Type.Optional(CARD_PROPERTIES.freshness),
+    mutationCompleted: CARD_PROPERTIES.mutationCompleted,
+    freshness: CARD_PROPERTIES.freshness,
   },
   { additionalProperties: false },
 );
@@ -70,13 +69,9 @@ const TARGET_STATE = {
 function notRunReason(card: CommandCardData): string | undefined {
   if (card.command === "cancelled" && !card.output) return "Not run: cancelled.";
   if (card.command !== "skipped") return undefined;
-  // Cards saved before these facts were recorded carry neither and show no reason.
   const { mutationCompleted, freshness } = card;
-  if (mutationCompleted === undefined) return undefined;
   if (!mutationCompleted) return "Not run: the mutation did not complete.";
-  return freshness === undefined || freshness === "unchanged"
-    ? undefined
-    : `Not run: ${TARGET_STATE[freshness]}.`;
+  return freshness === "unchanged" ? undefined : `Not run: ${TARGET_STATE[freshness]}.`;
 }
 
 /** Render one durable transcript card per fused command without adding model context. */

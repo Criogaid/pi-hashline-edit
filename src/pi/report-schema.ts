@@ -143,9 +143,6 @@ export const FACT_FIELDS = {
   schemaLimited: Type.Literal(true, {
     description: "A native diagnostic allowance was reached; more issues may exist.",
   }),
-  // Retained for decoding argument rejections in saved sessions; new reports omit both fields.
-  arguments: Type.Unknown({ description: "Prepared arguments in a persisted rejection." }),
-  argumentsOmitted: Type.Literal(true, { description: "A persisted rejection omitted its copy." }),
   // A missing path among several (grep).
   missing: Type.String(),
   // Anchor verification (failure-context.ts).
@@ -254,7 +251,7 @@ const NOT_FORGETTABLE_NEXT =
  */
 export const ERROR_DEFINITIONS = {
   INVALID_ARGUMENTS: {
-    facts: facts(["issues"], ["omittedIssues", "schemaLimited", "arguments", "argumentsOmitted"]),
+    facts: facts(["issues"], ["omittedIssues", "schemaLimited"]),
   },
   OPERATION_ABORTED: { facts: NONE },
   PATH_NOT_FOUND: {
@@ -320,13 +317,6 @@ export const ERROR_DEFINITIONS = {
   },
   POST_PROCESS_FAILED: {
     facts: NONE,
-  },
-  INVALID_REGEX: {
-    facts: NONE,
-    next: {
-      default:
-        "Rewrite the construct the cause names: give lookbehind a bounded length, or lower repetition counts.",
-    },
   },
   SEARCH_INCOMPLETE: {
     facts: facts(["diagnostics"], ["candidates", "scanLimit"]),

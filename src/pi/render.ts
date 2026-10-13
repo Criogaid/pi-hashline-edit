@@ -10,7 +10,6 @@
  * @module pi-hashline-edit/pi
  */
 
-import { isDeepStrictEqual } from "node:util";
 import {
   renderDiff,
   type Theme,
@@ -19,14 +18,7 @@ import {
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import { Text, type Component } from "@earendil-works/pi-tui";
 import type { ActionFusionProgress } from "./action-fusion.ts";
-import {
-  renderReport,
-  decodeReport,
-  reportEntries,
-  reportOf,
-  type Report,
-  detailsReport,
-} from "./report.ts";
+import { renderReport, reportEntries, reportOf, type Report, detailsReport } from "./report.ts";
 
 /** Max diff lines shown when a result is rendered collapsed. */
 const MAX_COLLAPSED_DIFF_LINES = 24;
@@ -163,12 +155,10 @@ function factLines(key: string, value: unknown, theme: Theme, indent = ""): stri
   ];
 }
 
-/** Highlight field issues; saved rejections may also contain an argument copy or its omission notice. */
-function argumentLines(report: Report, theme: Theme, expanded: boolean): string[] {
+/** Highlight field issues. */
+function argumentLines(report: Report, theme: Theme): string[] {
   const lines = [theme.fg("error", theme.bold(`Invalid arguments · ${report.tool} not executed`))];
   // Keep source omission notices ahead of the bounded collapsed preview.
-  if (report.argumentsOmitted)
-    lines.push(theme.fg("warning", "Prepared arguments omitted from diagnostic."));
   if (report.schemaLimited)
     lines.push(
       theme.fg("warning", "Schema diagnostic limit reached; additional issues may remain."),
@@ -180,14 +170,6 @@ function argumentLines(report: Report, theme: Theme, expanded: boolean): string[
     lines.push(`${theme.fg("accent", theme.bold(field))}: ${theme.fg("error", first)}`);
     lines.push(...rest.map((line) => `  ${theme.fg("error", line)}`));
     if (fix) lines.push(`  ${theme.fg("dim", fix)}`);
-  }
-  if (expanded && Object.hasOwn(report, "arguments")) {
-    lines.push("", theme.fg("dim", "Prepared arguments:"));
-    lines.push(
-      ...JSON.stringify(report.arguments, null, 2)
-        .split("\n")
-        .map((line) => theme.fg("dim", line)),
-    );
   }
   return lines;
 }
@@ -204,10 +186,9 @@ const ENVELOPE_FIELDS = ["error", "tool", "path", "publication", "stage", "messa
 export function reportLines(
   report: Report,
   theme: Theme,
-  expanded: boolean,
   shown: ReadonlySet<string> = new Set(),
 ): string[] {
-  if (report.error === "INVALID_ARGUMENTS") return argumentLines(report, theme, expanded);
+  if (report.error === "INVALID_ARGUMENTS") return argumentLines(report, theme);
   const lines: string[] = [];
   if (report.error !== undefined) {
     const { path } = report;
@@ -238,9 +219,7 @@ export function withoutReport<T extends Pick<AgentToolResult<unknown>, "content"
   const report = detailsReport(result.details);
   const last = result.content.at(-1);
   if (!report || last?.type !== "text") return result;
-  // Saved successes include the call fields that current model text omits.
-  if (last.text !== renderReport(report) && !isDeepStrictEqual(decodeReport(last.text), report))
-    return result;
+  if (last.text !== renderReport(report)) return result;
   return { ...result, content: result.content.slice(0, -1) };
 }
 
@@ -253,7 +232,7 @@ export function renderToolError(
 ): Text {
   const report = reportOf(result);
   const lines = report
-    ? reportLines(report, theme, expanded)
+    ? reportLines(report, theme)
     : result.content.flatMap((block) =>
         block.type === "text" && block.text
           ? block.text.split("\n").map((line) => theme.fg("error", line))
@@ -291,7 +270,7 @@ export function renderMutationResult<TArgs>(
     context.state?.callText?.setText(header(context.args, theme, counts));
   });
   const report = result.details?.report;
-  const facts = report ? reportLines(report, theme, expanded, MUTATION_CARD_SHOWN) : [];
+  const facts = report ? reportLines(report, theme, MUTATION_CARD_SHOWN) : [];
   // Only identical content produces no diff.
   const body = diff
     ? renderDiffPreview(diff, expanded, theme)

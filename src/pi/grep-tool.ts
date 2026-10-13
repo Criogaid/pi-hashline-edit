@@ -216,7 +216,7 @@ export function makeGrepOverrideWithBackend(
       return renderOutputPreview(
         [
           ...(payload?.type === "text" ? toDisplayLines(payload.text, theme) : []),
-          ...(report ? reportLines(report, theme, expanded, GREP_CARD_SHOWN) : []),
+          ...(report ? reportLines(report, theme, GREP_CARD_SHOWN) : []),
         ],
         expanded,
         theme,

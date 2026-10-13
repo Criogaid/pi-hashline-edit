@@ -80,7 +80,7 @@ Valid UTF-8 text inspection and matching uses one logical representation: CRLF b
 
 Every result of every tool (`read`, `grep`, `edit`, `replace`, `write`, and `forget`) states its facts in one **report**: a single JSON object, the only form the plugin uses for facts the model reads. A successful result is the tool's content payload (anchored `read` rows or `grep` rows) followed by its report; successful mutations return the report alone. Successful reports omit `tool` and `path`, which the call already supplies, while `details.report` retains them for display. A report with no outcome facts is omitted when there is a payload. A failure — including argument rejection, filesystem errors, cancellation, and a mutation failure under Action Fusion — is the full report alone, returned as an error result.
 
-Reports serialize only their facts, without a protocol marker. Text-only success reports use the originating call's tool name for decoding; saved reports that include it remain readable. The closed wire schemas in [`report-schema.ts`](src/pi/report-schema.ts) accept only registered tools and the `codemode` output tag, reject unknown fields, and require the facts associated with each error code. The TUI reads live reports from `details.report`; Pi's text-only argument rejections and forget tags decode from the final content block. Progress updates remain separate: Fusion sends command progress and publication in details. Their type derives from `ACTION_FUSION_PROGRESS_SCHEMA`; saved command cards validate a closed projection on restore. Malformed snapshots are ignored, while historical cards lacking freshness or mutation-completion facts retain their unknown state.
+Reports serialize only their facts, without a protocol marker. Text-only success reports use the originating call's tool name for decoding. The closed wire schemas in [`report-schema.ts`](src/pi/report-schema.ts) accept only registered tools and the `codemode` output tag, reject unknown fields, and require the facts associated with each error code. The TUI reads live reports from `details.report`; Pi's text-only argument rejections and forget tags decode from the final content block. Progress updates remain separate: Fusion sends command progress and publication in details. Their type derives from `ACTION_FUSION_PROGRESS_SCHEMA`; saved command cards validate a closed projection on restore. Malformed snapshots, including cards saved by earlier versions, are ignored.
 
 ```json
 {
@@ -160,7 +160,6 @@ The codes, their facts (`?` marks optional ones), and their recovery are defined
 | `SYMLINK_UNRESOLVED` | A symbolic link target cannot be resolved. | — |
 | `PUBLISH_FAILED` | Publication itself failed; `publication` says whether the file may have changed. | — |
 | `POST_PROCESS_FAILED` | A step after publication failed; the change is saved. | — |
-| `INVALID_REGEX` | Recognized when reading persisted regex-compilation failures. A new grep call never reports it: every pattern V8 accepts is searched. | — |
 | `SEARCH_INCOMPLETE` | `grep` could not confirm any result. | `diagnostics`; `candidates`, `scanLimit` when they apply |
 | `RIPGREP_FAILED` | ripgrep failed or produced output the tool cannot use; `cause` holds its stderr when there is any. | `exitCode`? |
 | `UNSUPPORTED_PATH` | A path reported by ripgrep is not valid UTF-8. | — |
@@ -201,7 +200,7 @@ edits[0].body: is empty
   Remove this edit or supply at least one line ([""] for a blank line).
 ```
 
-Collapsed cards use the shared bounded preview. Expanding shows all retained issues. Issue-omission and schema-limit notices appear before the issues so they remain visible when collapsed. Saved rejections containing `arguments` or `argumentsOmitted` remain readable, including their expanded argument copy.
+Collapsed cards use the shared bounded preview. Expanding shows all retained issues. Issue-omission and schema-limit notices appear before the issues so they remain visible when collapsed.
 
 `issues` combines schema and tool-specific failures. When a schema reason does not say how to correct the value, its `fix` comes from the declared schema. A missing required field or a pattern mismatch states what the field does, taken from its schema description; an array item without its own description uses its array's, and a choice field such as an edit's `op` lists each value with its description. A field that is not allowed lists the fields its selected shape accepts, after the meaning of the operation that selected that shape. Field paths refer to Pi's prepared arguments: array indices use `[0]`, named properties use dots, and other property names use JSON-quoted brackets. `$` identifies a preparation failure without a field diagnostic.
 
@@ -338,7 +337,7 @@ When the line limit or the byte budget leaves more content, the report's `pagina
 | `limit` | `100` | Positive safe-integer maximum of distinct matching physical lines, across all files and patterns. Reaching the limit sets the report's `matchLimit`; it does not prove that another match exists. |
 | `outputMode` | `"content"` | `"content"` returns matching lines plus context, with anchors for valid UTF-8 or plain line numbers for invalid UTF-8; `"files"` returns distinct paths, and `"count"` returns matching-line counts per file. Every mode's report states the totals in `matches` and `files` (`0` when nothing matched). All modes use the same limited match set: files and counts may be incomplete when the limit or output byte cap is reached. |
 
-The six former grep fields (`matchMode`, `excludePattern`, `wordMatch`, `pcre2`, `follow`, `noIgnore`) are no longer supported. Calls that contain them, including `false` or `null`, fail before searching; saved session history remains readable, but replaying an old call with these fields requires a new query. They are not silently converted to a different search.
+The six former grep fields (`matchMode`, `excludePattern`, `wordMatch`, `pcre2`, `follow`, `noIgnore`) are no longer supported. Calls that contain them, including `false` or `null`, fail before searching; replaying an old call with these fields requires a new query. They are not silently converted to a different search.
 
 Grep defaults to line-based code searches. With `multiline: true`, OR patterns are scanned separately to retain overlapping spans, and matching physical lines are deduplicated before counting. There are no switches for content exclusion, same-line AND, or whole words; lookaround and `\b` express them in the pattern. Displaying neighboring lines with `context` does not itself match across lines. More specialized searches require another tool (for example, Bash when available); an empty grep result does not establish that ignored files or linked directories contain no matches.
 

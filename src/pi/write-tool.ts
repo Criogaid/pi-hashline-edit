@@ -88,7 +88,7 @@ export function makeWriteOverride(
     ) {
       if (context.isError) return renderToolError(result, theme, options.expanded);
       const report = result.details?.report;
-      const facts = report ? reportLines(report, theme, options.expanded, WRITE_CARD_SHOWN) : [];
+      const facts = report ? reportLines(report, theme, WRITE_CARD_SHOWN) : [];
       if (facts.length) return new Text(facts.join("\n"), 0, 0);
       return builtin.renderResult!({ ...result, details: undefined }, options, theme, context);
     },

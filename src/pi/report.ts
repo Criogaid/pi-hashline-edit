@@ -64,7 +64,7 @@ export function renderReport(report: Report): string {
   return JSON.stringify(Object.fromEntries(entries), null, 2);
 }
 
-/** Decode saved reports or current success facts with the originating call's tool name. */
+/** Decode a text report; success text omits its tool, which the originating call supplies. */
 export function decodeReport(text: string, contextTool?: string): Report | undefined {
   if (!text.startsWith("{")) return undefined;
   try {

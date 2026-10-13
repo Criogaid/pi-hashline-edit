@@ -172,7 +172,7 @@ export function makeReadOverride(
       return new Text(
         [
           renderReadBody(raw, String(context?.args?.path ?? ""), theme),
-          ...(report ? reportLines(report, theme, expanded, READ_CARD_SHOWN) : []),
+          ...(report ? reportLines(report, theme, READ_CARD_SHOWN) : []),
         ].join("\n"),
         0,
         0,
