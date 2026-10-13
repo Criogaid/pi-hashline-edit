@@ -47,8 +47,8 @@ type SearchFacts = Pick<Report, "candidates" | "scanLimit">;
 function searchIncompleteError(
   message: string,
   warnings: readonly string[],
-  budget: OutputBudgets = DEFAULT_OUTPUT_BUDGETS,
-  searchFacts: SearchFacts = {},
+  budget: OutputBudgets,
+  searchFacts: SearchFacts,
 ): HashlineError<"SEARCH_INCOMPLETE"> {
   return new HashlineError("SEARCH_INCOMPLETE", message, {
     facts: { ...searchFacts, diagnostics: searchDiagnostics(warnings, budget) },
@@ -81,20 +81,11 @@ interface FormatMatchesOptions {
   readonly anchors: ReturnType<typeof createAnchorFormatter>;
   readonly signal?: AbortSignal;
   readonly warnings: string[];
-  readonly budget?: OutputBudgets;
+  readonly budget: OutputBudgets;
 }
 
 async function formatMatches(options: FormatMatchesOptions) {
-  const {
-    cwd,
-    files,
-    outputMode,
-    context,
-    anchors,
-    signal,
-    warnings,
-    budget = DEFAULT_OUTPUT_BUDGETS,
-  } = options;
+  const { cwd, files, outputMode, context, anchors, signal, warnings, budget } = options;
   const formatPath = (filePath: string): string => serializePath(cwd, filePath);
   const blocks: string[] = [];
   const invalidUtf8: string[] = [];
@@ -271,7 +262,8 @@ export function assembleGrepOutput(options: AssembleGrepOutputOptions): {
  * matched; a search that cannot confirm any result fails with SEARCH_INCOMPLETE instead.
  */
 export async function grepOutput(
-  options: Omit<FormatMatchesOptions, "files"> & {
+  options: Omit<FormatMatchesOptions, "files" | "budget"> & {
+    readonly budget?: OutputBudgets;
     readonly search: Awaited<ReturnType<typeof searchFiles>>;
     readonly effectiveLimit: number;
   },
@@ -289,7 +281,7 @@ export async function grepOutput(
       incomplete: search.scanLimitReached,
     };
   }
-  const formatted = await formatMatches({ ...options, files: search.files });
+  const formatted = await formatMatches({ ...options, files: search.files, budget });
   const { payload, facts } = assembleGrepOutput({
     formatted,
     warnings,
