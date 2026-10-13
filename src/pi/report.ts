@@ -153,6 +153,8 @@ export interface FailureContext {
 /**
  * A mutation that did not complete, so its then_run command never ran. Action
  * Fusion owns the command status; the mutation's own failure stays unchanged.
+ * It lives here because describeFailure unwraps it, and action-fusion.ts already
+ * imports this module.
  */
 export class CommandNotRun extends Error {
   readonly error: unknown;

@@ -34,6 +34,7 @@ export default function (pi: ExtensionAPI) {
   // read/grep/edit/write stay in place, as if this package were not installed.
   if (config.enabled) {
     const budgets = registerModelBudgets(pi);
+    // Saved then_run cards render even when Action Fusion is now off.
     const reportProgress = registerFusionCards(pi);
     const fusion = config.actionFusion
       ? createActionFusionExecutor(undefined, reportProgress)

@@ -273,6 +273,7 @@ export function makeReadOverride(
                 nextOffset: start + rows.length,
               }
             : undefined;
+        // Pi's ReadToolDetails truncation shape; this read stops only at the byte limit.
         const truncation = {
           content: rows.join("\n"),
           truncated,
