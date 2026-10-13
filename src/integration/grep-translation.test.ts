@@ -11,6 +11,7 @@ import { runCandidatePaths } from "../pi/grep-candidates.ts";
 import { lineCandidatePatterns } from "../pi/rg-regex.ts";
 import { extractPrefilter } from "../core/search-analysis.ts";
 import { REGEX_TRANSLATION_CORPUS } from "../testing/regex-translation-corpus.ts";
+import { unsupportedByHost } from "../testing/regex-host.testing.ts";
 
 const timeoutMs = 10_000;
 const sorted = (files: readonly Pick<GrepFileMatch, "filePath" | "rows">[]) =>
@@ -24,93 +25,97 @@ test("upstream regex witnesses × LF/CRLF/malformed bytes → sound candidates, 
   const directory = await mkdtemp(join(tmpdir(), "hl-regex-upstream-"));
   t.after(() => rm(directory, { recursive: true, force: true }));
   for (const [index, example] of REGEX_TRANSLATION_CORPUS.entries()) {
-    await t.test(`${example.pattern.slice(0, 90)} /${example.flags}`, async () => {
-      const query: GrepQuery = {
-        patterns: [example.pattern],
-        flags: example.flags,
-        literal: false,
-        multiline: false,
-      };
-      for (const value of example.hits)
-        assert.ok(
-          searchText({ source: value, query, limit: 100 }).lines.length,
-          `${example.source}: ${JSON.stringify(value)}`,
-        );
-      for (const value of example.misses)
-        assert.equal(
-          searchText({ source: value, query, limit: 100 }).lines.length,
-          0,
-          `${example.source}: ${JSON.stringify(value)}`,
-        );
-      const inputs = [];
-      for (const [name, separator] of [
-        ["lf", "\n"],
-        ["crlf", "\r\n"],
-      ]) {
-        const source = [
-          ...example.hits,
-          ...example.misses,
-          "a\rb",
-          "\u0558",
-          "éÉΣςKſ𐐀𐐨😀",
-          "Σ",
-          "a�b",
-          "",
-        ].join(separator);
-        const bytes = Buffer.concat([
-          Buffer.from(source),
-          Buffer.from([0x80, 0xc3, 0xe2, 0x82, 0xed, 0xa0, 0x80, 0xf0, 0x9f, 0x98, 0xff]),
-          Buffer.from(`${separator}tail\r`),
-        ]);
-        const filePath = join(directory, `${index}-${name}.txt`);
-        await writeFile(filePath, bytes);
-        inputs.push({ bytes, filePath });
-      }
-      const candidates = new Map<string, readonly number[] | undefined>();
-      const warnings: string[] = [];
-      const result = await searchFiles({
-        backend: {
-          runRgPaths: async () => assert.fail("unexpected file fallback"),
-          runRgLines: (rg, args, signal, maxLines, onFile) =>
-            runRgLines(rg, args, signal, maxLines, (path, lines) => {
-              candidates.set(resolve(path), lines);
-              return onFile(path, lines);
-            }),
-        },
-        rgPath,
-        scope: {
-          globs: [],
-          noIgnore: false,
-          follow: false,
-          searchPaths: inputs.map((input) => input.filePath),
-        },
-        query,
-        limit: 1000,
-        timeoutMs,
-        signal: AbortSignal.timeout(timeoutMs),
-        warnings,
-      });
-      const expected = inputs.map(({ bytes, filePath }) => {
-        const native = searchText({ source: bytes.toString("utf8"), query, limit: 1000 });
-        for (const row of native.lines)
+    await t.test(
+      `${example.pattern.slice(0, 90)} /${example.flags}`,
+      { skip: unsupportedByHost([example.pattern], example.flags) },
+      async () => {
+        const query: GrepQuery = {
+          patterns: [example.pattern],
+          flags: example.flags,
+          literal: false,
+          multiline: false,
+        };
+        for (const value of example.hits)
           assert.ok(
-            candidates.get(filePath)?.includes(row.lineNumber),
-            `missing candidate ${filePath}:${row.lineNumber}`,
+            searchText({ source: value, query, limit: 100 }).lines.length,
+            `${example.source}: ${JSON.stringify(value)}`,
           );
-        if (example.rejectCandidates)
-          for (let offset = 0; offset < example.misses.length; offset++) {
-            const line = example.hits.length + offset + 1;
-            assert.equal(
-              candidates.get(filePath)?.includes(line) ?? false,
-              false,
-              `unfiltered ${JSON.stringify(example.misses[offset])}`,
+        for (const value of example.misses)
+          assert.equal(
+            searchText({ source: value, query, limit: 100 }).lines.length,
+            0,
+            `${example.source}: ${JSON.stringify(value)}`,
+          );
+        const inputs = [];
+        for (const [name, separator] of [
+          ["lf", "\n"],
+          ["crlf", "\r\n"],
+        ]) {
+          const source = [
+            ...example.hits,
+            ...example.misses,
+            "a\rb",
+            "\u0558",
+            "éÉΣςKſ𐐀𐐨😀",
+            "Σ",
+            "a�b",
+            "",
+          ].join(separator);
+          const bytes = Buffer.concat([
+            Buffer.from(source),
+            Buffer.from([0x80, 0xc3, 0xe2, 0x82, 0xed, 0xa0, 0x80, 0xf0, 0x9f, 0x98, 0xff]),
+            Buffer.from(`${separator}tail\r`),
+          ]);
+          const filePath = join(directory, `${index}-${name}.txt`);
+          await writeFile(filePath, bytes);
+          inputs.push({ bytes, filePath });
+        }
+        const candidates = new Map<string, readonly number[] | undefined>();
+        const warnings: string[] = [];
+        const result = await searchFiles({
+          backend: {
+            runRgPaths: async () => assert.fail("unexpected file fallback"),
+            runRgLines: (rg, args, signal, maxLines, onFile) =>
+              runRgLines(rg, args, signal, maxLines, (path, lines) => {
+                candidates.set(resolve(path), lines);
+                return onFile(path, lines);
+              }),
+          },
+          rgPath,
+          scope: {
+            globs: [],
+            noIgnore: false,
+            follow: false,
+            searchPaths: inputs.map((input) => input.filePath),
+          },
+          query,
+          limit: 1000,
+          timeoutMs,
+          signal: AbortSignal.timeout(timeoutMs),
+          warnings,
+        });
+        const expected = inputs.map(({ bytes, filePath }) => {
+          const native = searchText({ source: bytes.toString("utf8"), query, limit: 1000 });
+          for (const row of native.lines)
+            assert.ok(
+              candidates.get(filePath)?.includes(row.lineNumber),
+              `missing candidate ${filePath}:${row.lineNumber}`,
             );
-          }
-        return { filePath, rows: native.lines };
-      });
-      assert.deepEqual(warnings, []);
-      assert.deepEqual(sorted(result.files), sorted(expected));
-    });
+          if (example.rejectCandidates)
+            for (let offset = 0; offset < example.misses.length; offset++) {
+              const line = example.hits.length + offset + 1;
+              assert.equal(
+                candidates.get(filePath)?.includes(line) ?? false,
+                false,
+                `unfiltered ${JSON.stringify(example.misses[offset])}`,
+              );
+            }
+          return { filePath, rows: native.lines };
+        });
+        assert.deepEqual(warnings, []);
+        assert.deepEqual(sorted(result.files), sorted(expected));
+      },
+    );
   }
 });
 

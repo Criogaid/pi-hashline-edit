@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { searchLines, searchText } from "./search.ts";
+import { unsupportedByHost } from "../testing/regex-host.testing.ts";
 
 const cases = [
   { name: "dot counts UTF-16 units", pattern: "^..$", source: "😀\na\nab\n", lines: [1, 3] },
@@ -69,7 +70,7 @@ const cases = [
   },
 ];
 for (const scenario of cases) {
-  test(`JS search: ${scenario.name}`, () => {
+  test(`JS search: ${scenario.name}`, { skip: unsupportedByHost([scenario.pattern], "m") }, () => {
     const result = searchText({
       source: scenario.source,
       query: {

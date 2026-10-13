@@ -9,6 +9,7 @@ import {
   nativeCharacterRanges,
   surrogatePair,
 } from "./character-set.ts";
+import { unsupportedByHost } from "../testing/regex-host.testing.ts";
 
 for (const [source, flags] of [
   ["\\p{Letter}", "u"],
@@ -20,7 +21,9 @@ for (const [source, flags] of [
   [".", ""],
   [".", "s"],
 ] as const) {
-  test(`native character intervals ${source} /${flags} → agree with the host engine`, () => {
+  test(`native character intervals ${source} /${flags} → agree with the host engine`, {
+    skip: unsupportedByHost([source], flags),
+  }, () => {
     const ranges = nativeCharacterRanges(source, flags);
     const native = membership(source, flags);
     for (const char of [

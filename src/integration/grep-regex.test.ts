@@ -8,6 +8,7 @@ import { DEFAULT_CONFIG } from "../pi/config.ts";
 import { makeGrepOverrideWithBackend } from "../pi/grep-tool.ts";
 import { reportOf } from "../pi/report.ts";
 import { callTool } from "../pi/tool-call.testing.ts";
+import { unsupportedByHost } from "../testing/regex-host.testing.ts";
 
 interface RegexCase {
   readonly name: string;
@@ -211,6 +212,7 @@ test("regex and case modes across line endings → real grep agrees with native 
       for (const multiline of scenario.multilineOnly ? [true] : [false, true]) {
         await t.test(
           `${scenario.name} ${JSON.stringify(separator)} multiline=${multiline}`,
+          { skip: unsupportedByHost(scenario.patterns) },
           async () => {
             const raw = scenario.source.replaceAll("\n", separator);
             await writeFile(path, raw);

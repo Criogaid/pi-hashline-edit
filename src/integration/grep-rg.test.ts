@@ -34,6 +34,7 @@ import { DEFAULT_CONFIG } from "../pi/config.ts";
 import { canonicalPath } from "../pi/path.ts";
 import { reportOf } from "../pi/report.ts";
 import { expectToolFailure } from "../pi/report-failure.testing.ts";
+import { hostCompiles, unsupportedByHost } from "../testing/regex-host.testing.ts";
 
 const invoke = (
   tool: any,
@@ -159,6 +160,7 @@ test("explicit ignoreCase overrides smart-case for regex and literal queries", a
       undefined,
     );
     assert.match(regex.content[0].text, /fixture\.txt · 2 matches/);
+    if (!hostCompiles("(?i:a)")) return;
     const inlineSensitive = await invoke(
       tool,
       "0",
@@ -233,7 +235,9 @@ test("real rg requires an explicit mode and separates exact text from regex", as
       invoke(tool, "missing-mode", { pattern: "foo" }),
       rejectsArgument("literal", /required/),
     );
-    for (const pattern of ["(?i:^foo$)", "(?<name>foo)$"]) {
+    for (const pattern of ["(?i:^foo$)", "(?<name>foo)$"].filter((source) =>
+      hostCompiles(source),
+    )) {
       const result = await invoke(tool, "regex", { pattern, literal: false });
       assert.match(result.content[0].text, /│foo/);
     }
@@ -782,7 +786,9 @@ test("multiline grep anchors empty lines and line-start zero-width matches", asy
   }
 });
 
-test("multiline zero-width EOF stays on the last existing physical line", async () => {
+test("multiline zero-width EOF stays on the last existing physical line", {
+  skip: unsupportedByHost(["(?-m:$)"]),
+}, async () => {
   const directory = await mkdtemp(join(tmpdir(), "hl-grep-multiline-eof-"));
   try {
     const file = join(directory, "fixture.txt");
