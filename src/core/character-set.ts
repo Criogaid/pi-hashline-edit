@@ -1,4 +1,4 @@
-/** Character intervals and membership derived from the running JavaScript engine. */
+/** Character interpretation, intervals, and membership from the running JavaScript engine. */
 import type { AST } from "@eslint-community/regexpp";
 export type CharacterNode =
   | AST.Character
@@ -14,12 +14,39 @@ type ClassNode =
 export type Ranges = readonly (readonly [number, number])[];
 export const MAX_UNIT = 0xffff;
 export const MAX_SCALAR = 0x10ffff;
+const HIGH_SURROGATE_START = 0xd800;
+const HIGH_SURROGATE_END = 0xdbff;
+const LOW_SURROGATE_START = 0xdc00;
+const LOW_SURROGATE_END = 0xdfff;
+const SURROGATE_BLOCK_SIZE = LOW_SURROGATE_END - LOW_SURROGATE_START + 1;
+const SUPPLEMENTARY_START = MAX_UNIT + 1;
 /** Bound retained native tables independently of the number of queries in a session. */
 const MAX_CACHED_SETS = 64;
 const MAX_CACHED_RANGES = 16 * 1024;
 const MAX_CACHED_SOURCE_UNITS = 8192;
 let cachedRanges = 0;
 const nativeSets = new Map<string, Ranges>();
+
+/** Without u, two adjacent Character nodes can encode one supplementary code point. */
+export function surrogatePair(
+  element: AST.Element,
+  next: AST.Element | undefined,
+): number | undefined {
+  if (element.type !== "Character" || next?.type !== "Character") return undefined;
+  const [high, low] = [element.value, next.value];
+  if (
+    high < HIGH_SURROGATE_START ||
+    high > HIGH_SURROGATE_END ||
+    low < LOW_SURROGATE_START ||
+    low > LOW_SURROGATE_END
+  )
+    return undefined;
+  return (
+    (high - HIGH_SURROGATE_START) * SURROGATE_BLOCK_SIZE +
+    (low - LOW_SURROGATE_START) +
+    SUPPLEMENTARY_START
+  );
+}
 
 export function normalize(ranges: Iterable<readonly [number, number]>): Ranges {
   const sorted = [...ranges].sort((a, b) => a[0] - b[0]);

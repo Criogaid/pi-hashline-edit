@@ -28,6 +28,7 @@ import {
   type Ranges,
   classStrings,
   type CharacterNode,
+  surrogatePair,
 } from "../core/character-set.ts";
 import { caseVariants } from "../core/case-fold.ts";
 import { parseQueryPattern } from "../core/search-analysis.ts";
@@ -533,14 +534,6 @@ function element(node: AST.Element, ctx: Context, position: Position): string {
   }
 }
 
-/** Without u, a supplementary character in the source is two Character nodes. */
-function supplementary(node: AST.Element, next: AST.Element | undefined): number | undefined {
-  if (node.type !== "Character" || next?.type !== "Character") return undefined;
-  const [high, low] = [node.value, next.value];
-  if (high < 0xd800 || high > 0xdbff || low < 0xdc00 || low > 0xdfff) return undefined;
-  return (high - 0xd800) * 0x400 + (low - 0xdc00) + 0x10000;
-}
-
 function alternatives(nodes: readonly AST.Alternative[], ctx: Context, position: Position): string {
   return choice(
     nodes.flatMap(({ elements }) =>
@@ -555,7 +548,7 @@ function alternatives(nodes: readonly AST.Alternative[], ctx: Context, position:
           const pair =
             ctx.unicode || plan.has(elements[index + 1])
               ? undefined
-              : supplementary(elements[index], elements[index + 1]);
+              : surrogatePair(elements[index], elements[index + 1]);
           if (pair !== undefined) {
             pattern += classPattern([[pair, pair]]);
             index++;

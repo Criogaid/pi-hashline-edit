@@ -1,11 +1,13 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { RegExpParser } from "@eslint-community/regexpp";
 import {
   contains,
   intersect,
   subtract,
   membership,
   nativeCharacterRanges,
+  surrogatePair,
 } from "./character-set.ts";
 
 for (const [source, flags] of [
@@ -77,4 +79,22 @@ test("interval intersection and difference → preserve included and excluded en
       [8, 9],
     ],
   );
+});
+
+test("adjacent surrogate Characters → decode a code point without joining other elements", () => {
+  const parser = new RegExpParser();
+  for (const [pattern, decoded] of [
+    ["\\uD800\\uDC00", "\u{10000}"],
+    ["\\uDBFF\\uDFFF", "\u{10ffff}"],
+    ["😀", "😀"],
+    ["\\uD83D\\uDE00", "😀"],
+    ["\\uDE00\\uD83D", undefined],
+    ["\\uD83D", undefined],
+    ["\\uD83Dx", undefined],
+    ["x\\uDE00", undefined],
+    ["\\uD83D(?:)\\uDE00", undefined],
+  ] as const) {
+    const [element, next] = parser.parsePattern(pattern).alternatives[0].elements;
+    assert.equal(surrogatePair(element, next), decoded?.codePointAt(0), pattern);
+  }
 });

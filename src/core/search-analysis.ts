@@ -16,6 +16,7 @@ import {
   membership,
   total,
   type CharacterNode,
+  surrogatePair,
 } from "./character-set.ts";
 import { regexSource } from "./regex.ts";
 import type { GrepQuery } from "./search.ts";
@@ -297,14 +298,6 @@ function analyzeElement(node: AST.Element, ctx: Context): Info {
     case "Quantifier":
       return quantified(node, ctx);
   }
-}
-
-/** Without u, a surrogate pair is two Character nodes that together match one character. */
-function surrogatePair(element: AST.Element, next: AST.Element | undefined): number | undefined {
-  if (element.type !== "Character" || next?.type !== "Character") return undefined;
-  const [high, low] = [element.value, next.value];
-  if (high < 0xd800 || high > 0xdbff || low < 0xdc00 || low > 0xdfff) return undefined;
-  return (high - 0xd800) * 0x400 + (low - 0xdc00) + 0x10000;
 }
 
 function analyzeAlternatives(alternatives: readonly AST.Alternative[], ctx: Context): Info {
