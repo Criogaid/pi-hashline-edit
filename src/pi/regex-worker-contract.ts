@@ -1,7 +1,11 @@
 /** Closed reply envelopes shared by isolated regex evaluators; decoded in the host. */
 import { Type, type Static, type TSchema } from "typebox";
 import { Value } from "typebox/value";
-import { HashlineError, type HashlineErrorArguments } from "../core/errors.ts";
+import {
+  HashlineError,
+  type HashlineErrorArguments,
+  type HashlineErrorOptions,
+} from "../core/errors.ts";
 import {
   ERROR_CODES,
   ERROR_DEFINITIONS,
@@ -9,7 +13,7 @@ import {
   type ErrorCode,
   type Cause,
 } from "./report-schema.ts";
-import { restoreCause, type WorkerFailure } from "./report-cause.ts";
+import { restoreCause } from "./report-cause.ts";
 
 const ERROR_SCHEMAS = ERROR_CODES.map((code) => {
   const facts = ERROR_DEFINITIONS[code].facts;
@@ -23,7 +27,17 @@ const ERROR_SCHEMAS = ERROR_CODES.map((code) => {
     { additionalProperties: false },
   );
 });
-export type RegexWorkerReply<Result> = { result: Result } | WorkerFailure;
+/** A worker error that passed its code's schema: the facts are those that code requires. */
+export type CheckedWorkerError = {
+  [C in ErrorCode]: {
+    readonly code: C;
+    readonly message: string;
+    readonly cause?: Cause;
+  } & Pick<HashlineErrorOptions<C>, "facts">;
+}[ErrorCode];
+export type RegexWorkerReply<Result> =
+  | { readonly result: Result }
+  | { readonly error: CheckedWorkerError };
 
 export function invalidWorkerResult(): HashlineError<"REGEX_WORKER_FAILED"> {
   return new HashlineError("REGEX_WORKER_FAILED", "Regex worker returned an invalid result.");
@@ -49,15 +63,11 @@ export function workerReplyDecoder<T extends TSchema>(result: T) {
   };
 }
 
-/** Accept only errors checked by workerReplyDecoder. */
-export function restoreWorkerError(error: {
-  readonly code: string;
-  readonly message: string;
-  readonly facts?: unknown;
-  readonly cause?: Cause;
-}): HashlineError {
+/** Restore an error workerReplyDecoder checked as the same HashlineError the worker threw. */
+export function restoreWorkerError(error: CheckedWorkerError): HashlineError {
+  // The parameter ties facts to code; TypeScript cannot carry that link into the generic constructor.
   const options = [
     { facts: error.facts, cause: restoreCause(error.cause) },
   ] as HashlineErrorArguments<ErrorCode>;
-  return new HashlineError(error.code as ErrorCode, error.message, ...options);
+  return new HashlineError(error.code, error.message, ...options);
 }
