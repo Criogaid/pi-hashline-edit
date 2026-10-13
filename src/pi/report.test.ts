@@ -16,7 +16,7 @@ import {
 } from "./report.ts";
 import { DEFAULT_OUTPUT_BUDGETS } from "./budgets.ts";
 import { MAX_UNNARROWED_SCAN_BYTES } from "./grep-candidates.ts";
-import { OUTCOME_NEXT, type Report } from "./report-schema.ts";
+import { OUTCOME_NEXT, type Report, type SuccessReport } from "./report-schema.ts";
 
 const text = (value: string) => ({ type: "text" as const, text: value });
 function displayed(result: Parameters<typeof renderToolError>[0]) {
@@ -155,7 +155,7 @@ test("native filesystem failure → reports its diagnostic once without a synthe
 });
 
 test("success reports → omit repeated call fields while retaining details and payload", () => {
-  const report: Report = {
+  const report: SuccessReport = {
     tool: "write",
     path: "target.txt",
     publication: "PUBLISHED",

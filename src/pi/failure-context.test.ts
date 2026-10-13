@@ -231,6 +231,7 @@ test("failure list exceeds budget → omitted anchors are never reported as matc
       start: oldAnchor,
     })),
   );
+  assert.equal(report.error, "ANCHOR_MISMATCH");
   assert.ok(report.failures && report.failures.length > 0);
   assert.equal(
     report.failures.length + (report.omittedFailures ?? 0),
@@ -273,6 +274,7 @@ test("unresolved row out of range or oversized → omission facts contain no rec
   ];
   for (const { start, reason } of cases) {
     const { report } = rejectedEdit(text, [{ op: "delete", start }]);
+    assert.equal(report.error, "ANCHOR_MISMATCH");
     assert.match(report.failures?.[0].observedOmitted ?? "", reason);
     assert.equal(report.failures?.[0].observed, undefined);
     assert.doesNotMatch(
