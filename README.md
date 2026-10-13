@@ -630,10 +630,11 @@ Result-generation failures preserve publication status and any completed command
 - `npm run format:check` checks formatting in both directories.
 - `npm test` runs core and tool tests.
 - `npm run test:integration` exercises bundled ripgrep, files over 100 MiB with LF and CRLF text, platform file types, and Action Fusion through real Pi sessions with command failures, cancellation, overrides, and approval/result hooks.
+- `npm run test:cartesian` runs only the Cartesian regex matrices (tests named `Cartesian …`) from both suites. They take minutes each, so `npm test`, `npm run test:integration`, and CI skip them; run them after changing regex translation, candidate derivation, or prefiltering.
 - `npm run bench` measures core throughput and long-line match mapping.
 - `node --expose-gc bench/grep-memory.bench.ts` measures grep latency and sampled peak heap/RSS for 24 files totaling 192 MiB, each with one matching line. It creates and removes its fixtures in the system temporary directory.
 
-Both test suites run in a child process without inherited `NODE_OPTIONS`, `NODE_PATH`, or `JITI_*` overrides, and use a temporary Pi agent directory. Extension and worker loading tests copy the locked production dependencies into an isolated installed-package layout; they cannot resolve development dependencies from the checkout.
+Every test suite runs in a child process without inherited `NODE_OPTIONS`, `NODE_PATH`, or `JITI_*` overrides, and use a temporary Pi agent directory. Extension and worker loading tests copy the locked production dependencies into an isolated installed-package layout; they cannot resolve development dependencies from the checkout.
 
 Real Pi session tests share temporary credentials and settings, disabled resource discovery, and local scripted model responses. They never send provider requests; each feature retains its own tool registration and behavior assertions.
 

@@ -6,24 +6,37 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { testEnvironment } from "./process.testing.ts";
 
-const SUITE_TIMEOUT_MS = 10 * 60 * 1000;
+const unit = ["src/core/*.test.ts", "src/pi/*.test.ts"];
+const integration = ["src/integration/*.test.ts"];
+// Cartesian matrices take minutes per test; unit and integration skip them, `cartesian` runs only them.
+const CARTESIAN = "^Cartesian ";
 const suites = {
-  unit: ["src/core/*.test.ts", "src/pi/*.test.ts"],
-  integration: ["src/integration/*.test.ts"],
+  unit: { files: unit, filter: `--test-skip-pattern=${CARTESIAN}`, timeoutMs: 10 * 60 * 1000 },
+  integration: {
+    files: integration,
+    filter: `--test-skip-pattern=${CARTESIAN}`,
+    timeoutMs: 10 * 60 * 1000,
+  },
+  cartesian: {
+    files: [...unit, ...integration],
+    filter: `--test-name-pattern=${CARTESIAN}`,
+    timeoutMs: 60 * 60 * 1000,
+  },
 };
 const suite = process.argv[2];
-if (suite !== "unit" && suite !== "integration")
-  throw new Error("Expected unit or integration suite");
+if (suite !== "unit" && suite !== "integration" && suite !== "cartesian")
+  throw new Error("Expected unit, integration, or cartesian suite");
+const { files, filter, timeoutMs } = suites[suite];
 const agentDir = mkdtempSync(join(tmpdir(), "hashline-test-agent-"));
 try {
   const result = spawnSync(
     process.execPath,
-    ["--test", ...process.argv.slice(3), ...suites[suite]],
+    ["--test", filter, ...process.argv.slice(3), ...files],
     {
       cwd: fileURLToPath(new URL("../../", import.meta.url)),
       env: testEnvironment(agentDir),
       stdio: "inherit",
-      timeout: SUITE_TIMEOUT_MS,
+      timeout: timeoutMs,
     },
   );
   if (result.error) throw result.error;

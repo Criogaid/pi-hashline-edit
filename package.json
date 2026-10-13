@@ -25,6 +25,7 @@
     "test": "node src/testing/run-tests.ts unit",
     "test:integration": "node src/testing/run-tests.ts integration",
     "test:all": "npm test && npm run test:integration",
+    "test:cartesian": "node src/testing/run-tests.ts cartesian",
     "bench": "node bench/throughput.bench.ts"
   },
   "dependencies": {

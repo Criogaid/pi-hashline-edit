@@ -70,6 +70,7 @@ TypeScript 经 Node 类型剥离直接运行，没有构建步骤。CI 用 Node 
 - `npm test`：经 `src/testing/run-tests.ts` 在隔离的 Node 环境和临时 Pi agent 目录中运行 core 与工具测试，排除继承的 Node loader 和个人 Pi 设置。
 - 单个用例：`npm test -- --test-name-pattern "<regex>"`，`npm run test:integration` 同样适用。不要直接运行 `node --test`，它绕过环境隔离。
 - `npm run test:integration`：bundled ripgrep、已安装包的 worker、超过 100 MiB 的文件。`npm run test:all` 运行两套隔离测试，与 CI 和发布一致。
+- `npm run test:cartesian`：只跑两套测试中名为 `Cartesian …` 的笛卡尔积矩阵，耗时以分钟计；其余命令与 CI 均跳过它们。改正则翻译、候选推导或预筛后手动运行。新增笛卡尔积矩阵测试时名称以 `Cartesian ` 开头。
 - `npm run bench`、`node --expose-gc bench/grep-memory.bench.ts`：吞吐与 grep 内存；`node bench/argument-validation.bench.ts`：参数准备加 Pi 校验，不执行工具。
 
 报告结果时注明平台跳过项。独立测试进程读取磁盘源码；通过当前 Pi 会话验证已加载的扩展行为时，需要用户 `/reload` 或重启，等待期间继续完成独立检查。纯文档改动核对事实、路径和 diff 即可。
