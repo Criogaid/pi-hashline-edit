@@ -526,7 +526,7 @@ A nested Bash result's `terminate` hint is passed to the parent mutation result 
 
 ### Hashing and BOM handling
 
-`read` scans text in bounded chunks, validates the whole file, and retains requested line content within its output budget. It reports the total line count and computes hashes for complete output rows. `grep` scans matching files concurrently, retaining only selected matches/context while formatting each file's output. Completed workers retain formatted output blocks in discovery order. It skips NUL-containing files and generates anchors only for files whose complete contents are valid UTF-8. Invalid UTF-8 previews and anchored output both retain byte revision checks. Mutation revision checks cover actual bytes.
+`read` scans text in bounded chunks, validates the whole file, and retains requested line content within its output budget. It reports the total line count and computes hashes for complete output rows. `grep` scans matching files concurrently, retaining only selected matches/context while formatting each file's output. File order follows search completion and is not guaranteed; with `limit`, which files fill it may vary between runs. It skips NUL-containing files and generates anchors only for files whose complete contents are valid UTF-8. Invalid UTF-8 previews and anchored output both retain byte revision checks. Mutation revision checks cover actual bytes.
 
 Only confirmed malformed UTF-8 produces `UNSUPPORTED_ENCODING`. Decoder resource failures, including the runtime string-length limit for whole-file `edit`/`replace`, retain their original error instead of being reported as an encoding problem.
 
