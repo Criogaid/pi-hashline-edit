@@ -10,6 +10,7 @@ pi 扩展 `@criogaid/pi-hashline-edit`，注册入口为 `src/index.ts`。它替
 - `src/integration/`：真实后端集成测试；`src/testing/`：共享测试环境与安装包 fixture。
 - 改工具参数、用户可见行为或配置时，核对 `README.md` 中对应契约（工具参数、输出预算、恢复语义、发布状态）。
 - 改 pi API、生命周期或 TUI 集成时，查看当前安装版本的 pi 文档和类型声明。
+- 运行时 `typebox` 由 Pi 的扩展加载器提供（peer 依赖）；devDependency 精确锁定为 `@earendil-works/pi-coding-agent` 依赖的同一版本，升级 Pi 时同步。
 - 涉及发布时，核对 `.github/workflows/publish.yml` 与 `package.json`。
 
 ## 行为契约
