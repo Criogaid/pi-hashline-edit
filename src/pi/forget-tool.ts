@@ -157,9 +157,9 @@ export function withResultTag<TDetails extends object | undefined>(
   } as TDetails & ForgetReceiptDetails);
 }
 
-function receiptOf(details: unknown): string | undefined {
-  const receipt = (details as ForgetReceiptDetails | undefined)?.forgetReceipt;
-  return typeof receipt === "string" ? receipt : undefined;
+/** Every tagged result carries its receipt; optional chaining only keeps foreign details from throwing. */
+function receiptOf(details: unknown): string {
+  return (details as ForgetReceiptDetails | undefined)?.forgetReceipt as string;
 }
 
 const forgetSchema = Type.Object(
@@ -180,8 +180,8 @@ const forgetSchema = Type.Object(
   { additionalProperties: false },
 );
 type ForgetParams = Static<typeof forgetSchema>;
-/** One line per forgotten result; receipt is absent when another extension's result hook replaced the details. */
-type ForgetDetails = { forgotten?: { id: string; receipt?: string }[] } & Partial<ReportDetails>;
+/** One line per forgotten result. */
+type ForgetDetails = { forgotten?: { id: string; receipt: string }[] } & Partial<ReportDetails>;
 
 /** Register the forget tool and the context hooks that apply it. */
 export function registerForgetTool(
@@ -189,7 +189,7 @@ export function registerForgetTool(
   budgets: OutputBudgetProvider = defaultOutputBudgets,
 ): void {
   // Tagged results of the batch the current response is the first to see, by id.
-  let forgettable = new Map<string, { toolCallId: string; receipt?: string }>();
+  let forgettable = new Map<string, { toolCallId: string; receipt: string }>();
   // Results named by forget during the current response, applied at its turn_end.
   let pending = new Set<string>();
 
@@ -329,8 +329,7 @@ export function registerForgetTool(
       if (context?.isError) return renderToolError(result, theme, expanded);
       const lines = (result.details?.forgotten ?? []).map(
         ({ id, receipt }) =>
-          (expanded && receipt ? theme.fg("dim", `${id} · `) : "") +
-          theme.fg("toolOutput", receipt ?? id),
+          (expanded ? theme.fg("dim", `${id} · `) : "") + theme.fg("toolOutput", receipt),
       );
       const notForgettable = result.details?.report?.notForgettable ?? [];
       if (notForgettable.length > 0)
