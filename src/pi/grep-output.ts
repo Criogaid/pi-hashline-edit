@@ -1,11 +1,18 @@
+/**
+ * grep's result: payload rows (anchored or plain previews, file headers and their TUI parser),
+ * the payload budget, and every report fact grep states, including search failures.
+ *
+ * @module pi-hashline-edit/pi
+ */
 import { truncateHead, formatSize } from "@earendil-works/pi-coding-agent";
 import { DiagnosticBuffer } from "./diagnostic-buffer.ts";
 import { createHash } from "node:crypto";
 import { createAnchorFormatter, displayCarriageReturns, plainRow } from "./anchor-format.ts";
-import { fileReadWarning, type GrepFileMatch } from "./grep-search.ts";
+import type { GrepFileMatch, searchFiles } from "./grep-search.ts";
+import { MAX_UNNARROWED_SCAN_BYTES } from "./grep-candidates.ts";
 import { scanTextLines } from "./text-stream.ts";
 import { DEFAULT_OUTPUT_BUDGETS, type OutputBudgets } from "./budgets.ts";
-import { searchChangedError } from "./error-text.ts";
+import { fileReadWarning, searchChangedError } from "./error-text.ts";
 import { HashlineError } from "../core/errors.ts";
 import { serializePath } from "./path.ts";
 import type { Report } from "./report-schema.ts";
@@ -33,10 +40,10 @@ function searchDiagnostics(warnings: readonly string[], budget: OutputBudgets): 
 }
 
 /** How the search selected and bounded its candidates; stated with success and failure alike. */
-export type SearchFacts = Pick<Report, "candidates" | "scanLimit">;
+type SearchFacts = Pick<Report, "candidates" | "scanLimit">;
 
 /** No result can be returned from an incomplete search: report it rather than "no matches". */
-export function searchIncompleteError(
+function searchIncompleteError(
   message: string,
   warnings: readonly string[],
   budget: OutputBudgets = DEFAULT_OUTPUT_BUDGETS,
@@ -76,7 +83,7 @@ interface FormatMatchesOptions {
   budget?: OutputBudgets;
 }
 
-export async function formatMatches(options: FormatMatchesOptions) {
+async function formatMatches(options: FormatMatchesOptions) {
   const {
     cwd,
     files,
@@ -194,7 +201,7 @@ export async function formatMatches(options: FormatMatchesOptions) {
 }
 
 /** What grep states about its outcome beside the payload rows. */
-export type GrepFacts = Pick<
+type GrepFacts = Pick<
   Report,
   | "matches"
   | "files"
@@ -205,7 +212,7 @@ export type GrepFacts = Pick<
   | "linePreviewLimit"
   | "invalidUtf8"
   | "diagnostics"
->;
+> & { matches: number; files: number };
 
 interface AssembleGrepOutputOptions {
   formatted: Awaited<ReturnType<typeof formatMatches>>;
@@ -253,4 +260,40 @@ export function assembleGrepOutput(options: AssembleGrepOutputOptions): {
       diagnostics: warnings.length ? searchDiagnostics(warnings, budget) : undefined,
     },
   };
+}
+
+/**
+ * grep's payload and report facts for a finished search. The payload is absent when nothing
+ * matched; a search that cannot confirm any result fails with SEARCH_INCOMPLETE instead.
+ */
+export async function grepOutput(
+  options: Omit<FormatMatchesOptions, "files"> & {
+    readonly search: Awaited<ReturnType<typeof searchFiles>>;
+    readonly effectiveLimit: number;
+  },
+): Promise<{ payload?: string; facts: GrepFacts; incomplete: boolean }> {
+  const { search, warnings, outputMode, effectiveLimit, budget = DEFAULT_OUTPUT_BUDGETS } = options;
+  const searchFacts: SearchFacts = {
+    candidates: search.candidates === "lines" ? undefined : search.candidates,
+    scanLimit: search.scanLimitReached ? formatSize(MAX_UNNARROWED_SCAN_BYTES) : undefined,
+  };
+  if (search.files.length === 0) {
+    if (warnings.length)
+      throw searchIncompleteError("No matches confirmed.", warnings, budget, searchFacts);
+    return {
+      facts: { matches: 0, files: 0, ...searchFacts },
+      incomplete: search.scanLimitReached,
+    };
+  }
+  const formatted = await formatMatches({ ...options, files: search.files });
+  const { payload, facts } = assembleGrepOutput({
+    formatted,
+    warnings,
+    outputMode,
+    matchLimitReached: search.matchLimitReached,
+    effectiveLimit,
+    searchFacts,
+    budget,
+  });
+  return { payload, facts, incomplete: warnings.length > 0 || search.scanLimitReached };
 }

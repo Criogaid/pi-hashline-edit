@@ -32,3 +32,18 @@ export class FileChangedDuringReadError extends HashlineError<"FILE_CHANGED"> {
 export function searchChangedError(): HashlineError<"FILE_CHANGED"> {
   return new HashlineError("FILE_CHANGED", "File changed during search.");
 }
+
+/**
+ * A per-file failure that leaves the rest of the search valid: a filesystem error, or the
+ * file changing while it was searched or displayed. Undefined for any other failure.
+ */
+export function fileReadWarning(
+  filePath: string,
+  error: unknown,
+  signal?: AbortSignal,
+): string | undefined {
+  if (signal?.aborted || !(error instanceof Error)) return undefined;
+  const changed = error instanceof HashlineError && error.errorCode === "FILE_CHANGED";
+  if (!changed && !("code" in error)) return undefined;
+  return `Could not read ${filePath}: ${error.message}`;
+}

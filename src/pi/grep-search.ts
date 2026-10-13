@@ -16,8 +16,7 @@ import type { SearchScope } from "./grep-scope.ts";
 import { listCandidates, type Candidate } from "./grep-candidates.ts";
 import { withRegexWorker } from "./regex-worker.ts";
 import { invalidWorkerResult, workerReplyDecoder } from "./regex-worker-contract.ts";
-import { throwIfCancelled } from "./error-text.ts";
-import { HashlineError } from "../core/errors.ts";
+import { fileReadWarning, throwIfCancelled } from "./error-text.ts";
 
 /** Matching physical lines in ascending order, with the revision they were searched against. */
 export interface GrepFileMatch {
@@ -31,21 +30,6 @@ interface SearchFileSnapshot {
   readonly revision: string;
   readonly validUtf8: boolean;
   readonly totalLines: number;
-}
-
-/**
- * A per-file failure that leaves the rest of the search valid: a filesystem error, or the
- * file changing while it was searched or displayed. Undefined for any other failure.
- */
-export function fileReadWarning(
-  filePath: string,
-  error: unknown,
-  signal?: AbortSignal,
-): string | undefined {
-  if (signal?.aborted || !(error instanceof Error)) return undefined;
-  const changed = error instanceof HashlineError && error.errorCode === "FILE_CHANGED";
-  if (!changed && !("code" in error)) return undefined;
-  return `Could not read ${filePath}: ${error.message}`;
 }
 
 /** Whole-file input of a multiline query; README's search limits link here. */
@@ -326,7 +310,7 @@ export async function searchFiles(options: {
       signal: poolSignal,
       onCandidate: enqueue,
     });
-    recordSearchDiagnostics(selection.listing, warnings);
+    if (selection.listing) recordSearchDiagnostics(selection.listing, warnings);
   } catch (error) {
     fail(error);
     throw error;

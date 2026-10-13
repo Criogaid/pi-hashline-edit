@@ -1,19 +1,20 @@
 /**
  * Override grep: valid UTF-8 results feed edit; malformed UTF-8 uses non-editable previews.
- * grep-candidates selects candidates with rg; grep-search matches them with native
- * JavaScript (core/search). grep-scope, grep-output, and
- * grep-render complete it. This module owns the schema, backend wiring, and execution order.
+ * grep-scope admits paths, grep-candidates selects candidates with rg, grep-search matches
+ * them with native JavaScript (core/search), grep-output states the payload and every report
+ * fact, and grep-render draws the card. This module owns the schema, backend wiring, and
+ * execution order.
  * @module pi-hashline-edit/pi
  */
 
-import { formatSize, type ToolDefinition } from "@earendil-works/pi-coding-agent";
+import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { rgPath as bundledRgPath } from "@vscode/ripgrep";
 import { Type, type Static } from "typebox";
 import { Text } from "@earendil-works/pi-tui";
 import { renderOutputPreview, renderToolError, reportLines, withoutReport } from "./render.ts";
 import { type ForgetReceiptDetails, grepReceipt, withResultTag } from "./forget-tool.ts";
 import { createAnchorFormatter } from "./anchor-format.ts";
-import { assembleGrepOutput, formatMatches, searchIncompleteError } from "./grep-output.ts";
+import { grepOutput } from "./grep-output.ts";
 import {
   filterExplicitFilesByGlob,
   toArray,
@@ -21,7 +22,6 @@ import {
   type SearchScope,
 } from "./grep-scope.ts";
 import { searchFiles } from "./grep-search.ts";
-import { MAX_UNNARROWED_SCAN_BYTES } from "./grep-candidates.ts";
 import { toDisplayLines } from "./grep-render.ts";
 import { runRgLines, runRgPaths, type GrepBackend } from "./rg-process.ts";
 import { smartIgnoreCase } from "../core/search-analysis.ts";
@@ -230,16 +230,10 @@ export function makeGrepOverrideWithBackend(
       const budget = budgets();
       return runTool("grep", { path: params.path, signal, budget }, async () => {
         throwIfCancelled(signal);
-        const anchors = createAnchorFormatter(hashLen);
         const warnings: string[] = [];
-
         const patterns = toArray(params.pattern);
         const effectiveLimit = params.limit ?? config.grep.defaultLimit;
-        const context = params.context ?? config.grep.defaultContext;
-        const rgPath = bundledRgPath;
-        const outputMode: "content" | "files" | "count" = params.outputMode ?? "content";
-        const multiline = params.multiline ?? false;
-        const globs = toArray(params.glob);
+        const outputMode = params.outputMode ?? "content";
         const { literal } = params;
         const flags = new Set(params.flags ?? DEFAULT_GREP_FLAGS);
         const ignoreCase =
@@ -247,94 +241,62 @@ export function makeGrepOverrideWithBackend(
           (flags.has("i") || smartIgnoreCase(patterns, literal, [...flags].join("")));
         if (ignoreCase) flags.add("i");
         else flags.delete("i");
-        const query = { patterns, literal, flags: [...flags].join(""), multiline };
-        const ctx = context;
+        const query = {
+          patterns,
+          literal,
+          flags: [...flags].join(""),
+          multiline: params.multiline ?? false,
+        };
         const { searchPaths, pathInfo } = await resolveSearchPaths(cwd, params.path);
-        let scope: SearchScope = {
-          globs,
+        const unfiltered: SearchScope = {
+          globs: toArray(params.glob),
           noIgnore: false,
           follow: false,
           searchPaths,
         };
-
-        scope = {
-          ...scope,
+        const scope: SearchScope = {
+          ...unfiltered,
           searchPaths: await filterExplicitFilesByGlob(
             backend,
-            rgPath,
-            scope,
+            bundledRgPath,
+            unfiltered,
             pathInfo,
             signal,
             warnings,
           ),
         };
-
-        const result =
-          scope.searchPaths.length === 0
-            ? {
-                files: [],
-                matchLimitReached: false,
-                candidates: "lines" as const,
-                scanLimitReached: false,
-              }
-            : await searchFiles({
-                backend,
-                rgPath,
-                scope,
-                query,
-                limit: effectiveLimit,
-                timeoutMs: config.grep.regexTimeoutMs,
-                signal,
-                warnings,
-              });
-        const { files, matchLimitReached, candidates, scanLimitReached } = result;
-        const searchFacts = {
-          candidates: candidates === "lines" ? undefined : candidates,
-          scanLimit: scanLimitReached ? formatSize(MAX_UNNARROWED_SCAN_BYTES) : undefined,
-        };
-
-        const report = { tool: "grep", path: params.path };
-        if (files.length === 0) {
-          if (warnings.length)
-            throw searchIncompleteError("No matches confirmed.", warnings, budget, searchFacts);
-          return reportResult(
-            { ...report, matches: 0, files: 0, ...searchFacts },
-            [],
-            scanLimitReached ? { incomplete: true as const } : undefined,
-          );
-        }
-
-        const formatted = await formatMatches({
-          cwd,
-          files,
-          outputMode,
-          context: ctx,
-          anchors,
+        const search = await searchFiles({
+          backend,
+          rgPath: bundledRgPath,
+          scope,
+          query,
+          limit: effectiveLimit,
+          timeoutMs: config.grep.regexTimeoutMs,
           signal,
           warnings,
-          budget,
         });
-        const { payload, facts } = assembleGrepOutput({
-          formatted,
-          warnings,
+        const { payload, facts, incomplete } = await grepOutput({
+          cwd,
+          search,
           outputMode,
-          matchLimitReached,
+          context: params.context ?? config.grep.defaultContext,
+          anchors: createAnchorFormatter(hashLen),
+          signal,
+          warnings,
           effectiveLimit,
-          searchFacts,
           budget,
         });
-        const incomplete = warnings.length > 0 || scanLimitReached;
         const parts = {
-          report: { ...report, ...facts },
-          payload: [{ type: "text" as const, text: payload }],
+          report: { tool: "grep", path: params.path, ...facts },
+          payload: payload === undefined ? [] : [{ type: "text" as const, text: payload }],
           details: incomplete ? { incomplete: true as const } : undefined,
         };
-        // Only content mode returns file text; paths and counts have nothing to forget.
-        if (outputMode !== "content")
+        // Only matched content-mode rows are file text; paths and counts have nothing to forget.
+        if (outputMode !== "content" || payload === undefined)
           return reportResult(parts.report, parts.payload, parts.details);
         return withResultTag(toolCallId, parts, config.forget, () =>
-          grepReceipt(patterns, formatted.matches, formatted.files, {
-            limitReached: matchLimitReached,
+          grepReceipt(patterns, facts.matches, facts.files, {
+            limitReached: search.matchLimitReached,
             incomplete,
           }),
         );

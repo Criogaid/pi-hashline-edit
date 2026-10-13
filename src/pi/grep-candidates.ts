@@ -118,7 +118,13 @@ export async function runCandidatePaths(
   return { code: 1, stderr: diagnostics.toString(), stopped: false };
 }
 
-/** Await each consumer for backpressure; false stops listing. The caller owns worker cleanup. */
+/** How candidates were selected: rg's candidate lines, or whole files (see Prefilter). */
+export type CandidateSource = "lines" | "files" | "all";
+
+/**
+ * Await each consumer for backpressure; false stops listing. The caller owns worker cleanup.
+ * An empty scope lists nothing, because rg would search the working directory instead.
+ */
 export async function listCandidates(options: {
   readonly backend: GrepBackend;
   readonly rgPath: string;
@@ -126,14 +132,19 @@ export async function listCandidates(options: {
   readonly query: GrepQuery;
   readonly signal: AbortSignal;
   readonly onCandidate: (candidate: Candidate) => Promise<boolean>;
-}) {
+}): Promise<{
+  readonly listing?: RgRunResult;
+  readonly candidates: CandidateSource;
+  readonly scanLimitReached: boolean;
+}> {
   const { backend, rgPath, scope, query, signal, onCandidate } = options;
+  if (scope.searchPaths.length === 0) return { candidates: "lines", scanLimitReached: false };
   let listedAny = false;
   const offer = (path: string, lines?: readonly number[]) => {
     listedAny = true;
     return onCandidate({ filePath: resolve(path), lines });
   };
-  let candidates: "lines" | "files" | "all" = "lines";
+  let candidates: CandidateSource = "lines";
   let scanned = 0;
   let scanLimitReached = false;
   const offerWithinBudget = async (path: string) => {
