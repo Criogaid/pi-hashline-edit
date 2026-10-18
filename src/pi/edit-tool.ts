@@ -157,7 +157,7 @@ function buildEditSchema(hashLen: number) {
       }),
       edits: Type.Array(editOpSchema, {
         minItems: 1,
-        description: `Operations on one snapshot. Anchors are LINE#HASH with exactly ${hashLen} hash characters. Copy each anchor from read, grep, or edit failure diagnostics; never write a hash you have not seen there. Shell output such as sed, head, or cat has no anchors, so read or grep those lines first.`,
+        description: `Operations on one snapshot; ranges must not overlap. Insertions at one position, or at the start of a replaced or deleted range, apply in array order before it. Anchors are LINE#HASH with exactly ${hashLen} hash characters. Copy each anchor from read, grep, or edit failure diagnostics; never write a hash you have not seen there. Shell output such as sed, head, or cat has no anchors, so read or grep those lines first.`,
       }),
     },
     { additionalProperties: false },
