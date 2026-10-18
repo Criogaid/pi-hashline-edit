@@ -710,6 +710,47 @@ test("literal punctuation → exact text is matched", async () =>
     assert.equal(fake.calls.length, 1);
   }));
 
+test("literal pipe patterns find no match → report the pattern-array recovery only for literal queries", async () =>
+  withDir(async (dir) => {
+    const path = join(dir, "pipe.txt");
+    const { backend } = fakeBackend({ paths: [path] });
+    const tool = makeGrepOverrideWithBackend(dir, DEFAULT_CONFIG, backend);
+    for (const { pattern, literal, source, matches, literalPipe } of [
+      { pattern: "foo|bar", literal: true, source: "foo\nbar\n", matches: 0, literalPipe: true },
+      {
+        pattern: ["foo", "bar"],
+        literal: true,
+        source: "foo\nbar\n",
+        matches: 2,
+        literalPipe: false,
+      },
+      { pattern: "foo|bar", literal: false, source: "unrelated\n", matches: 0, literalPipe: false },
+      { pattern: "a||b", literal: true, source: "a||b\n", matches: 1, literalPipe: false },
+      {
+        pattern: ["missing", "foo|bar"],
+        literal: true,
+        source: "foo\nbar\n",
+        matches: 0,
+        literalPipe: true,
+      },
+    ]) {
+      await writeFile(path, source);
+      const result = await callTool(tool, { path, pattern, literal });
+      const context = JSON.stringify({ pattern, literal, source });
+      assert.equal(result.isError, undefined, context);
+      assert.deepEqual(grepCounts(result), { matches, files: matches > 0 ? 1 : 0 }, context);
+      const report = reportOf(result);
+      assert.ok(report);
+      assert.equal(Object.hasOwn(report, "literalPipe"), literalPipe, context);
+      assert.equal(report.literalPipe, literalPipe ? true : undefined, context);
+      assert.equal(
+        report.next,
+        literalPipe ? "Pass the alternatives as a pattern array." : undefined,
+        context,
+      );
+    }
+  }));
+
 test("invalid JavaScript → its field rejects before file discovery", async () =>
   withDir(async (dir) => {
     for (const value of ["(", "(?m)^foo", "(?i)abc"]) {
