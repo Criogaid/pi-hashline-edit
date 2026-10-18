@@ -287,6 +287,9 @@ export function makeReadOverride(
           maxBytes,
         };
 
+        // A caller's own limit is a chosen window: its header and rows already show where it
+        // ends, so only a window the extension cut (default limit or byte budget) gets a report.
+        const reportedPagination = params.limit === undefined || truncated ? pagination : undefined;
         const header = `${formatReadHeader(params.path, stats.totalLines, start, stats.finalNewline)}\n`;
         const limitText = formatKiB(maxBytes);
 
@@ -295,7 +298,7 @@ export function makeReadOverride(
           {
             report: {
               ...report,
-              pagination,
+              pagination: reportedPagination,
               truncatedAt: truncated && !firstLineExceedsLimit ? limitText : undefined,
               lineTooLong: firstLineExceedsLimit ? { line: start, limit: limitText } : undefined,
             },
