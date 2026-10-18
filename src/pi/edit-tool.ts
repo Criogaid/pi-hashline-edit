@@ -85,7 +85,7 @@ function buildEditSchema(hashLen: number) {
   const transferFields = {
     op: Type.Union([Type.Literal("copy"), Type.Literal("move")], {
       description:
-        "Use copy or move to transfer whole lines whose text and indentation stay unchanged; move also removes the source. Use a body edit when text or indentation must change. Give exactly one destination: before or after.",
+        "Copy, or move (also removes the source), whole lines whose text and indentation stay unchanged; use a body edit when either changes.",
     }),
     anchor: requiredAnchor,
     end: optionalEnd,
@@ -301,13 +301,13 @@ export function makeEditOverride(
     name: "edit" as const,
     label: "edit",
     description: withThenRunDescription(
-      "Edit file lines by LINE#HASH anchors checked against the current file. Each operation replaces whole lines. Use replace instead when the same change repeats in several places, or when only a fragment of a long line changes. On anchor failure, shows current context and recovery candidates; nothing is retried automatically.",
+      "Edit file lines by LINE#HASH anchors checked against the current file. Each operation replaces whole lines. Use replace instead when the same change repeats in several places, or when only a fragment of a long line changes.",
       fusion !== undefined,
     ),
     promptSnippet: "Edit file lines using verified anchors",
     promptGuidelines: [
       "Batch all edits to one file into a single edit call.",
-      "Do not re-read a file just to refresh anchors: anchors stay valid while their line number and content are unchanged. Re-read or grep only the lines an edit changed or shifted.",
+      "After edit or replace adds or removes lines, take anchors below its first change only from a read or grep made after it; anchors above that change stay valid.",
       ...(fusion ? ACTION_FUSION_GUIDELINES : []),
     ],
     parameters,
