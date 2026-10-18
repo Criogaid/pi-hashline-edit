@@ -207,7 +207,13 @@ type GrepFacts = Pick<
   | "linePreviewLimit"
   | "invalidUtf8"
   | "diagnostics"
-> & { matches: number; files: number };
+>;
+
+/** Totals of the search, for receipts; the report states them only where the payload does not. */
+interface GrepCounts {
+  readonly matches: number;
+  readonly files: number;
+}
 
 interface AssembleGrepOutputOptions {
   readonly formatted: Awaited<ReturnType<typeof formatMatches>>;
@@ -223,6 +229,7 @@ interface AssembleGrepOutputOptions {
 export function assembleGrepOutput(options: AssembleGrepOutputOptions): {
   payload: string;
   facts: GrepFacts;
+  counts: GrepCounts;
 } {
   const {
     formatted,
@@ -242,11 +249,13 @@ export function assembleGrepOutput(options: AssembleGrepOutputOptions): {
     maxBytes: budget.grepBytes,
     maxLines: Number.MAX_SAFE_INTEGER,
   });
+  // One complete content or count block already states its path and match count.
+  const countsShown = outputMode !== "files" && blocks.length === 1 && !truncation.truncated;
   return {
     payload: truncation.content,
+    counts: { matches, files },
     facts: {
-      matches,
-      files,
+      ...(countsShown ? {} : { matches, files }),
       ...searchFacts,
       matchLimit: matchLimitReached ? effectiveLimit : undefined,
       outputLimit: truncation.truncated ? formatSize(budget.grepBytes) : undefined,
@@ -267,7 +276,7 @@ export async function grepOutput(
     readonly search: Awaited<ReturnType<typeof searchFiles>>;
     readonly effectiveLimit: number;
   },
-): Promise<{ payload?: string; facts: GrepFacts; incomplete: boolean }> {
+): Promise<{ payload?: string; facts: GrepFacts; counts: GrepCounts; incomplete: boolean }> {
   const { search, warnings, outputMode, effectiveLimit, budget = DEFAULT_OUTPUT_BUDGETS } = options;
   const searchFacts: SearchFacts = {
     candidates: search.candidates === "lines" ? undefined : search.candidates,
@@ -278,11 +287,12 @@ export async function grepOutput(
       throw searchIncompleteError("No matches confirmed.", warnings, budget, searchFacts);
     return {
       facts: { matches: 0, files: 0, ...searchFacts },
+      counts: { matches: 0, files: 0 },
       incomplete: search.scanLimitReached,
     };
   }
   const formatted = await formatMatches({ ...options, files: search.files, budget });
-  const { payload, facts } = assembleGrepOutput({
+  const { payload, facts, counts } = assembleGrepOutput({
     formatted,
     warnings,
     outputMode,
@@ -291,5 +301,5 @@ export async function grepOutput(
     searchFacts,
     budget,
   });
-  return { payload, facts, incomplete: warnings.length > 0 || search.scanLimitReached };
+  return { payload, facts, counts, incomplete: warnings.length > 0 || search.scanLimitReached };
 }

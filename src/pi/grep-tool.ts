@@ -277,7 +277,7 @@ export function makeGrepOverrideWithBackend(
           signal,
           warnings,
         });
-        const { payload, facts, incomplete } = await grepOutput({
+        const { payload, facts, counts, incomplete } = await grepOutput({
           cwd,
           search,
           outputMode,
@@ -297,7 +297,7 @@ export function makeGrepOverrideWithBackend(
         if (outputMode !== "content" || payload === undefined)
           return reportResult(parts.report, parts.payload, parts.details);
         return withResultTag(toolCallId, parts, config.forget, () =>
-          grepReceipt(patterns, facts.matches, facts.files, {
+          grepReceipt(patterns, counts.matches, counts.files, {
             limitReached: search.matchLimitReached,
             incomplete,
           }),
