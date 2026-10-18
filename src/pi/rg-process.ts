@@ -13,7 +13,11 @@ import type { Readable } from "node:stream";
 import { HashlineError } from "../core/errors.ts";
 import { throwIfCancelled } from "./error-text.ts";
 
-export const COMMON_RG_ARGS = ["--no-config", "--color=never"];
+/**
+ * Every rg run. Path order makes listings, and so grep results and limits, the same on every
+ * run; rg then walks in one thread, while matching stays parallel in grep-search's workers.
+ */
+export const COMMON_RG_ARGS = ["--no-config", "--color=never", "--sort=path"];
 export const MAX_RG_RECORD_BYTES = 16 * 1024 * 1024;
 const RG_RECORD_LIMIT_MESSAGE = `ripgrep output record exceeds ${MAX_RG_RECORD_BYTES / 1024 ** 2} MiB.`;
 /**

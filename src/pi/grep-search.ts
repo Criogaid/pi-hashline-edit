@@ -42,6 +42,8 @@ const MAX_SEARCH_LINE_UNITS = MAX_MULTILINE_SEARCH_BYTES;
 const MAX_SEARCH_HEAP_MB = 512;
 const MAX_SEARCH_WORKERS = 4;
 const SEARCH_WORKERS = Math.max(1, Math.min(MAX_SEARCH_WORKERS, availableParallelism() - 1));
+/** Listed files that may wait, searched or not, for an earlier file's result to commit. */
+const MAX_UNCOMMITTED_FILES = 16 * SEARCH_WORKERS;
 class SearchFileLimitError extends Error {
   constructor(multiline: boolean) {
     const limit = `${MAX_MULTILINE_SEARCH_BYTES / 1024 ** 2} MiB`;
@@ -64,6 +66,16 @@ class WorkerFailure {
 const decodeReply = workerReplyDecoder(SEARCH_RESULT_SCHEMA);
 type Rows = SearchResult["lines"];
 type Run = (input: SearchInput | LineSearchInput) => Promise<SearchResult>;
+/** A listed candidate and its position in the listing. */
+interface Queued {
+  readonly candidate: Candidate;
+  readonly position: number;
+}
+/** A searched candidate: its matches, a warning in place of a search, or neither. */
+interface Settled {
+  readonly file?: GrepFileMatch;
+  readonly warning?: string;
+}
 
 /**
  * The candidate lines among the next lines of a request source, as the LF view shows them.
@@ -197,8 +209,10 @@ async function searchFile(
 }
 
 /**
- * Search every candidate file in scope. Paths stream from rg into a queue that at most
- * SEARCH_WORKERS workers drain; a worker starts only when no idle one can take a path.
+ * Search every candidate file in scope. Paths stream from rg in path order into a queue that
+ * at most SEARCH_WORKERS workers drain; a worker starts only when no idle one can take a path.
+ * Workers finish in any order, so results commit in listing order: every run returns the same
+ * files, rows, and warnings, and a limit keeps the first matches in path order.
  */
 export async function searchFiles(options: {
   readonly backend: GrepBackend;
@@ -212,6 +226,7 @@ export async function searchFiles(options: {
 }) {
   const { backend, rgPath, scope, query, limit, timeoutMs, signal, warnings } = options;
   const files: GrepFileMatch[] = [];
+  /** Committed matches; a file still searching gets at most the remaining room. */
   let matches = 0;
   let matchLimitReached = false;
   let failure: { error: unknown } | undefined;
@@ -222,7 +237,7 @@ export async function searchFiles(options: {
     failed.abort();
   };
 
-  const queue: Candidate[] = [];
+  const queue: Queued[] = [];
   let listed = false;
   const idle: (() => void)[] = [];
   const space: (() => void)[] = [];
@@ -231,37 +246,51 @@ export async function searchFiles(options: {
     for (const wake of idle.splice(0)) wake();
     for (const wake of space.splice(0)) wake();
   };
-  const next = async (): Promise<Candidate | undefined> => {
+  const next = async (): Promise<Queued | undefined> => {
     while (!queue.length && !listed && !stopped())
       await new Promise<void>((wake) => idle.push(wake));
     space.shift()?.();
     return stopped() ? undefined : queue.shift();
   };
 
-  const searchPath = async (candidate: Candidate, run: Run) => {
+  /** Searched candidates by listing position, until every earlier one has committed. */
+  const settled = new Map<number, Settled>();
+  let enqueued = 0;
+  let committed = 0;
+  const commit = () => {
+    for (let result = settled.get(committed); result && !matchLimitReached; ) {
+      settled.delete(committed++);
+      if (result.warning) warnings.push(result.warning);
+      else if (result.file) {
+        const rows = result.file.rows.slice(0, limit - matches);
+        files.push({ ...result.file, rows });
+        matches += rows.length;
+        if (matches >= limit) matchLimitReached = true;
+      }
+      result = settled.get(committed);
+    }
+    releaseAll();
+  };
+
+  const searchPath = async ({ candidate, position }: Queued, run: Run) => {
     const { filePath } = candidate;
-    let found: Awaited<ReturnType<typeof searchFile>>;
+    let result: Settled;
     try {
-      found = await searchFile(candidate, query, () => limit - matches, run, poolSignal);
+      const found = await searchFile(candidate, query, () => limit - matches, run, poolSignal);
+      result = found?.rows.length ? { file: { filePath, ...found } } : {};
     } catch (error) {
+      // A file after the limit cannot change the result, so neither can its failure.
+      if (matchLimitReached) return;
       if (error instanceof WorkerFailure) throw error.error;
       const warning =
         error instanceof SearchFileLimitError
           ? `${filePath}: ${error.message}`
           : fileReadWarning(filePath, error, poolSignal);
       if (!warning) throw error;
-      warnings.push(warning);
-      return;
+      result = { warning };
     }
-    const room = limit - matches;
-    if (!found?.rows.length || room <= 0) return;
-    const rows = found.rows.slice(0, room);
-    files.push({ filePath, rows, snapshot: found.snapshot });
-    matches += rows.length;
-    if (matches >= limit) {
-      matchLimitReached = true;
-      releaseAll();
-    }
+    settled.set(position, result);
+    commit();
   };
 
   const workers: Promise<void>[] = [];
@@ -287,10 +316,14 @@ export async function searchFiles(options: {
     if (stopped()) return false;
     if (seen.has(filePath)) return true;
     seen.add(filePath);
-    queue.push(candidate);
+    queue.push({ candidate, position: enqueued++ });
     if (idle.length) idle.shift()!();
     else if (workers.length < SEARCH_WORKERS) workers.push(startWorker());
-    while (queue.length >= SEARCH_WORKERS && !stopped())
+    // A slow early file holds back every later result; bound what waits behind it.
+    while (
+      (queue.length >= SEARCH_WORKERS || enqueued - committed >= MAX_UNCOMMITTED_FILES) &&
+      !stopped()
+    )
       await new Promise<void>((wake) => space.push(wake));
     return !stopped();
   };
@@ -304,7 +337,6 @@ export async function searchFiles(options: {
       signal: poolSignal,
       onCandidate: enqueue,
     });
-    if (selection.listing) recordSearchDiagnostics(selection.listing, warnings);
   } catch (error) {
     fail(error);
     throw error;
@@ -315,6 +347,8 @@ export async function searchFiles(options: {
     throwIfCancelled(signal);
     if (failure) throw failure.error;
   }
+  // After every file's warning, so their order does not depend on when the listing ends.
+  if (selection.listing) recordSearchDiagnostics(selection.listing, warnings);
   return {
     files,
     matchLimitReached,

@@ -377,7 +377,7 @@ export const OUTCOME_NEXT = [
     "Inspect the line in chunks with bash, or use replace for a known literal or regex change; a smaller limit cannot split a line.",
   ],
   ["pagination", "Continue with offset set to pagination.nextOffset."],
-  ["matchLimit", "Raise limit or refine the pattern for more matches."],
+  ["matchLimit", "Raise limit to see the matches after the last one shown."],
   [
     "scanLimit",
     "Narrow path or glob, or add text every match must contain, to search the remaining files.",
