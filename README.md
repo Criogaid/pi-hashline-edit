@@ -12,7 +12,7 @@ Hash-anchored file editing for [Pi](https://github.com/earendil-works/pi-coding-
 - **No text matching.** The model never has to reproduce old text exactly, so whitespace drift, duplicate snippets, and long blocks stop causing failed or misplaced edits.
 - **Files stay byte-faithful.** BOMs, CRLF/LF line endings, final newlines, and untouched bytes are preserved. Invalid UTF-8 and NUL bytes are rejected before writing.
 - **Safe publication.** Writes are atomic (temporary file, then link or rename), bound to the revision that was read, and report clearly whether the file changed when something fails.
-- **Fewer round trips.** A mutation can carry a follow-up command such as `npm test` ([Action Fusion](#action-fusion)), and the optional [`forget`](#forget) tool removes large inspection results from context once they are no longer needed.
+- **Fewer round trips.** A mutation can carry a follow-up command such as `npm test` ([Action Fusion](#action-fusion)).
 - **JavaScript regex everywhere.** `grep` and `replace` use the JavaScript regex semantics the model already knows, with ripgrep speed for finding candidate files.
 - **Output sized to the model.** Result sizes scale with the selected model's context window, so small models are not flooded and large models are not starved.
 
@@ -48,7 +48,7 @@ The edit succeeds only if line 2 still has that content. The TUI shows the diff;
 
 ## Tools
 
-The extension replaces Pi's `read`, `grep`, `edit`, and `write`, and adds `replace` and the optional `forget`.
+The extension replaces Pi's `read`, `grep`, `edit`, and `write`, and adds `replace`.
 
 | Tool | What it does |
 | --- | --- |
@@ -57,7 +57,6 @@ The extension replaces Pi's `read`, `grep`, `edit`, and `write`, and adds `repla
 | `edit` | Replaces, inserts, deletes, copies, or moves whole lines by anchor. All operations in one call apply to the same snapshot, or none apply. |
 | `replace` | Applies literal or regex substitutions across one file. Every rule must match, and overlapping matches reject the batch. |
 | `write` | Creates a file (`mode: "create"`) or overwrites one (`mode: "overwrite"`), using the content exactly as given. |
-| `forget` | Removes earlier `read`/`grep` results from the model's context, optionally keeping a note. Off by default. |
 
 Edit operations:
 
@@ -90,10 +89,6 @@ Argument mistakes are reported per field, with what the field means and how to f
 
 The command runs through the session's own Bash tool, so approvals, overrides, and hooks still apply. It starts only if the change succeeded and the file is still as written. A failing command never rolls back the file. The TUI shows the change and the command as separate cards, with a live countdown when a timeout is set.
 
-## Forget
-
-Enable `hashlineEdit.forget` to let the model drop large `read` and `grep` results (2 KiB or more, or images) from its context after using them. Each eligible result carries a `resultId`; the model calls `forget` with those ids and an optional note of what to remember. Files, session history, and the TUI are unchanged, and re-running the original call shows the content again.
-
 ## Configuration
 
 Add `hashlineEdit` to Pi's global settings (`~/.pi/agent/settings.json`) or a project's `.pi/settings.json`:
@@ -103,7 +98,6 @@ Add `hashlineEdit` to Pi's global settings (`~/.pi/agent/settings.json`) or a pr
   "hashlineEdit": {
     "enabled": true,
     "actionFusion": true,
-    "forget": false,
     "hashLen": 4,
     "shiftRadius": 15,
     "read": { "defaultLimit": 500 },
@@ -117,7 +111,6 @@ Add `hashlineEdit` to Pi's global settings (`~/.pi/agent/settings.json`) or a pr
 | --- | --- | --- |
 | `enabled` | `true` | Register the extension's tools. |
 | `actionFusion` | `true` | Allow `then_run` on mutation tools. |
-| `forget` | `false` | Register `forget` and tag eligible results. |
 | `hashLen` | `4` | Anchor hash length, 2–8. |
 | `shiftRadius` | `15` | Lines searched around a stale anchor before the whole file, 0–100; `0` disables recovery search. |
 | `read.defaultLimit` | `500` | Lines returned when the call gives no limit. |

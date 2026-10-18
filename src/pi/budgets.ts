@@ -52,6 +52,3 @@ export const defaultOutputBudgets: OutputBudgetProvider = () => DEFAULT_OUTPUT_B
 export function formatKiB(bytes: number): string {
   return `${bytes / 1024} KiB`;
 }
-
-/** Smallest read or grep text result tagged for forget; smaller ones save too little to be worth forgetting. */
-export const FORGET_MIN_BYTES = 2 * 1024;

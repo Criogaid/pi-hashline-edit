@@ -27,11 +27,10 @@ import { scanTextLines } from "./text-stream.ts";
 import { createAnchorFormatter, displayCarriageReturns, parseHashline } from "./anchor-format.ts";
 import { canonicalPath, serializePath } from "./path.ts";
 import { renderToolError, reportLines, withoutReport } from "./render.ts";
-import { type ForgetReceiptDetails, readReceipt, withResultTag } from "./forget-tool.ts";
 import { POSITIVE_SAFE_INTEGER } from "./schema.ts";
 import { errnoCode } from "../core/errors.ts";
 import { throwIfCancelled } from "./error-text.ts";
-import { runTool, type Report, type ReportDetails } from "./report.ts";
+import { reportResult, runTool, type Report, type ReportDetails } from "./report.ts";
 import { defaultOutputBudgets, formatKiB, type OutputBudgetProvider } from "./budgets.ts";
 import type { HashlineEditConfig } from "./config.ts";
 import { createArgumentPreparer } from "./argument-validation.ts";
@@ -41,10 +40,7 @@ const DEFAULT_OFFSET = 1;
 type ReadDetails = ReadToolDetails & {
   nativeRead?: true;
   pagination?: NonNullable<Report["pagination"]>;
-} & ForgetReceiptDetails &
-  Partial<ReportDetails>;
-/** The read card shows the forget id only on the forget card. */
-const READ_CARD_SHOWN = new Set(["resultId"]);
+} & Partial<ReportDetails>;
 
 /**
  * First result line: `<path> · <N> lines`, optionally ` (from line <offset>)` and
@@ -172,7 +168,7 @@ export function makeReadOverride(
       return new Text(
         [
           renderReadBody(raw, String(context?.args?.path ?? ""), theme),
-          ...(report ? reportLines(report, theme, READ_CARD_SHOWN) : []),
+          ...(report ? reportLines(report, theme) : []),
         ].join("\n"),
         0,
         0,
@@ -197,22 +193,10 @@ export function makeReadOverride(
         const report = { tool: "read" as const, path: params.path };
         const readNative = async () => {
           const result = await builtin.execute(toolCallId, params, signal, onUpdate, ctx);
-          return withResultTag(
-            toolCallId,
-            {
-              report,
-              payload: result.content,
-              details: { ...result.details, nativeRead: true as const },
-            },
-            config.forget,
-            () =>
-              readReceipt(
-                params.path,
-                result.content.some((block) => block.type === "image")
-                  ? { image: true }
-                  : undefined,
-              ),
-          );
+          return reportResult(report, result.content, {
+            ...result.details,
+            nativeRead: true as const,
+          });
         };
 
         const absPath = canonicalPath(cwd, params.path);
@@ -293,29 +277,18 @@ export function makeReadOverride(
         const header = `${formatReadHeader(serializePath(cwd, absPath), stats.totalLines, start, stats.finalNewline)}\n`;
         const limitText = formatKiB(maxBytes);
 
-        return withResultTag(
-          toolCallId,
+        return reportResult(
           {
-            report: {
-              ...report,
-              pagination: reportedPagination,
-              truncatedAt: truncated && !firstLineExceedsLimit ? limitText : undefined,
-              lineTooLong: firstLineExceedsLimit ? { line: start, limit: limitText } : undefined,
-            },
-            payload: [{ type: "text" as const, text: header + truncation.content }],
-            details: {
-              ...(truncated ? { truncation } : {}),
-              ...(pagination ? { pagination } : {}),
-            },
+            ...report,
+            pagination: reportedPagination,
+            truncatedAt: truncated && !firstLineExceedsLimit ? limitText : undefined,
+            lineTooLong: firstLineExceedsLimit ? { line: start, limit: limitText } : undefined,
           },
-          config.forget,
-          () =>
-            readReceipt(
-              params.path,
-              rows.length > 0
-                ? { start, end: start + rows.length - 1, truncated: truncation.truncated }
-                : undefined,
-            ),
+          [{ type: "text" as const, text: header + truncation.content }],
+          {
+            ...(truncated ? { truncation } : {}),
+            ...(pagination ? { pagination } : {}),
+          },
         );
       });
     },

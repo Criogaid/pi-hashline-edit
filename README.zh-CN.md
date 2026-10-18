@@ -12,7 +12,7 @@
 - **不靠文本匹配。** 模型不需要原样复述旧文本，空白差异、重复片段和大段代码不再导致修改失败或改错地方。
 - **文件字节不走样。** 保留 BOM、CRLF/LF 换行、文件末尾换行和所有未改动的字节；非法 UTF-8 和 NUL 字节在写入前就被拒绝。
 - **安全写入。** 先写临时文件，再通过 link 或 rename 原子发布；写入绑定读取时的文件版本，出错时明确告知文件是否已经改动。
-- **减少来回。** 修改可以顺带一条后续命令，例如 `npm test`（[Action Fusion](#action-fusion)）；可选的 [`forget`](#forget) 工具能把用完的大段查看结果移出上下文。
+- **减少来回。** 修改可以顺带一条后续命令，例如 `npm test`（[Action Fusion](#action-fusion)）。
 - **统一使用 JavaScript 正则。** `grep` 和 `replace` 都采用模型熟悉的 JavaScript 正则语义，同时借助 ripgrep 快速筛选候选文件。
 - **输出按模型调整。** 结果大小随所选模型的上下文窗口缩放：小模型不会被撑爆，大模型也不会信息不足。
 
@@ -48,7 +48,7 @@ greet.ts · 3 lines
 
 ## 工具
 
-扩展替换 Pi 的 `read`、`grep`、`edit`、`write`，并新增 `replace` 和可选的 `forget`。
+扩展替换 Pi 的 `read`、`grep`、`edit`、`write`，并新增 `replace`。
 
 | 工具 | 作用 |
 | --- | --- |
@@ -57,7 +57,6 @@ greet.ts · 3 lines
 | `edit` | 按锚点替换、插入、删除、复制或移动整行。一次调用中的所有操作基于同一份快照，要么全部生效，要么全部不生效。 |
 | `replace` | 在单个文件内批量执行字面或正则替换。每条规则都必须有匹配，匹配区域重叠时整批拒绝。 |
 | `write` | 新建文件（`mode: "create"`）或覆盖文件（`mode: "overwrite"`），内容原样写入。 |
-| `forget` | 把之前的 `read`/`grep` 结果移出模型上下文，可附一条备注。默认关闭。 |
 
 `edit` 的操作：
 
@@ -90,10 +89,6 @@ greet.ts · 3 lines
 
 命令通过会话自己的 Bash 工具执行，审批、覆盖和钩子照常生效。只有修改成功且文件仍是刚写入的内容时才会启动。命令失败不会回滚文件。TUI 把修改和命令分成两张卡片显示，设置了超时时会显示实时倒计时。
 
-## Forget
-
-启用 `hashlineEdit.forget` 后，模型可以在用完之后，把较大的 `read` 和 `grep` 结果（2 KiB 及以上，或图片）移出上下文。每个符合条件的结果带一个 `resultId`，模型用这些 id 调用 `forget`，并可附一条需要记住的备注。文件、会话历史和 TUI 都不受影响，重新执行原来的调用即可再次看到内容。
-
 ## 配置
 
 在 Pi 的全局设置（`~/.pi/agent/settings.json`）或项目的 `.pi/settings.json` 中添加 `hashlineEdit`：
@@ -103,7 +98,6 @@ greet.ts · 3 lines
   "hashlineEdit": {
     "enabled": true,
     "actionFusion": true,
-    "forget": false,
     "hashLen": 4,
     "shiftRadius": 15,
     "read": { "defaultLimit": 500 },
@@ -117,7 +111,6 @@ greet.ts · 3 lines
 | --- | --- | --- |
 | `enabled` | `true` | 注册扩展的工具。 |
 | `actionFusion` | `true` | 允许修改类工具使用 `then_run`。 |
-| `forget` | `false` | 注册 `forget` 并给符合条件的结果打标签。 |
 | `hashLen` | `4` | 锚点哈希长度，2–8。 |
 | `shiftRadius` | `15` | 锚点过期时先在附近多少行内查找，再查全文件，0–100；`0` 关闭恢复查找。 |
 | `read.defaultLimit` | `500` | 调用未指定时返回的行数。 |

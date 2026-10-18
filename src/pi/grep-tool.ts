@@ -12,7 +12,6 @@ import { rgPath as bundledRgPath } from "@vscode/ripgrep";
 import { Type, type Static } from "typebox";
 import { Text } from "@earendil-works/pi-tui";
 import { renderOutputPreview, renderToolError, reportLines, withoutReport } from "./render.ts";
-import { type ForgetReceiptDetails, grepReceipt, withResultTag } from "./forget-tool.ts";
 import { createAnchorFormatter } from "./anchor-format.ts";
 import { grepOutput } from "./grep-output.ts";
 import {
@@ -118,7 +117,7 @@ type GrepSchema = ReturnType<typeof createGrepSchema>;
 export type GrepOutputMode = NonNullable<Static<GrepSchema>["outputMode"]>;
 type GrepTool = ToolDefinition<
   GrepSchema,
-  ({ incomplete?: true } & ForgetReceiptDetails & Partial<ReportDetails>) | undefined
+  ({ incomplete?: true } & Partial<ReportDetails>) | undefined
 >;
 /** Validate JavaScript syntax once; the search never rejects a pattern V8 accepts. */
 function checkGrepArguments(args: unknown, report: ReportArgumentIssue): void {
@@ -143,9 +142,6 @@ function checkGrepArguments(args: unknown, report: ReportArgumentIssue): void {
     }
   }
 }
-
-/** The grep card shows the forget id only on the forget card. */
-const GREP_CARD_SHOWN = new Set(["resultId"]);
 
 /** Build the production grep override (a ToolDefinition fragment for registerTool). */
 export function makeGrepOverride(
@@ -216,7 +212,7 @@ export function makeGrepOverrideWithBackend(
       return renderOutputPreview(
         [
           ...(payload?.type === "text" ? toDisplayLines(payload.text, theme) : []),
-          ...(report ? reportLines(report, theme, GREP_CARD_SHOWN) : []),
+          ...(report ? reportLines(report, theme) : []),
         ],
         expanded,
         theme,
@@ -224,7 +220,7 @@ export function makeGrepOverrideWithBackend(
     },
 
     async execute(
-      toolCallId: string,
+      _toolCallId: string,
       params: Static<GrepSchema>,
       signal: AbortSignal | undefined,
       _onUpdate: Parameters<GrepTool["execute"]>[3],
@@ -277,7 +273,7 @@ export function makeGrepOverrideWithBackend(
           signal,
           warnings,
         });
-        const { payload, facts, counts, incomplete } = await grepOutput({
+        const { payload, facts, incomplete } = await grepOutput({
           cwd,
           search,
           outputMode,
@@ -288,19 +284,10 @@ export function makeGrepOverrideWithBackend(
           effectiveLimit,
           budget,
         });
-        const parts = {
-          report: { tool: "grep" as const, path: params.path, ...facts },
-          payload: payload === undefined ? [] : [{ type: "text" as const, text: payload }],
-          details: incomplete ? { incomplete: true as const } : undefined,
-        };
-        // Only matched content-mode rows are file text; paths and counts have nothing to forget.
-        if (outputMode !== "content" || payload === undefined)
-          return reportResult(parts.report, parts.payload, parts.details);
-        return withResultTag(toolCallId, parts, config.forget, () =>
-          grepReceipt(patterns, counts.matches, counts.files, {
-            limitReached: search.matchLimitReached,
-            incomplete,
-          }),
+        return reportResult(
+          { tool: "grep" as const, path: params.path, ...facts },
+          payload === undefined ? [] : [{ type: "text" as const, text: payload }],
+          incomplete ? { incomplete: true as const } : undefined,
         );
       });
     },

@@ -4,7 +4,7 @@
  * Every result of every tool states its facts in one report (report-schema.ts).
  * Layers return structured facts and never append sentences: the commit layer
  * owns publication, stage, and freshness; each tool owns its outcome facts;
- * Action Fusion owns `then_run`; forget owns ids. This module builds the
+ * Action Fusion owns `then_run`. This module builds the
  * report of a success or a failure, derives its single `next`, and owns the
  * one model-facing serialization: one JSON object in schema order, with tool
  * and path omitted on success. A success puts it after the content payload;

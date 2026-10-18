@@ -1,12 +1,12 @@
 # Pi Hashline Edit
 
-pi 扩展 `@criogaid/pi-hashline-edit`，注册入口为 `src/index.ts`。它替换 Pi 内置的 `read`、`grep`、`edit`、`write`，并新增 `replace` 与可选的 `forget`。
+pi 扩展 `@criogaid/pi-hashline-edit`，注册入口为 `src/index.ts`。它替换 Pi 内置的 `read`、`grep`、`edit`、`write`，并新增 `replace`。
 
 ## 按任务定位
 
 - 改 `src/core/` 前读 `src/core/AGENTS.md`，改 `src/pi/` 或 `src/index.ts` 前读 `src/pi/AGENTS.md`：模块职责和该层的实现约束只写在那里。
 - `src/core/`：不依赖 Pi 的纯引擎（行处理、checksum、解码、错误、edit、replace、JavaScript 搜索），无公开 API。
-- `src/pi/`：工具注册、配置、参数校验、报告与渲染、grep 与 ripgrep 进程层、regex worker、文件提交、Action Fusion 和 forget。
+- `src/pi/`：工具注册、配置、参数校验、报告与渲染、grep 与 ripgrep 进程层、regex worker、文件提交和 Action Fusion。
 - `src/integration/`：真实后端集成测试；`src/testing/`：共享测试环境与安装包 fixture。
 - 改工具参数、用户可见行为或配置时，核对 `README.md` 中对应契约（工具参数、输出预算、恢复语义、发布状态）。
 - 改 pi API、生命周期或 TUI 集成时，查看当前安装版本的 pi 文档和类型声明。
@@ -59,7 +59,7 @@ pi 扩展 `@criogaid/pi-hashline-edit`，注册入口为 `src/index.ts`。它替
 - 一条测试只因一种原因失败；名字写成“条件 → 行为”。
 - 依赖真实 ripgrep、超大文件或平台差异的测试放 `src/integration/`，不进每次提交都跑的 `npm test`。
 
-测试布局：`*.test.ts` 与源码相邻。`registration.test.ts` 覆盖配置接线，`read.test.ts` 覆盖 read，`execute.test.ts` 覆盖 edit 与共享 mutation 流程，`failure-path.test.ts` / `result-safety.test.ts` 覆盖发布失败与结果安全，`argument-validation.test.ts` 经工具入口覆盖组合参数失败。`forget.test.ts` 用 `forget.testing.ts` 的本地模型 fixture 驱动真实 Pi 会话，`src/integration/forget-grep.test.ts` 用同一 fixture 配真实 ripgrep。`src/testing/session.testing.ts` 负责 Pi 会话初始化、本地模型响应流、凭据与资源隔离和清理，工具上下文、forget 和 Fusion 会话共用它，注册与业务断言留在各功能里。`process.testing.ts` 提供干净的子进程环境，`installation.testing.ts` 创建只含锁定生产依赖的源码或 npm 归档安装，`extension-loader.testing.ts` 经 Pi 的 jiti 与虚拟模块加载它们；`src/integration/npm-package.test.ts` 覆盖归档包的工具注册、worker、命令分发和上下文编辑。
+测试布局：`*.test.ts` 与源码相邻。`registration.test.ts` 覆盖配置接线，`read.test.ts` 覆盖 read，`execute.test.ts` 覆盖 edit 与共享 mutation 流程，`failure-path.test.ts` / `result-safety.test.ts` 覆盖发布失败与结果安全，`argument-validation.test.ts` 经工具入口覆盖组合参数失败。`src/testing/session.testing.ts` 负责 Pi 会话初始化、本地模型响应流、凭据与资源隔离和清理，工具上下文和 Fusion 会话共用它，注册与业务断言留在各功能里。`process.testing.ts` 提供干净的子进程环境，`installation.testing.ts` 创建只含锁定生产依赖的源码或 npm 归档安装，`extension-loader.testing.ts` 经 Pi 的 jiti 与虚拟模块加载它们；`src/integration/npm-package.test.ts` 覆盖归档包的工具注册、worker 和命令分发。
 
 ## 命令
 

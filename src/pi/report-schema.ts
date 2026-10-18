@@ -134,7 +134,7 @@ export type ArgumentIssue = Static<typeof ARGUMENT_ISSUE_SCHEMA>;
 
 /**
  * Every fact a report can carry beside the envelope, in output order: failure
- * facts first, then each tool's outcome, freshness, the command, and forget.
+ * facts first, then each tool's outcome, freshness, and the command.
  */
 export const FACT_FIELDS = {
   // Argument rejection (argument-error.ts).
@@ -207,14 +207,6 @@ export const FACT_FIELDS = {
     { additionalProperties: false },
   ),
   progressError: CAUSE_SCHEMA,
-  // forget.
-  forgotten: Type.Array(Type.String()),
-  notForgettable: Type.Array(Type.String(), {
-    description: "Named ids that are not tagged results of the previous response.",
-  }),
-  resultId: Type.String({ description: "Id to pass to forget." }),
-  forgetScope: Type.String(),
-  contentForgotten: Type.Literal(true),
 } satisfies TProperties;
 
 type FactName = keyof typeof FACT_FIELDS;
@@ -239,10 +231,6 @@ function facts<const R extends readonly FactName[], const O extends readonly Fac
 }
 const NONE = facts([]);
 const MATCHED = ["matched", "omittedMatched"] as const;
-
-/** Text shared by forget's failure and partial success: a later response cannot forget them either. */
-const NOT_FORGETTABLE_NEXT =
-  "Do not call forget again for the notForgettable ids; those results stay in context.";
 
 /**
  * Each error code: its facts and its recovery. `next.default` is the code's
@@ -327,10 +315,6 @@ export const ERROR_DEFINITIONS = {
   UNSUPPORTED_PATH: {
     facts: NONE,
   },
-  NOT_FORGETTABLE: {
-    facts: facts(["notForgettable"]),
-    next: { default: NOT_FORGETTABLE_NEXT },
-  },
   UNCLASSIFIED: { facts: NONE },
 } as const satisfies Record<
   string,
@@ -384,8 +368,6 @@ export const OUTCOME_NEXT = [
   ],
   ["outputLimit", "Narrow path, glob, or pattern to see the omitted output."],
   ["linePreviewLimit", "Read the full line before rewriting it from a partial preview."],
-  ["notForgettable", NOT_FORGETTABLE_NEXT],
-  ["contentForgotten", "Rerun the call to see it again."],
 ] as const satisfies readonly (readonly [FactName, string])[];
 
 /** The report envelope and facts, in output order; `next` is always last. */
@@ -405,7 +387,7 @@ export const REPORT_SCHEMA = Type.Object({
 type ReportFields = Omit<Static<typeof REPORT_SCHEMA>, "error"> & { error?: ErrorCode };
 
 const SUCCESS_DEFINITIONS = {
-  read: facts([], ["pagination", "truncatedAt", "lineTooLong", "resultId", "contentForgotten"]),
+  read: facts([], ["pagination", "truncatedAt", "lineTooLong"]),
   grep: facts(
     [],
     [
@@ -418,15 +400,11 @@ const SUCCESS_DEFINITIONS = {
       "linePreviewLimit",
       "invalidUtf8",
       "diagnostics",
-      "resultId",
-      "contentForgotten",
     ],
   ),
   edit: facts([]),
   replace: facts([], ["matches"]),
   write: facts([], ["created"]),
-  forget: facts(["forgotten"], ["notForgettable"]),
-  codemode: facts([], ["resultId", "forgetScope", "contentForgotten"]),
 } as const;
 export type ReportTool = keyof typeof SUCCESS_DEFINITIONS;
 /** Tools whose reports carry publication, freshness, and the then_run outcome. */

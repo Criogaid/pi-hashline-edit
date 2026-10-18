@@ -4,8 +4,8 @@
  * Overrides Pi's built-in read, grep, edit, and write: read and grep output
  * `LINE#HASH│content` anchors, edit applies structured ops on those anchors, and
  * write publishes whole files through the same commit layer. Adds `replace`
- * (literal or JavaScript-regex replacement across a file) and, when enabled,
- * `forget`. Each tool carries its own renderer; src/pi/AGENTS.md maps the modules.
+ * (literal or JavaScript-regex replacement across a file). Each tool carries its
+ * own renderer; src/pi/AGENTS.md maps the modules.
  *
  * @module pi-hashline-edit
  */
@@ -17,7 +17,6 @@ import { registerModelBudgets } from "./pi/model-budgets.ts";
 import { makeEditOverride } from "./pi/edit-tool.ts";
 import { makeReadOverride } from "./pi/read-tool.ts";
 import { makeGrepOverride } from "./pi/grep-tool.ts";
-import { registerForgetTool } from "./pi/forget-tool.ts";
 import { makeReplaceTool } from "./pi/replace-tool.ts";
 import { makeWriteOverride } from "./pi/write-tool.ts";
 import { createActionFusionExecutor } from "./pi/action-fusion.ts";
@@ -56,6 +55,5 @@ export default function (pi: ExtensionAPI) {
 
     register(makeReadOverride(cwd, config, budgets));
     register(makeGrepOverride(cwd, config, budgets));
-    if (config.forget) registerForgetTool(pi, budgets);
   }
 }
