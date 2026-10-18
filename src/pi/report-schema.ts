@@ -196,6 +196,9 @@ export const FACT_FIELDS = {
     description: "Files shown as plain previews; their rows are not edit anchors.",
   }),
   diagnostics: Type.String({ description: "Search diagnostics; results cover confirmed matches." }),
+  literalPipe: Type.Literal(true, {
+    description: "A literal pattern contains |, which matches only the | character.",
+  }),
   // Mutation outcome.
   created: Type.Literal(true),
   // Commit-layer observation after publication.
@@ -362,6 +365,7 @@ export const OUTCOME_NEXT = [
   ],
   ["pagination", "Continue with offset set to pagination.nextOffset."],
   ["matchLimit", "Raise limit to see the matches after the last one shown."],
+  ["literalPipe", "Pass the alternatives as a pattern array."],
   [
     "scanLimit",
     "Narrow path or glob, or add text every match must contain, to search the remaining files.",
@@ -400,6 +404,7 @@ const SUCCESS_DEFINITIONS = {
       "linePreviewLimit",
       "invalidUtf8",
       "diagnostics",
+      "literalPipe",
     ],
   ),
   edit: facts([]),

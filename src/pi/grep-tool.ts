@@ -282,6 +282,7 @@ export function makeGrepOverrideWithBackend(
           signal,
           warnings,
           effectiveLimit,
+          literalPipe: literal && patterns.some((pattern) => pattern.includes("|")),
           budget,
         });
         return reportResult(

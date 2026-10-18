@@ -207,6 +207,7 @@ type GrepFacts = Pick<
   | "linePreviewLimit"
   | "invalidUtf8"
   | "diagnostics"
+  | "literalPipe"
 >;
 
 interface AssembleGrepOutputOptions {
@@ -267,9 +268,18 @@ export async function grepOutput(
     readonly budget?: OutputBudgets;
     readonly search: Awaited<ReturnType<typeof searchFiles>>;
     readonly effectiveLimit: number;
+    /** A literal pattern contains `|`, which matches only that character. */
+    readonly literalPipe: boolean;
   },
 ): Promise<{ payload?: string; facts: GrepFacts; incomplete: boolean }> {
-  const { search, warnings, outputMode, effectiveLimit, budget = DEFAULT_OUTPUT_BUDGETS } = options;
+  const {
+    search,
+    warnings,
+    outputMode,
+    effectiveLimit,
+    literalPipe,
+    budget = DEFAULT_OUTPUT_BUDGETS,
+  } = options;
   const searchFacts: SearchFacts = {
     candidates: search.candidates === "lines" ? undefined : search.candidates,
     scanLimit: search.scanLimitReached ? formatSize(MAX_UNNARROWED_SCAN_BYTES) : undefined,
@@ -278,7 +288,8 @@ export async function grepOutput(
     if (warnings.length)
       throw searchIncompleteError("No matches confirmed.", warnings, budget, searchFacts);
     return {
-      facts: { matches: 0, files: 0, ...searchFacts },
+      // A literal `|` finding nothing most likely meant alternatives.
+      facts: { matches: 0, files: 0, ...searchFacts, literalPipe: literalPipe || undefined },
       incomplete: search.scanLimitReached,
     };
   }
