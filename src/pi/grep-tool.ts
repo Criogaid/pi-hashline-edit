@@ -75,13 +75,13 @@ function createGrepSchema({ defaultLimit, defaultContext }: HashlineEditConfig["
       }),
       flags: Type.Optional(
         Type.String({
-          description: `JavaScript regex flags (default ${DEFAULT_GREP_FLAGS}); explicit flags replace the default. g is always enabled and repeated flags are ignored. Use u or v for Unicode mode, s for dotAll, and y for sticky matching.`,
+          description: `JavaScript regex flags (default ${DEFAULT_GREP_FLAGS}); given flags replace the default, so in a multiline search without m, ^ and $ anchor to the file's start and end. g is always enabled and repeated flags are ignored. Use u or v for Unicode mode, s for dotAll, and y for sticky matching.`,
         }),
       ),
       ignoreCase: Type.Optional(
         Type.Boolean({
           description:
-            "true ignores case, false matches case; overrides the i flag. When omitted, the i flag ignores case; otherwise smart-case applies to the whole query, whatever other flags are given: any uppercase letter makes it case-sensitive (also when analysis is unavailable).",
+            "true ignores case, false matches case; overrides the i flag. When omitted, the i flag ignores case; without it, case is ignored only when no pattern contains an uppercase letter (a pattern that cannot be analyzed counts as uppercase).",
         }),
       ),
       multiline: Type.Optional(
@@ -105,7 +105,7 @@ function createGrepSchema({ defaultLimit, defaultContext }: HashlineEditConfig["
       outputMode: Type.Optional(
         Type.Union([Type.Literal("content"), Type.Literal("files"), Type.Literal("count")], {
           description:
-            '"content" (default): matches/context with anchors for valid UTF-8 or plain previews otherwise; "files": paths; "count": matching lines per file and total. Use files or count when only paths or counts are needed. All modes share limit.',
+            '"content" (default): matches/context with anchors for valid UTF-8 or plain previews otherwise; "files": paths; "count": matching lines per file and total. Use files or count when only paths or counts are needed. limit counts matching lines in every mode, so files and count stop at the same cutoff as content.',
         }),
       ),
     },
