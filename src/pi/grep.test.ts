@@ -688,7 +688,7 @@ test("matching rows exceed limit → bounded results carry matchLimit", async ()
     });
     assert.match(text(result), /1#[0-9A-Z]+│alpha beta/);
     assert.equal(reportOf(result)?.matchLimit, limit);
-    assert.match(reportOf(result)?.next ?? "", /limit.*refine.*pattern/);
+    assert.match(reportOf(result)?.next ?? "", /Raise limit.*after the last one shown/);
   });
 });
 

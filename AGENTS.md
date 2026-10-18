@@ -60,6 +60,7 @@ pi 扩展 `@criogaid/pi-hashline-edit`，注册入口为 `src/index.ts`。它替
 - 依赖真实 ripgrep、超大文件或平台差异的测试放 `src/integration/`，不进每次提交都跑的 `npm test`。
 
 测试布局：`*.test.ts` 与源码相邻。`registration.test.ts` 覆盖配置接线，`read.test.ts` 覆盖 read，`execute.test.ts` 覆盖 edit 与共享 mutation 流程，`failure-path.test.ts` / `result-safety.test.ts` 覆盖发布失败与结果安全，`argument-validation.test.ts` 经工具入口覆盖组合参数失败。`src/testing/session.testing.ts` 负责 Pi 会话初始化、本地模型响应流、凭据与资源隔离和清理，工具上下文和 Fusion 会话共用它，注册与业务断言留在各功能里。`process.testing.ts` 提供干净的子进程环境，`installation.testing.ts` 创建只含锁定生产依赖的源码或 npm 归档安装，`extension-loader.testing.ts` 经 Pi 的 jiti 与虚拟模块加载它们；`src/integration/npm-package.test.ts` 覆盖归档包的工具注册、worker 和命令分发。
+The `src/pi/grep-order.test.ts` suite controls worker and file-read completion order to verify deterministic rows, warnings, and limit cutoffs; `src/integration/grep-order.test.ts` verifies repeated real-rg output and row prefixes as the limit increases.
 
 ## 命令
 
