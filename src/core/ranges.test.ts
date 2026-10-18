@@ -2,14 +2,15 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { findSortedRangeConflict, mergeRanges, type HalfOpenRange } from "./ranges.ts";
 
-test("conflicts distinguish adjacent ranges from insertions at starts and interiors", () => {
-  const cases: [HalfOpenRange[], number | undefined][] = [
-    [[], undefined],
+test("sorted ranges → ordered starts allow only empty ranges before a shared start", () => {
+  const cases: [HalfOpenRange[], number | undefined, number | undefined][] = [
+    [[], undefined, undefined],
     [
       [
         [0, 2],
         [2, 4],
       ],
+      undefined,
       undefined,
     ],
     [
@@ -18,6 +19,7 @@ test("conflicts distinguish adjacent ranges from insertions at starts and interi
         [2, 2],
       ],
       undefined,
+      undefined,
     ],
     [
       [
@@ -25,6 +27,7 @@ test("conflicts distinguish adjacent ranges from insertions at starts and interi
         [0, 0],
       ],
       1,
+      undefined,
     ],
     [
       [
@@ -32,6 +35,16 @@ test("conflicts distinguish adjacent ranges from insertions at starts and interi
         [0, 2],
       ],
       1,
+      undefined,
+    ],
+    [
+      [
+        [0, 0],
+        [0, 0],
+        [0, 2],
+      ],
+      1,
+      undefined,
     ],
     [
       [
@@ -39,12 +52,22 @@ test("conflicts distinguish adjacent ranges from insertions at starts and interi
         [1, 1],
       ],
       1,
+      1,
     ],
     [
       [
         [0, 3],
         [1, 2],
       ],
+      1,
+      1,
+    ],
+    [
+      [
+        [0, 2],
+        [0, 3],
+      ],
+      1,
       1,
     ],
     [
@@ -54,14 +77,23 @@ test("conflicts distinguish adjacent ranges from insertions at starts and interi
         [1, 3],
       ],
       2,
+      2,
     ],
   ];
-  for (const [ranges, expected] of cases) {
-    assert.equal(findSortedRangeConflict(ranges), expected);
-    assert.equal(
-      findSortedRangeConflict(ranges.map(([start, end]) => [start + 10, end + 10])),
-      expected,
-    );
+  for (const [ranges, strictConflict, orderedConflict] of cases) {
+    for (const orderedStarts of [false, true]) {
+      const expected = orderedStarts ? orderedConflict : strictConflict;
+      for (const shift of [0, 10]) {
+        assert.equal(
+          findSortedRangeConflict(
+            ranges.map(([start, end]) => [start + shift, end + shift]),
+            orderedStarts,
+          ),
+          expected,
+          JSON.stringify({ ranges, orderedStarts, shift }),
+        );
+      }
+    }
   }
 });
 

@@ -142,34 +142,56 @@ test("reverse-order range rejected", () => {
   if (!r.ok) assert.equal(r.failure.kind, "range");
 });
 
-test("overlapping edits rejected", () => {
+test("range starts inside a range or shares its start → reject overlapping edits", () => {
   const text = "a\nb\nc\nd\n";
-  const r = applyEdits(
-    text,
-    [
-      { op: "replace", start: at(text, 2), end: at(text, 3), body: ["x"] },
-      { op: "replace", start: at(text, 3), body: ["y"] },
-    ],
-    4,
-    15,
-  );
-  assert.equal(r.ok, false);
-  if (!r.ok) assert.equal(r.failure.kind, "range");
+  for (const edit of [
+    { op: "replace", start: at(text, 3), body: ["y"] },
+    { op: "delete", start: at(text, 2) },
+    { op: "insert_after", anchor: at(text, 2), body: ["y"] },
+  ] satisfies Edit[]) {
+    const result = applyEdits(
+      text,
+      [{ op: "replace", start: at(text, 2), end: at(text, 3), body: ["x"] }, edit],
+      4,
+      0,
+    );
+    assert(!result.ok && result.failure.kind === "range");
+    assert.equal(result.failure.code, "OVERLAPPING_EDITS");
+  }
 });
 
-test("conflict at the same insertion point rejected", () => {
+test("insertion at a replaced or deleted range start → insert before the range in either batch order", () => {
+  const text = "a\nb\nc\nd\n";
+  const insertion: Edit = { op: "insert_after", anchor: at(text, 1), body: ["x"] };
+  for (const [edit, expected] of [
+    [{ op: "replace", start: at(text, 2), end: at(text, 3), body: ["B"] }, "a\nx\nB\nd\n"],
+    [{ op: "delete", start: at(text, 2), end: at(text, 3) }, "a\nx\nd\n"],
+  ] satisfies [Edit, string][]) {
+    for (const edits of [
+      [insertion, edit],
+      [edit, insertion],
+    ]) {
+      const result = applyEdits(text, edits, 4, 0);
+      assert(result.ok);
+      assert.equal(result.text, expected);
+    }
+  }
+});
+
+test("insertions sharing a gap → preserve array order", () => {
   const text = "a\nb\n";
-  const r = applyEdits(
-    text,
-    [
-      { op: "insert_after", anchor: at(text, 1), body: ["x"] },
-      { op: "insert_after", anchor: at(text, 1), body: ["y"] },
-    ],
-    4,
-    15,
-  );
-  assert.equal(r.ok, false);
-  if (!r.ok) assert.equal(r.failure.kind, "range");
+  const edits: Edit[] = [
+    { op: "insert_after", anchor: at(text, 1), body: ["x"] },
+    { op: "insert_before", anchor: at(text, 2), body: ["y"] },
+  ];
+  for (const [batch, expected] of [
+    [edits, "a\nx\ny\nb\n"],
+    [[...edits].reverse(), "a\ny\nx\nb\n"],
+  ] satisfies [Edit[], string][]) {
+    const result = applyEdits(text, batch, 4, 0);
+    assert(result.ok);
+    assert.equal(result.text, expected);
+  }
 });
 
 test("byte-identical edits → validate anchors and preserve the source bytes", () => {
@@ -746,23 +768,55 @@ test("copy/move bad source and destination anchors → aggregate every supplied 
   }
 });
 
-test("move interior destination, overlapping moves, or duplicate copy gaps → reject the complete batch", () => {
+test("copy/move captures sharing a gap → preserve original captures in array order", () => {
   const text = "A\nB\nC\nD\nE\n";
-  const cases: Edit[][] = [
-    [{ op: "move", start: at(text, 1), end: at(text, 3), after: at(text, 2) }],
+  for (const [first, second, remaining] of [
+    ["copy", "copy", text],
+    ["copy", "move", "A\nC\nD\nE\n"],
+    ["move", "copy", "B\nC\nD\nE\n"],
+    ["move", "move", "C\nD\nE\n"],
+  ] as const) {
+    const edits: Edit[] = [
+      { op: first, start: at(text, 1), after: at(text, 5) },
+      { op: second, start: at(text, 2), after: at(text, 5) },
+    ];
+    for (const [batch, suffix] of [
+      [edits, "A\nB\n"],
+      [[...edits].reverse(), "B\nA\n"],
+    ] satisfies [Edit[], string][]) {
+      const result = applyEdits(text, batch, 4, 0);
+      assert(result.ok);
+      assert.equal(result.text, remaining + suffix);
+    }
+  }
+});
+
+test("move interior destination or reversed capture range → reject invalid ranges", () => {
+  const text = "A\nB\nC\nD\nE\n";
+  for (const edit of [
+    { op: "move", start: at(text, 1), end: at(text, 3), after: at(text, 2) },
+    { op: "move", start: at(text, 1), end: at(text, 3), before: at(text, 2) },
+    { op: "copy", start: at(text, 3), end: at(text, 2), after: at(text, 5) },
+  ] satisfies Edit[]) {
+    const result = applyEdits(text, [edit], 4, 0);
+    assert(!result.ok && result.failure.kind === "range");
+    assert.equal(result.failure.code, "INVALID_RANGE");
+    assert(result.failure.checks.every((check) => check.status === "matched"));
+  }
+});
+
+test("overlapping move sources → reject the complete batch", () => {
+  const text = "A\nB\nC\nD\nE\n";
+  const result = applyEdits(
+    text,
     [
       { op: "move", start: at(text, 1), end: at(text, 2), after: at(text, 5) },
       { op: "move", start: at(text, 2), end: at(text, 3), before: at(text, 1) },
     ],
-    [
-      { op: "copy", start: at(text, 1), after: at(text, 5) },
-      { op: "copy", start: at(text, 2), after: at(text, 5) },
-    ],
-    [{ op: "copy", start: at(text, 3), end: at(text, 2), after: at(text, 5) }],
-  ];
-  for (const edits of cases) {
-    const result = applyEdits(text, edits, 4, 0);
-    assert(!result.ok && result.failure.kind === "range");
-    assert(result.failure.checks.every((check) => check.status === "matched"));
-  }
+    4,
+    0,
+  );
+  assert(!result.ok && result.failure.kind === "range");
+  assert.equal(result.failure.code, "OVERLAPPING_EDITS");
+  assert(result.failure.checks.every((check) => check.status === "matched"));
 });
