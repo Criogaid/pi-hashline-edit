@@ -32,7 +32,6 @@ import { callTool } from "./tool-call.testing.ts";
 import { renderToolError } from "./render.ts";
 import { formatArgumentError } from "./argument-error.ts";
 import { makeGrepOverride } from "./grep-tool.ts";
-import { registerForgetTool } from "./forget-tool.ts";
 import { openTestSession } from "../testing/session.testing.ts";
 
 const versions = { publishedRevision: "r", observedRevision: "r" };
@@ -348,24 +347,15 @@ test("grep renders plain and anchored rows in one group without exposing hashes"
   ]);
 });
 
-test("all tools render argument issues as field diagnostics while preserving model JSON", async (t) => {
+test("all tools render argument issues as field diagnostics while preserving model JSON", async () => {
   initTheme("dark");
   const cwd = process.cwd();
-  const { session } = await openTestSession(t, {
-    tools: ["forget"],
-    configure(pi) {
-      registerForgetTool(pi);
-    },
-  });
-  const forget = session.getToolDefinition("forget");
-  assert.ok(forget);
   const tools = [
     makeReadOverride(cwd, DEFAULT_CONFIG),
     withMutationStatus(makeEditOverride(cwd, DEFAULT_CONFIG)),
     withMutationStatus(makeReplaceTool(cwd, DEFAULT_CONFIG)),
     withMutationStatus(makeWriteOverride(cwd)),
     makeGrepOverride(cwd, DEFAULT_CONFIG),
-    forget,
   ];
   for (const tool of tools) {
     for (const fused of [false, true]) {
@@ -377,7 +367,6 @@ test("all tools render argument issues as field diagnostics while preserving mod
         replacements: [{ find: "unused", replace: "unused" }],
         pattern: "unused",
         literal: true,
-        ids: ["r00000"],
         unexpected: true,
         ...(fused ? { then_run: { command: "must-not-run" } } : {}),
       };

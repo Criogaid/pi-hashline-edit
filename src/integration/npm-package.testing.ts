@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
 import type { ToolCall } from "@earendil-works/pi-ai";
@@ -7,16 +7,10 @@ import { loadInstalledExtension } from "../testing/extension-loader.testing.ts";
 import { openTestSession, responseStream, SESSION_TIMEOUT_MS } from "../testing/session.testing.ts";
 import { decodeReport } from "../pi/report.ts";
 
-test("packed extension completes file, worker, command, and context operations", {
+test("packed extension completes file, worker, and command operations", {
   timeout: SESSION_TIMEOUT_MS,
 }, async (t) => {
   const cwd = process.cwd();
-  await mkdir(join(cwd, ".pi"));
-  await writeFile(
-    join(cwd, ".pi", "settings.json"),
-    JSON.stringify({ hashlineEdit: { forget: true } }),
-  );
-  await writeFile(join(cwd, "build.log"), "PACKAGE_LOG_CONTENT ".repeat(200));
   await writeFile(
     join(cwd, "check.mjs"),
     [
@@ -29,7 +23,7 @@ test("packed extension completes file, worker, command, and context operations",
   const factory = await loadInstalledExtension(process.argv[2]);
   const { session, model } = await openTestSession(t, {
     cwd,
-    tools: ["write", "read", "grep", "edit", "replace", "forget", "bash"],
+    tools: ["write", "read", "grep", "edit", "replace", "bash"],
     configure: (pi) => factory(pi),
   });
   const result = (id: string) => {
@@ -78,30 +72,11 @@ test("packed extension completes file, worker, command, and context operations",
         path: "fixture.txt",
         replacements: [{ find: "(edited)", replace: "$1 after", regex: true }],
       }),
-    () => call("log-read", "read", { path: "build.log" }),
-    () => {
-      const tag = result("log-read")
-        .content.map((block) =>
-          block.type === "text" ? decodeReport(block.text, "read")?.resultId : undefined,
-        )
-        .find((id) => id !== undefined);
-      assert.ok(tag);
-      return call("forget", "forget", { ids: [tag] });
-    },
   ];
   let next = 0;
-  session.agent.streamFunction = (_model, context) => {
+  session.agent.streamFunction = () => {
     const action = actions[next++];
     if (action) return responseStream(model, { content: [action()], stopReason: "toolUse" });
-    const forgotten = context.messages.find(
-      (message) => message.role === "toolResult" && message.toolCallId === "log-read",
-    );
-    assert.ok(forgotten?.role === "toolResult");
-    assert.equal(forgotten.content.length, 1);
-    assert.doesNotMatch(JSON.stringify(forgotten.content), /PACKAGE_LOG_CONTENT/);
-    const receipt = forgotten.content[0];
-    assert.ok(receipt.type === "text");
-    assert.equal(decodeReport(receipt.text, forgotten.toolName)?.contentForgotten, true);
     return responseStream(model, {
       content: [{ type: "text", text: "Done." }],
       stopReason: "stop",
@@ -110,7 +85,7 @@ test("packed extension completes file, worker, command, and context operations",
   await session.prompt("Complete the packaged tool workflow.");
   assert.equal(session.agent.state.errorMessage, undefined);
   assert.equal(next, actions.length + 1);
-  for (const id of ["write", "read", "grep", "edit", "replace", "forget"]) result(id);
+  for (const id of ["write", "read", "grep", "edit", "replace"]) result(id);
   const command = result("write")
     .content.map((block) =>
       block.type === "text" ? decodeReport(block.text, "write")?.then_run : undefined,
@@ -119,5 +94,4 @@ test("packed extension completes file, worker, command, and context operations",
   assert.equal(command?.status, "succeeded");
   assert.match(command?.output ?? "", /PACKAGE_COMMAND_OK/);
   assert.equal(await readFile(join(cwd, "fixture.txt"), "utf8"), "edited after\nkeep\n");
-  assert.equal(await readFile(join(cwd, "build.log"), "utf8"), "PACKAGE_LOG_CONTENT ".repeat(200));
 });

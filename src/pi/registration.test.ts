@@ -20,6 +20,7 @@ import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import type { ActionFusionProgress } from "./action-fusion.ts";
 import { reportOf } from "./report.ts";
 import { expectToolFailure } from "./report-failure.testing.ts";
+import { openTestSession } from "../testing/session.testing.ts";
 
 test("mutation cards use Fusion by default and explicit false removes command support", async () => {
   const dir = await mkdtemp(join(tmpdir(), "hashline-registration-"));
@@ -330,6 +331,34 @@ function anchorLine(block: string, line: number) {
   if (!m) throw new Error(`line ${line} anchor not found in block`);
   return `${line}#${m[1]}`;
 }
+
+test("removed forget setting remains in settings → load succeeds without registering forget", async (t) =>
+  withDir(async (dir) => {
+    await mkdir(join(dir, ".pi"));
+    await writeFile(
+      join(dir, ".pi", "settings.json"),
+      JSON.stringify({
+        hashlineEdit: { forget: true, hashLen: 6, actionFusion: false },
+      }),
+    );
+    assert.deepEqual(loadConfig(dir), { ...DEFAULT_CONFIG, hashLen: 6, actionFusion: false });
+    const { session } = await openTestSession(t, {
+      cwd: dir,
+      tools: ["read", "grep"],
+      configure(pi) {
+        const previousCwd = process.cwd();
+        try {
+          process.chdir(dir);
+          registerHashline(pi);
+        } finally {
+          process.chdir(previousCwd);
+        }
+      },
+    });
+    assert.ok(session.getToolDefinition("read"));
+    assert.ok(session.getToolDefinition("grep"));
+    assert.equal(session.getToolDefinition("forget"), undefined);
+  }));
 
 test("disabled config registers no tools — built-ins remain", async () => {
   await withDir(async (dir) => {

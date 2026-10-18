@@ -1,7 +1,5 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { openTestSession } from "../testing/session.testing.ts";
-import { registerForgetTool } from "./forget-tool.ts";
 import { makeEditOverride } from "./edit-tool.ts";
 import { makeReadOverride } from "./read-tool.ts";
 import { makeGrepOverride } from "./grep-tool.ts";
@@ -14,15 +12,7 @@ import { argumentError } from "./argument-error.testing.ts";
 
 const cwd = process.cwd();
 
-test("all six tools receive invalid arguments → return field diagnostics without an argument copy or execution", async (t) => {
-  const { session } = await openTestSession(t, {
-    tools: ["forget"],
-    configure(pi) {
-      registerForgetTool(pi);
-    },
-  });
-  const forget = session.getToolDefinition("forget");
-  assert.ok(forget);
+test("all tools receive invalid arguments → return field diagnostics without an argument copy or execution", async () => {
   const cases = [
     {
       tool: makeEditOverride(cwd, DEFAULT_CONFIG),
@@ -35,7 +25,6 @@ test("all six tools receive invalid arguments → return field diagnostics witho
       tool: makeReplaceTool(cwd, DEFAULT_CONFIG),
       args: { path: "unused", replacements: [{ find: "a", replace: "bad\0" }] },
     },
-    { tool: forget, args: { ids: [] } },
   ];
   for (const { tool, args } of cases) {
     let executed = false;

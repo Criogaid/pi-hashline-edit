@@ -32,7 +32,6 @@ test("defaults come from the settings schema", () => {
   assert.deepEqual(DEFAULT_CONFIG, {
     enabled: true,
     actionFusion: true,
-    forget: false,
     hashLen: 4,
     shiftRadius: 15,
     read: { defaultLimit: 500, maxKiB: undefined },
