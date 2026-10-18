@@ -41,7 +41,9 @@ export function serializePath(cwd: string, path: string): string {
   const absolute = resolve(cwd, path);
   const rel = relative(cwd, absolute);
   const local = rel && rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel);
-  const candidate = local ? (sep === "\\" ? rel.replaceAll(sep, "/") : rel) : absolute;
+  // Windows accepts "/" too: one separator keeps paths alike inside and outside the cwd.
+  const native = local ? rel : absolute;
+  const candidate = sep === "\\" ? native.replaceAll(sep, "/") : native;
   // A file URL preserves names whose spaces are normalized on input, and keeps headers single-line.
   if (!/[\r\n]/.test(candidate)) {
     if (canonicalPath(cwd, candidate) === absolute) return candidate;

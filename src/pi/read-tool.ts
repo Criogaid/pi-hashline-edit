@@ -25,7 +25,7 @@ import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { scanTextLines } from "./text-stream.ts";
 import { createAnchorFormatter, displayCarriageReturns, parseHashline } from "./anchor-format.ts";
-import { canonicalPath } from "./path.ts";
+import { canonicalPath, serializePath } from "./path.ts";
 import { renderToolError, reportLines, withoutReport } from "./render.ts";
 import { type ForgetReceiptDetails, readReceipt, withResultTag } from "./forget-tool.ts";
 import { POSITIVE_SAFE_INTEGER } from "./schema.ts";
@@ -290,7 +290,7 @@ export function makeReadOverride(
         // A caller's own limit is a chosen window: its header and rows already show where it
         // ends, so only a window the extension cut (default limit or byte budget) gets a report.
         const reportedPagination = params.limit === undefined || truncated ? pagination : undefined;
-        const header = `${formatReadHeader(params.path, stats.totalLines, start, stats.finalNewline)}\n`;
+        const header = `${formatReadHeader(serializePath(cwd, absPath), stats.totalLines, start, stats.finalNewline)}\n`;
         const limitText = formatKiB(maxBytes);
 
         return withResultTag(
