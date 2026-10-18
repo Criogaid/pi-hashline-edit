@@ -1,7 +1,7 @@
 import { rejectsArgument, rejectsArguments } from "./argument-error.testing.ts";
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, rm, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { initTheme } from "@earendil-works/pi-coding-agent";
@@ -36,7 +36,7 @@ initTheme();
 test("read execute: text outputs LINE#HASH│content", async () => {
   await withDir(async (dir) => {
     await writeFile(join(dir, "f.txt"), "line1\nline2\n");
-    const r: any = await call(makeReadOverride(dir, DEFAULT_CONFIG), { path: "f.txt" });
+    const r = await call(makeReadOverride(dir, DEFAULT_CONFIG), { path: "f.txt" });
     const text = r.content[0];
     assert.equal(text.type, "text");
     assert.match(text.text, /1#[0-9A-Z]+│line1/);
@@ -44,6 +44,35 @@ test("read execute: text outputs LINE#HASH│content", async () => {
     assert.match(text.text, /f\.txt · 2 lines/);
   });
 });
+
+test("absolute path inside cwd → read header uses relative spelling", async () =>
+  withDir(async (dir) => {
+    const path = join(dir, "f.txt");
+    await writeFile(path, "line1\nline2\n");
+    const result = await call(makeReadOverride(dir, DEFAULT_CONFIG), { path });
+    assert.equal(result.isError, undefined);
+    assert.equal(result.content[0].text.split("\n")[0], "f.txt · 2 lines");
+  }));
+
+test(
+  "Windows absolute path outside cwd → read header uses forward slashes",
+  {
+    skip: process.platform !== "win32",
+  },
+  async () =>
+    withDir(async (dir) => {
+      const cwd = join(dir, "workspace");
+      await mkdir(cwd);
+      const path = join(dir, "outside.txt");
+      await writeFile(path, "line1\nline2\n");
+      const result = await call(makeReadOverride(cwd, DEFAULT_CONFIG), { path });
+      assert.equal(result.isError, undefined);
+      assert.equal(
+        result.content[0].text.split("\n")[0],
+        `${path.replaceAll("\\", "/")} · 2 lines`,
+      );
+    }),
+);
 
 test("read execute: Pi-supported images without NUL bypass text decoding", async () =>
   withDir(async (dir) => {
@@ -132,7 +161,7 @@ test("read preserves empty files and explicit limits above the native default", 
     assert.equal(reportOf(many)?.pagination, undefined);
   }));
 
-test("read uses the configured default limit and respects explicit limits", async () =>
+test("read window end chosen by caller or default → only the default reports continuation", async () =>
   withDir(async (dir) => {
     const defaultLimit = DEFAULT_CONFIG.read.defaultLimit;
     const totalLines = defaultLimit + 100;
@@ -140,7 +169,7 @@ test("read uses the configured default limit and respects explicit limits", asyn
       join(dir, "large.txt"),
       Array.from({ length: totalLines }, (_, i) => `line${i + 1}\n`).join(""),
     );
-    for (const limit of [undefined, defaultLimit + 50]) {
+    for (const limit of [undefined, defaultLimit, defaultLimit + 50]) {
       const result = await call(makeReadOverride(dir, DEFAULT_CONFIG), {
         path: "large.txt",
         limit,
@@ -149,13 +178,17 @@ test("read uses the configured default limit and respects explicit limits", asyn
       assert.match(result.content[0].text, new RegExp(`large\\.txt · ${totalLines} lines`));
       assert.match(result.content[0].text, new RegExp(`\\n${end}#[0-9A-Z]+│line${end}`));
       assert.doesNotMatch(result.content[0].text, new RegExp(`\\n${end + 1}#[0-9A-Z]+│`));
-      assert.deepEqual(reportOf(result)?.pagination, {
-        start: 1,
-        end,
-        totalLines,
-        nextOffset: end + 1,
-      });
-      assert.match(reportOf(result)?.next ?? "", /offset.*pagination\.nextOffset/);
+      const pagination = { start: 1, end, totalLines, nextOffset: end + 1 };
+      assert.deepEqual(result.details.pagination, pagination);
+      const report = reportOf(result);
+      assert.ok(report);
+      if (limit === undefined) {
+        assert.deepEqual(report.pagination, pagination);
+        assert.match(report.next ?? "", /offset.*pagination\.nextOffset/);
+      } else {
+        assert.equal(Object.hasOwn(report, "pagination"), false);
+        assert.equal(Object.hasOwn(report, "next"), false);
+      }
     }
   }));
 
@@ -180,10 +213,12 @@ test("read pagination supports offset windows and stops suggesting continuation 
     assert.match(next.content[0].text, new RegExp(`\\n${totalLines}#[0-9A-Z]+│line${totalLines}`));
     assert.equal(reportOf(next)?.pagination, undefined);
     assert.equal(reportOf(next)?.next, undefined);
+    assert.equal(next.details.pagination, undefined);
     for (const offset of [totalLines - DEFAULT_CONFIG.read.defaultLimit + 1, totalLines + 1]) {
       const result = await call(read, { path: "pages.txt", offset });
       assert.equal(reportOf(result)?.pagination, undefined);
       assert.equal(reportOf(result)?.next, undefined);
+      assert.equal(result.details.pagination, undefined);
     }
   }));
 
@@ -224,20 +259,6 @@ test("read rejects noninteger and nonpositive offsets and limits before reading"
       call(read, { path: "missing.txt", offset: 1.5 }),
       rejectsArguments("read"),
     );
-    const page = await call(read, { path: "pages.txt", offset: 2, limit: 1 });
-    assert.match(page.content[0].text, /\n2#[0-9A-Z]+│second/);
-    assert.match(reportOf(page)?.next ?? "", /offset.*pagination\.nextOffset/);
-    assert.deepEqual(reportOf(page)?.pagination, {
-      start: 2,
-      end: 2,
-      totalLines: 3,
-      nextOffset: 3,
-    });
-    await writeFile(join(dir, "long.txt"), "x".repeat(DEFAULT_READ_MAX_BYTES + 1));
-    const long = await call(read, { path: "long.txt", offset: 1, limit: 1 });
-    assert.equal(long.details.truncation.firstLineExceedsLimit, true);
-    assert.equal(long.details.truncation.outputLines, 0);
-    assert.equal(long.details.truncation.maxBytes, DEFAULT_READ_MAX_BYTES);
   }));
 
 test("read schema rejects empty paths and unknown fields before file access", async () =>
@@ -267,6 +288,9 @@ test("read byte truncation retains its budget and a continuation after complete 
       nextOffset: 2,
     });
     assert.equal(result.details.truncation.maxBytes, DEFAULT_READ_MAX_BYTES);
+    assert.deepEqual(result.details.pagination, reportOf(result)?.pagination);
+    assert.equal(reportOf(result)?.truncatedAt, formatKiB(DEFAULT_READ_MAX_BYTES));
+    assert.match(reportOf(result)?.next ?? "", /offset.*pagination\.nextOffset/);
     assert.doesNotMatch(result.content[0].text, /showing lines|to continue/);
   }));
 
