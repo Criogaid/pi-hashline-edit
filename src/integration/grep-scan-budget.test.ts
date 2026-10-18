@@ -10,6 +10,7 @@ import { MAX_UNNARROWED_SCAN_BYTES } from "../pi/grep-candidates.ts";
 import { makeGrepOverrideWithBackend } from "../pi/grep-tool.ts";
 import { OUTCOME_NEXT } from "../pi/report-schema.ts";
 import { reportOf } from "../pi/report.ts";
+import { grepCounts } from "../pi/grep-output.testing.ts";
 import { callTool } from "../pi/tool-call.testing.ts";
 
 test("all-file candidates exceed the scan budget → stop listing and retain scan facts with or without matches", async (t) => {
@@ -78,7 +79,7 @@ test("all-file candidates exceed the scan budget → stop listing and retain sca
         assert.match(report.diagnostics ?? "", /listing interrupted/);
       } else {
         assert.equal(result.isError, undefined);
-        assert.equal(report.matches, scenario.matches);
+        assert.equal(grepCounts(result).matches, scenario.matches);
         assert.equal(report.diagnostics, undefined);
         assert.equal(result.details.incomplete, true);
         assert.equal(report.next, scanLimitNext);

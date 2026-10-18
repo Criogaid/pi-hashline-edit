@@ -7,6 +7,7 @@ import { rejectsArgument } from "../pi/argument-error.testing.ts";
 import { DEFAULT_CONFIG } from "../pi/config.ts";
 import { makeGrepOverrideWithBackend } from "../pi/grep-tool.ts";
 import { reportOf } from "../pi/report.ts";
+import { grepCounts } from "../pi/grep-output.testing.ts";
 import { callTool } from "../pi/tool-call.testing.ts";
 import { unsupportedByHost } from "../testing/regex-host.testing.ts";
 
@@ -236,7 +237,7 @@ test("regex and case modes across line endings → real grep agrees with native 
               Number(match[1]),
             );
             assert.deepEqual(actual, expected);
-            assert.equal(reportOf(result)?.matches, expected.length);
+            assert.equal(grepCounts(result).matches, expected.length);
           },
         );
       }
@@ -259,7 +260,7 @@ test("malformed UTF-8 → character classes match replacement characters in the 
   ]) {
     const result = await callTool(tool, { path, pattern, literal: false, ignoreCase: false });
     assert.equal(result.isError, undefined);
-    assert.equal(reportOf(result)?.matches, 2);
+    assert.equal(grepCounts(result).matches, 2);
     const body = result.content[0];
     assert.ok(body.type === "text");
     assert.match(body.text, /2│axb/);
@@ -282,7 +283,7 @@ test("backreference regression: a capture spanning mixed line endings → matche
       ignoreCase: false,
     });
     assert.equal(result.isError, undefined, JSON.stringify(reportOf(result)));
-    assert.equal(reportOf(result)?.matches, 2);
+    assert.equal(grepCounts(result).matches, 2);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
@@ -301,7 +302,7 @@ test("backreference regression: ignoreCase with an ASCII capture → does not ma
       ignoreCase: true,
     });
     assert.equal(result.isError, undefined, JSON.stringify(result));
-    assert.equal(reportOf(result)?.matches, 0);
+    assert.equal(grepCounts(result).matches, 0);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
@@ -339,7 +340,7 @@ test("zero-maximum quantifiers → real grep matches the active capture", async 
           ignoreCase,
         });
         assert.equal(result.isError, undefined, JSON.stringify(result));
-        assert.equal(reportOf(result)?.matches, 1);
+        assert.equal(grepCounts(result).matches, 1);
       } finally {
         await rm(dir, { recursive: true, force: true });
       }
@@ -369,7 +370,7 @@ test("JS syntax boundary rejects rg-only syntax and executes constructs requirin
       const result = await callTool(tool, { path, pattern, literal: false, ignoreCase: false });
       assert.equal(result.isError, undefined, JSON.stringify(reportOf(result)));
       assert.equal(
-        reportOf(result)?.matches,
+        grepCounts(result).matches,
         jsLines("😀\naba\nab\n", [pattern], false, false).length,
       );
     });
@@ -404,7 +405,7 @@ test("zero-width assertions at LF and CRLF boundaries → match only empty physi
       assert.ok(body.type === "text");
       const lines = [...body.text.matchAll(/^(\d+)#[0-9A-Z]+│/gm)].map((match) => Number(match[1]));
       assert.deepEqual(lines, [4, 6]);
-      assert.equal(reportOf(result)?.matches, 2);
+      assert.equal(grepCounts(result).matches, 2);
     });
   }
 });

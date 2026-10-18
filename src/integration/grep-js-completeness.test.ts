@@ -7,6 +7,7 @@ import { DEFAULT_CONFIG } from "../pi/config.ts";
 import { MAX_MULTILINE_SEARCH_BYTES } from "../pi/grep-search.ts";
 import { makeGrepOverrideWithBackend } from "../pi/grep-tool.ts";
 import { reportOf } from "../pi/report.ts";
+import { grepCounts } from "../pi/grep-output.testing.ts";
 import { COMMON_RG_ARGS, runRgLines, runRgPaths } from "../pi/rg-process.ts";
 import { searchText } from "../core/search.ts";
 import { callTool } from "../pi/tool-call.testing.ts";
@@ -35,7 +36,7 @@ test("JS grep: rg discovery retains ignore, hidden, glob, and binary rules", asy
     outputMode: "files",
   });
   assert.equal(result.isError, undefined, JSON.stringify(reportOf(result)));
-  assert.equal(reportOf(result)?.files, 3);
+  assert.equal(grepCounts(result).files, 3);
   const body = result.content[0];
   assert.ok(body.type === "text");
   for (const name of ["allowed.txt", ".hidden.txt", "child.txt"])
@@ -46,7 +47,7 @@ test("JS grep: rg discovery retains ignore, hidden, glob, and binary rules", asy
     path: join(directory, "ignored.txt"),
     glob: "*.txt",
   });
-  assert.equal(reportOf(explicit)?.matches, 1);
+  assert.equal(grepCounts(explicit).matches, 1);
 });
 
 test("JS grep: physical rows, context, and limits agree across output modes", async (t) => {
@@ -58,8 +59,8 @@ test("JS grep: physical rows, context, and limits agree across output modes", as
   for (const outputMode of ["content", "files", "count"] as const) {
     const result = await callTool(tool, { ...query, path, outputMode, limit: 1, context: 1 });
     assert.equal(result.isError, undefined, JSON.stringify(reportOf(result)));
-    assert.equal(reportOf(result)?.matches, 1);
-    assert.equal(reportOf(result)?.files, 1);
+    assert.equal(grepCounts(result).matches, 1);
+    assert.equal(grepCounts(result).files, 1);
     assert.equal(reportOf(result)?.matchLimit, 1);
     const body = result.content[0];
     assert.ok(body.type === "text");
@@ -81,7 +82,7 @@ test("JS grep: malformed UTF-8 matches the preview text without editable anchors
   const tool = makeGrepOverrideWithBackend(directory, DEFAULT_CONFIG, {});
   const result = await callTool(tool, { path, pattern: "a.b", literal: false });
   assert.equal(result.isError, undefined, JSON.stringify(reportOf(result)));
-  assert.equal(reportOf(result)?.matches, 1);
+  assert.equal(grepCounts(result).matches, 1);
   assert.equal(reportOf(result)?.invalidUtf8?.length, 1);
   const body = result.content[0];
   assert.ok(body.type === "text");
@@ -108,7 +109,7 @@ test("oversized line or multiline input → explicit incomplete-search diagnosti
       assert.match(reportOf(result)?.diagnostics ?? "", /large\.txt/);
       if (includeGood) {
         assert.equal(result.isError, undefined);
-        assert.equal(reportOf(result)?.matches, 1);
+        assert.equal(grepCounts(result).matches, 1);
         assert.equal(result.details?.incomplete, true);
       } else {
         assert.equal(result.isError, true);
@@ -179,8 +180,8 @@ test("real rg candidates → include every JS row and preserve confirmed output 
         const expected = await callTool(full, params);
         assert.equal(actual.isError, undefined, JSON.stringify(reportOf(actual)));
         assert.equal(expected.isError, undefined, JSON.stringify(reportOf(expected)));
-        assert.equal(reportOf(actual)?.matches, matches);
-        assert.equal(reportOf(expected)?.matches, matches);
+        assert.equal(grepCounts(actual).matches, matches);
+        assert.equal(grepCounts(expected).matches, matches);
         const actualText = actual.content[0];
         const expectedText = expected.content[0];
         assert.ok(actualText.type === "text" && expectedText.type === "text");

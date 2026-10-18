@@ -6,6 +6,8 @@ import { test } from "node:test";
 import { DEFAULT_OUTPUT_BUDGETS, FORGET_MIN_BYTES } from "./budgets.ts";
 import { withResultTag } from "./forget-tool.ts";
 import { reportOf } from "./report.ts";
+import { DEFAULT_CONFIG } from "./config.ts";
+import { makeGrepOverrideWithBackend } from "./grep-tool.ts";
 import {
   assertForgotten,
   finish,
@@ -166,6 +168,55 @@ for (const mode of ["pagination", "byte truncation"] as const) {
     assert.ok(mode === "pagination" ? "pagination" in details : "truncation" in details);
   });
 }
+
+test("single grep block omits report totals → forget receipt retains both counts", {
+  timeout: SESSION_TIMEOUT_MS,
+}, async (t) => {
+  const f = await openForgetSession(t, (pi, cwd) => {
+    pi.registerTool(
+      makeGrepOverrideWithBackend(
+        cwd,
+        { ...DEFAULT_CONFIG, forget: true },
+        {
+          runRgLines: async (_rg, _args, _signal, _maxLines, onFile) => {
+            await onFile(join(cwd, "search.log"), undefined);
+            return { code: 0, stderr: "", stopped: false };
+          },
+        },
+      ),
+    );
+  });
+  const rowPayloadChars = 256;
+  const rowCount = Math.ceil(FORGET_MIN_BYTES / rowPayloadChars) + 1;
+  await writeFile(
+    join(f.cwd, "search.log"),
+    `needle ${"x".repeat(rowPayloadChars)}\n`.repeat(rowCount),
+  );
+  await f.prompt(
+    toolResponse({
+      type: "toolCall",
+      id: "search",
+      name: "grep",
+      arguments: { path: "search.log", pattern: "needle", literal: true },
+    }),
+    (messages) => toolResponse(forgetCall(messages, "search")),
+    finish,
+  );
+  const original = f.rawResult("search");
+  const report = reportOf(original);
+  assert.ok(report);
+  assert.equal(Object.hasOwn(report, "matches"), false);
+  assert.equal(Object.hasOwn(report, "files"), false);
+  const receipt = `grep /needle/ · ${rowCount} matches in 1 file`;
+  assert.partialDeepStrictEqual(original.details, { forgetReceipt: receipt });
+  const id = taggedResultId(toolResult(f.requests[1], "search"));
+  assert.ok(id);
+  assert.partialDeepStrictEqual(f.rawResult("forget-call").details, {
+    forgotten: [{ id, receipt }],
+  });
+  assert.ok(f.renderForgetCard().includes(receipt));
+  assertForgotten(toolResult(f.requests[2], "search"), id);
+});
 
 test("forget with a note → calls, saved facts, source bytes and raw session remain", {
   timeout: SESSION_TIMEOUT_MS,

@@ -23,6 +23,7 @@ import { DEFAULT_CONFIG } from "./config.ts";
 import { DEFAULT_OUTPUT_BUDGETS, FORGET_MIN_BYTES } from "./budgets.ts";
 import { taggedResultId } from "./forget.testing.ts";
 import { reportOf } from "./report.ts";
+import { grepCounts } from "./grep-output.testing.ts";
 import { expectToolFailure } from "./report-failure.testing.ts";
 import { RegExpParser } from "@eslint-community/regexpp";
 import { COMMON_RG_ARGS, LINE_LISTING_ARGS, type GrepBackend } from "./rg-process.ts";
@@ -273,6 +274,73 @@ test("matched files → full-line hash anchors", async () => {
   });
 });
 
+test("grep payload blocks → only a single complete content or count block omits report totals", async () =>
+  withDir(async (dir) => {
+    const paths = [join(dir, "a.txt"), join(dir, "b.txt")];
+    await Promise.all(paths.map((path) => writeFile(path, "needle\nneedle\n")));
+    const truncatedBytes = Buffer.byteLength("a.txt · 2 matches\n");
+    for (const [outputMode, fileCount, truncated, reported] of [
+      ["content", 1, false, false],
+      ["count", 1, false, false],
+      ["content", 2, false, true],
+      ["count", 2, false, true],
+      ["files", 1, false, true],
+      ["content", 1, true, true],
+      ["content", 0, false, true],
+      ["count", 0, false, true],
+      ["files", 0, false, true],
+    ] as const) {
+      const { backend } = fakeBackend({ paths: paths.slice(0, fileCount) });
+      const budget = {
+        ...DEFAULT_OUTPUT_BUDGETS,
+        grepBytes: truncated ? truncatedBytes : DEFAULT_OUTPUT_BUDGETS.grepBytes,
+      };
+      const result = await callTool(
+        makeGrepOverrideWithBackend(dir, DEFAULT_CONFIG, backend, () => budget),
+        {
+          path: dir,
+          pattern: "needle",
+          literal: true,
+          outputMode,
+        },
+      );
+      assert.equal(result.isError, undefined);
+      const report = reportOf(result);
+      assert.ok(report);
+      const context = JSON.stringify({ outputMode, fileCount, truncated });
+      assert.equal(Object.hasOwn(report, "matches"), reported, context);
+      assert.equal(Object.hasOwn(report, "files"), reported, context);
+      if (reported) {
+        assert.equal(report.matches, fileCount * 2, context);
+        assert.equal(report.files, fileCount, context);
+      }
+      assert.equal(report.outputLimit !== undefined, truncated, context);
+      assert.deepEqual(grepCounts(result), { matches: fileCount * 2, files: fileCount }, context);
+    }
+  }));
+
+test(
+  "Windows absolute path outside cwd → grep header uses forward slashes",
+  {
+    skip: process.platform !== "win32",
+  },
+  async () =>
+    withDir(async (dir) => {
+      const cwd = join(dir, "workspace");
+      await mkdir(cwd);
+      const path = join(dir, "outside.txt");
+      await writeFile(path, "needle\n");
+      const { backend } = fakeBackend({ paths: [path] });
+      const result = await callTool(makeGrepOverrideWithBackend(cwd, DEFAULT_CONFIG, backend), {
+        path,
+        pattern: "needle",
+        literal: true,
+      });
+      assert.equal(result.isError, undefined);
+      assert.equal(text(result).split("\n")[0], `${path.replaceAll("\\", "/")} · 1 match`);
+    }),
+);
+
 test("file changes after matching → summary modes retain the snapshot and content omits changed files", async (t) => {
   await withDir(async (dir) => {
     const file = join(dir, "grep.txt");
@@ -325,8 +393,7 @@ test("file changes after matching → summary modes retain the snapshot and cont
               assert.equal(changed, true);
               if (outputMode !== "content") {
                 assert.equal(result.isError, undefined);
-                assert.equal(reportOf(result)?.matches, 1);
-                assert.equal(reportOf(result)?.files, 1);
+                assert.deepEqual(grepCounts(result), { matches: 1, files: 1 });
                 assert.equal(reportOf(result)?.diagnostics, undefined);
                 assert.equal(result.details.incomplete, undefined);
                 assert.match(text(result), /grep\.txt/);
@@ -335,8 +402,7 @@ test("file changes after matching → summary modes retain the snapshot and cont
                 assert.match(reportOf(result)?.diagnostics ?? "", /File changed during search\./);
                 if (keepOtherFile) {
                   assert.equal(result.isError, undefined);
-                  assert.equal(reportOf(result)?.matches, 1);
-                  assert.equal(reportOf(result)?.files, 1);
+                  assert.deepEqual(grepCounts(result), { matches: 1, files: 1 });
                   assert.equal(result.details.incomplete, true);
                   assert.match(text(result), /unchanged\.txt · 1 match/);
                   assert.doesNotMatch(text(result), /grep\.txt ·/);
@@ -385,8 +451,7 @@ test("excluded changed file → contributes no preview limit or recovery to comp
     });
     const report = reportOf(result);
     assert.equal(result.isError, undefined);
-    assert.equal(report?.matches, 1);
-    assert.equal(report?.files, 1);
+    assert.deepEqual(grepCounts(result), { matches: 1, files: 1 });
     assert.match(report?.diagnostics ?? "", /changed\.txt: File changed during search\./);
     assert.match(text(result), /^stable\.txt · 1 match\n/);
     assert.deepEqual(
@@ -421,7 +486,7 @@ test("candidate selection → reports only whole-file candidate facts", async ()
         },
       );
       assert.equal(result.isError, undefined);
-      assert.equal(reportOf(result)?.matches, 1);
+      assert.equal(grepCounts(result).matches, 1);
       assert.equal(reportOf(result)?.candidates, candidates);
       assert.equal(reportOf(result)?.scanLimit, undefined);
       assert.equal(fake.calls[0].kind, multiline ? "paths" : "lines");
@@ -521,8 +586,7 @@ test("scope filters and output modes → confirmed files and counts are preserve
       outputMode: "count",
     });
     assert.deepEqual(text(count).split("\n").sort(), ["a.ts: 1", "b.ts: 1"]);
-    assert.equal(reportOf(count)?.matches, 2);
-    assert.equal(reportOf(count)?.files, 2);
+    assert.deepEqual(grepCounts(count), { matches: 2, files: 2 });
   });
 });
 
@@ -963,7 +1027,7 @@ for (const admitted of [2, 1, 0]) {
       }
       if (admitted > 0) {
         assert.equal(result.isError, undefined);
-        assert.equal(reportOf(result)?.matches, admitted);
+        assert.equal(grepCounts(result).matches, admitted);
       } else {
         assert.equal(result.isError, true);
         assert.equal(reportOf(result)?.error, "SEARCH_INCOMPLETE");
@@ -1118,7 +1182,7 @@ test("catastrophic worker evaluation → timeout and cancellation fail the searc
     }
     const recovered = await callTool(tool, { ...params, pattern: "a." });
     assert.equal(recovered.isError, undefined);
-    assert.equal(reportOf(recovered)?.matches, 1);
+    assert.equal(grepCounts(recovered).matches, 1);
   });
 });
 
@@ -1141,7 +1205,7 @@ test("non-multiline or multiline query → use line candidates or the file prefi
         makeGrepOverrideWithBackend(dir, DEFAULT_CONFIG, fake.backend),
         params,
       );
-      assert.equal(reportOf(result)?.matches, 2);
+      assert.equal(grepCounts(result).matches, 2);
       assert.equal(fake.calls.length, 1);
       assert.equal(fake.calls[0].kind, multiline ? "paths" : "lines");
       const query = { patterns: params.pattern, literal: true, flags: "", multiline };
@@ -1195,8 +1259,8 @@ test("line discovery status and emitted files → fallback only for code 2 befor
         fake.calls.map(({ kind }) => kind),
         kinds,
       );
-      assert.equal(reportOf(result)?.matches ?? 0, paths.length);
       if (code === 2 && paths.length === 0) assert.equal(result.isError, true);
+      else assert.equal(grepCounts(result).matches, paths.length);
     }
   }));
 
@@ -1215,7 +1279,7 @@ test("sparse, dense, or overflowed candidate lines → matching preserves origin
           context: 0,
         },
       );
-      assert.equal(reportOf(result)?.matches, 2);
+      assert.equal(grepCounts(result).matches, 2);
       assert.match(text(result), /2#[0-9A-Z]+│needle/);
       assert.match(text(result), /5#[0-9A-Z]+│needle␍/);
     }
@@ -1226,7 +1290,7 @@ test("sparse, dense, or overflowed candidate lines → matching preserves origin
       literal: false,
       flags: "",
     });
-    assert.equal(reportOf(result)?.matches, 1);
+    assert.equal(grepCounts(result).matches, 1);
     assert.match(text(result), /5#[0-9A-Z]+│needle␍/);
   }));
 
@@ -1244,7 +1308,7 @@ test("native-valid pattern exceeds parser limits → use the all-file prefilter"
       literal: false,
       ignoreCase: false,
     });
-    assert.equal(reportOf(result)?.matches, 1);
+    assert.equal(grepCounts(result).matches, 1);
     assert.deepEqual(
       fake.calls.map(({ kind }) => kind),
       ["paths"],
@@ -1274,7 +1338,7 @@ test("rg rejects line patterns before listing files → successful file fallback
       { path: dir, pattern: "needle", literal: true },
     );
     assert.equal(result.isError, undefined);
-    assert.equal(reportOf(result)?.matches, 1);
+    assert.equal(grepCounts(result).matches, 1);
     assert.equal(reportOf(result)?.diagnostics, undefined);
     assert.deepEqual(
       [...lines.calls, ...paths.calls].map(({ kind }) => kind),

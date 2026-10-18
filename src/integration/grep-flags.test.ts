@@ -6,6 +6,7 @@ import { test } from "node:test";
 import { DEFAULT_CONFIG } from "../pi/config.ts";
 import { makeGrepOverrideWithBackend } from "../pi/grep-tool.ts";
 import { reportOf } from "../pi/report.ts";
+import { grepCounts } from "../pi/grep-output.testing.ts";
 import { callTool } from "../pi/tool-call.testing.ts";
 import { rejectsArgument } from "../pi/argument-error.testing.ts";
 
@@ -229,7 +230,7 @@ test("grep flags: JavaScript modes preserve native matching through the real sea
         ...(scenario.ignoreCase === undefined ? {} : { ignoreCase: scenario.ignoreCase }),
       });
       assert.equal(result.isError, undefined, JSON.stringify(reportOf(result)));
-      assert.equal(reportOf(result)?.matches, scenario.lines.length);
+      assert.equal(grepCounts(result).matches, scenario.lines.length);
       const body = result.content[0];
       assert.ok(body.type === "text");
       const lines = [...body.text.matchAll(/^(\d+)#[0-9A-Z]+│/gm)].map((match) => Number(match[1]));
@@ -275,6 +276,6 @@ test("grep flags: valid V8 patterns exceeding translator parser depth still exec
       ...(flags === undefined ? {} : { flags }),
     });
     assert.equal(result.isError, undefined, JSON.stringify(reportOf(result)));
-    assert.equal(reportOf(result)?.matches, 1);
+    assert.equal(grepCounts(result).matches, 1);
   }
 });

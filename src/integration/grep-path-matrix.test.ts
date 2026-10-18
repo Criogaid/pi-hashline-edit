@@ -7,6 +7,7 @@ import { DEFAULT_GREP_FLAGS, searchText } from "../core/search.ts";
 import { DEFAULT_CONFIG } from "../pi/config.ts";
 import { makeGrepOverrideWithBackend } from "../pi/grep-tool.ts";
 import { reportOf } from "../pi/report.ts";
+import { grepCounts } from "../pi/grep-output.testing.ts";
 import { runRgLines, runRgPaths } from "../pi/rg-process.ts";
 import { callTool } from "../pi/tool-call.testing.ts";
 import { acceptsNative } from "../core/search-matrix.testing.ts";
@@ -86,11 +87,11 @@ test("Cartesian literal mode × flags × case override × line mode × bytes →
               `${context}: ${JSON.stringify(reportOf(actual))}`,
             );
             assert.equal(
-              reportOf(actual)?.matches,
+              grepCounts(actual).matches,
               expected.reduce((sum, input) => sum + input.rows.length, 0),
               context,
             );
-            assert.equal(reportOf(actual)?.files, expected.length, context);
+            assert.equal(grepCounts(actual).files, expected.length, context);
             for (const input of expected) {
               nativeMatchingFiles++;
               assert.ok(candidates.has(input.name), `${context}: rg dropped ${input.name}`);

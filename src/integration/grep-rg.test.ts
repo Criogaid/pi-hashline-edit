@@ -33,6 +33,7 @@ import { callTool } from "../pi/tool-call.testing.ts";
 import { DEFAULT_CONFIG } from "../pi/config.ts";
 import { canonicalPath } from "../pi/path.ts";
 import { reportOf } from "../pi/report.ts";
+import { grepCounts } from "../pi/grep-output.testing.ts";
 import { expectToolFailure } from "../pi/report-failure.testing.ts";
 import { hostCompiles, unsupportedByHost } from "../testing/regex-host.testing.ts";
 
@@ -80,8 +81,8 @@ test("real rg finds whitespace-only literal queries and OR alternatives", async 
         undefined,
         undefined,
       );
-      assert.equal(reportOf(result)?.matches, expected);
-      assert.equal(reportOf(result)?.files, 1);
+      assert.equal(grepCounts(result).matches, expected);
+      assert.equal(grepCounts(result).files, 1);
     }
     const lineBreaks = await invoke(
       tool,
@@ -90,8 +91,8 @@ test("real rg finds whitespace-only literal queries and OR alternatives", async 
       undefined,
       undefined,
     );
-    assert.equal(reportOf(lineBreaks)?.matches, 3);
-    assert.equal(reportOf(lineBreaks)?.files, 1);
+    assert.equal(grepCounts(lineBreaks).matches, 3);
+    assert.equal(grepCounts(lineBreaks).files, 1);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
@@ -207,7 +208,7 @@ test("owned rg processes ignore RIPGREP_CONFIG_PATH", async () => {
     assert.doesNotMatch(result.content[0].text, /│bar/);
     const lineOnly = await invoke(tool, "0", { pattern: "foo\\nbar", literal: false });
     assert.equal(lineOnly.isError, undefined);
-    assert.equal(reportOf(lineOnly)?.matches, 0);
+    assert.equal(grepCounts(lineOnly).matches, 0);
     const multiline = await invoke(
       tool,
       "0",
@@ -249,7 +250,7 @@ test("real rg requires an explicit mode and separates exact text from regex", as
       assert.ok(result.content[0].text.includes(`│${pattern}`));
     }
     const missing = await invoke(tool, "no-match", { pattern: "missing(", literal: true });
-    assert.equal(reportOf(missing)?.matches, 0);
+    assert.equal(grepCounts(missing).matches, 0);
     assert.equal(missing.isError, undefined);
     await assert.rejects(
       invoke(tool, "invalid-regex", { pattern: "queueTool(", literal: false }),
@@ -356,7 +357,7 @@ test("directory searches respect ignores but explicit files and hidden files rem
       undefined,
       undefined,
     );
-    assert.equal(reportOf(normal)?.matches, 0);
+    assert.equal(grepCounts(normal).matches, 0);
     const explicit = await invoke(
       tool,
       "0",
@@ -372,7 +373,7 @@ test("directory searches respect ignores but explicit files and hidden files rem
       undefined,
       undefined,
     );
-    assert.equal(reportOf(excluded)?.matches, 0);
+    assert.equal(grepCounts(excluded).matches, 0);
     await writeFile(join(directory, ".hidden.txt"), "needle\n");
     const hidden = await invoke(
       tool,
@@ -411,7 +412,7 @@ test("directory traversal with caller globs → excludes .git while an explicit 
           outputMode: "files",
         });
         assert.equal(result.isError, undefined, JSON.stringify(reportOf(result)));
-        assert.equal(reportOf(result)?.matches, 1);
+        assert.equal(grepCounts(result).matches, 1);
         assert.equal(result.content[0].text.replace(/\\/g, "/"), expected);
       }
     }
@@ -443,8 +444,8 @@ test("explicit file with different case and a glob → admits the same file on a
     pattern: "needle",
   });
   assert.equal(result.isError, undefined, JSON.stringify(reportOf(result)));
-  assert.equal(reportOf(result)?.matches, 1);
-  assert.equal(reportOf(result)?.files, 1);
+  assert.equal(grepCounts(result).matches, 1);
+  assert.equal(grepCounts(result).files, 1);
   assert.match(result.content[0].text, /1#[0-9A-Z]+│needle/);
   assert.equal(reportOf(result)?.diagnostics, undefined);
   assert.equal(result.details.incomplete, undefined);
@@ -489,7 +490,7 @@ test("explicit file with a dangling sibling link and a glob → returns complete
   });
   assert.match(listingDiagnostics, /broken\.txt/);
   assert.equal(result.isError, undefined, JSON.stringify(reportOf(result)));
-  assert.equal(reportOf(result)?.matches, 1);
+  assert.equal(grepCounts(result).matches, 1);
   assert.equal(reportOf(result)?.diagnostics, undefined);
   assert.equal(result.details.incomplete, undefined);
 });
@@ -526,7 +527,7 @@ test("explicit file paths obey ordered glob filters without inheriting ignore ru
       undefined,
       undefined,
     );
-    assert.equal(reportOf(none)?.matches, 0);
+    assert.equal(grepCounts(none).matches, 0);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
@@ -559,7 +560,7 @@ test("directory traversal skips symlinks but explicitly named linked files remai
       undefined,
       undefined,
     );
-    assert.equal(reportOf(hidden)?.matches, 0);
+    assert.equal(grepCounts(hidden).matches, 0);
     const found: any = await invoke(
       grep,
       "0",
@@ -596,7 +597,7 @@ test("unbounded lookbehind → native JS matches after rg discovery", async (t) 
   const tool = makeGrepOverrideWithBackend(directory, DEFAULT_CONFIG, {});
   const result = await invoke(tool, "0", { pattern: "(?<=a+)b", literal: false });
   assert.equal(result.isError, undefined, JSON.stringify(reportOf(result)));
-  assert.equal(reportOf(result)?.matches, 1);
+  assert.equal(grepCounts(result).matches, 1);
 });
 
 test("line-based grep uses context for display but never matches across CRLF", async () => {
@@ -621,7 +622,7 @@ test("line-based grep uses context for display but never matches across CRLF", a
     ] as const) {
       const result = await invoke(tool, "0", { pattern, literal });
       assert.equal(result.isError, undefined);
-      assert.equal(reportOf(result)?.matches, 0);
+      assert.equal(grepCounts(result).matches, 0);
     }
     const limited = await invoke(
       tool,
@@ -684,8 +685,8 @@ test("multiline grep anchors CRLF spans and counts overlapping physical lines on
       undefined,
     );
     assert.match(bounded.content[0].text, /fixture\.txt: 2/);
-    assert.equal(reportOf(bounded)?.matches, 2);
-    assert.equal(reportOf(bounded)?.files, 1);
+    assert.equal(grepCounts(bounded).matches, 2);
+    assert.equal(grepCounts(bounded).files, 1);
     assert.equal(reportOf(bounded)?.matchLimit, 2);
     const files = await invoke(
       tool,
@@ -803,7 +804,7 @@ test("multiline zero-width EOF stays on the last existing physical line", {
         undefined,
       );
       if (content.endsWith("\n")) {
-        assert.equal(reportOf(result)?.matches, 0);
+        assert.equal(grepCounts(result).matches, 0);
       } else {
         assert.match(result.content[0].text, /fixture\.txt · 1 match/);
         assert.match(result.content[0].text, /1#[0-9A-Z]+│last line/);
@@ -839,8 +840,8 @@ test("files and count modes aggregate only matching lines inside the limit", asy
       undefined,
       undefined,
     );
-    assert.equal(reportOf(limited)?.matches, 1);
-    assert.equal(reportOf(limited)?.files, 1);
+    assert.equal(grepCounts(limited).matches, 1);
+    assert.equal(grepCounts(limited).files, 1);
     const complete = await invoke(
       tool,
       "count-all",
@@ -848,8 +849,8 @@ test("files and count modes aggregate only matching lines inside the limit", asy
       undefined,
       undefined,
     );
-    assert.equal(reportOf(complete)?.matches, 3);
-    assert.equal(reportOf(complete)?.files, 2);
+    assert.equal(grepCounts(complete).matches, 3);
+    assert.equal(grepCounts(complete).files, 2);
     const contextual = await invoke(
       tool,
       "content",
@@ -881,8 +882,8 @@ test("real rg accepts wildcard-only regexes and preserves limits and literal mod
         undefined,
         undefined,
       );
-      assert.equal(reportOf(result)?.matches, expected);
-      assert.equal(reportOf(result)?.files, 1);
+      assert.equal(grepCounts(result).matches, expected);
+      assert.equal(grepCounts(result).files, 1);
     }
     const limited: any = await invoke(
       tool,
@@ -1224,7 +1225,7 @@ test("NUL files are silently skipped across search scopes and output modes", asy
           undefined,
           undefined,
         );
-        assert.equal(reportOf(skipped)?.matches, 0);
+        assert.equal(grepCounts(skipped).matches, 0);
         assert.equal(reportOf(skipped)?.diagnostics, undefined);
         const result = await invoke(
           grep,
@@ -1299,7 +1300,7 @@ test("invalid UTF-8 matches use plain previews while valid files retain edit anc
       undefined,
     );
     // The explicit class excludes the replacement character in the lossy view.
-    assert.equal(reportOf(multiline)?.matches, 0);
+    assert.equal(grepCounts(multiline).matches, 0);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
@@ -1382,8 +1383,8 @@ test("literal LF and CRLF queries match original valid and invalid UTF-8 files a
           assert.match(result.content[0].text, /1│alpha\n2│beta/);
           assert.match(result.content[0].text, /1#[0-9A-Z]+│alpha\n2#[0-9A-Z]+│beta/);
         } else if (outputMode === "count") {
-          assert.equal(reportOf(result)?.matches, 4);
-          assert.equal(reportOf(result)?.files, 2);
+          assert.equal(grepCounts(result).matches, 4);
+          assert.equal(grepCounts(result).files, 2);
         }
         assert.equal(result.details?.incomplete, undefined);
         const lf = await invoke(grep, "lf", {
