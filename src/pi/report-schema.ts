@@ -323,7 +323,10 @@ export const ERROR_DEFINITIONS = {
   },
   TARGET_EXISTS: {
     facts: NONE,
-    next: { default: 'Use mode "overwrite" to replace the existing file.' },
+    next: {
+      default:
+        'Check the path and read the existing file. Use mode "overwrite" only if replacing that file is intended.',
+    },
   },
   NOT_REGULAR_FILE: { facts: NONE },
   MULTIPLE_HARD_LINKS: { facts: NONE },

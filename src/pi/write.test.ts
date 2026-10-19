@@ -116,7 +116,13 @@ test("write supports create-only and overwrite-only modes", async () =>
       options,
     );
     assert.equal(exists.isError, true);
-    assert.equal(reportOf(exists, "write")?.error, "TARGET_EXISTS");
+    const conflict = reportOf(exists, "write");
+    assert.equal(conflict?.error, "TARGET_EXISTS");
+    assert.equal(conflict?.publication, "NOT_PUBLISHED");
+    const next = conflict?.next ?? "";
+    assert.match(next, /check the path/i);
+    assert.match(next, /read the existing file/i);
+    assert.match(next, /overwrite.*only if.*intended/i);
     assert.equal(await readFile(target, "utf8"), "new\n");
     const missing = await callTool(
       write,
