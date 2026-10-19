@@ -18,11 +18,15 @@ export function anchorPattern(hashLen: number): string {
   return `^${anchorSource(`{${hashLen}}`)}$`;
 }
 
-/** Separates a row's line reference from its displayed content. */
+/**
+ * Separates a row's line reference from its displayed content. Rows are split on LF only, so
+ * row and header patterns use `s`: content may hold U+2028 or U+2029, which `.` skips otherwise.
+ */
 const ROW_SEPARATOR = "│";
 const ANCHOR_TOKEN = new RegExp(`^${anchorSource("+")}$`);
 const HASHLINE_ROW = new RegExp(
   `^${anchorSource(`{${HASH_LEN_MIN},${HASH_LEN_MAX}}`)}${ROW_SEPARATOR}(.*)$`,
+  "s",
 );
 
 /** Split a `LINE#HASH` token of any hash length; undefined when the shape is wrong. */
@@ -44,7 +48,7 @@ export function parseHashline(line: string): HashlineRow | null {
   return match ? { lineNo: match[1], content: match[3] } : null;
 }
 
-const PLAIN_ROW = new RegExp(`^([1-9][0-9]*)${ROW_SEPARATOR}(.*)$`);
+const PLAIN_ROW = new RegExp(`^([1-9][0-9]*)${ROW_SEPARATOR}(.*)$`, "s");
 
 /** Parse an anchored row or a non-editable `LINE│content` row; null for other text. */
 export function parseDisplayRow(line: string): HashlineRow | null {

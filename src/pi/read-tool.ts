@@ -55,7 +55,7 @@ function formatReadHeader(
   const shownFrom = start > DEFAULT_OFFSET ? ` (from line ${start})` : "";
   return `${path} · ${totalLines} lines${shownFrom}${finalNewline ? "" : " · no trailing newline"}`;
 }
-const READ_HEADER = /^(.+?) · (\d+ lines(?: \(from line \d+\))?(?: · no trailing newline)?)$/;
+const READ_HEADER = /^(.+?) · (\d+ lines(?: \(from line \d+\))?(?: · no trailing newline)?)$/s;
 
 /**
  * Render the expanded read body for the TUI: color the header, strip the

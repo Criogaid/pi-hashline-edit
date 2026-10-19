@@ -25,7 +25,7 @@ const MAX_CONCURRENT_FILE_READS = 16;
 function formatFileHeader(path: string, matches: number): string {
   return `${path} · ${matches} match${matches !== 1 ? "es" : ""}`;
 }
-const FILE_HEADER = /^(.+?) · (\d+ match(?:es)?)$/;
+const FILE_HEADER = /^(.+?) · (\d+ match(?:es)?)$/s;
 
 export function parseFileHeader(line: string): { path: string; summary: string } | undefined {
   const match = FILE_HEADER.exec(line);
