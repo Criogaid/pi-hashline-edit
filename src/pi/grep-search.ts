@@ -209,10 +209,10 @@ async function searchFile(
 }
 
 /**
- * Search every candidate file in scope. Paths stream from rg in path order into a queue that
+ * Search every candidate file in scope. Paths stream from rg in listing order into a queue that
  * at most SEARCH_WORKERS workers drain; a worker starts only when no idle one can take a path.
  * Workers finish in any order, so results commit in listing order: every run returns the same
- * files, rows, and warnings, and a limit keeps the first matches in path order.
+ * files, rows, and warnings, and a limit keeps the first matches in that order.
  */
 export async function searchFiles(options: {
   readonly backend: GrepBackend;

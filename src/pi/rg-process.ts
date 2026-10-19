@@ -14,8 +14,9 @@ import { HashlineError } from "../core/errors.ts";
 import { throwIfCancelled } from "./error-text.ts";
 
 /**
- * Every rg run. Path order makes listings, and so grep results and limits, the same on every
- * run; rg then walks in one thread, while matching stays parallel in grep-search's workers.
+ * Every rg run visits input roots in caller order and sorts each directory's entries.
+ * This is deterministic traversal, not global full-path sorting. rg walks in one thread;
+ * matching stays parallel in grep-search's workers.
  */
 export const COMMON_RG_ARGS = ["--no-config", "--color=never", "--sort=path"];
 export const MAX_RG_RECORD_BYTES = 16 * 1024 * 1024;
