@@ -66,7 +66,7 @@ const COMMAND_DESCRIPTION =
     : "Bash command to run.";
 
 export const ACTION_FUSION_GUIDELINES = [
-  "then_run is a parameter of edit, replace, and write, not a separate tool.",
+  "When a check covers several changes, run it once after all of those changes.",
 ];
 
 type ProgressReporter = (progress: ActionFusionProgress, ctx: ExtensionToolContext) => void;
@@ -111,7 +111,7 @@ export type ThenRunInput = NonNullable<Static<ReturnType<typeof createThenRunSch
 /** Name then_run in a mutation tool's description when Action Fusion is enabled. */
 export function withThenRunDescription(description: string, actionFusion: boolean): string {
   return actionFusion
-    ? `${description} To run tests, a typecheck, or a build right after this change, set then_run instead of a separate bash call; use bash instead when the command needs the user's approval, depends on this result, must wait for a reload, or checks several changes from one response (run it once after them).`
+    ? `${description} Use then_run for checks that can run immediately after this change. Use a separate bash call when the command requires approval, needs information from this tool's result, must wait for reload, or checks several changes from one response.`
     : description;
 }
 

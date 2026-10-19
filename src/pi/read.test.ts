@@ -160,7 +160,7 @@ test("read preserves empty files and explicit limits above the native default", 
     assert.equal(reportOf(many, "read")?.pagination, undefined);
   }));
 
-test("read window end chosen by caller or default → only the default reports continuation", async () =>
+test("read window end chosen by caller or default → only the default offers optional continuation", async () =>
   withDir(async (dir) => {
     const defaultLimit = DEFAULT_CONFIG.read.defaultLimit;
     const totalLines = defaultLimit + 100;
@@ -183,7 +183,7 @@ test("read window end chosen by caller or default → only the default reports c
       assert.ok(report);
       if (limit === undefined) {
         assert.deepEqual(report.pagination, pagination);
-        assert.match(report.next ?? "", /offset.*pagination\.nextOffset/);
+        assert.match(report.next ?? "", /if you need more lines.*offset.*pagination\.nextOffset/i);
       } else {
         assert.equal(Object.hasOwn(report, "pagination"), false);
         assert.equal(Object.hasOwn(report, "next"), false);

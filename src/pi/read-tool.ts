@@ -145,7 +145,7 @@ export function makeReadOverride(
     name: "read" as const,
     label: "read",
     description:
-      "Read a file. Text lines show as LINE#HASH│content anchors for edit; CRLF line endings show as LF. Use read, not shell output, for files you will edit.",
+      "Read a file. Text lines show as LINE#HASH│content anchors for edit; CRLF line endings show as LF.",
     promptSnippet: "Read files with editable line anchors",
     parameters: parameters as typeof builtin.parameters,
     prepareArguments: createArgumentPreparer("read", parameters, undefined, budgets),

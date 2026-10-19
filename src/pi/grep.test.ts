@@ -703,7 +703,7 @@ test("aligns TUI line numbers across files to the widest result", () => {
   );
 });
 
-test("matching rows exceed limit → bounded results carry matchLimit", async () => {
+test("matching rows exceed limit → bounded results offer optional continuation", async () => {
   await withDir(async (dir) => {
     const file = join(dir, "a.ts");
     await writeFile(file, "alpha beta\nalpha only\nalpha later\n");
@@ -717,7 +717,10 @@ test("matching rows exceed limit → bounded results carry matchLimit", async ()
     });
     assert.match(text(result), /1#[0-9A-Z]+│alpha beta/);
     assert.equal(reportOf(result, "grep")?.matchLimit, limit);
-    assert.match(reportOf(result, "grep")?.next ?? "", /Raise limit.*after the last one shown/);
+    assert.match(
+      reportOf(result, "grep")?.next ?? "",
+      /if you need more matches.*raise limit.*after the last one shown/i,
+    );
   });
 });
 
@@ -739,7 +742,7 @@ test("literal punctuation → exact text is matched", async () =>
     assert.equal(fake.calls.length, 1);
   }));
 
-test("literal pipe patterns find no match → report the pattern-array recovery only for literal queries", async () =>
+test("literal pipe patterns find no match → alternatives recovery preserves literal intent", async () =>
   withDir(async (dir) => {
     const path = join(dir, "pipe.txt");
     const { backend } = fakeBackend({ paths: [path] });
@@ -772,11 +775,15 @@ test("literal pipe patterns find no match → report the pattern-array recovery 
       assert.ok(report);
       assert.equal(Object.hasOwn(report, "literalPipe"), literalPipe, context);
       assert.equal(report.literalPipe, literalPipe ? true : undefined, context);
-      assert.equal(
-        report.next,
-        literalPipe ? "Pass the alternatives as a pattern array." : undefined,
-        context,
-      );
+      if (literalPipe) {
+        assert.match(
+          report.next ?? "",
+          /if you meant alternatives.*pattern array.*otherwise.*literal matching/i,
+          context,
+        );
+      } else {
+        assert.equal(report.next, undefined, context);
+      }
     }
   }));
 

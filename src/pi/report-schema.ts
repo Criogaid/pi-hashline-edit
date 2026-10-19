@@ -391,9 +391,12 @@ export const OUTCOME_NEXT = [
     "lineTooLong",
     "Inspect the line in chunks with bash, or use replace for a known literal or regex change; a smaller limit cannot split a line.",
   ],
-  ["pagination", "Continue with offset set to pagination.nextOffset."],
-  ["matchLimit", "Raise limit to see the matches after the last one shown."],
-  ["literalPipe", "Pass the alternatives as a pattern array."],
+  ["pagination", "If you need more lines, set offset to pagination.nextOffset."],
+  ["matchLimit", "If you need more matches, raise limit to include rows after the last one shown."],
+  [
+    "literalPipe",
+    "If you meant alternatives, pass them as a pattern array. Otherwise, keep literal matching.",
+  ],
   [
     "scanLimit",
     "Narrow path or glob, or add text every match must contain, to search the remaining files.",

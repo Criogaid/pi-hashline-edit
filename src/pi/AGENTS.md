@@ -4,7 +4,7 @@ Pi integration. Cross-cutting contracts live in the root `AGENTS.md`; this file 
 
 ## Registration
 
-`src/index.ts` loads the config once and passes it explicitly to each tool factory, which keeps that snapshot for its lifetime. When `enabled` is false it registers nothing. Otherwise it registers tools from their `make*Override` / `makeReplaceTool` factories through one helper that appends `NEXT_GUIDELINE` from `report-schema.ts` (Pi prints the shared guideline once). When `actionFusion` is on, the three mutation tools also receive the Action Fusion executor and are wrapped with `withMutationStatus`; `withThenRunDescription` appends the one then_run selection sentence as `withThenRunSchema` adds the field, and the field's `command` description carries the Windows path note only when `process.platform` is `win32`.
+`src/index.ts` loads the config once and passes it explicitly to each tool factory, which keeps that snapshot for its lifetime. When `enabled` is false it registers nothing. Otherwise it registers tools from their `make*Override` / `makeReplaceTool` factories through one helper that appends `NEXT_GUIDELINE` from `report-schema.ts` (Pi prints the shared guideline once). When `actionFusion` is on, the three mutation tools also receive the Action Fusion executor and are wrapped with `withMutationStatus`; `withThenRunDescription` appends the then_run selection instructions as `withThenRunSchema` adds the field, and the field's `command` description carries the Windows path note only when `process.platform` is `win32`.
 
 ## Argument funnel
 
