@@ -1,7 +1,7 @@
 /** Tool-validated replacement rules, the engine's result, and their types; no Pi runtime imports. */
 import { Type, type Static } from "typebox";
 
-export const REPLACEMENT_SCHEMA = Type.Object(
+const REPLACEMENT_SCHEMA = Type.Object(
   {
     find: Type.String({
       minLength: 1,

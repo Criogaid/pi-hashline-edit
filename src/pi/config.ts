@@ -32,7 +32,7 @@ const regexTimeoutSetting = integerSetting(
 );
 
 /** Settings schema: the single source of setting types, bounds, and defaults. */
-export const configSchema = Type.Object({
+const configSchema = Type.Object({
   enabled: Type.Boolean({
     default: true,
     description:

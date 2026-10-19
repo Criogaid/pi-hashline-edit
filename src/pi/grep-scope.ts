@@ -38,7 +38,7 @@ export function toArray(v: string | string[] | undefined): string[] {
   return Array.isArray(v) ? v : [v];
 }
 
-export interface SearchPathInfo {
+interface SearchPathInfo {
   readonly path: string;
   readonly isFile: boolean;
 }

@@ -32,7 +32,7 @@ const MAX_AMBIGUOUS_CANDIDATES = 8;
 type Snapshot = Readonly<{ currentText: string; anchors: AnchorFormatter }>;
 
 /** Select the shared candidate prefix for detail lists and observation neighborhoods. */
-export function selectAmbiguousCandidates(candidates: readonly Anchor[]): readonly Anchor[] {
+function selectAmbiguousCandidates(candidates: readonly Anchor[]): readonly Anchor[] {
   return candidates.slice(0, MAX_AMBIGUOUS_CANDIDATES);
 }
 

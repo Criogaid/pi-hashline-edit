@@ -57,7 +57,7 @@ export interface MutationRenderState {
 }
 
 /** Count added/removed lines in a pi-format diff (`+N content` / `-N content` / ` N content`). */
-export function countDiffLines(diff: string): DiffCounts {
+function countDiffLines(diff: string): DiffCounts {
   let added = 0;
   let removed = 0;
   for (const line of diff.split("\n")) {
@@ -88,7 +88,7 @@ export function formatDiffCounts(counts: DiffCounts, theme: Theme): string {
  * synchronously (not re-entrant) and the outer pass then re-adds the result
  * component after the nested one — the diff renders twice.
  */
-export function publishDiffCounts(
+function publishDiffCounts(
   diff: string | undefined,
   context: { state?: MutationRenderState },
   refreshHeader: (counts: DiffCounts) => void,

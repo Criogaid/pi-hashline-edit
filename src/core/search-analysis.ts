@@ -21,9 +21,9 @@ import { regexSource } from "./regex.ts";
 import type { GrepQuery } from "./search.ts";
 
 /** One literal position: the characters JavaScript may match there. */
-export type LiteralChar = readonly string[];
+type LiteralChar = readonly string[];
 export type Literal = readonly LiteralChar[];
-export interface LiteralFilter {
+interface LiteralFilter {
   readonly kind: "literals";
   readonly literals: readonly Literal[];
 }

@@ -65,7 +65,7 @@ export const ACTION_FUSION_GUIDELINES = [
 
 type ProgressReporter = (progress: ActionFusionProgress, ctx: ExtensionToolContext) => void;
 
-export function createThenRunSchema(tool: MutationToolName) {
+function createThenRunSchema(tool: MutationToolName) {
   return Type.Optional(
     Type.Object(
       {

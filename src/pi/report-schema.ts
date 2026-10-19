@@ -38,21 +38,21 @@ export const CAUSE_SCHEMA = Type.Cyclic(
 );
 export type Cause = Static<typeof CAUSE_SCHEMA>;
 
-export const PUBLICATION_SCHEMA = Type.Union([
+const PUBLICATION_SCHEMA = Type.Union([
   Type.Literal("NOT_PUBLISHED"),
   Type.Literal("PUBLISHED"),
   Type.Literal("UNKNOWN"),
 ]);
 export type PublicationStatus = Static<typeof PUBLICATION_SCHEMA>;
 
-export const STAGE_SCHEMA = Type.Union([
+const STAGE_SCHEMA = Type.Union([
   Type.Literal("prepare"),
   Type.Literal("commit"),
   Type.Literal("post_process"),
 ]);
 export type MutationStage = Static<typeof STAGE_SCHEMA>;
 
-export const FRESHNESS_SCHEMA = Type.Union([
+const FRESHNESS_SCHEMA = Type.Union([
   Type.Literal("unchanged"),
   Type.Literal("changed"),
   Type.Literal("missing"),
@@ -61,7 +61,7 @@ export const FRESHNESS_SCHEMA = Type.Union([
 export type Freshness = Static<typeof FRESHNESS_SCHEMA>;
 
 /** A then_run command's final status; `skipped` never started, `cancelled` may have. */
-export const COMMAND_STATUS_SCHEMA = Type.Union([
+const COMMAND_STATUS_SCHEMA = Type.Union([
   Type.Literal("succeeded"),
   Type.Literal("failed"),
   Type.Literal("timeout"),
@@ -71,7 +71,7 @@ export const COMMAND_STATUS_SCHEMA = Type.Union([
 export type CommandStatus = Static<typeof COMMAND_STATUS_SCHEMA>;
 
 /** A then_run command's session tool result, as the TUI renders it. */
-export const COMMAND_RESULT_SCHEMA = Type.Object(
+const COMMAND_RESULT_SCHEMA = Type.Object(
   {
     content: Type.Array(
       Type.Union([
@@ -142,7 +142,7 @@ const ANCHOR_FAILURE_SCHEMA = Type.Object(
 );
 export type AnchorFailureFact = Static<typeof ANCHOR_FAILURE_SCHEMA>;
 
-export const ARGUMENT_ISSUE_SCHEMA = Type.Object(
+const ARGUMENT_ISSUE_SCHEMA = Type.Object(
   {
     field: Type.String({
       description: "Path of the field in Pi's prepared arguments; `$` for none.",
@@ -160,7 +160,7 @@ export type ArgumentIssue = Static<typeof ARGUMENT_ISSUE_SCHEMA>;
  * Every fact a report can carry beside the envelope, in output order: failure
  * facts first, then each tool's outcome, freshness, and the command.
  */
-export const FACT_FIELDS = {
+const FACT_FIELDS = {
   // Argument rejection (argument-error.ts).
   issues: Type.Array(ARGUMENT_ISSUE_SCHEMA),
   omittedIssues: count("Issues omitted from the byte budget."),
@@ -442,7 +442,7 @@ const SUCCESS_DEFINITIONS = {
 } as const;
 export type ReportTool = keyof typeof SUCCESS_DEFINITIONS;
 /** Tools whose reports carry publication, freshness, and the then_run outcome. */
-export const MUTATION_TOOLS = ["edit", "replace", "write"] as const satisfies readonly ReportTool[];
+const MUTATION_TOOLS = ["edit", "replace", "write"] as const satisfies readonly ReportTool[];
 export type MutationToolName = (typeof MUTATION_TOOLS)[number];
 /** Argument rejections may omit message; Pi supplies none for them. */
 const MESSAGE_OPTIONAL = "INVALID_ARGUMENTS" satisfies ErrorCode;

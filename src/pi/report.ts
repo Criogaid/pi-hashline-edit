@@ -149,7 +149,7 @@ export function failureResult(
 }
 
 /** Where a failure happened, as the caller knows it. */
-export interface FailureContext {
+interface FailureContext {
   /** The path or paths the call names, as supplied. */
   readonly path?: string | readonly string[];
   /** Mutation tools report `publication` and `stage` on every failure. */

@@ -31,7 +31,7 @@ export function parseAnchorToken(value: string): { line: number; hash: string } 
   return match ? { line: Number(match[1]), hash: match[2]! } : undefined;
 }
 
-export interface HashlineRow {
+interface HashlineRow {
   /** Line number as written in the anchor (string form). */
   lineNo: string;
   /** Line content with the `LINE#HASH│` prefix removed. */

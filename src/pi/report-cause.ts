@@ -54,7 +54,7 @@ export type WorkerError = {
     readonly cause?: Cause;
   } & Pick<HashlineErrorOptions<C>, "facts">;
 }[ErrorCode];
-export type WorkerFailure = { readonly error: WorkerError };
+type WorkerFailure = { readonly error: WorkerError };
 
 /** Transport full failures; the receiving tool applies its model-budget snapshot. */
 export function workerFailure(caught: unknown): WorkerFailure {

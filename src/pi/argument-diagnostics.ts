@@ -17,7 +17,7 @@ import type { TLocalizedValidationError } from "typebox/error";
 import { Value } from "typebox/value";
 import type { ArgumentIssue } from "./report-schema.ts";
 
-export interface ArgumentDiagnostics {
+interface ArgumentDiagnostics {
   readonly issues: readonly ArgumentIssue[];
   readonly limited: boolean;
 }

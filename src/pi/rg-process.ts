@@ -25,7 +25,7 @@ const RG_RECORD_LIMIT_MESSAGE = `ripgrep output record exceeds ${MAX_RG_RECORD_B
  * A ripgrep process or output-protocol failure. A finished run contributes its
  * exit code and, as the cause, its stderr.
  */
-export function ripgrepFailure(
+function ripgrepFailure(
   message: string,
   run?: { readonly code: number | null; readonly stderr: string } | { readonly error: unknown },
 ): HashlineError<"RIPGREP_FAILED"> {

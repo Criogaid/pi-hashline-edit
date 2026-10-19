@@ -49,7 +49,7 @@ export interface MutationTarget {
   readonly budget: OutputBudgets;
 }
 
-export interface MutationToolSpec<
+interface MutationToolSpec<
   TParams extends { path: string },
   TDetails,
   TTool extends MutationToolName,
@@ -65,7 +65,7 @@ export interface MutationToolSpec<
   ): Promise<MutationOutcome<TDetails, TTool>>;
 }
 
-export interface MutationCall<TParams, TDetails> {
+interface MutationCall<TParams, TDetails> {
   readonly toolCallId: string;
   /** Arguments already prepared and validated by Pi against the tool schema. */
   readonly params: TParams & { then_run?: ThenRunInput };

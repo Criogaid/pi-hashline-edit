@@ -119,7 +119,7 @@ export async function runCandidatePaths(
 }
 
 /** How candidates were selected: rg's candidate lines, or whole files (see Prefilter). */
-export type CandidateSource = "lines" | "files" | "all";
+type CandidateSource = "lines" | "files" | "all";
 
 /**
  * Await each consumer for backpressure; false stops listing. The caller owns worker cleanup.
