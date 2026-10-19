@@ -10,8 +10,19 @@ import type {
   ExtensionContext,
   ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
-import { createBashToolDefinition } from "@earendil-works/pi-coding-agent";
-import { Box, Container, Text, type Component } from "@earendil-works/pi-tui";
+import {
+  createBashToolDefinition,
+  SettingsManager,
+  ToolExecutionComponent,
+} from "@earendil-works/pi-coding-agent";
+import {
+  Box,
+  Container,
+  Text,
+  type Component,
+  type TUI,
+  type TuiMouseEvent,
+} from "@earendil-works/pi-tui";
 import { Type, type Static, type TSchema } from "typebox";
 import { Value } from "typebox/value";
 import { ACTION_FUSION_PROGRESS_SCHEMA } from "./report-schema.ts";
@@ -28,6 +39,7 @@ const COMMAND_CARD_SCHEMA = Type.Object(
     commandText: CARD_PROPERTIES.commandText,
     command: CARD_PROPERTIES.command,
     output: CARD_PROPERTIES.output,
+    result: CARD_PROPERTIES.result,
     timing: CARD_PROPERTIES.timing,
     mutationCompleted: CARD_PROPERTIES.mutationCompleted,
     freshness: CARD_PROPERTIES.freshness,
@@ -41,6 +53,7 @@ function commandCardData({
   commandText,
   command,
   output,
+  result,
   timing,
   mutationCompleted,
   freshness,
@@ -53,6 +66,7 @@ function commandCardData({
     mutationCompleted,
     freshness,
     ...(timing ? { timing } : {}),
+    ...(result ? { result } : {}),
   };
 }
 
@@ -74,17 +88,49 @@ function notRunReason(card: CommandCardData): string | undefined {
   return freshness === "unchanged" ? undefined : `Not run: ${TARGET_STATE[freshness]}.`;
 }
 
+/** Adapt Pi's tool row spacing to the spacer already owned by a custom entry. */
+class CommandEntryComponent extends ToolExecutionComponent {
+  private globalExpanded?: boolean;
+  private readonly refresh: () => void;
+
+  constructor(
+    refresh: (card: ToolExecutionComponent) => void,
+    ...args: ConstructorParameters<typeof ToolExecutionComponent>
+  ) {
+    super(...args);
+    this.refresh = () => refresh(this);
+  }
+
+  setGlobalExpanded(expanded: boolean) {
+    if (this.globalExpanded === expanded) return;
+    this.globalExpanded = expanded;
+    this.setExpanded(expanded);
+  }
+
+  override render(width: number) {
+    this.refresh();
+    return super.render(width).slice(1);
+  }
+
+  override handleMouse(event: TuiMouseEvent) {
+    return super.handleMouse({ ...event, y: event.y + 1, height: event.height + 1 });
+  }
+}
+
 /** Render one durable transcript card per fused command without adding model context. */
 export function registerFusionCards(pi: ExtensionAPI) {
   let currentCwd = process.cwd();
   const bash = createBashToolDefinition(process.cwd());
   const states = new Map<string, CommandCardData>();
   const active = new Set<string>();
+  const cards = new Map<string, CommandEntryComponent>();
+  let tui: TUI | undefined;
 
   const restore = (ctx: ExtensionContext) => {
     if (ctx.cwd) currentCwd = ctx.cwd;
     states.clear();
     active.clear();
+    cards.clear();
     for (const entry of ctx.sessionManager.getBranch()) {
       if (
         entry.type !== "custom" ||
@@ -95,85 +141,153 @@ export function registerFusionCards(pi: ExtensionAPI) {
       if (Value.Check(COMMAND_CARD_SCHEMA, data)) states.set(data.toolCallId, data);
     }
   };
-  pi.on("session_start", (_event, ctx) => restore(ctx));
+  pi.on("session_start", (_event, ctx) => {
+    restore(ctx);
+    tui = undefined;
+    if (ctx.mode !== "tui") return;
+    // The public widget factory supplies the session TUI without changing its header or editor.
+    const bridge = "hashline-then-run-ui";
+    ctx.ui.setWidget(
+      bridge,
+      (sessionTui) => {
+        tui = sessionTui;
+        return new Container();
+      },
+      { placement: "belowEditor" },
+    );
+    ctx.ui.setWidget(bridge, undefined);
+  });
   pi.on("session_tree", (_event, ctx) => restore(ctx));
 
-  pi.registerEntryRenderer<CommandCardData>(CARD_TYPE, (entry, { expanded }, theme) => {
+  pi.registerEntryRenderer<CommandCardData>(CARD_TYPE, function renderCard(entry, { expanded }):
+    | Component
+    | undefined {
     const initial = entry.data;
     if (!Value.Check(COMMAND_CARD_SCHEMA, initial)) return undefined;
-    const statusText = new Text("", 0, 0);
-    const box = new Box(1, 1);
-    let call: Component | undefined;
-    let result: Component | undefined;
-    const rendererState = { startedAt: undefined, endedAt: undefined, interval: undefined };
-    return {
-      invalidate: () => box.invalidate(),
-      render(width) {
-        // Read live state during rendering; native tool updates schedule the repaint.
-        const current = states.get(initial.toolCallId) ?? initial;
-        const pending = current.command === "waiting" || current.command === "running";
-        const interrupted = pending && !active.has(current.toolCallId);
-        const status = interrupted ? "interrupted (final status unknown)" : current.command;
-        const countdown =
-          current.command === "running" && !interrupted && current.timing
-            ? ` · ${current.timing.remainingSeconds}s remaining`
-            : "";
-        const failed = current.command === "failed" || current.command === "timeout";
-        const color =
-          pending || current.command === "cancelled"
-            ? "warning"
-            : failed
-              ? "error"
-              : current.command === "succeeded"
-                ? "success"
-                : "dim";
-        const background =
-          pending && !interrupted
-            ? "toolPendingBg"
-            : failed
-              ? "toolErrorBg"
-              : current.command === "succeeded"
-                ? "toolSuccessBg"
-                : "customMessageBg";
-        box.setBgFn((line) => theme.bg(background, line));
-        statusText.setText(
-          `${theme.fg("toolTitle", theme.bold("then_run"))} · ${theme.fg(color, status + countdown)}`,
-        );
-        const context = {
-          args: {
-            command: current.commandText,
-            ...(current.timing ? { timeout: current.timing.timeoutSeconds } : {}),
-          },
-          toolCallId: current.toolCallId,
-          cwd: currentCwd,
-          state: rendererState,
-          invalidate: () => box.invalidate(),
-          // Parent tool updates drive entry rendering; leave the native elapsed-time timer off.
-          executionStarted: false,
-          argsComplete: true,
-          isPartial: pending && !interrupted,
-          expanded,
-          showImages: false,
-          isError: failed,
-        };
-        call = bash.renderCall!(context.args, theme, { ...context, lastComponent: call });
-        box.clear();
-        box.addChild(statusText);
-        box.addChild(call);
-        const reason = notRunReason(current);
-        if (reason) box.addChild(new Text(theme.fg("dim", reason), 0, 0));
-        if (current.output || current.command === "succeeded" || failed) {
-          result = bash.renderResult!(
-            { content: [{ type: "text", text: current.output }], details: undefined },
-            { expanded, isPartial: context.isPartial },
-            theme,
-            { ...context, lastComponent: result },
+    if (!tui) {
+      // Pi may rebuild history before session_start supplies its UI context.
+      let component: Component | undefined;
+      const ready = () => (component ??= tui ? renderCard(entry, { expanded }) : undefined);
+      return {
+        render: (width) => ready()?.render(width) ?? [],
+        invalidate: () => component?.invalidate(),
+        handleMouse: (event) => ready()?.handleMouse?.(event),
+      };
+    }
+    let card = cards.get(initial.toolCallId);
+    const settings = SettingsManager.inMemory(pi.getSettings());
+    if (!card) {
+      const current = () => states.get(initial.toolCallId) ?? initial;
+      const statusText = new Text("", 0, 0);
+      let outputPadding: number | undefined;
+      let box = new Box(outputPadding, 1);
+      let call: Component | undefined;
+      let result: Component | undefined;
+      const renderers: Pick<typeof bash, "renderShell" | "renderCall" | "renderResult"> = {
+        renderShell: "self",
+        renderCall(args, theme, context) {
+          const hostSettings = pi.getSettings();
+          const padding =
+            "outputPad" in hostSettings && typeof hostSettings.outputPad === "number"
+              ? hostSettings.outputPad
+              : undefined;
+          if (padding !== outputPadding) {
+            outputPadding = padding;
+            box = new Box(outputPadding, 1);
+          }
+          const value = current();
+          const pending = value.command === "waiting" || value.command === "running";
+          const interrupted = pending && !active.has(value.toolCallId);
+          const status = interrupted ? "interrupted (final status unknown)" : value.command;
+          const countdown =
+            value.command === "running" && !interrupted && value.timing
+              ? ` · ${value.timing.remainingSeconds}s remaining`
+              : "";
+          const failed = value.command === "failed" || value.command === "timeout";
+          const color =
+            pending || value.command === "cancelled"
+              ? "warning"
+              : failed
+                ? "error"
+                : value.command === "succeeded"
+                  ? "success"
+                  : "dim";
+          const background =
+            pending && !interrupted
+              ? "toolPendingBg"
+              : failed
+                ? "toolErrorBg"
+                : value.command === "succeeded"
+                  ? "toolSuccessBg"
+                  : "customMessageBg";
+          box.setBgFn((line) => theme.bg(background, line));
+          statusText.setText(
+            `${theme.fg("toolTitle", theme.bold("then_run"))} · ${theme.fg(color, status + countdown)}`,
           );
-          box.addChild(result);
-        }
-        return box.render(width);
-      },
-    };
+          call = bash.renderCall!(args, theme, { ...context, lastComponent: call });
+          box.clear();
+          box.addChild(statusText);
+          box.addChild(call);
+          const reason = notRunReason(value);
+          if (reason) box.addChild(new Text(theme.fg("dim", reason), 0, 0));
+          return box;
+        },
+        renderResult(value, options, theme, context) {
+          const card = current();
+          const command = card.command;
+          if (
+            card.result ||
+            card.output ||
+            command === "succeeded" ||
+            command === "failed" ||
+            command === "timeout"
+          ) {
+            result = bash.renderResult!(value, options, theme, {
+              ...context,
+              lastComponent: result,
+            });
+            box.addChild(result);
+          }
+          return new Container();
+        },
+      };
+      let rendered: CommandCardData | undefined;
+      card = new CommandEntryComponent(
+        (native) => {
+          const value = current();
+          if (rendered === value) return;
+          rendered = value;
+          native.updateArgs({
+            command: value.commandText,
+            ...(value.timing ? { timeout: value.timing.timeoutSeconds } : {}),
+          });
+          native.updateResult(
+            {
+              ...(value.result ?? { content: [{ type: "text", text: value.output }] }),
+              isError: value.command === "failed" || value.command === "timeout",
+            },
+            (value.command === "waiting" || value.command === "running") &&
+              active.has(value.toolCallId),
+          );
+        },
+        "bash",
+        initial.toolCallId,
+        { command: initial.commandText },
+        {
+          showImages: settings.getShowImages(),
+          imageWidthCells: settings.getImageWidthCells(),
+        },
+        renderers,
+        tui,
+        currentCwd,
+      );
+      card.setArgsComplete();
+      cards.set(initial.toolCallId, card);
+    }
+    card.setShowImages(settings.getShowImages());
+    card.setImageWidthCells(settings.getImageWidthCells());
+    card.setGlobalExpanded(expanded);
+    return card;
   });
 
   return (progress: ActionFusionProgress, ctx?: ExtensionContext) => {

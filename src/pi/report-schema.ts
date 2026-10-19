@@ -80,6 +80,30 @@ export const ACTION_FUSION_PROGRESS_SCHEMA = Type.Object(
     publication: PUBLICATION_SCHEMA,
     freshness: FRESHNESS_SCHEMA,
     output: Type.String(),
+    result: opt(
+      Type.Object(
+        {
+          content: Type.Array(
+            Type.Union([
+              Type.Object(
+                {
+                  type: Type.Literal("text"),
+                  text: Type.String(),
+                  textSignature: opt(Type.String()),
+                },
+                { additionalProperties: false },
+              ),
+              Type.Object(
+                { type: Type.Literal("image"), data: Type.String(), mimeType: Type.String() },
+                { additionalProperties: false },
+              ),
+            ]),
+          ),
+          details: opt(Type.Unknown()),
+        },
+        { additionalProperties: false },
+      ),
+    ),
     mutationCompleted: Type.Boolean(),
     timing: opt(
       Type.Object(

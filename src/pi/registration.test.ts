@@ -12,6 +12,8 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import registerHashline from "../index.ts";
 import { initTheme } from "@earendil-works/pi-coding-agent";
+import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { ProcessTerminal, TuiMainScreen } from "@earendil-works/pi-tui";
 import { ToolExecutionComponent } from "../../node_modules/@earendil-works/pi-coding-agent/dist/modes/interactive/components/tool-execution.js";
 import { theme } from "../../node_modules/@earendil-works/pi-coding-agent/dist/modes/interactive/theme/theme.js";
 import { computeLineHash } from "../core/hash.ts";
@@ -35,8 +37,14 @@ test("mutation cards use Fusion by default and explicit false removes command su
     const tools: any[] = [];
     const entries: any[] = [];
     const renderers = new Map<string, any>();
+    let start: ((event: unknown, ctx: unknown) => void) | undefined;
     registerHashline({
-      on() {},
+      on(event: string, handler: (event: unknown, ctx: unknown) => void) {
+        if (event === "session_start") start = handler;
+      },
+      getSettings() {
+        return {};
+      },
       registerEntryRenderer(type: string, renderer: any) {
         renderers.set(type, renderer);
       },
@@ -81,6 +89,22 @@ test("mutation cards use Fusion by default and explicit false removes command su
       );
     }
     initTheme("dark");
+    const tui = new TuiMainScreen(new ProcessTerminal());
+    tui.requestRender = () => {};
+    assert.ok(start);
+    start(
+      {},
+      {
+        cwd: dir,
+        mode: "tui",
+        sessionManager: { getBranch: () => entries },
+        ui: {
+          setWidget(_key: string, content: Parameters<ExtensionContext["ui"]["setWidget"]>[1]) {
+            if (typeof content === "function") content(tui, theme);
+          },
+        },
+      },
+    );
     const cases = [
       { name: "write", args: { content: "published\n", mode: "create" } },
       { name: "edit", args: { edits: [{ op: "append", body: ["appended"] }] } },
@@ -89,15 +113,7 @@ test("mutation cards use Fusion by default and explicit false removes command su
     for (const { name, args } of cases) {
       const tool = tools.find((tool) => tool.name === name);
       const params = { path: "published.txt", ...args, then_run: { command: "exit 7" } };
-      const card = new ToolExecutionComponent(
-        name,
-        name,
-        params,
-        {},
-        tool,
-        { requestRender() {} } as any,
-        dir,
-      );
+      const card = new ToolExecutionComponent(name, name, params, {}, tool, tui, dir);
       card.setArgsComplete();
       card.markExecutionStarted();
       const frames: {
@@ -184,7 +200,7 @@ test("mutation cards use Fusion by default and explicit false removes command su
         invalid,
         {},
         tool,
-        { requestRender() {} } as any,
+        tui,
         dir,
       );
       const failed = await tool.execute(
@@ -241,15 +257,7 @@ test("mutation cards use Fusion by default and explicit false removes command su
       edits: [{ op: "replace", anchor: `1#${computeLineHash(1, "target", 4)}`, body: ["changed"] }],
       then_run: { command: "exit 99" },
     };
-    const staleCard = new ToolExecutionComponent(
-      "edit",
-      "stale",
-      stale,
-      {},
-      edit,
-      { requestRender() {} } as any,
-      dir,
-    );
+    const staleCard = new ToolExecutionComponent("edit", "stale", stale, {}, edit, tui, dir);
     const failed = await edit.execute(
       "stale",
       stale,

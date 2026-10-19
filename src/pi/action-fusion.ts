@@ -123,6 +123,7 @@ export function withThenRunDescription(description: string, actionFusion: boolea
 export interface CommandOutcome {
   readonly status: Exclude<CommandStatus, "skipped">;
   readonly output: string;
+  readonly result?: ActionFusionProgress["result"];
   /** Preserve the session tool's request to stop after this tool batch. */
   readonly terminate?: boolean;
 }
@@ -154,7 +155,11 @@ async function defaultCommandRunner(
     .filter((block) => block.type === "text")
     .map((block) => block.text)
     .join("\n");
-  const command = { output, terminate: result.terminate };
+  const command = {
+    output,
+    terminate: result.terminate,
+    result: { content: result.content, details: result.details },
+  };
   if (!isError) return { status: "succeeded", ...command };
   if (signal?.aborted) return { status: "cancelled", ...command };
 
@@ -247,6 +252,7 @@ export function createActionFusionExecutor(
   > {
     let completedMutation: MutationOutcome<TDetails, TTool> | undefined;
     let progressFailure: unknown;
+    let commandResult: ActionFusionProgress["result"];
     let commandTiming: { readonly timeoutSeconds: number; readonly deadlineMs: number } | undefined;
     const report = (
       command: ActionFusionProgress["command"],
@@ -263,6 +269,7 @@ export function createActionFusionExecutor(
         publication,
         freshness,
         output,
+        ...(commandResult ? { result: commandResult } : {}),
         mutationCompleted: completedMutation !== undefined,
         ...(commandTiming
           ? {
@@ -363,6 +370,7 @@ export function createActionFusionExecutor(
               heartbeat.unref();
             }
           }
+          commandResult = { content: partial.content, details: partial.details };
           output = partial.content
             .filter((block) => block.type === "text")
             .map((block) => block.text)
@@ -370,8 +378,10 @@ export function createActionFusionExecutor(
           report("running", publication, "unknown", output);
         });
         output = command.output;
+        commandResult = command.result;
       } catch (error) {
         output = errorMessage(error);
+        commandResult = undefined;
         command = { status: signal?.aborted ? "cancelled" : "failed", output };
       } finally {
         if (heartbeat) clearInterval(heartbeat);

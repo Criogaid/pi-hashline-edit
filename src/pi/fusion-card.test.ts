@@ -3,12 +3,10 @@ import { after, before, test } from "node:test";
 import { initTheme } from "@earendil-works/pi-coding-agent";
 import { registerFusionCards } from "./fusion-card.ts";
 import type { ActionFusionProgress } from "./action-fusion.ts";
+import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { ProcessTerminal, TuiMainScreen } from "@earendil-works/pi-tui";
+import { theme as activeTheme } from "../../node_modules/@earendil-works/pi-coding-agent/dist/modes/interactive/theme/theme.js";
 
-const theme = {
-  fg: (_color: string, text: string) => text,
-  bg: (_color: string, text: string) => text,
-  bold: (text: string) => text,
-};
 const themeKey = Symbol.for("@earendil-works/pi-coding-agent:theme");
 const originalTheme = Object.getOwnPropertyDescriptor(globalThis, themeKey);
 before(() => initTheme("dark"));
@@ -20,8 +18,12 @@ after(() => {
 function harness(entries: any[] = []) {
   const renderers = new Map<string, any>();
   const handlers = new Map<string, any>();
-  const backgrounds: string[] = [];
+  const tui = new TuiMainScreen(new ProcessTerminal());
+  tui.requestRender = () => {};
   const report = registerFusionCards({
+    getSettings() {
+      return {};
+    },
     on(event: string, handler: any) {
       handlers.set(event, handler);
     },
@@ -33,20 +35,23 @@ function harness(entries: any[] = []) {
     },
   } as any);
   const restore = (event = "session_start", branch = entries, extra = {}) =>
-    handlers.get(event)({}, { sessionManager: { getBranch: () => branch }, ...extra });
-  const card = (entry: any, expanded = false) =>
-    renderers.get(entry.customType)(
-      entry,
-      { expanded },
+    handlers.get(event)(
+      {},
       {
-        ...theme,
-        bg: (color: string, text: string) => {
-          backgrounds.push(color);
-          return text;
+        mode: "tui",
+        ui: {
+          setWidget(_key: string, content: Parameters<ExtensionContext["ui"]["setWidget"]>[1]) {
+            if (typeof content === "function") content(tui, activeTheme);
+          },
         },
+        sessionManager: { getBranch: () => branch },
+        ...extra,
       },
     );
-  return { entries, report, restore, card, backgrounds };
+  const card = (entry: any, expanded = false) =>
+    renderers.get(entry.customType)(entry, { expanded }, activeTheme);
+  restore();
+  return { entries, report, restore, card };
 }
 
 const waiting: ActionFusionProgress = {
@@ -65,7 +70,7 @@ test("one independent card updates live and only persists its endpoints", () => 
   h.report(waiting);
   const card = h.card(h.entries[0]);
   assert.match(card.render(100).join("\n"), /waiting/);
-  assert.equal(h.backgrounds.at(-1), "toolPendingBg");
+  assert.ok(card.render(100).join("\n").includes(activeTheme.getBgAnsi("toolPendingBg")));
   h.report({
     ...waiting,
     command: "running",
@@ -87,7 +92,7 @@ test("one independent card updates live and only persists its endpoints", () => 
   const collapsed = card.render(100).join("\n");
   assert.match(collapsed, /succeeded/);
   assert.doesNotMatch(collapsed, /publication=|freshness=|Anchors are stale|file\.ts/);
-  assert.equal(h.backgrounds.at(-1), "toolSuccessBg");
+  assert.ok(collapsed.includes(activeTheme.getBgAnsi("toolSuccessBg")));
   assert.match(collapsed, /output line 19/);
   assert.doesNotMatch(collapsed, /output line 0\b/);
   assert.match(h.card(h.entries[0], true).render(100).join("\n"), /output line 0\b/);
@@ -101,14 +106,24 @@ test("session restore uses final snapshots and marks unfinished calls unknown", 
     command: "failed",
     publication: "PUBLISHED",
     output: "Command exited with code 7",
+    result: {
+      content: [{ type: "text", text: "Command exited with code 7" }],
+      details: { fullOutputPath: "/tmp/command-output.log" },
+    },
   });
   const resumed = harness(h.entries);
   resumed.restore();
   assert.match(
     resumed.card(h.entries[0]).render(100).join("\n"),
-    /failed[\s\S]*Command exited with code 7/,
+    /failed[\s\S]*Command exited with code 7[\s\S]*command-output\.log/,
   );
-  assert.equal(resumed.backgrounds.at(-1), "toolErrorBg");
+  assert.ok(
+    resumed
+      .card(h.entries[0])
+      .render(100)
+      .join("\n")
+      .includes(activeTheme.getBgAnsi("toolErrorBg")),
+  );
   resumed.restore("session_tree", [h.entries[0]]);
   assert.match(
     resumed.card(h.entries[0]).render(100).join("\n"),
@@ -130,9 +145,9 @@ test("skips and cancellations stay neutral and restore their own reason", () => 
         command === "skipped" ? /Not run: the mutation did not complete/ : /Not run: cancelled/,
       );
       assert.doesNotMatch(output, /publication=|freshness=|\(no output\)/);
-      assert.ok(!view.backgrounds.includes("toolErrorBg"));
-      assert.ok(!view.backgrounds.includes("toolSuccessBg"));
-      assert.equal(view.backgrounds.at(-1), "customMessageBg");
+      assert.ok(!output.includes(activeTheme.getBgAnsi("toolErrorBg")));
+      assert.ok(!output.includes(activeTheme.getBgAnsi("toolSuccessBg")));
+      assert.ok(output.includes(activeTheme.getBgAnsi("customMessageBg")));
     }
   }
 });

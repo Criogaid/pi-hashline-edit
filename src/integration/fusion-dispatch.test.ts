@@ -3,6 +3,7 @@ import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test, type TestContext } from "node:test";
 import { Type } from "typebox";
+import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { openTestSession, responseStream } from "../testing/session.testing.ts";
 import {
@@ -221,21 +222,33 @@ test("session Bash override and tool_result hook → then_run uses their final r
   timeout: 15_000,
 }, async (t) => {
   let executions = 0;
+  const partial: AgentToolResult<unknown> = {
+    content: [{ type: "text", text: "OVERRIDE_PROGRESS" }],
+    details: { fullOutputPath: "/tmp/partial-command.log" },
+  };
+  const final: AgentToolResult<unknown> = {
+    content: [
+      { type: "text", text: "HOOK_REJECTED_OVERRIDE" },
+      { type: "image", data: "iVBORw0KGgo=", mimeType: "image/png" },
+    ],
+    details: { fullOutputPath: "/tmp/final-command.log" },
+  };
   const f = await openSession(t, (pi) => {
     pi.registerTool({
       name: "bash",
       label: "bash",
       description: "Session Bash override",
       parameters: Type.Object({ command: Type.String() }),
-      async execute() {
+      async execute(_id, _args, _signal, onUpdate) {
         executions++;
+        onUpdate?.(partial);
         return { content: [{ type: "text", text: "OVERRIDE_RESULT" }], details: {} };
       },
     });
     pi.on("tool_result", (event) =>
       event.toolName === "bash"
         ? {
-            content: [{ type: "text", text: "HOOK_REJECTED_OVERRIDE" }],
+            ...final,
             isError: true,
           }
         : undefined,
@@ -254,6 +267,11 @@ test("session Bash override and tool_result hook → then_run uses their final r
   });
   assert.match(result.text, /HOOK_REJECTED_OVERRIDE/);
   assert.doesNotMatch(result.text, /OVERRIDE_RESULT/);
+  assert.deepEqual(
+    f.progress.find((event) => event.output === "OVERRIDE_PROGRESS")?.result,
+    partial,
+  );
+  assert.deepEqual(f.progress.at(-1)?.result, final);
   await assert.rejects(readFile(join(f.cwd, "command-ran")), { code: "ENOENT" });
   assert.ok(f.calls.some((call) => call.name === "bash" && call.parent === "fused"));
 });

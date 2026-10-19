@@ -91,6 +91,8 @@ Argument mistakes are reported per field, with what the field means and how to f
 
 The command runs through the session's own Bash tool, so approvals, overrides, and hooks still apply. It starts only if the change succeeded and the file is still as written. A failing command never rolls back the file. The TUI shows the change and the command as separate cards, with a live countdown when a timeout is set.
 
+Command cards use Pi's native tool component for mouse clicks and the global expand shortcut. Each card keeps its own expansion while output streams or the screen redraws. The built-in Bash renderer displays the command's original content and details, which are also saved for session restore; custom Bash renderer overrides are not exposed by the supported Pi API.
+
 ## Configuration
 
 Add `hashlineEdit` to Pi's global settings (`~/.pi/agent/settings.json`) or a project's `.pi/settings.json`:
