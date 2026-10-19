@@ -119,6 +119,16 @@ export function withThenRunDescription(description: string, actionFusion: boolea
     : description;
 }
 
+/** The text blocks of a command result, joined as then_run reports its output. */
+export function commandText(
+  content: NonNullable<ActionFusionProgress["result"]>["content"],
+): string {
+  return content
+    .filter((block) => block.type === "text")
+    .map((block) => block.text)
+    .join("\n");
+}
+
 /** Keep command state independent of its diagnostic text and of file publication. */
 export interface CommandOutcome {
   readonly status: Exclude<CommandStatus, "skipped">;
@@ -151,10 +161,7 @@ async function defaultCommandRunner(
   // Use the session's callable Bash, including overrides, validation, permission
   // hooks and tool_result hooks. Tool failures resolve with isError, not rejection.
   const { result, isError } = await ctx.executeTool("bash", input, { signal, onUpdate });
-  const output = result.content
-    .filter((block) => block.type === "text")
-    .map((block) => block.text)
-    .join("\n");
+  const output = commandText(result.content);
   const command = {
     output,
     terminate: result.terminate,
@@ -371,10 +378,7 @@ export function createActionFusionExecutor(
             }
           }
           commandResult = { content: partial.content, details: partial.details };
-          output = partial.content
-            .filter((block) => block.type === "text")
-            .map((block) => block.text)
-            .join("\n");
+          output = commandText(partial.content);
           report("running", publication, "unknown", output);
         });
         output = command.output;

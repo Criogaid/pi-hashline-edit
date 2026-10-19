@@ -26,7 +26,7 @@ import {
 import { Type, type Static, type TSchema } from "typebox";
 import { Value } from "typebox/value";
 import { ACTION_FUSION_PROGRESS_SCHEMA } from "./report-schema.ts";
-import type { ActionFusionProgress } from "./action-fusion.ts";
+import { commandText, type ActionFusionProgress } from "./action-fusion.ts";
 import type { MutationRenderState } from "./render.ts";
 
 const CARD_TYPE = "hashline-then-run";
@@ -38,7 +38,8 @@ const COMMAND_CARD_SCHEMA = Type.Object(
     toolCallId: CARD_PROPERTIES.toolCallId,
     commandText: CARD_PROPERTIES.commandText,
     command: CARD_PROPERTIES.command,
-    output: CARD_PROPERTIES.output,
+    // A card stores the command result, or only its output text when no result exists.
+    output: Type.Optional(CARD_PROPERTIES.output),
     result: CARD_PROPERTIES.result,
     timing: CARD_PROPERTIES.timing,
     mutationCompleted: CARD_PROPERTIES.mutationCompleted,
@@ -62,12 +63,15 @@ function commandCardData({
     toolCallId,
     commandText,
     command,
-    output,
     mutationCompleted,
     freshness,
     ...(timing ? { timing } : {}),
-    ...(result ? { result } : {}),
+    ...(result ? { result } : { output }),
   };
+}
+
+function cardOutput(card: CommandCardData): string {
+  return card.result ? commandText(card.result.content) : (card.output ?? "");
 }
 
 const TARGET_STATE = {
@@ -81,7 +85,7 @@ const TARGET_STATE = {
  * states: whether the mutation completed and the target's freshness.
  */
 function notRunReason(card: CommandCardData): string | undefined {
-  if (card.command === "cancelled" && !card.output) return "Not run: cancelled.";
+  if (card.command === "cancelled" && !cardOutput(card)) return "Not run: cancelled.";
   if (card.command !== "skipped") return undefined;
   const { mutationCompleted, freshness } = card;
   if (!mutationCompleted) return "Not run: the mutation did not complete.";
@@ -263,7 +267,7 @@ export function registerFusionCards(pi: ExtensionAPI) {
           });
           native.updateResult(
             {
-              ...(value.result ?? { content: [{ type: "text", text: value.output }] }),
+              ...(value.result ?? { content: [{ type: "text", text: value.output ?? "" }] }),
               isError: value.command === "failed" || value.command === "timeout",
             },
             (value.command === "waiting" || value.command === "running") &&
