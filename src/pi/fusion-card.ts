@@ -23,7 +23,7 @@ import {
   type TUI,
   type TuiMouseEvent,
 } from "@earendil-works/pi-tui";
-import { Type, type Static, type TSchema } from "typebox";
+import type { TSchema } from "typebox";
 import { Value } from "typebox/value";
 import { ACTION_FUSION_PROGRESS_SCHEMA } from "./report-schema.ts";
 import type { ActionFusionProgress } from "./action-fusion.ts";
@@ -33,40 +33,9 @@ import type { MutationRenderState } from "./render.ts";
 const CARD_TYPE = "hashline-then-run";
 const RESULT_TYPE = "hashline-then-run-result";
 
-const CARD_PROPERTIES = ACTION_FUSION_PROGRESS_SCHEMA.properties;
-const COMMAND_CARD_SCHEMA = Type.Object(
-  {
-    toolCallId: CARD_PROPERTIES.toolCallId,
-    commandText: CARD_PROPERTIES.commandText,
-    command: CARD_PROPERTIES.command,
-    result: CARD_PROPERTIES.result,
-    timing: CARD_PROPERTIES.timing,
-    mutationCompleted: CARD_PROPERTIES.mutationCompleted,
-    freshness: CARD_PROPERTIES.freshness,
-  },
-  { additionalProperties: false },
-);
-type CommandCardData = Static<typeof COMMAND_CARD_SCHEMA>;
-
-function commandCardData({
-  toolCallId,
-  commandText,
-  command,
-  result,
-  timing,
-  mutationCompleted,
-  freshness,
-}: ActionFusionProgress): CommandCardData {
-  return {
-    toolCallId,
-    commandText,
-    command,
-    mutationCompleted,
-    freshness,
-    ...(timing ? { timing } : {}),
-    ...(result ? { result } : {}),
-  };
-}
+/** A command card persists its progress as is; restored entries are checked against the same schema. */
+const COMMAND_CARD_SCHEMA = ACTION_FUSION_PROGRESS_SCHEMA;
+type CommandCardData = ActionFusionProgress;
 
 const TARGET_STATE = {
   changed: "the target changed after the mutation",
@@ -281,14 +250,13 @@ export function registerFusionCards(pi: ExtensionAPI) {
   return (progress: ActionFusionProgress, ctx?: ExtensionContext) => {
     if (ctx?.cwd) currentCwd = ctx.cwd;
     const first = !states.has(progress.toolCallId);
-    const data = commandCardData(progress);
-    states.set(progress.toolCallId, data);
+    states.set(progress.toolCallId, progress);
     const pending = progress.command === "waiting" || progress.command === "running";
     if (pending) active.add(progress.toolCallId);
     else active.delete(progress.toolCallId);
     // Only endpoints are persisted; streaming snapshots reuse Bash's bounded output.
-    if (first) pi.appendEntry(CARD_TYPE, data);
-    if (!pending) pi.appendEntry(RESULT_TYPE, data);
+    if (first) pi.appendEntry(CARD_TYPE, progress);
+    if (!pending) pi.appendEntry(RESULT_TYPE, progress);
   };
 }
 
