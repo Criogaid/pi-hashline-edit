@@ -65,7 +65,7 @@ const edits: Edit[] = [];
 for (let i = 100; i < 200; i += 5) {
   edits.push({
     op: "replace",
-    start: { line: i, hash: computeLineHash(i, lines5k[i - 1], hashLen) },
+    anchor: { line: i, hash: computeLineHash(i, lines5k[i - 1], hashLen) },
     body: [`updated line ${i}`],
   });
 }

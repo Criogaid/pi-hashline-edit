@@ -230,15 +230,15 @@ function toCoreEdits(ops: readonly EditOpInput[]): Edit[] {
       case "replace":
         return {
           op: "replace",
-          start: parseAnchor(op.anchor),
+          anchor: parseAnchor(op.anchor),
           end: parseAnchor(op.end),
           body: op.body,
         };
       case "delete":
-        return { op: "delete", start: parseAnchor(op.anchor), end: parseAnchor(op.end) };
+        return { op: "delete", anchor: parseAnchor(op.anchor), end: parseAnchor(op.end) };
       case "copy":
       case "move": {
-        const source = { op: op.op, start: parseAnchor(op.anchor), end: parseAnchor(op.end) };
+        const source = { op: op.op, anchor: parseAnchor(op.anchor), end: parseAnchor(op.end) };
         return "before" in op
           ? { ...source, before: parseAnchor(op.before) }
           : { ...source, after: parseAnchor(op.after) };

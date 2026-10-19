@@ -154,10 +154,10 @@ function translateEdit(
     case "move": {
       const failures: AnchorFailure[] = [];
       const checks: AnchorCheck[] = [];
-      const startF = verifyAnchor(lines, edit.start, "anchor", opIndex, edit.op, hashLen, radius);
-      checks.push(checkedAnchor(edit, opIndex, "anchor", edit.start, startF));
-      if (startF) failures.push(startF);
-      let endLine = edit.start.line;
+      const anchorF = verifyAnchor(lines, edit.anchor, "anchor", opIndex, edit.op, hashLen, radius);
+      checks.push(checkedAnchor(edit, opIndex, "anchor", edit.anchor, anchorF));
+      if (anchorF) failures.push(anchorF);
+      let endLine = edit.anchor.line;
       if (edit.end) {
         const endF = verifyAnchor(lines, edit.end, "end", opIndex, edit.op, hashLen, radius);
         checks.push(checkedAnchor(edit, opIndex, "end", edit.end, endF));
@@ -184,24 +184,24 @@ function translateEdit(
         if (failure) failures.push(failure);
       }
       if (failures.length > 0) return { ok: false, anchorFailures: failures, checks };
-      if (endLine < edit.start.line)
+      if (endLine < edit.anchor.line)
         return {
           ok: false,
           rangeError: {
             code: "INVALID_RANGE",
-            message: `Range ${edit.start.line}..${endLine} ends before it starts.`,
+            message: `Range ${edit.anchor.line}..${endLine} ends before it starts.`,
           },
           checks,
         };
       if (destination) {
-        const sourceLo = edit.start.line - 1;
+        const sourceLo = edit.anchor.line - 1;
         const gap = destination.cited.line - (destination.which === "before" ? 1 : 0);
         if (edit.op === "move" && sourceLo < gap && gap < endLine) {
           return {
             ok: false,
             rangeError: {
               code: "INVALID_RANGE",
-              message: `Destination ${destination.which} line ${destination.cited.line} lies inside moved range ${edit.start.line}..${endLine}.`,
+              message: `Destination ${destination.which} line ${destination.cited.line} lies inside moved range ${edit.anchor.line}..${endLine}.`,
             },
             checks,
           };
@@ -230,7 +230,7 @@ function translateEdit(
         checks,
         ops: [
           {
-            lo: edit.start.line - 1,
+            lo: edit.anchor.line - 1,
             hi: endLine,
             kind: "body",
             newLines: edit.op === "replace" ? edit.body : [],

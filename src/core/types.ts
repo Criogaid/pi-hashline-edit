@@ -22,12 +22,12 @@ type AnchorField = (typeof EDIT_ANCHOR_FIELDS)[number];
 export type Edit =
   | {
       readonly op: "replace";
-      readonly start: Anchor;
+      readonly anchor: Anchor;
       readonly end?: Anchor;
       readonly body: string[];
     }
-  | { readonly op: "delete"; readonly start: Anchor; readonly end?: Anchor }
-  | ({ readonly op: "copy" | "move"; readonly start: Anchor; readonly end?: Anchor } & (
+  | { readonly op: "delete"; readonly anchor: Anchor; readonly end?: Anchor }
+  | ({ readonly op: "copy" | "move"; readonly anchor: Anchor; readonly end?: Anchor } & (
       | { readonly before: Anchor; readonly after?: never }
       | { readonly after: Anchor; readonly before?: never }
     ))
