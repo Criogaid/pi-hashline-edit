@@ -193,6 +193,62 @@ test("session restore uses final snapshots and marks unfinished calls unknown", 
   );
 });
 
+test("session restore accepts exactly one command output representation", async (t) => {
+  const cases: readonly {
+    name: string;
+    fields: Partial<Pick<ActionFusionProgress, "result" | "output">>;
+    text?: RegExp;
+  }[] = [
+    {
+      name: "result only → restore result text",
+      fields: { result: { content: [{ type: "text", text: "result text" }] } },
+      text: /result text/,
+    },
+    {
+      name: "output only → restore output text",
+      fields: { output: "output text" },
+      text: /output text/,
+    },
+    {
+      name: "result and output coexist → ignore snapshot",
+      fields: {
+        result: { content: [{ type: "text", text: "result text" }] },
+        output: "output text",
+      },
+    },
+    { name: "result and output are absent → ignore snapshot", fields: {} },
+  ];
+  for (const { name, fields, text } of cases) {
+    await t.test(name, () => {
+      for (const event of ["session_start", "session_tree"]) {
+        const original = harness();
+        original.report(waiting);
+        const initial = original.entries[0];
+        const snapshot = {
+          ...initial,
+          data: {
+            toolCallId: waiting.toolCallId,
+            commandText: waiting.commandText,
+            command: "succeeded",
+            mutationCompleted: true,
+            freshness: "unchanged",
+            ...fields,
+          },
+        };
+        const resumed = harness();
+        resumed.restore(event, [initial, { ...snapshot, customType: "hashline-then-run-result" }]);
+        const shown = resumed.card(initial, true).render(160).join("\n");
+        if (text) {
+          assert.match(shown, text, event);
+        } else {
+          assert.match(shown, /interrupted \(final status unknown\)/, event);
+          assert.equal(resumed.card(snapshot), undefined, event);
+        }
+      }
+    });
+  }
+});
+
 test("skips and cancellations stay neutral and restore their own reason", () => {
   for (const command of ["skipped", "cancelled"] as const) {
     const h = harness();
