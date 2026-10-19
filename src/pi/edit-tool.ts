@@ -307,7 +307,7 @@ export function makeEditOverride(
     promptSnippet: "Edit file lines using verified anchors",
     promptGuidelines: [
       "Batch all edits to one file into a single edit call.",
-      "After edit or replace adds or removes lines, get fresh anchors with read or grep for lines at or below the earliest affected line. Anchors above it remain valid.",
+      "After edit or replace, get fresh anchors with read or grep before citing any line it changed. If it added or removed lines, also refresh anchors below the earliest affected line; anchors above it remain valid. If the affected positions are unknown, read or grep the lines you intend to cite.",
       ...(fusion ? ACTION_FUSION_GUIDELINES : []),
     ],
     parameters,

@@ -54,6 +54,19 @@ function failureReport(result: AgentToolResult<unknown> & { isError?: boolean })
   return report;
 }
 
+test("edit guidance → refreshes anchors after content changes and line shifts", () => {
+  const guidance = makeEditOverride(process.cwd(), DEFAULT_CONFIG).promptGuidelines.join("\n");
+  assert.match(guidance, /after edit or replace.*before citing any line it changed/i);
+  assert.match(
+    guidance,
+    /added or removed lines.*refresh anchors below the earliest affected line/i,
+  );
+  assert.match(
+    guidance,
+    /affected positions are unknown.*read or grep the lines you intend to cite/i,
+  );
+});
+
 test("edit execute: a file without a final newline stays byte-exact", async () => {
   await withDir(async (dir) => {
     const f = join(dir, "f.txt");
