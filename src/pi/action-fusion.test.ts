@@ -39,6 +39,7 @@ test("mutation tools expose Fusion schemas and guidance when supplied an executo
     assert.ok(
       "then_run" in enabled.parameters.properties && enabled.parameters.properties.then_run,
     );
+    assert.match(enabled.description, /set the then_run parameter/i);
     assert.deepEqual(enabled.promptGuidelines, [
       ...(disabled.promptGuidelines ?? []),
       ...ACTION_FUSION_GUIDELINES,
