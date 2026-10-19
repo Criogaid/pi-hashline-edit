@@ -64,7 +64,7 @@ The `src/pi/grep-order.test.ts` suite controls worker and file-read completion o
 
 ## 命令
 
-TypeScript 经 Node 类型剥离直接运行，没有构建步骤。CI 用 Node 24，并在 Linux、macOS、Windows 上测试 22.19.0 与 26。本地格式、类型、测试和 bench 命令可直接运行，无需确认。
+TypeScript runs directly through Node's type stripping, without a build step. CI runs Node 24 on Linux, macOS, and Windows, plus Node 22.19.0 and 26 on Linux. Local formatting, type checks, tests, and benchmarks need no confirmation.
 
 - `npm run format:check` / `npm run format`：Biome，只管格式，范围为 `src/` 与 `bench/`。
 - `npm run typecheck`：`tsc --noEmit`，覆盖源码与测试。
