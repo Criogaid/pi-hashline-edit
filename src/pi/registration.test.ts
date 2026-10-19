@@ -21,7 +21,7 @@ import { callTool } from "./tool-call.testing.ts";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import type { ActionFusionProgress } from "./action-fusion.ts";
 import { reportOf } from "./report.ts";
-import { formatKiB } from "./budgets.ts";
+import { formatByteSize } from "./budgets.ts";
 import { expectToolFailure } from "./report-failure.testing.ts";
 import { openTestSession } from "../testing/session.testing.ts";
 
@@ -457,6 +457,6 @@ test("configured read defaults bound omitted limits and returned bytes", async (
     assert.match(explicit.content[0].text, /^3#[0-9A-Z]+│c$/m);
     await writeFile(join(dir, "wide.txt"), `${"x".repeat(2048)}\n`);
     const wide = await call(read, { path: "wide.txt" });
-    assert.deepEqual(reportOf(wide, "read")?.lineTooLong, { line: 1, limit: formatKiB(1024) });
+    assert.deepEqual(reportOf(wide, "read")?.lineTooLong, { line: 1, limit: formatByteSize(1024) });
     assert.doesNotMatch(wide.content[0].text, /^\d+#/m);
   }));

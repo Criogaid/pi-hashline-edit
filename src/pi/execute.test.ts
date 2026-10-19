@@ -17,7 +17,7 @@ import { computeLineHash } from "../core/hash.ts";
 import { splitLines } from "../core/lines.ts";
 import { callTool } from "./tool-call.testing.ts";
 import { DEFAULT_CONFIG } from "./config.ts";
-import { formatKiB, DEFAULT_OUTPUT_BUDGETS } from "./budgets.ts";
+import { formatByteSize, DEFAULT_OUTPUT_BUDGETS } from "./budgets.ts";
 import { detailsReport, reportOf } from "./report.ts";
 import type { Report } from "./report-schema.ts";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
@@ -573,7 +573,7 @@ test("shifted-anchor recovery keeps the read fallback for oversized candidates",
     );
     assert.match(
       report.failures?.[0].omitted ?? "",
-      new RegExp(`exceeds ${formatKiB(DEFAULT_OUTPUT_BUDGETS.fieldBytes)}`),
+      new RegExp(`exceeds ${formatByteSize(DEFAULT_OUTPUT_BUDGETS.fieldBytes)}`),
     );
     assert.match(report.next ?? "", /use read or grep/);
     assert.equal(report.failures?.[0].content, undefined);
@@ -1248,7 +1248,7 @@ test("unresolved oversized and out-of-range rows require more context without pa
         report.failures?.[0].omitted,
         anchor.startsWith("99#")
           ? "cited line is out of range"
-          : `row exceeds ${formatKiB(DEFAULT_OUTPUT_BUDGETS.fieldBytes)}`,
+          : `row exceeds ${formatByteSize(DEFAULT_OUTPUT_BUDGETS.fieldBytes)}`,
       );
       assert.deepEqual(await readFile(file), Buffer.from(current));
     }

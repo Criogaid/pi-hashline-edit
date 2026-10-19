@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { stripVTControlCharacters } from "node:util";
-import { formatSize, initTheme } from "@earendil-works/pi-coding-agent";
+import { initTheme } from "@earendil-works/pi-coding-agent";
 import { theme } from "../../node_modules/@earendil-works/pi-coding-agent/dist/modes/interactive/theme/theme.js";
 import { formatArgumentError } from "./argument-error.ts";
 import { renderToolError, splitReport } from "./render.ts";
@@ -14,7 +14,7 @@ import {
   describeFailure,
   renderReport,
 } from "./report.ts";
-import { DEFAULT_OUTPUT_BUDGETS, formatKiB } from "./budgets.ts";
+import { DEFAULT_OUTPUT_BUDGETS, formatByteSize } from "./budgets.ts";
 import { MAX_UNNARROWED_SCAN_BYTES } from "./grep-candidates.ts";
 import { OUTCOME_NEXT, type Report, type ReportTool, type SuccessReport } from "./report-schema.ts";
 
@@ -249,7 +249,7 @@ test("grep success and incomplete candidate facts → survive report serializati
       tool: "grep",
       matches: 0,
       candidates: "all",
-      scanLimit: formatSize(MAX_UNNARROWED_SCAN_BYTES),
+      scanLimit: formatByteSize(MAX_UNNARROWED_SCAN_BYTES),
     },
     {
       tool: "grep",
@@ -257,7 +257,7 @@ test("grep success and incomplete candidate facts → survive report serializati
       message: "Search incomplete.",
       diagnostics: "unreadable file",
       candidates: "all",
-      scanLimit: formatSize(MAX_UNNARROWED_SCAN_BYTES),
+      scanLimit: formatByteSize(MAX_UNNARROWED_SCAN_BYTES),
     },
   ] satisfies Report[]) {
     const serialized = renderReport(report);
@@ -274,7 +274,7 @@ test("match and scan limits → recovery prioritizes the match limit", () => {
     matches: 1,
     matchLimit: 1,
     candidates: "all",
-    scanLimit: formatSize(MAX_UNNARROWED_SCAN_BYTES),
+    scanLimit: formatByteSize(MAX_UNNARROWED_SCAN_BYTES),
   });
   assert.equal(reportOf(result, "grep")?.next, next);
 });
@@ -301,8 +301,8 @@ test("invalid details report → falls back to valid text and leaves content int
 test("output byte limit → follows the scan limit and precedes the line preview limit", () => {
   const serialized = renderReport({
     candidates: "all",
-    scanLimit: formatSize(MAX_UNNARROWED_SCAN_BYTES),
-    outputLimit: formatKiB(DEFAULT_OUTPUT_BUDGETS.grepBytes),
+    scanLimit: formatByteSize(MAX_UNNARROWED_SCAN_BYTES),
+    outputLimit: formatByteSize(DEFAULT_OUTPUT_BUDGETS.grepBytes),
     linePreviewLimit: DEFAULT_OUTPUT_BUDGETS.grepPreviewUnits,
   });
   assert.deepEqual(Object.keys(JSON.parse(serialized)), [

@@ -11,7 +11,7 @@ import { makeReadOverride } from "./read-tool.ts";
 import { computeLineHash } from "../core/hash.ts";
 import { callTool } from "./tool-call.testing.ts";
 import { DEFAULT_CONFIG } from "./config.ts";
-import { DEFAULT_OUTPUT_BUDGETS, formatKiB } from "./budgets.ts";
+import { DEFAULT_OUTPUT_BUDGETS, formatByteSize } from "./budgets.ts";
 import { reportOf } from "./report.ts";
 
 const DEFAULT_READ_MAX_BYTES = DEFAULT_OUTPUT_BUDGETS.readBytes;
@@ -119,7 +119,7 @@ test("read byte truncation counts UTF-8 and separators without cutting anchors",
     const second = "x".repeat(maxBytes - Buffer.byteLength(first) - 2 * prefixBytes);
     await writeFile(join(dir, "large.txt"), `${first}\n${second}\n`);
     const result = await call(makeReadOverride(dir, DEFAULT_CONFIG), { path: "large.txt" });
-    assert.equal(reportOf(result, "read")?.outputLimit, formatKiB(maxBytes));
+    assert.equal(reportOf(result, "read")?.outputLimit, formatByteSize(maxBytes));
     assert.ok(result.content[0].text.includes(`1#${computeLineHash(1, first, hashLen)}│${first}`));
     assert.doesNotMatch(result.content[0].text, /\n2#/);
     const next = await call(makeReadOverride(dir, DEFAULT_CONFIG), {
@@ -138,7 +138,7 @@ test("read reports an oversized first row without suggesting an ineffective retr
     assert.doesNotMatch(result.content[0].text, /use offset\/limit/);
     assert.deepEqual(reportOf(result, "read")?.lineTooLong, {
       line: 1,
-      limit: formatKiB(DEFAULT_READ_MAX_BYTES),
+      limit: formatByteSize(DEFAULT_READ_MAX_BYTES),
     });
     assert.match(reportOf(result, "read")?.next ?? "", /chunks.*bash.*replace/);
   }));
@@ -284,7 +284,7 @@ test("read byte truncation retains its budget and a continuation after complete 
       totalLines: 3,
       nextOffset: 2,
     });
-    assert.equal(reportOf(result, "read")?.outputLimit, formatKiB(DEFAULT_READ_MAX_BYTES));
+    assert.equal(reportOf(result, "read")?.outputLimit, formatByteSize(DEFAULT_READ_MAX_BYTES));
     assert.match(reportOf(result, "read")?.next ?? "", /offset.*pagination\.nextOffset/);
     assert.doesNotMatch(result.content[0].text, /showing lines|to continue/);
   }));
@@ -298,11 +298,11 @@ test("read bounds oversized selected lines while reporting limits and preserving
     assert.match(result.content[0].text, /1#[0-9A-Z]+│first/);
     assert.doesNotMatch(result.content[0].text, /2#[0-9A-Z]+│/);
     assert.equal(reportOf(result, "read")?.lineTooLong, undefined);
-    assert.equal(reportOf(result, "read")?.outputLimit, formatKiB(DEFAULT_READ_MAX_BYTES));
+    assert.equal(reportOf(result, "read")?.outputLimit, formatByteSize(DEFAULT_READ_MAX_BYTES));
     const oversized = await call(read, { path: "long.txt", offset: 2, limit: 1 });
     assert.deepEqual(reportOf(oversized, "read")?.lineTooLong, {
       line: 2,
-      limit: formatKiB(DEFAULT_READ_MAX_BYTES),
+      limit: formatByteSize(DEFAULT_READ_MAX_BYTES),
     });
     assert.doesNotMatch(oversized.content[0].text, /^\d+#/m);
     const last = await call(read, { path: "long.txt", offset: 3, limit: 1 });
@@ -317,7 +317,7 @@ test("read budgets visible standalone CR characters using rendered UTF-8 bytes",
     const result = await call(makeReadOverride(dir, DEFAULT_CONFIG), { path: "cr.txt", limit: 1 });
     assert.deepEqual(reportOf(result, "read")?.lineTooLong, {
       line: 1,
-      limit: formatKiB(DEFAULT_READ_MAX_BYTES),
+      limit: formatByteSize(DEFAULT_READ_MAX_BYTES),
     });
     assert.doesNotMatch(result.content[0].text, /^\d+#/m);
   }));

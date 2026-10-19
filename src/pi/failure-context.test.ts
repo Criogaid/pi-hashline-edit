@@ -3,7 +3,7 @@ import { test } from "node:test";
 import { computeLineHash } from "../core/hash.ts";
 import { applyEdits } from "../core/apply.ts";
 import type { AnchorFailure, Edit } from "../core/types.ts";
-import { formatKiB, DEFAULT_OUTPUT_BUDGETS } from "./budgets.ts";
+import { formatByteSize, DEFAULT_OUTPUT_BUDGETS } from "./budgets.ts";
 import { DEFAULT_CONFIG } from "./config.ts";
 import { createAnchorFormatter } from "./anchor-format.ts";
 import { ambiguousCandidateNeighborhoods, describeEditFailure } from "./failure-context.ts";
@@ -268,7 +268,7 @@ test("unresolved row out of range or oversized → omission facts contain no rec
   const cases = [
     {
       anchor: oldAnchor,
-      reason: new RegExp(`row exceeds ${formatKiB(DEFAULT_OUTPUT_BUDGETS.fieldBytes)}`),
+      reason: new RegExp(`row exceeds ${formatByteSize(DEFAULT_OUTPUT_BUDGETS.fieldBytes)}`),
     },
     { anchor: { ...oldAnchor, line: 2 }, reason: /cited line is out of range/ },
   ];

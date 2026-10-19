@@ -9,7 +9,7 @@ import { HashlineError } from "../core/errors.ts";
 import { computeLineHash } from "../core/hash.ts";
 import { createAnchorFormatter } from "./anchor-format.ts";
 import { formatArgumentError } from "./argument-error.ts";
-import { formatKiB, outputBudgetsFor } from "./budgets.ts";
+import { formatByteSize, outputBudgetsFor } from "./budgets.ts";
 import { DEFAULT_CONFIG } from "./config.ts";
 import { makeEditOverride } from "./edit-tool.ts";
 import { describeEditFailure } from "./failure-context.ts";
@@ -28,6 +28,18 @@ function wrongHash(text: string): string {
   const hash = computeLineHash(1, text, DEFAULT_CONFIG.hashLen);
   return (hash[0] === "0" ? "1" : "0") + hash.slice(1);
 }
+
+test("byte budget size → uses MiB for whole MiB and KiB otherwise", () => {
+  for (const [bytes, expected] of [
+    [1024, "1 KiB"],
+    [1023 * 1024, "1023 KiB"],
+    [1024 * 1024, "1 MiB"],
+    [1025 * 1024, "1025 KiB"],
+    [4 * 1024 * 1024, "4 MiB"],
+  ] as const) {
+    assert.equal(formatByteSize(bytes), expected);
+  }
+});
 
 test("model budget grows → argument issues remain complete JSON with counted omissions", () => {
   const issues = Array.from({ length: 100 }, (_, index) => ({
@@ -95,7 +107,7 @@ test("model budget grows → grep payload and diagnostics use that call's allowa
       budget,
     }),
   );
-  assert.equal(outputs[0].facts.outputLimit, formatKiB(small.grepBytes));
+  assert.equal(outputs[0].facts.outputLimit, formatByteSize(small.grepBytes));
   assert.equal(outputs[1].payload, payload);
   assert.equal(outputs[1].facts.outputLimit, undefined);
   assert.ok(Buffer.byteLength(outputs[0].facts.diagnostics!) <= small.fieldBytes);

@@ -9,7 +9,7 @@ import { computeLineHash } from "../core/hash.ts";
 import { callTool } from "../pi/tool-call.testing.ts";
 import { DEFAULT_CONFIG, type HashlineEditConfig } from "../pi/config.ts";
 import { reportOf } from "../pi/report.ts";
-import { formatKiB } from "../pi/budgets.ts";
+import { formatByteSize } from "../pi/budgets.ts";
 import { expectToolFailure } from "../pi/report-failure.testing.ts";
 
 test("registered tools retain their configuration when another tool set is registered", async (t) => {
@@ -141,7 +141,7 @@ test("registered tools retain their configuration when another tool set is regis
             const maxBytes = read.maxKiB * 1024;
             assert.deepEqual(reportOf(bounded, "read")?.lineTooLong, {
               line: 1,
-              limit: formatKiB(maxBytes),
+              limit: formatByteSize(maxBytes),
             });
             assert.doesNotMatch(bounded.content[0].text, /^\d+#/m);
           } else {

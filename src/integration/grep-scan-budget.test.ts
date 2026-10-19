@@ -3,7 +3,7 @@ import { mkdtemp, rm, truncate, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { formatSize } from "@earendil-works/pi-coding-agent";
+import { formatByteSize } from "../pi/budgets.ts";
 import { DEFAULT_CONFIG } from "../pi/config.ts";
 import { MAX_MULTILINE_SEARCH_BYTES } from "../pi/grep-search.ts";
 import { MAX_UNNARROWED_SCAN_BYTES } from "../pi/grep-candidates.ts";
@@ -72,7 +72,7 @@ test("all-file candidates exceed the scan budget → stop listing and retain sca
       const report = reportOf(result, "grep");
       assert.ok(report);
       assert.equal(report.candidates, "all");
-      assert.equal(report.scanLimit, formatSize(MAX_UNNARROWED_SCAN_BYTES));
+      assert.equal(report.scanLimit, formatByteSize(MAX_UNNARROWED_SCAN_BYTES));
       if (scenario.stderr) {
         assert.equal(result.isError, true);
         assert.equal(report.error, "SEARCH_INCOMPLETE");

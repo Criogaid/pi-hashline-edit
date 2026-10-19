@@ -20,7 +20,7 @@ import { Worker } from "node:worker_threads";
 import { makeEditOverride } from "./edit-tool.ts";
 import { callTool } from "./tool-call.testing.ts";
 import { DEFAULT_CONFIG } from "./config.ts";
-import { DEFAULT_OUTPUT_BUDGETS, formatKiB } from "./budgets.ts";
+import { DEFAULT_OUTPUT_BUDGETS, formatByteSize } from "./budgets.ts";
 import { makeReadOverride } from "./read-tool.ts";
 import { reportOf } from "./report.ts";
 import { grepCounts } from "./grep-output.testing.ts";
@@ -338,7 +338,7 @@ test("grep payload blocks → only a single complete content or count block omit
       }
       assert.equal(
         report.outputLimit,
-        truncated ? formatKiB(budget.grepBytes) : undefined,
+        truncated ? formatByteSize(budget.grepBytes) : undefined,
         context,
       );
       assert.deepEqual(grepCounts(result), { matches: fileCount * 2, files: fileCount }, context);
