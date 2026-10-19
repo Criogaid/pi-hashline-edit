@@ -19,7 +19,7 @@ import { throwIfCancelled } from "./error-text.ts";
 import { createArgumentPreparer } from "./argument-validation.ts";
 import { defaultOutputBudgets, type OutputBudgetProvider } from "./budgets.ts";
 import { unwritableTextError } from "../core/text.ts";
-import { reportLines, renderToolError } from "./render.ts";
+import { reportLines, renderToolError, splitReport } from "./render.ts";
 import type { MutationResultDetails } from "./mutation-result.ts";
 import type { ReportDetails } from "./report.ts";
 
@@ -87,7 +87,7 @@ export function makeWriteOverride(
       context: WriteRenderContext,
     ) {
       if (context.isError) return renderToolError(result, theme, options.expanded);
-      const report = result.details?.report;
+      const { report } = splitReport(result);
       const facts = report ? reportLines(report, theme, WRITE_CARD_SHOWN) : [];
       if (facts.length) return new Text(facts.join("\n"), 0, 0);
       return builtin.renderResult!({ ...result, details: undefined }, options, theme, context);

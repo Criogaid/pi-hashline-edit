@@ -212,15 +212,19 @@ export function reportLines(
   return lines;
 }
 
-/** A result without its report block, for renderers that show every content block. */
-export function withoutReport<T extends Pick<AgentToolResult<unknown>, "content" | "details">>(
-  result: T,
-): T {
+/**
+ * A successful result's checked report and the content before its report block. Renderers
+ * read reports only here or through renderToolError, so the facts a card shows and the
+ * block it strips come from one check; content that is not our report stays.
+ */
+export function splitReport(result: Pick<AgentToolResult<unknown>, "content" | "details">): {
+  content: AgentToolResult<unknown>["content"];
+  report: Report | undefined;
+} {
   const report = detailsReport(result.details);
   const last = result.content.at(-1);
-  if (!report || last?.type !== "text") return result;
-  if (last.text !== renderReport(report)) return result;
-  return { ...result, content: result.content.slice(0, -1) };
+  const ours = report !== undefined && last?.type === "text" && last.text === renderReport(report);
+  return { content: ours ? result.content.slice(0, -1) : result.content, report };
 }
 
 /** Render a failure from its report; text that is not ours keeps its original lines. */
@@ -268,7 +272,7 @@ export function renderMutationResult<TArgs>(
   publishDiffCounts(diff, context, (counts) => {
     context.state?.callText?.setText(header(context.args, theme, counts));
   });
-  const report = result.details?.report;
+  const { report } = splitReport(result);
   const facts = report ? reportLines(report, theme, MUTATION_CARD_SHOWN) : [];
   // Only identical content produces no diff.
   const body = diff

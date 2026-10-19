@@ -11,7 +11,7 @@ import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { rgPath as bundledRgPath } from "@vscode/ripgrep";
 import { Type, type Static } from "typebox";
 import { Text } from "@earendil-works/pi-tui";
-import { renderOutputPreview, renderToolError, reportLines, withoutReport } from "./render.ts";
+import { renderOutputPreview, renderToolError, reportLines, splitReport } from "./render.ts";
 import { createAnchorFormatter } from "./anchor-format.ts";
 import { grepOutput } from "./grep-output.ts";
 import {
@@ -206,8 +206,8 @@ export function makeGrepOverrideWithBackend(
     ) {
       if (isPartial) return new Text(theme.fg("warning", "Searching…"), 0, 0);
       if (context?.isError) return renderToolError(result, theme, expanded);
-      const payload = withoutReport(result).content[0];
-      const report = result.details?.report;
+      const { content, report } = splitReport(result);
+      const payload = content[0];
       return renderOutputPreview(
         [
           ...(payload?.type === "text" ? toDisplayLines(payload.text, theme) : []),

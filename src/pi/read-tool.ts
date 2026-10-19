@@ -26,7 +26,7 @@ import { Type } from "typebox";
 import { scanTextLines } from "./text-stream.ts";
 import { createAnchorFormatter, displayCarriageReturns, parseHashline } from "./anchor-format.ts";
 import { canonicalPath, serializePath } from "./path.ts";
-import { renderToolError, reportLines, withoutReport } from "./render.ts";
+import { renderToolError, reportLines, splitReport } from "./render.ts";
 import { POSITIVE_SAFE_INTEGER } from "./schema.ts";
 import { errnoCode } from "../core/errors.ts";
 import { throwIfCancelled } from "./error-text.ts";
@@ -157,14 +157,13 @@ export function makeReadOverride(
       const { isPartial, expanded } = options;
       if (isPartial) return new Text(theme.fg("warning", "Reading…"), 0, 0);
       if (context?.isError) return renderToolError(result, theme, expanded);
+      const { content, report } = splitReport(result);
       if (result.details?.nativeRead)
-        return builtin.renderResult!(withoutReport(result), options, theme, context);
+        return builtin.renderResult!({ ...result, content }, options, theme, context);
       // Collapsed (not expanded): show nothing — the call line carries the
       // title, matching the built-in read's fold behavior.
       if (!expanded) return new Text("", 0, 0);
-      const content = withoutReport(result).content[0];
-      const raw = content?.type === "text" ? content.text : "";
-      const report = result.details?.report;
+      const raw = content[0]?.type === "text" ? content[0].text : "";
       return new Text(
         [
           renderReadBody(raw, String(context?.args?.path ?? ""), theme),
