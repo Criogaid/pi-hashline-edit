@@ -98,6 +98,68 @@ test("one independent card updates live and only persists its endpoints", () => 
   assert.match(h.card(h.entries[0], true).render(100).join("\n"), /output line 0\b/);
 });
 
+test("command cards persist one copy of command output and preserve rendered text", async (t) => {
+  const cases: readonly {
+    name: string;
+    progress: Pick<ActionFusionProgress, "command" | "output" | "result">;
+    text: RegExp;
+    notRun?: boolean;
+  }[] = [
+    {
+      name: "result exists → persist result without output",
+      progress: {
+        command: "succeeded",
+        output: "ok",
+        result: { content: [{ type: "text", text: "ok" }] },
+      },
+      text: /ok/,
+    },
+    {
+      name: "result is absent → persist output without result",
+      progress: { command: "failed", output: "boom" },
+      text: /boom/,
+    },
+    {
+      name: "cancelled result has empty text → show the not-run reason",
+      progress: {
+        command: "cancelled",
+        output: "",
+        result: { content: [{ type: "text", text: "" }] },
+      },
+      text: /cancelled/,
+      notRun: true,
+    },
+    {
+      name: "cancelled result has text → omit the not-run reason",
+      progress: {
+        command: "cancelled",
+        output: "partial output",
+        result: { content: [{ type: "text", text: "partial output" }] },
+      },
+      text: /partial output/,
+      notRun: false,
+    },
+  ];
+  for (const { name, progress, text, notRun } of cases) {
+    await t.test(name, () => {
+      const h = harness();
+      h.report(waiting);
+      h.report({ ...waiting, ...progress });
+      const saved = h.entries.find((entry) => entry.customType === "hashline-then-run-result");
+      assert.ok(saved);
+      assert.equal(Object.hasOwn(saved.data, "result"), progress.result !== undefined);
+      assert.equal(Object.hasOwn(saved.data, "output"), progress.result === undefined);
+      if (progress.result) assert.deepEqual(saved.data.result, progress.result);
+      else assert.equal(saved.data.output, progress.output);
+      for (const view of [h, harness(h.entries)]) {
+        const rendered = view.card(h.entries[0], true).render(160).join("\n");
+        assert.match(rendered, text);
+        if (notRun !== undefined) assert.equal(rendered.includes("Not run: cancelled."), notRun);
+      }
+    });
+  }
+});
+
 test("session restore uses final snapshots and marks unfinished calls unknown", () => {
   const h = harness();
   h.report(waiting);
