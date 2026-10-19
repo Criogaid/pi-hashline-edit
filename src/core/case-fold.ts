@@ -8,11 +8,8 @@
 import { MAX_UNIT, MAX_SCALAR, nativeCharacterRanges } from "./character-set.ts";
 const MAX_ASCII = 0x7f;
 
-let unitGroups: readonly (readonly number[])[] | undefined;
-
 /** Code units that ignoreCase treats as equal: ECMA-262 Canonicalize without the u flag. */
 function equivalentCases(): readonly (readonly number[])[] {
-  if (unitGroups) return unitGroups;
   const groups = new Map<number, number[]>();
   for (let unit = 0; unit <= MAX_UNIT; unit++) {
     const upper = String.fromCharCode(unit).toUpperCase();
@@ -24,8 +21,7 @@ function equivalentCases(): readonly (readonly number[])[] {
     if (group) group.push(unit);
     else groups.set(canonical, [unit]);
   }
-  unitGroups = [...groups.values()].filter((group) => group.length > 1);
-  return unitGroups;
+  return [...groups.values()].filter((group) => group.length > 1);
 }
 
 let unitVariants: ReadonlyMap<number, readonly string[]> | undefined;
