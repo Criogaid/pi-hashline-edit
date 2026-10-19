@@ -13,7 +13,7 @@ import {
   withThenRunSchema,
   type ThenRunInput,
 } from "./action-fusion.ts";
-import { commitFile, type CommitResult } from "./file-commit.ts";
+import { commitFile, commitVersions, type MutationVersions } from "./file-commit.ts";
 import { executeMutation, type ActionFusionExecutor } from "./mutation-runner.ts";
 import { throwIfCancelled } from "./error-text.ts";
 import { createArgumentPreparer } from "./argument-validation.ts";
@@ -41,7 +41,7 @@ function createWriteSchema(actionFusion: boolean) {
   return withThenRunSchema(writeSchema, "write", actionFusion);
 }
 type WriteParams = Static<typeof writeSchema> & { then_run?: ThenRunInput };
-type WriteMutationDetails = CommitResult & { path: string };
+type WriteMutationDetails = MutationVersions;
 type WriteDetails = MutationResultDetails<WriteMutationDetails>;
 /** The write card's call line shows the content; the command card owns then_run. */
 const WRITE_CARD_SHOWN = new Set(["publication", "created", "then_run", "progressError"]);
@@ -105,7 +105,7 @@ export function makeWriteOverride(
           cwd,
           fusion,
           budgets,
-          async run(mutationParams, { absolutePath, displayPath, signal }) {
+          async run(mutationParams, { absolutePath, signal }) {
             throwIfCancelled(signal);
             const commit = await commitFile(absolutePath, mutationParams.content, {
               mode: mutationParams.mode,
@@ -113,7 +113,7 @@ export function makeWriteOverride(
             });
             return {
               commit,
-              details: { path: displayPath, ...commit },
+              details: commitVersions(commit),
               facts: commit.created ? { created: true } : {},
             };
           },

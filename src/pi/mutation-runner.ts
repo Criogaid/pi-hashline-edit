@@ -45,8 +45,6 @@ export type TextMutationDetails = ReturnType<typeof generateMutationDetails>;
 /** The file a mutation targets, resolved once per call. */
 export interface MutationTarget {
   readonly absolutePath: string;
-  /** The caller-supplied path, used in reports and diffs. */
-  readonly displayPath: string;
   readonly signal: AbortSignal | undefined;
   readonly budget: OutputBudgets;
 }
@@ -92,7 +90,7 @@ export async function executeMutation<
   const budget = (spec.budgets ?? defaultOutputBudgets)();
   return runTool(tool, { path: displayPath, mutation: true, signal, budget }, async () => {
     const absolutePath = canonicalPath(cwd, displayPath);
-    const target: MutationTarget = { absolutePath, displayPath, signal, budget };
+    const target: MutationTarget = { absolutePath, signal, budget };
     const mutate = (): Promise<MutationOutcome<TDetails, TTool>> =>
       withFileMutationQueue(absolutePath, () => spec.run(mutationParams, target));
     if (!fusion) {
@@ -137,7 +135,7 @@ export async function runTextMutation<TTool extends MutationToolName>(
   target: MutationTarget,
   change: (currentText: string) => TextChange<TTool> | Promise<TextChange<TTool>>,
 ): Promise<MutationOutcome<TextMutationDetails, TTool>> {
-  const { absolutePath, displayPath, signal } = target;
+  const { absolutePath, signal } = target;
 
   const { text: currentText, baseRevision } = await readEditableSnapshot(absolutePath, signal);
   // Cancelled after read: don't transform; the file stays untouched.
@@ -151,13 +149,7 @@ export async function runTextMutation<TTool extends MutationToolName>(
   const commit = await commitReplacement(absolutePath, next.text, baseRevision, signal);
   return postProcessMutation(commit.publication, () => ({
     commit,
-    details: generateMutationDetails(
-      displayPath,
-      currentText,
-      next.text,
-      commit,
-      commit.publication,
-    ),
+    details: generateMutationDetails(currentText, next.text, commit),
     facts: next.facts,
   }));
 }

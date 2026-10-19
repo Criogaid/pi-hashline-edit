@@ -7,12 +7,13 @@
 
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import {
+  commitVersions,
   FileMutationError,
   type CommitResult,
   type FreshnessObservation,
   type MutationVersions,
 } from "./file-commit.ts";
-import { generateDiffString, generateUnifiedPatch } from "@earendil-works/pi-coding-agent";
+import { generateDiffString } from "@earendil-works/pi-coding-agent";
 import { displayCarriageReturns } from "./anchor-format.ts";
 import { normalizeLineEndings } from "../core/lines.ts";
 import type {
@@ -38,15 +39,12 @@ export type MutationResultDetails<TDetails> =
   | MutationFinalDetails<TDetails>
   | (Partial<TDetails> & { actionFusion: ActionFusionProgress });
 
-/** Keep byte-faithful diff/patch data and a separate preview of the shared logical text. */
-export function generateMutationDetails(
-  path: string,
-  before: string,
-  after: string,
-  versions: MutationVersions,
-  publication: PublicationStatus,
-) {
-  const { diff, firstChangedLine } = generateDiffString(before, after);
+/**
+ * A byte-faithful diff (Pi's session export reads it), a separate preview of the shared
+ * logical text for the card, and the commit's revisions.
+ */
+export function generateMutationDetails(before: string, after: string, commit: MutationVersions) {
+  const { diff } = generateDiffString(before, after);
   const logicalBefore = normalizeLineEndings(before);
   const logicalAfter = normalizeLineEndings(after);
   const displayDiff =
@@ -56,10 +54,7 @@ export function generateMutationDetails(
   return {
     diff: displayCarriageReturns(diff),
     displayDiff: displayCarriageReturns(displayDiff),
-    firstChangedLine,
-    patch: generateUnifiedPatch(path, before, after),
-    publication,
-    ...versions,
+    ...commitVersions(commit),
   };
 }
 
