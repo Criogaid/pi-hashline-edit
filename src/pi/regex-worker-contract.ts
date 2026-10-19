@@ -1,19 +1,9 @@
 /** Closed reply envelopes shared by isolated regex evaluators; decoded in the host. */
 import { Type, type Static, type TSchema } from "typebox";
 import { Value } from "typebox/value";
-import {
-  HashlineError,
-  type HashlineErrorArguments,
-  type HashlineErrorOptions,
-} from "../core/errors.ts";
-import {
-  ERROR_CODES,
-  ERROR_DEFINITIONS,
-  CAUSE_SCHEMA,
-  type ErrorCode,
-  type Cause,
-} from "./report-schema.ts";
-import { restoreCause } from "./report-cause.ts";
+import { HashlineError, type HashlineErrorArguments } from "../core/errors.ts";
+import { ERROR_CODES, ERROR_DEFINITIONS, CAUSE_SCHEMA, type ErrorCode } from "./report-schema.ts";
+import { restoreCause, type WorkerError } from "./report-cause.ts";
 
 const ERROR_SCHEMAS = ERROR_CODES.map((code) => {
   const facts = ERROR_DEFINITIONS[code].facts;
@@ -27,17 +17,9 @@ const ERROR_SCHEMAS = ERROR_CODES.map((code) => {
     { additionalProperties: false },
   );
 });
-/** A worker error that passed its code's schema: the facts are those that code requires. */
-export type CheckedWorkerError = {
-  [C in ErrorCode]: {
-    readonly code: C;
-    readonly message: string;
-    readonly cause?: Cause;
-  } & Pick<HashlineErrorOptions<C>, "facts">;
-}[ErrorCode];
 export type RegexWorkerReply<Result> =
   | { readonly result: Result }
-  | { readonly error: CheckedWorkerError };
+  | { readonly error: WorkerError };
 
 export function invalidWorkerResult(): HashlineError<"REGEX_WORKER_FAILED"> {
   return new HashlineError("REGEX_WORKER_FAILED", "Regex worker returned an invalid result.");
@@ -64,7 +46,7 @@ export function workerReplyDecoder<T extends TSchema>(result: T) {
 }
 
 /** Restore an error workerReplyDecoder checked as the same HashlineError the worker threw. */
-export function restoreWorkerError(error: CheckedWorkerError): HashlineError {
+export function restoreWorkerError(error: WorkerError): HashlineError {
   // The parameter ties facts to code; TypeScript cannot carry that link into the generic constructor.
   const options = [
     { facts: error.facts, cause: restoreCause(error.cause) },

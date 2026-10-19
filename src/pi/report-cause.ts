@@ -4,10 +4,15 @@
  * mapping, so it must not import typebox at runtime.
  * External boundaries validate cause data before restoreCause.
  */
-import { errnoCode, errorMessage, HashlineError } from "../core/errors.ts";
+import {
+  errnoCode,
+  errorMessage,
+  HashlineError,
+  type HashlineErrorOptions,
+} from "../core/errors.ts";
 import { DEFAULT_OUTPUT_BUDGETS } from "./budgets.ts";
 import { DiagnosticBuffer } from "./diagnostic-buffer.ts";
-import type { Cause } from "./report-schema.ts";
+import type { Cause, ErrorCode } from "./report-schema.ts";
 
 class RestoredCause extends Error {
   readonly data: Cause;
@@ -38,31 +43,31 @@ function boundedCause(data: Cause, maxBytes: number): Cause {
     ...(data.errors ? { errors: data.errors.map((inner) => boundedCause(inner, maxBytes)) } : {}),
   };
 }
-/** A worker reply error before schema validation; report-cause keeps its transport.
- *
- * Defined here, not in regex-worker-contract.ts, so the worker's runtime graph
- * stays free of typebox: the contract module imports typebox to validate replies,
- * and the worker runs on plain jiti without the host's module mapping.
+/**
+ * A failure a regex worker transports: its code ties the facts that code requires.
+ * The host still validates every reply (regex-worker-contract.ts) before trusting it.
  */
-export interface WorkerError {
-  readonly code: string;
-  readonly message: string;
-  readonly facts?: unknown;
-  readonly cause?: Cause;
-}
+export type WorkerError = {
+  [C in ErrorCode]: {
+    readonly code: C;
+    readonly message: string;
+    readonly cause?: Cause;
+  } & Pick<HashlineErrorOptions<C>, "facts">;
+}[ErrorCode];
 export type WorkerFailure = { readonly error: WorkerError };
 
 /** Transport full failures; the receiving tool applies its model-budget snapshot. */
 export function workerFailure(caught: unknown): WorkerFailure {
   if (caught instanceof HashlineError) {
-    // Its constructor enforced the code/facts relationship before crossing the boundary.
+    // Its constructor enforced the code/facts relationship; TypeScript cannot carry that link
+    // through the generic errorCode.
     return {
       error: {
         code: caught.errorCode,
         message: caught.message,
         ...(caught.facts === undefined ? {} : { facts: caught.facts }),
         ...(caught.cause === undefined ? {} : { cause: causeOf(caught.cause, Infinity) }),
-      },
+      } as WorkerError,
     };
   }
   return {
