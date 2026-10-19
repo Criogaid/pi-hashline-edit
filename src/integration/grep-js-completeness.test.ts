@@ -95,24 +95,34 @@ test("oversized line or multiline input → explicit incomplete-search diagnosti
   t.after(() => rm(directory, { recursive: true, force: true }));
   const path = join(directory, "large.txt");
   const good = join(directory, "good.txt");
-  await writeFile(path, Buffer.alloc(MAX_MULTILINE_SEARCH_BYTES + 1, 0x61));
+  const oversized = Buffer.alloc(MAX_MULTILINE_SEARCH_BYTES + 1, 0x61);
   await writeFile(good, "a\n");
   const tool = makeGrepOverrideWithBackend(directory, DEFAULT_CONFIG, {});
-  for (const multiline of [false, true]) {
-    for (const includeGood of [false, true]) {
-      const result = await callTool(tool, {
-        path: includeGood ? [path, good] : path,
-        pattern: "a",
-        literal: true,
-        multiline,
-      });
-      assert.match(reportOf(result, "grep")?.diagnostics ?? "", /large\.txt/);
-      if (includeGood) {
-        assert.equal(result.isError, undefined);
-        assert.equal(grepCounts(result).matches, 1);
-      } else {
-        assert.equal(result.isError, true);
-        assert.equal(reportOf(result, "grep")?.error, "SEARCH_INCOMPLETE");
+  for (const finalNewline of [false, true]) {
+    await writeFile(path, finalNewline ? Buffer.concat([oversized, Buffer.from("\n")]) : oversized);
+    for (const multiline of [false, true]) {
+      for (const includeGood of [false, true]) {
+        await t.test(
+          `finalNewline=${finalNewline}, multiline=${multiline}, includeGood=${includeGood}`,
+          async () => {
+            const result = await callTool(tool, {
+              path: includeGood ? [path, good] : path,
+              pattern: "a",
+              literal: true,
+              multiline,
+            });
+            const diagnostics = reportOf(result, "grep")?.diagnostics ?? "";
+            assert.match(diagnostics, /large\.txt/);
+            assert.match(diagnostics, multiline ? /MiB/ : /UTF-16 code units/);
+            if (includeGood) {
+              assert.equal(result.isError, undefined);
+              assert.equal(grepCounts(result).matches, 1);
+            } else {
+              assert.equal(result.isError, true);
+              assert.equal(reportOf(result, "grep")?.error, "SEARCH_INCOMPLETE");
+            }
+          },
+        );
       }
     }
   }

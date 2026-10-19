@@ -12,6 +12,7 @@ import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import type { Readable } from "node:stream";
 import { HashlineError } from "../core/errors.ts";
 import { throwIfCancelled } from "./error-text.ts";
+import { formatByteSize } from "./budgets.ts";
 
 /**
  * Every rg run visits input roots in caller order and sorts each directory's entries.
@@ -20,7 +21,7 @@ import { throwIfCancelled } from "./error-text.ts";
  */
 export const COMMON_RG_ARGS = ["--no-config", "--color=never", "--sort=path"];
 export const MAX_RG_RECORD_BYTES = 16 * 1024 * 1024;
-const RG_RECORD_LIMIT_MESSAGE = `ripgrep output record exceeds ${MAX_RG_RECORD_BYTES / 1024 ** 2} MiB.`;
+const RG_RECORD_LIMIT_MESSAGE = `ripgrep output record exceeds ${formatByteSize(MAX_RG_RECORD_BYTES)}.`;
 /**
  * A ripgrep process or output-protocol failure. A finished run contributes its
  * exit code and, as the cause, its stderr.

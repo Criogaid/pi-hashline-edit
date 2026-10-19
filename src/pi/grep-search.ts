@@ -17,6 +17,7 @@ import { listCandidates, type Candidate } from "./grep-candidates.ts";
 import { withRegexWorker } from "./regex-worker.ts";
 import { invalidWorkerResult, workerReplyDecoder } from "./regex-worker-contract.ts";
 import { fileReadWarning, throwIfCancelled } from "./error-text.ts";
+import { formatByteSize } from "./budgets.ts";
 
 /** Matching physical lines in ascending order, with the revision they were searched against. */
 export interface GrepFileMatch {
@@ -35,7 +36,7 @@ interface SearchFileSnapshot {
 export const MAX_MULTILINE_SEARCH_BYTES = 64 * 1024 * 1024;
 /** Line-mode requests end after a line feed once they reach this many UTF-16 units. */
 const SEARCH_CHUNK_UNITS = 1024 * 1024;
-/** A line-mode request holds whole lines, so one line may not exceed the multiline limit. */
+/** Maximum UTF-16 code units in one physical line; independent of its encoded byte length. */
 const MAX_SEARCH_LINE_UNITS = MAX_MULTILINE_SEARCH_BYTES;
 const MAX_SEARCH_HEAP_MB = 512;
 const MAX_SEARCH_WORKERS = 4;
@@ -44,11 +45,10 @@ const SEARCH_WORKERS = Math.max(1, Math.min(MAX_SEARCH_WORKERS, availableParalle
 const MAX_UNCOMMITTED_FILES = 16 * SEARCH_WORKERS;
 class SearchFileLimitError extends Error {
   constructor(multiline: boolean) {
-    const limit = `${MAX_MULTILINE_SEARCH_BYTES / 1024 ** 2} MiB`;
     super(
       multiline
-        ? `Multiline search requires a file of at most ${limit}.`
-        : `Search requires lines of at most ${limit}.`,
+        ? `Multiline search requires a file of at most ${formatByteSize(MAX_MULTILINE_SEARCH_BYTES)}.`
+        : `Search requires lines of at most ${MAX_SEARCH_LINE_UNITS} UTF-16 code units.`,
     );
   }
 }
@@ -166,16 +166,24 @@ async function searchFile(
   let pending = "";
   /** Length of pending through its last line feed. */
   let complete = 0;
+  let lineUnits = 0;
   const stats = await scanTextFile(filePath, {
     onChunk: async (text, bytesRead) => {
       if (query.multiline) {
         if (bytesRead <= MAX_MULTILINE_SEARCH_BYTES) pending += text;
         return;
       }
-      const lf = text.lastIndexOf("\n");
-      if (lf !== -1) complete = pending.length + lf + 1;
+      let start = 0;
+      for (;;) {
+        const lf = text.indexOf("\n", start);
+        lineUnits += (lf === -1 ? text.length : lf) - start;
+        if (lineUnits > MAX_SEARCH_LINE_UNITS) throw new SearchFileLimitError(false);
+        if (lf === -1) break;
+        lineUnits = 0;
+        complete = pending.length + lf + 1;
+        start = lf + 1;
+      }
       pending += text;
-      if (pending.length - complete > MAX_SEARCH_LINE_UNITS) throw new SearchFileLimitError(false);
       if (complete >= SEARCH_CHUNK_UNITS) {
         const source = pending.slice(0, complete);
         pending = pending.slice(complete);

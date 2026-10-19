@@ -11,7 +11,7 @@ Hash-anchored file editing for [Pi](https://github.com/earendil-works/pi-coding-
 - **Edits land where the model meant.** Each line carries a short `LINE#HASH` anchor. If the file changed since the model looked, the edit is rejected, and the report points to where the line moved.
 - **No text matching.** The model never has to reproduce old text exactly, so whitespace drift, duplicate snippets, and long blocks stop causing failed or misplaced edits.
 - **Files stay byte-faithful.** BOMs, CRLF/LF line endings, final newlines, and untouched bytes are preserved. Invalid UTF-8 and NUL bytes are rejected before writing.
-- **Safe publication.** Writes are atomic (temporary file, then link or rename), bound to the revision that was read, and report clearly whether the file changed when something fails.
+- **Safe publication.** Writes are atomic (temporary file, then link or rename). Read-modify-write calls bind publication to the bytes they read; failures report whether publication happened.
 - **Fewer round trips.** A mutation can carry a follow-up command such as `npm test` ([Action Fusion](#action-fusion)).
 - **JavaScript regex everywhere.** `grep` and `replace` use the JavaScript regex semantics the model already knows, with ripgrep speed for finding candidate files.
 - **Output sized to the model.** Result sizes scale with the selected model's context window, so small models are not flooded and large models are not starved.
@@ -60,6 +60,8 @@ The extension replaces Pi's `read`, `grep`, `edit`, and `write`, and adds `repla
 
 Grep visits input paths in the order supplied and uses ripgrep's sorted directory traversal within each root. Repeated candidate paths are searched once, at their first occurrence. This is not global lexicographic sorting of full paths.
 
+Grep matches the LF view with native JavaScript regexes. Without `multiline`, each physical line is searched separately; with it, the whole file is searched and every physical line touched by a match is returned. Context rows do not count toward `limit`. Content output re-reads matched files and omits any whose revision changed; `files` and `count` report the searched snapshot without a second read. Incomplete scans state their diagnostics or scan limit in the report.
+
 Edit operations:
 
 | `op` | Effect |
@@ -71,9 +73,13 @@ Edit operations:
 
 The model sees each tool's full parameter schema; the definitions live in the tool files under [`src/pi/`](src/pi/).
 
+Range operations verify the cited `anchor` and `end`, plus the destination for copy/move. Interior lines have no individual anchor check. Changes elsewhere before the call do not invalidate unchanged anchors; publication rechecks the bytes read while applying the call and rejects a detected change.
+
 ## When an edit is rejected
 
-A rejected call never changes the file. The report names the error, the fields involved, and a `next` instruction. For a stale anchor it also shows where the line most likely moved, with its new anchor and nearby lines, so the model can confirm and resubmit without re-reading the whole file. Recovery never edits on its own; every retry is verified again.
+Argument and anchor validation failures leave the file untouched. The report names the error, the fields involved, and a `next` instruction. For a stale anchor it also shows where the line most likely moved, with its new anchor and nearby lines, so the model can confirm and resubmit without re-reading the whole file. Recovery never edits on its own; every retry is verified again.
+
+A failure during or after publication states `NOT_PUBLISHED`, `PUBLISHED`, or `UNKNOWN`. Follow the report's `next` before retrying: an error after publication can leave the requested change on disk.
 
 Argument mistakes are reported per field, with what the field means and how to fix it, before any file is touched.
 
@@ -125,12 +131,22 @@ Add `hashlineEdit` to Pi's global settings (`~/.pi/agent/settings.json`) or a pr
 
 A project's `hashlineEdit` replaces the global one as a whole; invalid values fall back to their defaults. Reload Pi after changing settings. The [configuration schema](src/pi/config.ts) is the source of truth.
 
+## Output budgets
+
+The selected model's declared context capacity sets the output budgets; remaining context is never used. For a known capacity, anchored read rows and grep payloads receive one byte per context token, up to 4 MiB. Diagnostic blocks receive a quarter of that budget (at least 512 bytes), and free-text fields a quarter of the block budget (at least 128 bytes). Grep previews keep one UTF-16 code unit per four field bytes. The definitions and fallback values live in [`budgets.ts`](src/pi/budgets.ts).
+
+When model capacity is unknown or invalid, the defaults are 256 KiB for read rows, 50 KiB for grep payloads, 16 KiB per diagnostic block, 4 KiB per free-text field, and 500 UTF-16 code units per grep preview. An explicit `read.maxKiB` overrides only the read cap. Each execution keeps the budget snapshot it started with.
+
+Read reports pagination when the extension cuts a window or its byte budget; a caller-supplied `limit` alone does not add a pagination report. A first row that cannot fit gets a `lineTooLong` fact. Grep reports payload and preview truncation separately, and plain previews for invalid UTF-8 never carry edit anchors.
+
 ## Limits
 
 - Anchors are short checksums: they catch changed and shifted lines, but can collide and do not prove the model read the line.
 - Only UTF-8 text is edited; UTF-16 and legacy code pages are not supported.
 - Revision checks catch most concurrent changes, but there is no cross-process lock or multi-file transaction.
 - Overwrites keep symlinks pointing at their target; FIFOs, other non-regular files, and files with multiple hard links are not overwritten.
+- Grep's [search limits](src/pi/grep-search.ts) allow multiline files up to 64 MiB and individual physical lines up to 64 × 1024² UTF-16 code units. Matching runs in at most four workers, each with a 512 MiB V8 old-generation heap limit; individual regex evaluations use the configured timeout.
+- When discovery falls back to every file in scope, it stops queuing files once their combined sizes reach the [256 MiB whole-scope budget](src/pi/grep-candidates.ts); the last queued file can cross that threshold. The report states when this prevents another file from being scanned. Ripgrep protocol records have a [16 MiB limit](src/pi/rg-process.ts). Unsupported or over-limit candidate analysis widens discovery; JavaScript still decides the matches.
 
 ## Development
 
