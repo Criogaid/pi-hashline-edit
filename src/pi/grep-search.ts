@@ -54,7 +54,7 @@ class SearchFileLimitError extends Error {
 }
 
 /** A worker failure inside a file scan; never classify it as a file-read warning. */
-class WorkerFailure {
+class ScanWorkerFailure {
   readonly error: unknown;
   constructor(error: unknown) {
     this.error = error;
@@ -123,7 +123,7 @@ async function searchFile(
     try {
       result = await run(input);
     } catch (error) {
-      throw new WorkerFailure(error);
+      throw new ScanWorkerFailure(error);
     }
     if (result.totalLines !== lines || result.lines.length > input.limit)
       throw invalidWorkerResult();
@@ -275,7 +275,7 @@ export async function searchFiles(options: {
           : fileReadWarning(filePath, error, poolSignal);
       result = warning
         ? { warning }
-        : { error: error instanceof WorkerFailure ? error.error : error };
+        : { error: error instanceof ScanWorkerFailure ? error.error : error };
     }
     settled.set(position, result);
     commit();
