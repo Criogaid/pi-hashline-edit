@@ -127,5 +127,9 @@ function readSettings(filePath: string): Record<string, unknown> {
 export function loadConfig(cwd?: string): HashlineEditConfig {
   const globalSettings = readSettings(path.join(getAgentDir(), "settings.json"));
   const projectSettings = cwd ? readSettings(path.join(cwd, ".pi", "settings.json")) : {};
-  return resolveSetting(configSchema, projectSettings.hashlineEdit ?? globalSettings.hashlineEdit);
+  // Any project value replaces the global one, even null or an invalid value, which yields defaults.
+  const settings = Object.hasOwn(projectSettings, "hashlineEdit")
+    ? projectSettings
+    : globalSettings;
+  return resolveSetting(configSchema, settings.hashlineEdit);
 }
