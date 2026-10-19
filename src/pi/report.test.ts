@@ -312,3 +312,17 @@ test("output byte limit → follows the scan limit and precedes the line preview
     "linePreviewLimit",
   ]);
 });
+
+test("hooked details contain a cyclic report cause → preserves payload and decodes the text report", () => {
+  const cause: { message: string; cause?: unknown } = { message: "loop" };
+  cause.cause = cause;
+  const fallback = {
+    tool: "read" as const,
+    error: "UNCLASSIFIED" as const,
+    message: "raw diagnostic",
+  };
+  const content = [text(renderReport(fallback))];
+  const result = { details: { report: { ...fallback, cause } }, content };
+  assert.deepEqual(reportOf(result, "read"), fallback);
+  assert.deepEqual(splitReport(result), { content, report: undefined });
+});

@@ -89,9 +89,16 @@ export function decodeReport(text: string, contextTool: ReportTool): Report | un
 export function detailsReport(details: unknown): Report | undefined {
   const report: unknown =
     typeof details === "object" && details !== null ? Reflect.get(details, "report") : undefined;
-  return report !== undefined && Value.Check(WIRE_REPORT_SCHEMA, report)
-    ? (report as Report)
-    : undefined;
+  try {
+    // Hooks can introduce cycles; reject non-JSON reports before recursive schema validation.
+    JSON.stringify(report);
+    return report !== undefined && Value.Check(WIRE_REPORT_SCHEMA, report)
+      ? (report as Report)
+      : undefined;
+  } catch (error) {
+    if (error instanceof TypeError || error instanceof RangeError) return undefined;
+    throw error;
+  }
 }
 
 /** Tool results carry their report in details; Pi argument failures carry it as their final text block. */
