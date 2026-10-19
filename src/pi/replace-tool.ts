@@ -33,7 +33,7 @@ import {
 import type { AgentToolUpdateCallback } from "@earendil-works/pi-agent-core";
 import { Type, type Static } from "typebox";
 import { applyReplacements } from "../core/replace.ts";
-import { buildRegex, regexFlagsError } from "../core/regex.ts";
+import { checkRegexArguments } from "../core/regex.ts";
 import { REPLACEMENTS_SCHEMA } from "../core/replace-schema.ts";
 import { runRegexReplacements } from "./replace-regex.ts";
 import { unwritableTextError } from "../core/text.ts";
@@ -58,7 +58,6 @@ import {
   type TextMutationDetails,
 } from "./mutation-runner.ts";
 import type { MutationResultDetails } from "./mutation-result.ts";
-import { errorMessage } from "../core/errors.ts";
 import { defaultOutputBudgets, type OutputBudgetProvider } from "./budgets.ts";
 import {
   argumentItems,
@@ -104,18 +103,14 @@ function checkReplaceArguments(args: unknown, report: ReportArgumentIssue): void
     const unwritable = typeof replace === "string" ? unwritableTextError(replace) : undefined;
     if (unwritable) report(`replacements[${index}].replace`, unwritable.message);
     if (flags !== undefined && typeof flags !== "string") return;
-    const flagsError = regexFlagsError(flags);
-    if (flagsError) {
-      report(`replacements[${index}].flags`, flagsError);
-      return;
-    }
-    if (literal === false && typeof find === "string" && find !== "") {
-      try {
-        buildRegex(find, false, flags);
-      } catch (error) {
-        report(`replacements[${index}].find`, errorMessage(error));
-      }
-    }
+    const item = `replacements[${index}]`;
+    checkRegexArguments(
+      `${item}.flags`,
+      flags,
+      literal !== false,
+      [[`${item}.find`, find]],
+      report,
+    );
   });
 }
 

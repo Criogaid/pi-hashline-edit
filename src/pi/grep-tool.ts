@@ -24,9 +24,8 @@ import { searchFiles } from "./grep-search.ts";
 import { toDisplayLines } from "./grep-render.ts";
 import { runRgLines, runRgPaths, type GrepBackend } from "./rg-process.ts";
 import { smartIgnoreCase } from "../core/search-analysis.ts";
-import { buildRegex, regexFlagsError } from "../core/regex.ts";
+import { checkRegexArguments } from "../core/regex.ts";
 import { DEFAULT_GREP_FLAGS } from "../core/search.ts";
-import { errorMessage } from "../core/errors.ts";
 import { GREP_CONTEXT_RANGE, POSITIVE_SAFE_INTEGER } from "./schema.ts";
 import { throwIfCancelled } from "./error-text.ts";
 import { reportResult, runTool, type ReportDetails } from "./report.ts";
@@ -120,23 +119,10 @@ type GrepTool = ToolDefinition<GrepSchema, Partial<ReportDetails> | undefined>;
 function checkGrepArguments(args: unknown, report: ReportArgumentIssue): void {
   const { pattern, literal, flags } = (args ?? {}) as Record<string, unknown>;
   if (typeof literal !== "boolean" || (flags !== undefined && typeof flags !== "string")) return;
-  const flagsError = regexFlagsError(flags ?? DEFAULT_GREP_FLAGS);
-  if (flagsError) {
-    report("flags", flagsError);
-    return;
-  }
-  if (literal) return;
   const fields = Array.isArray(pattern)
     ? pattern.map((value, index) => [`pattern[${index}]`, value] as const)
     : [["pattern", pattern] as const];
-  for (const [field, value] of fields) {
-    if (typeof value !== "string" || value === "") continue;
-    try {
-      buildRegex(value, false, flags ?? DEFAULT_GREP_FLAGS);
-    } catch (error) {
-      report(field, errorMessage(error));
-    }
-  }
+  checkRegexArguments("flags", flags ?? DEFAULT_GREP_FLAGS, literal, fields, report);
 }
 
 /** Build the production grep override (a ToolDefinition fragment for registerTool). */
