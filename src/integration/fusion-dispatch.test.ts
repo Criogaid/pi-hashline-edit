@@ -81,7 +81,7 @@ async function openSession(
       assert.equal(await readFile(join(cwd, "saved.txt"), "utf8"), "saved\n");
       return {
         modelRequests: responses,
-        report: reportOf(result),
+        report: reportOf(result, "write"),
         text: result.content
           .filter((block) => block.type === "text")
           .map((block) => block.text)

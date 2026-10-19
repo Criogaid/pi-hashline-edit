@@ -66,7 +66,7 @@ test("Cartesian JS syntax × all flag combinations → tool entry agrees with V8
         accepted++;
         const value = await result;
         assert.equal(value.isError, undefined, context);
-        assert.equal(reportOf(value)?.matches, 0, context);
+        assert.equal(reportOf(value, "grep")?.matches, 0, context);
         assert.equal(discoveries, before + 1, context);
       }
     }

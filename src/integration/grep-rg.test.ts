@@ -306,7 +306,7 @@ test("real rg finds a late OR match and respects the line limit", async () => {
       undefined,
     );
     assert.match(result.content[0].text, /4097#[0-9A-Z]+│foo keep/);
-    assert.equal(reportOf(result)?.matchLimit, 1);
+    assert.equal(reportOf(result, "grep")?.matchLimit, 1);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
@@ -411,7 +411,7 @@ test("directory traversal with caller globs → excludes .git while an explicit 
           pattern: "needle",
           outputMode: "files",
         });
-        assert.equal(result.isError, undefined, JSON.stringify(reportOf(result)));
+        assert.equal(result.isError, undefined, JSON.stringify(reportOf(result, "grep")));
         assert.equal(grepCounts(result).matches, 1);
         assert.equal(result.content[0].text.replace(/\\/g, "/"), expected);
       }
@@ -443,11 +443,11 @@ test("explicit file with different case and a glob → admits the same file on a
     literal: true,
     pattern: "needle",
   });
-  assert.equal(result.isError, undefined, JSON.stringify(reportOf(result)));
+  assert.equal(result.isError, undefined, JSON.stringify(reportOf(result, "grep")));
   assert.equal(grepCounts(result).matches, 1);
   assert.equal(grepCounts(result).files, 1);
   assert.match(result.content[0].text, /1#[0-9A-Z]+│needle/);
-  assert.equal(reportOf(result)?.diagnostics, undefined);
+  assert.equal(reportOf(result, "grep")?.diagnostics, undefined);
   assert.equal(result.details.incomplete, undefined);
 });
 
@@ -489,9 +489,9 @@ test("explicit file with a dangling sibling link and a glob → returns complete
     pattern: "needle",
   });
   assert.match(listingDiagnostics, /broken\.txt/);
-  assert.equal(result.isError, undefined, JSON.stringify(reportOf(result)));
+  assert.equal(result.isError, undefined, JSON.stringify(reportOf(result, "grep")));
   assert.equal(grepCounts(result).matches, 1);
-  assert.equal(reportOf(result)?.diagnostics, undefined);
+  assert.equal(reportOf(result, "grep")?.diagnostics, undefined);
   assert.equal(result.details.incomplete, undefined);
 });
 
@@ -596,7 +596,7 @@ test("unbounded lookbehind → native JS matches after rg discovery", async (t) 
   await writeFile(join(directory, "fixture.txt"), "aaab\n");
   const tool = makeGrepOverrideWithBackend(directory, DEFAULT_CONFIG, {});
   const result = await invoke(tool, "0", { pattern: "(?<=a+)b", literal: false });
-  assert.equal(result.isError, undefined, JSON.stringify(reportOf(result)));
+  assert.equal(result.isError, undefined, JSON.stringify(reportOf(result, "grep")));
   assert.equal(grepCounts(result).matches, 1);
 });
 
@@ -632,7 +632,7 @@ test("line-based grep uses context for display but never matches across CRLF", a
       undefined,
     );
     assert.match(limited.content[0].text, /fixture\.txt: 1/);
-    assert.equal(reportOf(limited)?.matchLimit, 1);
+    assert.equal(reportOf(limited, "grep")?.matchLimit, 1);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
@@ -687,7 +687,7 @@ test("multiline grep anchors CRLF spans and counts overlapping physical lines on
     assert.match(bounded.content[0].text, /fixture\.txt: 2/);
     assert.equal(grepCounts(bounded).matches, 2);
     assert.equal(grepCounts(bounded).files, 1);
-    assert.equal(reportOf(bounded)?.matchLimit, 2);
+    assert.equal(reportOf(bounded, "grep")?.matchLimit, 2);
     const files = await invoke(
       tool,
       "0",
@@ -703,7 +703,7 @@ test("multiline grep anchors CRLF spans and counts overlapping physical lines on
       undefined,
     );
     assert.equal(files.content[0].text, "fixture.txt");
-    assert.equal(reportOf(files)?.matchLimit, 1);
+    assert.equal(reportOf(files, "grep")?.matchLimit, 1);
     const boundary = await invoke(
       tool,
       "0",
@@ -832,7 +832,7 @@ test("files and count modes aggregate only matching lines inside the limit", asy
       undefined,
     );
     assert.match(files.content[0].text, /^(?:a|b)\.txt$/);
-    assert.equal(reportOf(files)?.matchLimit, 1);
+    assert.equal(reportOf(files, "grep")?.matchLimit, 1);
     const limited = await invoke(
       tool,
       "count",
@@ -992,7 +992,10 @@ test("long-line previews preserve full-line anchors across literal and JavaScrip
           `3#${computeLineHash(3, context, 4)}│[partial, columns 1-${DEFAULT_OUTPUT_BUDGETS.grepPreviewUnits - 1}]`,
         ),
       );
-      assert.equal(reportOf(result)?.linePreviewLimit, DEFAULT_OUTPUT_BUDGETS.grepPreviewUnits);
+      assert.equal(
+        reportOf(result, "grep")?.linePreviewLimit,
+        DEFAULT_OUTPUT_BUDGETS.grepPreviewUnits,
+      );
     }
   } finally {
     await rm(directory, { recursive: true, force: true });
@@ -1229,7 +1232,7 @@ test("NUL files are silently skipped across search scopes and output modes", asy
           undefined,
         );
         assert.equal(grepCounts(skipped).matches, 0);
-        assert.equal(reportOf(skipped)?.diagnostics, undefined);
+        assert.equal(reportOf(skipped, "grep")?.diagnostics, undefined);
         const result = await invoke(
           grep,
           "directory",
@@ -1268,7 +1271,7 @@ test("invalid UTF-8 matches use plain previews while valid files retain edit anc
         undefined,
       );
       assert.match(result.content[0].text, /1│before\n2│needle �\n3│after/);
-      assert.deepEqual(reportOf(result)?.invalidUtf8, ["invalid.txt"]);
+      assert.deepEqual(reportOf(result, "grep")?.invalidUtf8, ["invalid.txt"]);
       assert.doesNotMatch(result.content[0].text, /\d+#/);
       assert.equal(result.details?.incomplete, undefined);
       assert.deepEqual(await readFile(invalid), source);

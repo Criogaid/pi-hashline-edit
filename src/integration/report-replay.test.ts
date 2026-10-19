@@ -35,7 +35,7 @@ test("live preparation failure → replays diagnostic after fresh registration",
     );
     assert.ok(result?.role === "toolResult");
     assert.equal(result.isError, true);
-    assert.equal(reportOf(result)?.error, "INVALID_ARGUMENTS");
+    assert.equal(reportOf(result, "edit")?.error, "INVALID_ARGUMENTS");
     return responseStream(first.model, {
       content: [{ type: "text", text: "Done." }],
       stopReason: "stop",
@@ -51,7 +51,7 @@ test("live preparation failure → replays diagnostic after fresh registration",
   assert.ok(live?.role === "toolResult");
   const replay = { content: structuredClone(live.content), details: undefined };
   const serialized = JSON.stringify(replay);
-  const report = reportOf(replay);
+  const report = reportOf(replay, "edit");
   assert.equal(report?.issues?.[0].field, "edits[0].body");
   assert.equal(report?.issues?.[0].reason, "is empty");
 

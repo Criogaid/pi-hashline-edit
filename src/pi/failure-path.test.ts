@@ -86,7 +86,7 @@ test("command fails and modifies the target → reports changed freshness and co
       signal: undefined,
       ctx: await createToolContext(dir, t),
     });
-    const report = reportOf(outcome);
+    const report = reportOf(outcome, "edit");
     assert.equal(report?.publication, "PUBLISHED");
     assert.equal(report?.then_run?.status, "failed");
     assert.equal(report?.freshness, "changed");
@@ -122,8 +122,8 @@ test("cancellation after publication → does not rerun mutation and still inspe
       signal: controller.signal,
       ctx: await createToolContext(dir, t),
     });
-    assert.equal(reportOf(outcome)?.then_run?.status, "cancelled");
-    assert.equal(reportOf(outcome)?.freshness, undefined);
+    assert.equal(reportOf(outcome, "edit")?.then_run?.status, "cancelled");
+    assert.equal(reportOf(outcome, "edit")?.freshness, undefined);
     assert.equal(mutations, 1);
     assert.equal(await readFile(target, "utf8"), "mutation\n");
   }));
@@ -152,7 +152,10 @@ test("first command fails → releases the queue for the next mutation", async (
         signal: undefined,
         ctx,
       });
-      assert.equal(reportOf(result)?.then_run?.status, calls === 1 ? "failed" : "succeeded");
+      assert.equal(
+        reportOf(result, "edit")?.then_run?.status,
+        calls === 1 ? "failed" : "succeeded",
+      );
     }
     assert.equal(calls, 2);
     assert.equal(await readFile(target, "utf8"), "second\n");
@@ -183,8 +186,8 @@ test("command succeeds on an unchanged target → retains the result and complet
       },
     });
     assert.equal(completed.content.length, 1);
-    assert.equal(reportOf(completed)?.then_run?.status, "succeeded");
-    assert.equal(reportOf(completed)?.then_run?.output, "command finished");
+    assert.equal(reportOf(completed, "edit")?.then_run?.status, "succeeded");
+    assert.equal(reportOf(completed, "edit")?.then_run?.output, "command finished");
     assert.equal(progress.filter((event) => event.command === "succeeded").length, 1);
     assert.equal(progress.at(-1)?.publication, "PUBLISHED");
     assert.equal(progress.at(-1)?.freshness, "unchanged");

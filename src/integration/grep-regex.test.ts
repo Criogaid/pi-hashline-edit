@@ -230,7 +230,7 @@ test("regex and case modes across line endings → real grep agrees with native 
               ignoreCase: scenario.ignoreCase,
               multiline,
             });
-            assert.equal(result.isError, undefined, JSON.stringify(reportOf(result)));
+            assert.equal(result.isError, undefined, JSON.stringify(reportOf(result, "grep")));
             const body = result.content[0];
             assert.ok(body.type === "text");
             const actual = [...body.text.matchAll(/^(\d+)#[0-9A-Z]+│/gm)].map((match) =>
@@ -282,7 +282,7 @@ test("backreference regression: a capture spanning mixed line endings → matche
       multiline: true,
       ignoreCase: false,
     });
-    assert.equal(result.isError, undefined, JSON.stringify(reportOf(result)));
+    assert.equal(result.isError, undefined, JSON.stringify(reportOf(result, "grep")));
     assert.equal(grepCounts(result).matches, 2);
   } finally {
     await rm(dir, { recursive: true, force: true });
@@ -368,7 +368,7 @@ test("JS syntax boundary rejects rg-only syntax and executes constructs requirin
   ]) {
     await t.test(pattern, async () => {
       const result = await callTool(tool, { path, pattern, literal: false, ignoreCase: false });
-      assert.equal(result.isError, undefined, JSON.stringify(reportOf(result)));
+      assert.equal(result.isError, undefined, JSON.stringify(reportOf(result, "grep")));
       assert.equal(
         grepCounts(result).matches,
         jsLines("😀\naba\nab\n", [pattern], false, false).length,
@@ -400,7 +400,7 @@ test("zero-width assertions at LF and CRLF boundaries → match only empty physi
         ignoreCase: false,
         multiline,
       });
-      assert.equal(result.isError, undefined, JSON.stringify(reportOf(result)));
+      assert.equal(result.isError, undefined, JSON.stringify(reportOf(result, "grep")));
       const body = result.content[0];
       assert.ok(body.type === "text");
       const lines = [...body.text.matchAll(/^(\d+)#[0-9A-Z]+│/gm)].map((match) => Number(match[1]));

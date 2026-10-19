@@ -56,7 +56,7 @@ test("repeated real-rg query with increasing limits → stable traversal order a
           const first = await callTool(tool, query);
           const second = await callTool(tool, query);
           for (const result of [first, second]) {
-            assert.equal(result.isError, undefined, JSON.stringify(reportOf(result)));
+            assert.equal(result.isError, undefined, JSON.stringify(reportOf(result, "grep")));
           }
           assert.deepEqual(first.content, second.content);
           const body = first.content[0];

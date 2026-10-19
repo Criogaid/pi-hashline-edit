@@ -19,7 +19,7 @@ import { byteRevision } from "./file-revision.ts";
 import { callTool } from "./tool-call.testing.ts";
 import { DEFAULT_CONFIG } from "./config.ts";
 import { formatKiB, DEFAULT_OUTPUT_BUDGETS } from "./budgets.ts";
-import { reportOf } from "./report.ts";
+import { detailsReport, reportOf } from "./report.ts";
 import type { Report } from "./report-schema.ts";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 
@@ -49,7 +49,7 @@ function anchorLine(block: string, line: number) {
 
 function failureReport(result: AgentToolResult<unknown> & { isError?: boolean }): Report {
   assert.equal(result.isError, true);
-  const report = reportOf(result);
+  const report = detailsReport(result.details);
   assert.ok(report?.error);
   return report;
 }
@@ -249,7 +249,7 @@ test("edit execute: empty edits → throws", async () => {
     await writeFile(join(dir, "f.txt"), "a\n");
     await assert.rejects(
       call(makeEditOverride(dir, DEFAULT_CONFIG), { path: "f.txt", edits: [] }),
-      rejectsArguments("edit"),
+      rejectsArguments(),
     );
   });
 });
@@ -366,7 +366,7 @@ test("edit schema rejects misspelled range fields and invalid operation shapes",
       [{ op: "insert_after", body: ["bad"] }],
       [{ op: "append", anchor, body: ["bad"] }],
     ]) {
-      await assert.rejects(call(edit, { path: "range.txt", edits }), rejectsArguments("edit"));
+      await assert.rejects(call(edit, { path: "range.txt", edits }), rejectsArguments());
       assert.equal(await readFile(join(dir, "range.txt"), "utf8"), original);
     }
     const alternates: Parameters<typeof validateToolArguments>[1]["arguments"][] = [
@@ -374,7 +374,7 @@ test("edit schema rejects misspelled range fields and invalid operation shapes",
       { path: "range.txt", edits: JSON.stringify([{ op: "replace", anchor, body: ["ok"] }]) },
     ];
     for (const alternate of alternates) {
-      await assert.rejects(call(edit, alternate), rejectsArguments("edit"));
+      await assert.rejects(call(edit, alternate), rejectsArguments());
       assert.equal(await readFile(join(dir, "range.txt"), "utf8"), original);
     }
   }));
@@ -567,7 +567,7 @@ test("shifted-anchor recovery keeps the read fallback for oversized candidates",
       }),
     );
     assert.match(
-      report.failures?.[0].contentOmitted ?? "",
+      report.failures?.[0].omitted ?? "",
       new RegExp(`exceeds ${formatKiB(DEFAULT_OUTPUT_BUDGETS.fieldBytes)}`),
     );
     assert.match(report.next ?? "", /use read or grep/);
@@ -688,11 +688,12 @@ test("failed commands preserve mutation results and stay out of all main card re
       await writeFile(join(dir, path), "before\n");
       const { result, rendered } = await run();
       assert.equal("isError" in result, false);
-      assert.equal(reportOf(result)?.publication, "PUBLISHED");
+      const report = detailsReport(result.details);
+      assert.equal(report?.publication, "PUBLISHED");
       const last = result.content.at(-1);
       assert.ok(last?.type === "text");
-      assert.equal(reportOf(result)?.then_run?.status, "failed");
-      assert.match(reportOf(result)?.then_run?.output ?? "", /command-only diagnostic/);
+      assert.equal(report?.then_run?.status, "failed");
+      assert.match(report?.then_run?.output ?? "", /command-only diagnostic/);
       if (path !== "write.txt")
         assert.equal(typeof ("diff" in result.details ? result.details.diff : undefined), "string");
       assert.doesNotMatch(rendered, /command-only diagnostic|then_run:failed/);
@@ -762,7 +763,7 @@ test("edit rejects embedded line terminators at its schema boundary", async () =
           path: "body.txt",
           edits: [{ op: "append", body: [line] }],
         }),
-        rejectsArguments("edit"),
+        rejectsArguments(),
       );
       assert.equal(await readFile(target, "utf8"), "a\n");
     }
@@ -950,7 +951,7 @@ test("schema-invalid bodies omit anchor checks; subsequent retries revalidate", 
             edits: [operation, { op: "replace", anchor: laterAnchor, body: ["B"] }],
           }),
           (error: Error) => {
-            rejectsArguments("edit")(error);
+            rejectsArguments()(error);
             const report = argumentError(error);
             assert.equal(report.matched, undefined);
             assert.equal(report.failures, undefined);
@@ -1110,7 +1111,7 @@ test("edit tool rejects non-array formats Pi cannot convert", async () =>
       { path: "f.txt", op: "replace", anchor, body: ["SECOND"] },
     ]) {
       const original = structuredClone(alternate);
-      await assert.rejects(call(edit, alternate), rejectsArguments("edit"));
+      await assert.rejects(call(edit, alternate), rejectsArguments());
       assert.deepEqual(alternate, original);
       assert.equal(await readFile(file, "utf8"), "first\nsecond\n");
     }
@@ -1180,14 +1181,14 @@ test("edit execute rejects legacy oldText/newText without op", async () =>
         oldText: "first",
         newText: "FIRST",
       }),
-      rejectsArguments("edit"),
+      rejectsArguments(),
     );
     await assert.rejects(
       call(edit, {
         path: "f.txt",
         edits: [{ oldText: "first", newText: "FIRST" } as any],
       }),
-      rejectsArguments("edit"),
+      rejectsArguments(),
     );
     assert.equal(await readFile(file, "utf8"), "first\nsecond\n");
   }));
@@ -1244,7 +1245,7 @@ test("unresolved oversized and out-of-range rows require more context without pa
       assert.match(report.next ?? "", /read or grep/);
       assert.equal(report.failures?.[0].observed, undefined);
       assert.equal(
-        report.failures?.[0].observedOmitted,
+        report.failures?.[0].omitted,
         anchor.startsWith("99#")
           ? "cited line is out of range"
           : `row exceeds ${formatKiB(DEFAULT_OUTPUT_BUDGETS.fieldBytes)}`,
@@ -1263,7 +1264,7 @@ test("edit rejects impossible checksum characters before accessing the file", as
           path: "missing.txt",
           edits: [{ op: "delete", anchor: `1#${char.repeat(DEFAULT_CONFIG.hashLen)}` }],
         }),
-        rejectsArguments("edit"),
+        rejectsArguments(),
       );
     }
   }));
@@ -1399,8 +1400,8 @@ test("copy/move with fused command → execute after the complete transfer and p
         { ctx: { cwd: dir } },
       );
       assert.ok("publishedRevision" in result.details);
-      assert.equal(reportOf(result)?.then_run?.status, "failed");
-      assert.equal(reportOf(result)?.publication, "PUBLISHED");
+      assert.equal(reportOf(result, "edit")?.then_run?.status, "failed");
+      assert.equal(reportOf(result, "edit")?.publication, "PUBLISHED");
       assert.equal(result.details.publishedRevision, byteRevision(Buffer.from(expected, "utf8")));
       assert.equal(await readFile(file, "utf8"), expected);
       assert.equal(commands, 1);

@@ -140,7 +140,7 @@ test("grep and replace flags → accept V8 modes and reject invalid flags before
           const input = { path, ...args(flags === "v" ? "a" : "(", literal, flags) };
           if (flags === "v") {
             const result = await callTool(tool, input);
-            assert.equal(reportOf(result)?.error, "PATH_NOT_FOUND");
+            assert.equal(reportOf(result, tool.name)?.error, "PATH_NOT_FOUND");
           } else {
             await assert.rejects(callTool(tool, input), (error: unknown) => {
               const report = argumentError(error);
@@ -486,7 +486,6 @@ test("copy/move illegal argument shapes → reject before any file access", asyn
         callTool(tool, { path: "missing-copy-move.txt", edits: [{ op, anchor, ...fields }] }),
         (error: unknown) => {
           const result = argumentError(error);
-          assert.equal(result.tool, "edit");
           assert(result.issues.length > 0);
           if ("body" in fields)
             assert(result.issues.some((issue) => issue.field === "edits[0].body"));

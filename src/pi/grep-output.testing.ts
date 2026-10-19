@@ -7,7 +7,7 @@ export function grepCounts(result: Parameters<typeof reportOf>[0]): {
   matches: number;
   files: number;
 } {
-  const report = reportOf(result);
+  const report = reportOf(result, "grep");
   assert.ok(report?.tool === "grep" && report.error === undefined, JSON.stringify(report));
   if (report.matches !== undefined) {
     assert.ok(typeof report.files === "number");

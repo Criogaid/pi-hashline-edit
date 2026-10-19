@@ -131,15 +131,19 @@ for (const fused of [false, true]) {
               () => callTool(mutation.make(directory, fusion), { path, ...mutation.args }),
             );
             assert.equal(result.isError, undefined);
-            assert.equal(reportOf(result)?.publication, "PUBLISHED");
+            const report = reportOf(
+              result,
+              mutation.name === "edit" ? "edit" : mutation.name === "replace" ? "replace" : "write",
+            );
+            assert.equal(report?.publication, "PUBLISHED");
             assert.equal(Object.hasOwn(result.details, "observedRevision"), false);
             assert.equal(result.details.publishedRevision, byteRevision(Buffer.from(PUBLISHED)));
             if (mutation.name !== "write create")
               assert.equal(result.details.baseRevision, byteRevision(Buffer.from(BEFORE)));
-            assert.equal(reportOf(result)?.next, REREAD);
+            assert.equal(report?.next, REREAD);
             assert.doesNotMatch(text(result), /Updated anchors|retry the tool/);
-            assert.equal(reportOf(result)?.then_run, undefined);
-            assert.equal(reportOf(result)?.freshness, "changed");
+            assert.equal(report?.then_run, undefined);
+            assert.equal(report?.freshness, "changed");
             await assertTarget(path, PUBLISHED, disturbance);
           },
         );
@@ -188,7 +192,7 @@ for (const observation of [1, 2]) {
             ),
         );
         assert.equal(commands, 0);
-        const report = reportOf(result);
+        const report = reportOf(result, "write");
         assert.equal(report?.publication, "PUBLISHED");
         assert.equal(report?.then_run?.status, "skipped");
         assert.equal(report?.freshness, disturbance === "I/O failure" ? "unknown" : "changed");
@@ -235,13 +239,13 @@ test("disturbance during post-command freshness read → retains publication and
             ),
         );
         assert.equal(commands, 1);
-        assert.equal(reportOf(result)?.publication, "PUBLISHED");
-        assert.equal(reportOf(result)?.then_run?.status, "succeeded");
+        assert.equal(reportOf(result, "write")?.publication, "PUBLISHED");
+        assert.equal(reportOf(result, "write")?.then_run?.status, "succeeded");
         assert.equal(
-          reportOf(result)?.freshness,
+          reportOf(result, "write")?.freshness,
           disturbance === "I/O failure" ? "unknown" : "changed",
         );
-        assert.equal(reportOf(result)?.next, REREAD);
+        assert.equal(reportOf(result, "write")?.next, REREAD);
         assert.doesNotMatch(text(result), /Updated anchors|retry the tool/);
         await assertTarget(path, PUBLISHED, disturbance);
       },

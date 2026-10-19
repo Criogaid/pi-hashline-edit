@@ -9,7 +9,7 @@ import { HashlineError } from "../core/errors.ts";
 import { computeLineHash } from "../core/hash.ts";
 import { createAnchorFormatter } from "./anchor-format.ts";
 import { formatArgumentError } from "./argument-error.ts";
-import { outputBudgetsFor } from "./budgets.ts";
+import { formatKiB, outputBudgetsFor } from "./budgets.ts";
 import { DEFAULT_CONFIG } from "./config.ts";
 import { makeEditOverride } from "./edit-tool.ts";
 import { describeEditFailure } from "./failure-context.ts";
@@ -38,7 +38,7 @@ test("model budget grows → argument issues remain complete JSON with counted o
   const reports = [outputBudgetsFor(1), small, large].map((budget) => {
     const text = formatArgumentError("edit", issues, false, budget);
     assert.ok(Buffer.byteLength(text) <= budget.blockBytes);
-    const report = decodeReport(text);
+    const report = decodeReport(text, "edit");
     assert.ok(report);
     assert.equal((report.issues?.length ?? 0) + (report.omittedIssues ?? 0), issues.length);
     return report;
@@ -66,10 +66,10 @@ test("model row allowance grows → anchor failures return complete observations
     assert.equal(report.error, "ANCHOR_MISMATCH");
     return report;
   });
-  assert.ok(reports[0].failures?.[0].observedOmitted);
+  assert.ok(reports[0].failures?.[0].omitted);
   assert.equal(reports[0].failures?.[0].observed, undefined);
   assert.equal(reports[1].failures?.[0].observed, snapshot.anchors.row(1, text));
-  assert.equal(reports[1].failures?.[0].observedOmitted, undefined);
+  assert.equal(reports[1].failures?.[0].omitted, undefined);
   for (const report of reports) {
     assert.equal(report.publication, "NOT_PUBLISHED");
     assert.ok(report.next?.includes("intended target"));
@@ -95,7 +95,7 @@ test("model budget grows → grep payload and diagnostics use that call's allowa
       budget,
     }),
   );
-  assert.ok(outputs[0].facts.outputLimit);
+  assert.equal(outputs[0].facts.outputLimit, formatKiB(small.grepBytes));
   assert.equal(outputs[1].payload, payload);
   assert.equal(outputs[1].facts.outputLimit, undefined);
   assert.ok(Buffer.byteLength(outputs[0].facts.diagnostics!) <= small.fieldBytes);
@@ -146,14 +146,15 @@ test("model switches while a mutation waits → failure uses its starting budget
     model = { ...model, id: "large", contextWindow: 1_048_576 };
     assert.equal(budgets().readBytes, large.readBytes);
     release.resolve();
-    const report = reportOf(await running);
-    assert.ok(report?.failures?.[0].observedOmitted);
+    const report = reportOf(await running, "edit");
+    assert.ok(report?.failures?.[0].omitted);
     assert.equal(report.failures[0].observed, undefined);
     const next = reportOf(
       await callTool(makeEditOverride(dir, DEFAULT_CONFIG, undefined, budgets), {
         path,
         edits: [{ op: "delete", anchor: `1#${wrongHash(text)}` }],
       }),
+      "edit",
     );
     assert.equal(
       next?.failures?.[0].observed,

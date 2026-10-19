@@ -106,7 +106,7 @@ test("out-of-order file completions → listing order fixes rows, warnings, and 
             await setImmediate();
           }
           const result = await running;
-          assert.equal(result.isError, undefined, JSON.stringify(reportOf(result)));
+          assert.equal(result.isError, undefined, JSON.stringify(reportOf(result, "grep")));
           const payload = result.content[0];
           assert.ok(payload.type === "text");
           const expected = ["01-slow.txt", "02-fast.txt"]
@@ -122,7 +122,7 @@ test("out-of-order file completions → listing order fixes rows, warnings, and 
             })
             .join("\n\n");
           assert.equal(payload.text, expected);
-          const report = reportOf(result);
+          const report = reportOf(result, "grep");
           assert.ok(report);
           assert.equal(report.matches, limit === 3 ? 3 : 4);
           assert.equal(report.files, 2);
@@ -251,7 +251,7 @@ test("file-associated failure → listing position decides failure or cutoff, wh
               else if (failureFirst) succeed();
               else failure.finish(late.worker);
               const result = await running;
-              const report = reportOf(result);
+              const report = reportOf(result, "grep");
               if (outcome === "limited") {
                 assert.equal(result.isError, undefined, JSON.stringify(report));
                 assert.equal(report?.matchLimit, 1);

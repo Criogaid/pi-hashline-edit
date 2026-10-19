@@ -54,7 +54,7 @@ test("replace schema requires a non-empty replacements array", async () => {
       })),
     ];
     for (const args of invalidArgs) {
-      await assert.rejects(call(tool, args), rejectsArguments("replace"));
+      await assert.rejects(call(tool, args), rejectsArguments());
     }
   }
 });
@@ -65,7 +65,7 @@ test("replace schema rejects empty paths and empty find", async () => {
     { path: "", replacements: [{ literal: true, find: "old", replace: "new" }] },
     { path: "f.txt", replacements: [{ literal: true, find: "", replace: "new" }] },
   ]) {
-    await assert.rejects(call(tool, args), rejectsArguments("replace"), JSON.stringify(args));
+    await assert.rejects(call(tool, args), rejectsArguments(), JSON.stringify(args));
   }
 });
 
@@ -168,7 +168,7 @@ test("replace literal: replaces all occurrences", async () => {
     });
     assert.equal(r.isError, undefined);
     assert.equal(await readFile(f, "utf-8"), "qux bar qux baz qux\n");
-    assert.equal(reportOf(r)?.matches, 3);
+    assert.equal(reportOf(r, "replace")?.matches, 3);
   });
 });
 
@@ -180,7 +180,7 @@ test("literal multiline replace matches LF and CRLF while retaining local separa
       path: "mixed.txt",
       replacements: [{ literal: true, find: "old\none", replace: "NEW\nX" }],
     });
-    assert.equal(reportOf(result)?.matches, 2);
+    assert.equal(reportOf(result, "replace")?.matches, 2);
     assert.equal(await readFile(file, "utf8"), "\uFEFFhead\r\nNEW\r\nX\r\nmid\nNEW\nX\nend\r\n");
     await call(makeReplaceTool(dir, DEFAULT_CONFIG), {
       path: "mixed.txt",
@@ -213,8 +213,8 @@ test("literal replacement uses one LF view and preserves raw bytes across query 
         replacements: [{ literal: true, find, replace: find }],
       });
       assert.equal(await readFile(file, "utf8"), before);
-      assert.equal(reportOf(result)?.matches, 1);
-      assert.equal(reportOf(result)?.publication, "NOT_PUBLISHED");
+      assert.equal(reportOf(result, "replace")?.matches, 1);
+      assert.equal(reportOf(result, "replace")?.publication, "NOT_PUBLISHED");
     }
     for (const [before, find, replacement, expected] of [
       ["a\r\nb", "a", "A\nextra", "A\r\nextra\r\nb"],
@@ -253,7 +253,7 @@ test("mixed literal and regex batches share raw offsets after CRLF normalization
       ],
     });
     assert.equal(failed.isError, true);
-    assert.equal(reportOf(failed)?.error, "OVERLAPPING_MATCHES");
+    assert.equal(reportOf(failed, "replace")?.error, "OVERLAPPING_MATCHES");
     assert.equal(await readFile(file, "utf8"), before);
   }));
 
@@ -297,8 +297,8 @@ test("replace aborts catastrophic regex without blocking the event loop or publi
         { toolCallId: "abort", signal: controller.signal, ctx: { cwd: dir } },
       );
       assert.equal(failed.isError, true);
-      assert.equal(reportOf(failed)?.error, "OPERATION_ABORTED");
-      assert.equal(reportOf(failed)?.publication, "NOT_PUBLISHED");
+      assert.equal(reportOf(failed, "replace")?.error, "OPERATION_ABORTED");
+      assert.equal(reportOf(failed, "replace")?.publication, "NOT_PUBLISHED");
       assert.ok(performance.now() - start < 2000);
       assert.equal(await readFile(file, "utf8"), before);
     } finally {
@@ -317,9 +317,9 @@ test("replace times out catastrophic regex at the configured limit without publi
       replacements: [{ find: "^(a+)+$", replace: "x", literal: false }],
     });
     assert.equal(failed.isError, true);
-    assert.equal(reportOf(failed)?.error, "REGEX_TIMEOUT");
-    assert.equal(reportOf(failed)?.timeoutMs, config.replace.regexTimeoutMs);
-    assert.equal(reportOf(failed)?.publication, "NOT_PUBLISHED");
+    assert.equal(reportOf(failed, "replace")?.error, "REGEX_TIMEOUT");
+    assert.equal(reportOf(failed, "replace")?.timeoutMs, config.replace.regexTimeoutMs);
+    assert.equal(reportOf(failed, "replace")?.publication, "NOT_PUBLISHED");
     assert.equal(await readFile(file, "utf8"), before);
   });
 });
@@ -371,8 +371,8 @@ test("replace finds no matches → returns failure and leaves file untouched", a
       replacements: [{ literal: true, find: "zzz", replace: "y" }],
     });
     assert.equal(failed.isError, true);
-    assert.equal(reportOf(failed)?.error, "NO_MATCH");
-    assert.equal(reportOf(failed)?.rule, 0);
+    assert.equal(reportOf(failed, "replace")?.error, "NO_MATCH");
+    assert.equal(reportOf(failed, "replace")?.rule, 0);
     assert.equal(await readFile(f, "utf-8"), "a\nb\n", "file untouched on 0-match failure");
   });
 });
@@ -398,7 +398,7 @@ test("replace: handles large match counts without an arbitrary cap", async () =>
       path: "f.txt",
       replacements: [{ literal: true, find: "a", replace: "b" }],
     });
-    assert.equal(reportOf(result)?.matches, 2500);
+    assert.equal(reportOf(result, "replace")?.matches, 2500);
     assert.equal(await readFile(f, "utf-8"), "b\n".repeat(2500));
   });
 });
@@ -414,8 +414,8 @@ test("replace: count-but-no-net-change does not rewrite and reports it", async (
     });
     assert.equal(r.isError, undefined);
     assert.equal(await readFile(f, "utf-8"), "xx\n");
-    assert.equal(reportOf(r)?.publication, "NOT_PUBLISHED");
-    assert.equal(reportOf(r)?.matches, 2);
+    assert.equal(reportOf(r, "replace")?.publication, "NOT_PUBLISHED");
+    assert.equal(reportOf(r, "replace")?.matches, 2);
     assert.equal(r.details.diff, "");
   });
 });
@@ -475,7 +475,7 @@ test("replacement batches → evaluate every rule against one snapshot", async (
     await writeFile(file, "\uFEFFfoo\r\nbar\nfoo");
     const result = await call(tool, args);
     assert.equal(await readFile(file, "utf8"), "\uFEFFbar\r\nbaz\nbar");
-    assert.equal(reportOf(result)?.matches, 3);
+    assert.equal(reportOf(result, "replace")?.matches, 3);
     assert.match(result.details.diff, /^\+2 baz/m);
   }));
 
@@ -508,7 +508,7 @@ test("invalid batches reject every change and never run a fused command", async 
         [{ replacements: [first, { literal: true, find: "foo", replace: "\ud800" }] }],
       ],
       [
-        rejectsArguments("replace"),
+        rejectsArguments(),
         [
           { replacements: [first, { literal: true, find: "", replace: "x" }] },
           { replacements: [first, { literal: true, find: "foo" }] },
@@ -530,9 +530,9 @@ test("invalid batches reject every change and never run a fused command", async 
         { ctx: { cwd: dir } },
       );
       assert.equal(failed.isError, true);
-      assert.equal(reportOf(failed)?.error, code);
-      assert.equal(reportOf(failed)?.then_run?.status, "skipped");
-      assert.equal(reportOf(failed)?.publication, "NOT_PUBLISHED");
+      assert.equal(reportOf(failed, "replace")?.error, code);
+      assert.equal(reportOf(failed, "replace")?.then_run?.status, "skipped");
+      assert.equal(reportOf(failed, "replace")?.publication, "NOT_PUBLISHED");
       assert.equal(await readFile(file, "utf8"), before);
     }
     for (const [expected, inputs] of cases) {
@@ -586,7 +586,7 @@ test("adjacent matches and zero-width boundaries have deterministic batch semant
       } else {
         const failed = await call(tool, args);
         assert.equal(failed.isError, true);
-        assert.equal(reportOf(failed)?.error, "OVERLAPPING_MATCHES");
+        assert.equal(reportOf(failed, "replace")?.error, "OVERLAPPING_MATCHES");
         assert.equal(await readFile(file, "utf8"), "ab");
       }
     }
@@ -599,7 +599,7 @@ test("adjacent matches and zero-width boundaries have deterministic batch semant
       ],
     });
     assert.equal(failed.isError, true);
-    assert.equal(reportOf(failed)?.error, "OVERLAPPING_MATCHES");
+    assert.equal(reportOf(failed, "replace")?.error, "OVERLAPPING_MATCHES");
     assert.equal(await readFile(file, "utf8"), "ab");
   }));
 
@@ -667,8 +667,8 @@ test("successful batches run one command against the complete result", async () 
       { cwd: dir } as Parameters<typeof tool.execute>[4],
     );
     assert.equal(commands, 1);
-    assert.equal(reportOf(result)?.then_run?.status, "succeeded");
-    assert.equal(reportOf(result)?.then_run?.output, "checked");
+    assert.equal(reportOf(result, "replace")?.then_run?.status, "succeeded");
+    assert.equal(reportOf(result, "replace")?.then_run?.output, "checked");
   }));
 
 test("regex captures and zero-width insertions use logical offsets without consuming CRLF bytes", async () =>

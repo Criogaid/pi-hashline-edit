@@ -73,7 +73,7 @@ test("then_run schemas reject invalid commands, unknown keys, and excessive time
         await assert.rejects(
           callTool(tool, { path, ...mutation, then_run }, { ctx: await ctx(dir, t) }),
           (error: unknown) =>
-            rejectsArguments(tool.name)(error) &&
+            rejectsArguments()(error) &&
             argumentError(error).issues.some((issue) => issue.field.startsWith("then_run.")),
         );
         assert.equal(await readFile(join(dir, path), "utf8"), "old\n");
@@ -120,11 +120,11 @@ test("edit and replace share one embedded executor and preserve mutation results
     );
     const editOutput = editResult.content.at(-1);
     assert.ok(editOutput?.type === "text");
-    assert.equal(reportOf(editResult)?.then_run?.status, "succeeded");
+    assert.equal(reportOf(editResult, "edit")?.then_run?.status, "succeeded");
     assert.equal(editResult.content.length, 1);
     const replaceOutput = replaceResult.content.at(-1);
     assert.ok(replaceOutput?.type === "text");
-    assert.equal(reportOf(replaceResult)?.then_run?.status, "succeeded");
+    assert.equal(reportOf(replaceResult, "replace")?.then_run?.status, "succeeded");
     assert.deepEqual(calls, ["check edit", "check replace"]);
     assert.equal(await readFile(join(dir, "edit.txt"), "utf8"), "before\nafter\n");
     assert.equal(await readFile(join(dir, "replace.txt"), "utf8"), "after\n");
@@ -178,8 +178,8 @@ test("mutation failure skips the command and command failure does not roll back"
       ctx: await ctx(dir, t),
     });
     assert.equal(result.details.ok, true);
-    assert.equal(reportOf(result)?.then_run?.status, "failed");
-    assert.equal(reportOf(result)?.then_run?.output, commandFailure);
+    assert.equal(reportOf(result, "edit")?.then_run?.status, "failed");
+    assert.equal(reportOf(result, "edit")?.then_run?.output, commandFailure);
     assert.equal(await readFile(target, "utf8"), "changed\n");
     assert.equal(calls, 1);
   } finally {
@@ -251,9 +251,9 @@ test("unreadable target after mutation → reports unknown freshness and skips t
       .map((block) => (block.type === "text" ? block.text : ""))
       .join("\n");
     assert.equal(commands, 0);
-    assert.equal(reportOf(result)?.freshness, "unknown");
+    assert.equal(reportOf(result, "edit")?.freshness, "unknown");
     assert.doesNotMatch(output, /ANCHOR/);
-    assert.equal(reportOf(result)?.next, REREAD);
+    assert.equal(reportOf(result, "edit")?.next, REREAD);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
@@ -282,8 +282,8 @@ test("then_run changes the target → reports changed freshness", async (t) => {
     const output = result.content
       .map((block) => (block.type === "text" ? block.text : ""))
       .join("\n");
-    assert.equal(reportOf(result)?.freshness, "changed");
-    assert.equal(reportOf(result)?.next, REREAD);
+    assert.equal(reportOf(result, "edit")?.freshness, "changed");
+    assert.equal(reportOf(result, "edit")?.next, REREAD);
     assert.doesNotMatch(output, /Updated anchors|\b1#[0-9A-Z]+│/);
     assert.equal(await readFile(target, "utf8"), "command changed\n");
   } finally {
@@ -412,7 +412,7 @@ test("progress reports skipped mutations and failed commands without rolling bac
       await ctx(dir, t),
     );
     assert.equal(skipped.isError, true);
-    assert.equal(reportOf(skipped)?.then_run?.status, "skipped");
+    assert.equal(reportOf(skipped, "edit")?.then_run?.status, "skipped");
     assert.equal(commands, 0);
     assert.deepEqual(
       events.map((event) => event.command),
@@ -434,7 +434,7 @@ test("progress reports skipped mutations and failed commands without rolling bac
       await ctx(dir, t),
     );
     assert.equal(unmatched.isError, true);
-    assert.equal(reportOf(unmatched)?.error, "NO_MATCH");
+    assert.equal(reportOf(unmatched, "replace")?.error, "NO_MATCH");
     assert.equal(commands, 0);
     assert.deepEqual(
       events.map((event) => event.command),
@@ -454,7 +454,7 @@ test("progress reports skipped mutations and failed commands without rolling bac
       undefined,
       await ctx(dir, t),
     );
-    assert.equal(reportOf(failed)?.then_run?.status, "failed");
+    assert.equal(reportOf(failed, "write")?.then_run?.status, "failed");
     assert.deepEqual(
       events.map((event) => event.command),
       ["waiting", "waiting", "running", "failed"],
@@ -605,8 +605,8 @@ test("Fusion uses commit facts when details omit or contradict publication and r
         assert.equal(result.content.length, 1);
         for (const [key, value] of Object.entries(details ?? {}))
           assert.deepEqual(Reflect.get(result.details, key), value);
-        assert.equal(reportOf(result)?.publication, "NOT_PUBLISHED");
-        assert.equal(reportOf(result)?.then_run?.status, thenRun ? "succeeded" : undefined);
+        assert.equal(reportOf(result, "edit")?.publication, "NOT_PUBLISHED");
+        assert.equal(reportOf(result, "edit")?.then_run?.status, thenRun ? "succeeded" : undefined);
         assert.equal(commands, thenRun ? 1 : 0);
         assert.equal(await readFile(target, "utf8"), "same\n");
       }

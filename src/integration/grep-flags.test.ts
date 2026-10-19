@@ -229,7 +229,7 @@ test("grep flags: JavaScript modes preserve native matching through the real sea
         multiline: scenario.multiline ?? false,
         ...(scenario.ignoreCase === undefined ? {} : { ignoreCase: scenario.ignoreCase }),
       });
-      assert.equal(result.isError, undefined, JSON.stringify(reportOf(result)));
+      assert.equal(result.isError, undefined, JSON.stringify(reportOf(result, "grep")));
       assert.equal(grepCounts(result).matches, scenario.lines.length);
       const body = result.content[0];
       assert.ok(body.type === "text");
@@ -267,7 +267,7 @@ test("grep flags: valid V8 patterns exceeding translator parser depth still exec
       literal: false,
       ...(flags === undefined ? {} : { flags }),
     });
-    assert.equal(result.isError, undefined, JSON.stringify(reportOf(result)));
+    assert.equal(result.isError, undefined, JSON.stringify(reportOf(result, "grep")));
     assert.equal(grepCounts(result).matches, 1);
   }
 });

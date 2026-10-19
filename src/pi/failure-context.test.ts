@@ -275,7 +275,7 @@ test("unresolved row out of range or oversized → omission facts contain no rec
   for (const { start, reason } of cases) {
     const { report } = rejectedEdit(text, [{ op: "delete", start }]);
     assert.equal(report.error, "ANCHOR_MISMATCH");
-    assert.match(report.failures?.[0].observedOmitted ?? "", reason);
+    assert.match(report.failures?.[0].omitted ?? "", reason);
     assert.equal(report.failures?.[0].observed, undefined);
     assert.doesNotMatch(
       JSON.stringify(report.failures),

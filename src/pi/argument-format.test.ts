@@ -41,7 +41,6 @@ test("all tools receive invalid arguments → return field diagnostics without a
       ),
       (error: unknown) => {
         const result = argumentError(error);
-        assert.equal(result.tool, tool.name);
         assert.ok(result.issues.length > 0);
         assert.equal(Object.hasOwn(result, "arguments"), false);
         assert.equal(Object.hasOwn(result, "argumentsOmitted"), false);

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import type { ErrorCode } from "../core/errors.ts";
 import type { Report } from "./report-schema.ts";
-import { reportOf } from "./report.ts";
+import { detailsReport } from "./report.ts";
 
 /** Assert execution failures through the returned model/TUI report, without changing tool semantics. */
 export async function expectToolFailure(
@@ -12,7 +12,7 @@ export async function expectToolFailure(
 ): Promise<Report> {
   const result = await pending;
   assert.equal(result.isError, true);
-  const report = reportOf(result);
+  const report = detailsReport(result.details);
   assert.ok(report);
   assert.equal(report.error, code);
   inspect?.(report);

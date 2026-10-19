@@ -425,8 +425,8 @@ test("expanded errors retain every text block while collapsed errors stay bounde
       { type: "text" as const, text: "Final cause: permission denied" },
     ],
   };
-  const collapsed = renderToolError(result, theme, false).render(120).join("\n");
-  const expanded = renderToolError(result, theme, true).render(120).join("\n");
+  const collapsed = renderToolError(result, "edit", theme, false).render(120).join("\n");
+  const expanded = renderToolError(result, "edit", theme, true).render(120).join("\n");
   assert.match(collapsed, /Error header/);
   assert.doesNotMatch(collapsed, /Final cause/);
   assert.match(expanded, /Final cause: permission denied/);
@@ -447,10 +447,10 @@ test("argument cards preserve omission notices and all expanded issues", () => {
   };
   const original = structuredClone(result);
   const collapsed = stripVTControlCharacters(
-    renderToolError(result, theme, false).render(100).join("\n"),
+    renderToolError(result, "edit", theme, false).render(100).join("\n"),
   );
   const expanded = stripVTControlCharacters(
-    renderToolError(result, theme, true).render(100).join("\n"),
+    renderToolError(result, "edit", theme, true).render(100).join("\n"),
   );
   for (const displayed of [collapsed, expanded]) {
     assert.match(displayed, /Schema diagnostic limit/);
@@ -475,7 +475,7 @@ test("unrecognized or malformed JSON errors retain their original diagnostic", (
   ]) {
     const result = { content: [{ type: "text" as const, text: diagnostic }] };
     const displayed = stripVTControlCharacters(
-      renderToolError(result, theme, true).render(300).join("\n"),
+      renderToolError(result, "edit", theme, true).render(300).join("\n"),
     );
     assert.ok(displayed.includes(diagnostic || "Error"));
   }
@@ -490,7 +490,7 @@ test("argument diagnostics wrap Unicode and multiline reasons at narrow terminal
     initTheme(appearance);
     for (const width of [24, 80]) {
       for (const expanded of [false, true]) {
-        const lines = renderToolError(result, theme, expanded).render(width);
+        const lines = renderToolError(result, "edit", theme, expanded).render(width);
         assert.ok(lines.every((line) => visibleWidth(line) <= width));
         const displayed = stripVTControlCharacters(lines.join("\n")).replace(/\s/g, "");
         for (const value of [field, reason, "edit not executed"]) {

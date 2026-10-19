@@ -84,7 +84,7 @@ test("Cartesian literal mode × flags × case override × line mode × bytes →
             assert.equal(
               actual.isError,
               undefined,
-              `${context}: ${JSON.stringify(reportOf(actual))}`,
+              `${context}: ${JSON.stringify(reportOf(actual, "grep"))}`,
             );
             assert.equal(
               grepCounts(actual).matches,

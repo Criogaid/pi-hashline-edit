@@ -116,7 +116,7 @@ test("write supports create-only and overwrite-only modes", async () =>
       options,
     );
     assert.equal(exists.isError, true);
-    assert.equal(reportOf(exists)?.error, "TARGET_EXISTS");
+    assert.equal(reportOf(exists, "write")?.error, "TARGET_EXISTS");
     assert.equal(await readFile(target, "utf8"), "new\n");
     const missing = await callTool(
       write,
@@ -124,7 +124,7 @@ test("write supports create-only and overwrite-only modes", async () =>
       options,
     );
     assert.equal(missing.isError, true);
-    assert.equal(reportOf(missing)?.error, "PATH_NOT_FOUND");
+    assert.equal(reportOf(missing, "write")?.error, "PATH_NOT_FOUND");
     await callTool(write, { path: "new.txt", content: "updated\n", mode: "overwrite" }, options);
     assert.equal(await readFile(target, "utf8"), "updated\n");
   }));
@@ -165,9 +165,9 @@ test("write returns only a summary for empty, short, and long content", async ()
         undefined,
         context(dir),
       );
-      assert.equal(reportOf(result)?.created, true);
-      assert.equal(reportOf(result)?.path, path);
-      assert.equal(reportOf(result)?.publication, "PUBLISHED");
+      assert.equal(reportOf(result, "write")?.created, true);
+      assert.equal(reportOf(result, "write")?.path, path);
+      assert.equal(reportOf(result, "write")?.publication, "PUBLISHED");
       assert.equal(result.content.length, 1);
       assert.equal(await readFile(join(dir, path), "utf8"), content);
     }
@@ -192,8 +192,11 @@ test("write returns its summary and command output after an unchanged then_run",
       undefined,
       context(dir),
     );
-    assert.equal(reportOf(result)?.created, true);
-    assert.deepEqual(reportOf(result)?.then_run, { status: "succeeded", output: "checked" });
+    assert.equal(reportOf(result, "write")?.created, true);
+    assert.deepEqual(reportOf(result, "write")?.then_run, {
+      status: "succeeded",
+      output: "checked",
+    });
   }));
 
 test("write reports changed freshness when then_run changes the target", async () =>
@@ -216,10 +219,13 @@ test("write reports changed freshness when then_run changes the target", async (
     );
     const text = result.content.map((block: any) => block.text).join("\n");
     assert.doesNotMatch(text, /revision:|[0-9a-f]{64}/i);
-    assert.equal(reportOf(result)?.created, true);
-    assert.equal(reportOf(result)?.freshness, "changed");
-    assert.equal(reportOf(result)?.next, REREAD);
-    assert.deepEqual(reportOf(result)?.then_run, { status: "succeeded", output: "checked" });
+    assert.equal(reportOf(result, "write")?.created, true);
+    assert.equal(reportOf(result, "write")?.freshness, "changed");
+    assert.equal(reportOf(result, "write")?.next, REREAD);
+    assert.deepEqual(reportOf(result, "write")?.then_run, {
+      status: "succeeded",
+      output: "checked",
+    });
     assert.doesNotMatch(text, /Fresh anchors:|\b1#[0-9A-Z]+\b/);
     const rendered = write
       .renderResult(result, { isPartial: false }, theme, { isError: false })
@@ -250,8 +256,8 @@ test("write reports missing freshness when then_run removes the target", async (
       context(dir),
     );
     const text = result.content.map((block: any) => block.text).join("\n");
-    assert.equal(reportOf(result)?.freshness, "missing");
-    assert.equal(reportOf(result)?.next, REREAD);
+    assert.equal(reportOf(result, "write")?.freshness, "missing");
+    assert.equal(reportOf(result, "write")?.next, REREAD);
     assert.doesNotMatch(text, /Fresh anchors:/);
   }));
 
@@ -270,9 +276,9 @@ test("write preserves command failure and changed freshness", async () =>
       context(dir),
     );
     const text = result.content.map((block: any) => block.text).join("\n");
-    assert.equal(reportOf(result)?.freshness, "changed");
-    assert.equal(reportOf(result)?.then_run?.status, "failed");
-    assert.equal(reportOf(result)?.next, REREAD);
+    assert.equal(reportOf(result, "write")?.freshness, "changed");
+    assert.equal(reportOf(result, "write")?.then_run?.status, "failed");
+    assert.equal(reportOf(result, "write")?.next, REREAD);
     assert.doesNotMatch(text, /Fresh anchors:/);
   }));
 

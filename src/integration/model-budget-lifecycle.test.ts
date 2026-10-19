@@ -82,9 +82,12 @@ test("model capacity changes → read and grep grow and shrink without re-regist
   const smallSearch = await callTool(grep, { path, pattern: "中文", literal: true }, { ctx });
   await session.setModel({ ...model, id: "large", contextWindow: 1_048_576 });
   const largeSearch = await callTool(grep, { path, pattern: "中文", literal: true }, { ctx });
-  assert.equal(reportOf(smallSearch)?.linePreviewLimit, outputBudgetsFor(65_536).grepPreviewUnits);
   assert.equal(
-    reportOf(largeSearch)?.linePreviewLimit,
+    reportOf(smallSearch, "grep")?.linePreviewLimit,
+    outputBudgetsFor(65_536).grepPreviewUnits,
+  );
+  assert.equal(
+    reportOf(largeSearch, "grep")?.linePreviewLimit,
     outputBudgetsFor(1_048_576).grepPreviewUnits,
   );
   assert.ok(largeSearch.content[0].text.length > smallSearch.content[0].text.length);
@@ -115,7 +118,7 @@ test("model switches before argument preparation → rejection uses the new budg
         assert.ok(error instanceof Error);
         const budget = outputBudgetsFor(contextWindow);
         assert.ok(Buffer.byteLength(error.message) <= budget.blockBytes);
-        const report = decodeReport(error.message);
+        const report = decodeReport(error.message, "edit");
         assert.ok(report?.issues);
         assert.equal(report.issues.length + (report.omittedIssues ?? 0), args.edits.length);
         reports.push(report);

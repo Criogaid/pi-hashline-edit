@@ -69,7 +69,7 @@ test("all-file candidates exceed the scan budget → stop listing and retain sca
       });
       assert.equal(stopped, true);
       assert.deepEqual(offered, [fixture, ...padding, blocked]);
-      const report = reportOf(result);
+      const report = reportOf(result, "grep");
       assert.ok(report);
       assert.equal(report.candidates, "all");
       assert.equal(report.scanLimit, formatSize(MAX_UNNARROWED_SCAN_BYTES));

@@ -122,7 +122,7 @@ test("read byte truncation counts UTF-8 and separators without cutting anchors",
     assert.equal(result.details.truncation.outputLines, 1);
     assert.equal(result.details.truncation.truncatedBy, "bytes");
     assert.equal(result.details.truncation.maxBytes, maxBytes);
-    assert.equal(reportOf(result)?.truncatedAt, formatKiB(maxBytes));
+    assert.equal(reportOf(result, "read")?.outputLimit, formatKiB(maxBytes));
     assert.ok(result.content[0].text.includes(`1#${computeLineHash(1, first, hashLen)}│${first}`));
     assert.doesNotMatch(result.content[0].text, /\n2#/);
     const next = await call(makeReadOverride(dir, DEFAULT_CONFIG), {
@@ -141,8 +141,8 @@ test("read reports an oversized first row without suggesting an ineffective retr
     assert.equal(result.details.truncation.outputLines, 0);
     assert.doesNotMatch(result.content[0].text, /^\d+#/m);
     assert.doesNotMatch(result.content[0].text, /use offset\/limit/);
-    assert.equal(reportOf(result)?.lineTooLong?.line, 1);
-    assert.match(reportOf(result)?.next ?? "", /chunks.*bash.*replace/);
+    assert.equal(reportOf(result, "read")?.lineTooLong?.line, 1);
+    assert.match(reportOf(result, "read")?.next ?? "", /chunks.*bash.*replace/);
   }));
 
 test("read preserves empty files and explicit limits above the native default", async () =>
@@ -150,14 +150,14 @@ test("read preserves empty files and explicit limits above the native default", 
     await writeFile(join(dir, "empty.txt"), "");
     const empty = await call(makeReadOverride(dir, DEFAULT_CONFIG), { path: "empty.txt" });
     assert.match(empty.content[0].text, /0 lines/);
-    assert.equal(reportOf(empty)?.pagination, undefined);
+    assert.equal(reportOf(empty, "read")?.pagination, undefined);
     await writeFile(join(dir, "many.txt"), "x\n".repeat(2001));
     const many = await call(makeReadOverride(dir, DEFAULT_CONFIG), {
       path: "many.txt",
       limit: 2001,
     });
     assert.match(many.content[0].text, /\n2001#[0-9A-Z]+│x/);
-    assert.equal(reportOf(many)?.pagination, undefined);
+    assert.equal(reportOf(many, "read")?.pagination, undefined);
   }));
 
 test("read window end chosen by caller or default → only the default reports continuation", async () =>
@@ -179,7 +179,7 @@ test("read window end chosen by caller or default → only the default reports c
       assert.doesNotMatch(result.content[0].text, new RegExp(`\\n${end + 1}#[0-9A-Z]+│`));
       const pagination = { start: 1, end, totalLines, nextOffset: end + 1 };
       assert.deepEqual(result.details.pagination, pagination);
-      const report = reportOf(result);
+      const report = reportOf(result, "read");
       assert.ok(report);
       if (limit === undefined) {
         assert.deepEqual(report.pagination, pagination);
@@ -202,21 +202,26 @@ test("read pagination supports offset windows and stops suggesting continuation 
     );
     const read = makeReadOverride(dir, DEFAULT_CONFIG);
     const page = await call(read, { path: "pages.txt", offset: start });
-    assert.match(reportOf(page)?.next ?? "", /offset.*pagination\.nextOffset/);
-    assert.deepEqual(reportOf(page)?.pagination, { start, end, totalLines, nextOffset: end + 1 });
+    assert.match(reportOf(page, "read")?.next ?? "", /offset.*pagination\.nextOffset/);
+    assert.deepEqual(reportOf(page, "read")?.pagination, {
+      start,
+      end,
+      totalLines,
+      nextOffset: end + 1,
+    });
     const next = await call(read, {
       path: "pages.txt",
       offset: page.details.pagination.nextOffset,
     });
     assert.match(next.content[0].text, new RegExp(`\\n${end + 1}#[0-9A-Z]+│line${end + 1}`));
     assert.match(next.content[0].text, new RegExp(`\\n${totalLines}#[0-9A-Z]+│line${totalLines}`));
-    assert.equal(reportOf(next)?.pagination, undefined);
-    assert.equal(reportOf(next)?.next, undefined);
+    assert.equal(reportOf(next, "read")?.pagination, undefined);
+    assert.equal(reportOf(next, "read")?.next, undefined);
     assert.equal(next.details.pagination, undefined);
     for (const offset of [totalLines - DEFAULT_CONFIG.read.defaultLimit + 1, totalLines + 1]) {
       const result = await call(read, { path: "pages.txt", offset });
-      assert.equal(reportOf(result)?.pagination, undefined);
-      assert.equal(reportOf(result)?.next, undefined);
+      assert.equal(reportOf(result, "read")?.pagination, undefined);
+      assert.equal(reportOf(result, "read")?.next, undefined);
       assert.equal(result.details.pagination, undefined);
     }
   }));
@@ -254,10 +259,7 @@ test("read rejects noninteger and nonpositive offsets and limits before reading"
       }),
       { path: "pages.txt", offset: 2, limit: 550 },
     );
-    await assert.rejects(
-      call(read, { path: "missing.txt", offset: 1.5 }),
-      rejectsArguments("read"),
-    );
+    await assert.rejects(call(read, { path: "missing.txt", offset: 1.5 }), rejectsArguments());
   }));
 
 test("read schema rejects empty paths and unknown fields before file access", async () =>
@@ -268,7 +270,7 @@ test("read schema rejects empty paths and unknown fields before file access", as
       { path: "missing.txt", offest: 3 },
     ];
     for (const args of invalidArgs) {
-      await assert.rejects(call(read, args), rejectsArguments("read"));
+      await assert.rejects(call(read, args), rejectsArguments());
     }
   }));
 
@@ -280,16 +282,16 @@ test("read byte truncation retains its budget and a continuation after complete 
       limit: 2,
     });
     assert.equal(result.details.truncation.truncatedBy, "bytes");
-    assert.deepEqual(reportOf(result)?.pagination, {
+    assert.deepEqual(reportOf(result, "read")?.pagination, {
       start: 1,
       end: 1,
       totalLines: 3,
       nextOffset: 2,
     });
     assert.equal(result.details.truncation.maxBytes, DEFAULT_READ_MAX_BYTES);
-    assert.deepEqual(result.details.pagination, reportOf(result)?.pagination);
-    assert.equal(reportOf(result)?.truncatedAt, formatKiB(DEFAULT_READ_MAX_BYTES));
-    assert.match(reportOf(result)?.next ?? "", /offset.*pagination\.nextOffset/);
+    assert.deepEqual(result.details.pagination, reportOf(result, "read")?.pagination);
+    assert.equal(reportOf(result, "read")?.outputLimit, formatKiB(DEFAULT_READ_MAX_BYTES));
+    assert.match(reportOf(result, "read")?.next ?? "", /offset.*pagination\.nextOffset/);
     assert.doesNotMatch(result.content[0].text, /showing lines|to continue/);
   }));
 
@@ -359,7 +361,7 @@ test("read accepts safe offsets and limits whose sum exceeds the safe integer ra
         offset,
         limit: Number.MAX_SAFE_INTEGER,
       });
-      assert.equal(reportOf(result)?.pagination, undefined);
+      assert.equal(reportOf(result, "read")?.pagination, undefined);
       assert.doesNotMatch(result.content[0].text, /to continue|│first/);
       if (offset <= 3) assert.match(result.content[0].text, /│third/);
       else assert.doesNotMatch(result.content[0].text, /│/);

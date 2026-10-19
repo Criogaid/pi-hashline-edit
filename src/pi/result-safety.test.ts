@@ -33,7 +33,7 @@ const invoke = (
 ) => callTool(tool, args, { toolCallId, signal, onUpdate, ctx: context });
 
 function assertFailureByteBudgets(message: string): void {
-  const report = decodeReport(message);
+  const report = decodeReport(message, "edit");
   assert.ok(report);
   assert.equal(report.error, "ANCHOR_MISMATCH");
   assert.ok(report.failures && report.failures.length > 0);
@@ -83,9 +83,9 @@ test("replace withholds anchors in progress and after commands change or remove 
           await ctx(dir, t),
         );
         assert.doesNotMatch(text(result), /Updated anchors|\d+#[0-9A-Z]+│/);
-        assert.equal(reportOf(result)?.freshness, state);
-        assert.equal(reportOf(result)?.publication, "PUBLISHED");
-        assert.equal(reportOf(result)?.next, REREAD);
+        assert.equal(reportOf(result, "replace")?.freshness, state);
+        assert.equal(reportOf(result, "replace")?.publication, "PUBLISHED");
+        assert.equal(reportOf(result, "replace")?.next, REREAD);
         assert.equal(result.content.length, 1);
         for (const update of updates)
           assert.doesNotMatch(text(update), /Updated anchors|\d+#[0-9A-Z]+│/);
@@ -127,8 +127,8 @@ test("progress callback failures preserve publication and do not prevent the com
       );
       assert.equal(commands, 1);
       assert.equal(await readFile(path, "utf8"), "saved\n");
-      assert.equal(reportOf(result)?.publication, "PUBLISHED");
-      assert.equal(reportOf(result)?.then_run?.status, "succeeded");
+      assert.equal(reportOf(result, "write")?.publication, "PUBLISHED");
+      assert.equal(reportOf(result, "write")?.then_run?.status, "succeeded");
       assert.match(text(result), /display unavailable/);
     }
     const fusion = createActionFusionExecutor(undefined, () => {
@@ -199,9 +199,9 @@ test("standalone and Fusion finalizers → take freshness from commit facts", as
         });
         assert.deepEqual(fused.content, standalone.content);
         assert.equal(standalone.details.publication, "UNKNOWN");
-        assert.equal(reportOf(standalone)?.publication, publication);
-        assert.equal(reportOf(fused)?.publication, publication);
-        assert.equal(reportOf(standalone)?.freshness, fresh ? undefined : "changed");
+        assert.equal(reportOf(standalone, "edit")?.publication, publication);
+        assert.equal(reportOf(fused, "edit")?.publication, publication);
+        assert.equal(reportOf(standalone, "edit")?.freshness, fresh ? undefined : "changed");
         assert.deepEqual(mutation.details, {
           publication: "UNKNOWN",
           publishedRevision: "ignored",
@@ -309,7 +309,7 @@ test("ambiguous recovery bounds candidate lists and never claims content identit
     );
     assert.equal(failure.isError, true);
     assertFailureByteBudgets(text(failure));
-    const report = reportOf(failure);
+    const report = reportOf(failure, "edit");
     assert.ok(
       report?.failures?.every((entry) => entry.result === "ambiguous" && entry.omittedCandidates),
     );
@@ -396,9 +396,9 @@ test("Fusion skips the command when a replacement produces unencodable text", as
       { ctx: await ctx(dir, t) },
     );
     assert.equal(result.isError, true);
-    assert.equal(reportOf(result)?.error, "INVALID_UNICODE");
-    assert.equal(reportOf(result)?.publication, "NOT_PUBLISHED");
-    assert.equal(reportOf(result)?.then_run?.status, "skipped");
+    assert.equal(reportOf(result, "replace")?.error, "INVALID_UNICODE");
+    assert.equal(reportOf(result, "replace")?.publication, "NOT_PUBLISHED");
+    assert.equal(reportOf(result, "replace")?.then_run?.status, "skipped");
     assert.deepEqual(events, ["waiting", "skipped"]);
     assert.equal(await readFile(path, "utf8"), before);
     assert.equal(commands, 0);
@@ -467,7 +467,7 @@ test("all mutation tools succeed without rewriting on no-op, with and without Fu
           undefined,
           await ctx(dir, t),
         );
-        assert.equal(reportOf(result)?.publication, "NOT_PUBLISHED");
+        assert.equal(reportOf(result, tool.name)?.publication, "NOT_PUBLISHED");
         const revision = byteRevision(Buffer.from("same\n"));
         for (const key of ["baseRevision", "publishedRevision", "observedRevision"])
           assert.equal(result.details[key], revision);
@@ -475,7 +475,7 @@ test("all mutation tools succeed without rewriting on no-op, with and without Fu
         assert.doesNotMatch(text(result), /Updated anchors|\d+#[0-9A-Z]+│/);
         assert.equal(commands, mode === "command" ? 1 : 0);
         assert.equal(
-          reportOf(result)?.then_run?.status,
+          reportOf(result, tool.name)?.then_run?.status,
           mode === "command" ? "succeeded" : undefined,
         );
         const after = await stat(path);
@@ -524,13 +524,16 @@ test("no-op Fusion still detects external changes and reports command failures",
           undefined,
           await ctx(dir, t),
         );
-        assert.equal(reportOf(result)?.publication, "NOT_PUBLISHED");
+        assert.equal(reportOf(result, tool.name)?.publication, "NOT_PUBLISHED");
         assert.equal(commands, scenario === "before" ? 0 : 1);
         assert.equal(
-          reportOf(result)?.then_run?.status,
+          reportOf(result, tool.name)?.then_run?.status,
           scenario === "before" ? "skipped" : scenario === "failed" ? "failed" : "succeeded",
         );
-        assert.equal(reportOf(result)?.freshness, scenario === "failed" ? undefined : "changed");
+        assert.equal(
+          reportOf(result, tool.name)?.freshness,
+          scenario === "failed" ? undefined : "changed",
+        );
       }
     }
   } finally {

@@ -112,7 +112,7 @@ test("mutation cards use Fusion by default and explicit false removes command su
         name: "replace",
         args: { replacements: [{ literal: true, find: "published", replace: "published" }] },
       },
-    ];
+    ] as const;
     for (const { name, args } of cases) {
       const tool = tools.find((tool) => tool.name === name);
       const params = { path: "published.txt", ...args, then_run: { command: "exit 7" } };
@@ -148,10 +148,10 @@ test("mutation cards use Fusion by default and explicit false removes command su
         ctx: { cwd: dir },
       });
       assert.equal(
-        reportOf(result)?.publication,
+        reportOf(result, name)?.publication,
         name === "replace" ? "NOT_PUBLISHED" : "PUBLISHED",
       );
-      assert.equal(reportOf(result)?.then_run?.status, "failed");
+      assert.equal(reportOf(result, name)?.then_run?.status, "failed");
       assert.ok(frames[0].output.includes(theme.getBgAnsi("toolPendingBg")));
       const running = frames.find((frame) => frame.command === "running")!;
       assert.ok(running, `${name} should emit running progress`);
@@ -214,7 +214,7 @@ test("mutation cards use Fusion by default and explicit false removes command su
         { cwd: dir },
       );
       assert.equal(failed.isError, true);
-      const report = reportOf(failed);
+      const report = reportOf(failed, name);
       assert.equal(report?.error, "PATH_NOT_FOUND");
       failedCard.updateResult(failed);
       const output = failedCard.render(100).join("\n");
@@ -269,7 +269,7 @@ test("mutation cards use Fusion by default and explicit false removes command su
       { cwd: dir },
     );
     assert.equal(failed.isError, true);
-    assert.equal(reportOf(failed)?.failures?.[0].result, "shifted");
+    assert.equal(reportOf(failed, "edit")?.failures?.[0].result, "shifted");
     staleCard.updateResult(failed);
     assert.match(staleCard.render(160).join("\n"), /ANCHOR_MISMATCH/);
     const entry = entries.find(
@@ -446,7 +446,7 @@ test("configured read defaults bound omitted limits and returned bytes", async (
     await writeFile(join(dir, "short.txt"), "a\nb\nc\n");
     const paged = await call(read, { path: "short.txt" });
     assert.deepEqual(paged.details.pagination, { start: 1, end: 2, totalLines: 3, nextOffset: 3 });
-    assert.match(reportOf(paged)?.next ?? "", /offset.*pagination\.nextOffset/);
+    assert.match(reportOf(paged, "read")?.next ?? "", /offset.*pagination\.nextOffset/);
     assert.match(paged.content[0].text, /^2#[0-9A-Z]+│b$/m);
     assert.doesNotMatch(paged.content[0].text, /^3#/m);
     const explicit = await call(read, { path: "short.txt", limit: 3 });

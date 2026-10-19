@@ -14,9 +14,9 @@ import {
   describeFailure,
   renderReport,
 } from "./report.ts";
-import { DEFAULT_OUTPUT_BUDGETS } from "./budgets.ts";
+import { DEFAULT_OUTPUT_BUDGETS, formatKiB } from "./budgets.ts";
 import { MAX_UNNARROWED_SCAN_BYTES } from "./grep-candidates.ts";
-import { OUTCOME_NEXT, type Report, type SuccessReport } from "./report-schema.ts";
+import { OUTCOME_NEXT, type Report, type ReportTool, type SuccessReport } from "./report-schema.ts";
 
 // npm run typecheck checks these invalid callers; they must never run.
 function invalidReportConstruction(report: NonNullable<ReturnType<typeof decodeReport>>) {
@@ -32,20 +32,36 @@ function invalidReportConstruction(report: NonNullable<ReturnType<typeof decodeR
 }
 
 const text = (value: string) => ({ type: "text" as const, text: value });
-function displayed(result: Parameters<typeof renderToolError>[0]) {
+function displayed(result: Parameters<typeof renderToolError>[0], tool: ReportTool) {
   initTheme("dark");
-  return stripVTControlCharacters(renderToolError(result, theme, true).render(200).join("\n"));
+  return stripVTControlCharacters(
+    renderToolError(result, tool, theme, true).render(200).join("\n"),
+  );
 }
 
-test("structured failure → renders its report once from details", () => {
+test("structured failure → omits call fields from text and renders the complete details once", () => {
   const result = failureResult({
     tool: "write",
+    path: "target.txt",
     error: "TARGET_EXISTS",
     message: "Target already exists.",
   });
   const before = structuredClone(result);
-  assert.equal(reportOf(result), result.details.report);
-  const shown = displayed(result);
+  const block = result.content[0];
+  assert.ok(block.type === "text");
+  const serialized: unknown = JSON.parse(block.text);
+  assert.ok(typeof serialized === "object" && serialized !== null);
+  assert.equal(Object.hasOwn(serialized, "tool"), false);
+  assert.equal(Object.hasOwn(serialized, "path"), false);
+  assert.equal(result.details.report.tool, "write");
+  assert.equal(result.details.report.path, "target.txt");
+  assert.equal(reportOf(result, "write"), result.details.report);
+  assert.deepEqual(decodeReport(block.text, "write"), {
+    tool: "write",
+    error: "TARGET_EXISTS",
+    message: "Target already exists.",
+  });
+  const shown = displayed(result, "write");
   assert.match(shown, /TARGET_EXISTS/);
   assert.equal(shown.split("Target already exists.").length - 1, 1);
   assert.doesNotMatch(shown, /"error":/);
@@ -53,15 +69,16 @@ test("structured failure → renders its report once from details", () => {
 });
 
 test("Pi argument failure transported as text → renders field facts after serialization", () => {
-  const diagnostic = formatArgumentError(
-    "edit",
-    [{ field: "edits[0].body", reason: "is empty" }],
-    false,
-  );
+  const diagnostic = formatArgumentError("grep", [{ field: "pattern", reason: "missing" }], false);
   const result = JSON.parse(JSON.stringify({ content: [text(diagnostic)] }));
-  assert.equal(reportOf(result)?.error, "INVALID_ARGUMENTS");
-  const shown = displayed(result);
-  assert.match(shown, /edits\[0\]\.body: is empty/);
+  assert.equal(Object.hasOwn(JSON.parse(diagnostic), "tool"), false);
+  assert.equal(Object.hasOwn(JSON.parse(diagnostic), "path"), false);
+  const report = reportOf(result, "grep");
+  assert.equal(report?.error, "INVALID_ARGUMENTS");
+  assert.equal(report?.tool, "grep");
+  const shown = displayed(result, "grep");
+  assert.match(shown, /pattern: missing/);
+  assert.match(shown, /grep not executed/);
   assert.doesNotMatch(shown, /"issues":/);
 });
 
@@ -75,9 +92,9 @@ test("argument reports with obsolete fields → remain raw on replay", () => {
     };
     const diagnostic = JSON.stringify(report);
     const result = { content: [text(diagnostic)], details: { report } };
-    assert.equal(decodeReport(diagnostic), undefined);
-    assert.equal(reportOf(result), undefined);
-    assert.equal(displayed(result).trimEnd(), diagnostic);
+    assert.equal(decodeReport(diagnostic, "edit"), undefined);
+    assert.equal(reportOf(result, "edit"), undefined);
+    assert.equal(displayed(result, "edit").trimEnd(), diagnostic);
   }
 });
 
@@ -87,7 +104,7 @@ test("invalid serialized report → retains the raw diagnostic", () => {
     '{"tool":"edit","arbitrary":"user file"}',
     '{"tool":"replace","error":"NO_MATCH","message":"missing rule"}',
     '{"tool":"write","error":"TARGET_EXISTS","rule":1}',
-    valid.replace('"tool": "edit"', '"tool": "foreign"'),
+    JSON.stringify({ ...JSON.parse(valid), tool: "foreign" }),
     JSON.stringify({
       ...JSON.parse(valid),
       issues: [{ field: "path", reason: "missing", foreign: true }],
@@ -99,9 +116,9 @@ test("invalid serialized report → retains the raw diagnostic", () => {
       cause: { message: "native", foreign: true },
     }),
   ]) {
-    assert.equal(decodeReport(invalid), undefined, invalid);
+    assert.equal(decodeReport(invalid, "edit"), undefined, invalid);
     assert.equal(
-      displayed({ content: [text(invalid)] })
+      displayed({ content: [text(invalid)] }, "edit")
         .split("\n")
         .map((line) => line.trimEnd())
         .join("\n"),
@@ -117,9 +134,9 @@ test("native failure with deeply nested cause → retains the terminal diagnosti
     error = Object.assign(new Error(`layer ${index}`, { cause: error }), { code: "EIO" });
   const report = describeFailure("grep", error, { path: "source" });
   const serialized = renderReport(report);
-  const decoded = decodeReport(serialized);
+  const decoded = decodeReport(serialized, "grep");
   assert.ok(decoded);
-  assert.deepEqual(decoded, JSON.parse(serialized));
+  assert.deepEqual(decoded, { tool: "grep", ...JSON.parse(serialized) });
   let cause = decoded.cause;
   while (cause?.cause) cause = cause.cause;
   assert.equal(cause?.code, terminal.code);
@@ -184,15 +201,15 @@ test("success reports → omit repeated call fields while retaining details and 
   assert.equal(result.content.length, 2);
 });
 
-test("success facts without a tool → require call context and still enforce tool-specific fields", () => {
+test("success facts without a tool → use call context and enforce tool-specific fields", () => {
   const report: Report = { tool: "write", publication: "PUBLISHED", created: true };
   const serialized = renderReport(report);
-  assert.equal(decodeReport(serialized), undefined);
   assert.deepEqual(decodeReport(serialized, "write"), report);
-  for (const tool of ["read", "foreign"]) assert.equal(decodeReport(serialized, tool), undefined);
+  for (const tool of ["read", "grep", "edit", "replace"] as const)
+    assert.equal(decodeReport(serialized, tool), undefined);
   for (const invalid of [
     '{"created":true,"foreign":true}',
-    '{"error":"TARGET_EXISTS","message":"exists"}',
+    '{"error":"INVALID_ARGUMENTS","message":"missing issues"}',
     '{"tool":"foreign","created":true}',
     "[]",
     "null",
@@ -245,7 +262,7 @@ test("grep success and incomplete candidate facts → survive report serializati
   ] satisfies Report[]) {
     const serialized = renderReport(report);
     assert.deepEqual(decodeReport(serialized, report.tool), report);
-    assert.deepEqual(reportOf({ content: [text(serialized)], toolName: report.tool }), report);
+    assert.deepEqual(reportOf({ content: [text(serialized)] }, report.tool), report);
   }
 });
 
@@ -259,13 +276,14 @@ test("match and scan limits → recovery prioritizes the match limit", () => {
     candidates: "all",
     scanLimit: formatSize(MAX_UNNARROWED_SCAN_BYTES),
   });
-  assert.equal(reportOf(result)?.next, next);
+  assert.equal(reportOf(result, "grep")?.next, next);
 });
 
-test("text-only error resembles success facts → preserves the raw error diagnostic", () => {
-  const result = { toolName: "read", isError: true, content: [text("{}")] };
-  assert.equal(reportOf(result), undefined);
-  assert.equal(displayed(result).trimEnd(), "{}");
+test("text-only error contains facts invalid for the originating tool → preserves the raw diagnostic", () => {
+  const diagnostic = '{"publication":"PUBLISHED"}';
+  const result = { content: [text(diagnostic)] };
+  assert.equal(reportOf(result, "read"), undefined);
+  assert.equal(displayed(result, "read").trimEnd(), diagnostic);
 });
 
 test("invalid details report → falls back to valid text and leaves content intact", () => {
@@ -273,9 +291,25 @@ test("invalid details report → falls back to valid text and leaves content int
   const fallback: SuccessReport = { tool: "grep", matches: 1, files: 1 };
   for (const expected of [undefined, fallback]) {
     const last = expected ? renderReport(expected) : JSON.stringify({ matches: "x" }, null, 2);
-    const result = { toolName: "grep", details, content: [text("payload"), text(last)] };
-    assert.deepEqual(reportOf(result), expected);
+    const result = { details, content: [text("payload"), text(last)] };
+    assert.deepEqual(reportOf(result, "grep"), expected);
     assert.deepEqual(splitReport(result), { content: result.content, report: undefined });
     assert.equal(result.content.length, 2);
   }
+});
+
+test("output byte limit → follows the scan limit and precedes the line preview limit", () => {
+  const serialized = renderReport({
+    tool: "grep",
+    candidates: "all",
+    scanLimit: formatSize(MAX_UNNARROWED_SCAN_BYTES),
+    outputLimit: formatKiB(DEFAULT_OUTPUT_BUDGETS.grepBytes),
+    linePreviewLimit: DEFAULT_OUTPUT_BUDGETS.grepPreviewUnits,
+  });
+  assert.deepEqual(Object.keys(JSON.parse(serialized)), [
+    "candidates",
+    "scanLimit",
+    "outputLimit",
+    "linePreviewLimit",
+  ]);
 });

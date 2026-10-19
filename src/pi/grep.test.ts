@@ -20,7 +20,7 @@ import { Worker } from "node:worker_threads";
 import { makeEditOverride } from "./edit-tool.ts";
 import { callTool } from "./tool-call.testing.ts";
 import { DEFAULT_CONFIG } from "./config.ts";
-import { DEFAULT_OUTPUT_BUDGETS } from "./budgets.ts";
+import { DEFAULT_OUTPUT_BUDGETS, formatKiB } from "./budgets.ts";
 import { makeReadOverride } from "./read-tool.ts";
 import { reportOf } from "./report.ts";
 import { grepCounts } from "./grep-output.testing.ts";
@@ -128,7 +128,7 @@ test("configured defaults → descriptions, limits, and context use the register
     const defaults = await call(tool, { path: file, pattern: "needle", literal: true });
     assert.deepEqual(rows(defaults), [1, 2, 3, 4].map(expectedRow));
     assert.match(text(defaults), /configured\.txt · 1 match\n/);
-    assert.equal(reportOf(defaults)?.matchLimit, config.grep.defaultLimit);
+    assert.equal(reportOf(defaults, "grep")?.matchLimit, config.grep.defaultLimit);
 
     const explicit = await call(tool, {
       path: file,
@@ -223,7 +223,7 @@ test("grep schema rejects empty search inputs and fractional context", async () 
       { literal: true, pattern: "needle", limit: Number.MAX_SAFE_INTEGER + 1 },
     ];
     for (const args of invalidArgs) {
-      await assert.rejects(call(tool, args), rejectsArguments("grep"), JSON.stringify(args));
+      await assert.rejects(call(tool, args), rejectsArguments(), JSON.stringify(args));
     }
     await assert.rejects(
       call(tool, { literal: true, pattern: "needle", context: 1.5 }),
@@ -253,6 +253,28 @@ test("grep points wildcard paths to glob without changing ordinary missing-path 
     );
   });
 });
+
+test("one of multiple grep paths is missing → text identifies it without repeating call fields", async () =>
+  withDir(async (dir) => {
+    await writeFile(join(dir, "present.txt"), "value\n");
+    const path = ["present.txt", "missing.txt"];
+    const fake = fakeBackend();
+    const tool = makeGrepOverrideWithBackend(dir, DEFAULT_CONFIG, fake.backend);
+    const result = await call(tool, { literal: true, pattern: "value", path });
+    assert.equal(result.isError, true);
+    const block = result.content[0];
+    assert.ok(block.type === "text");
+    const facts = JSON.parse(block.text);
+    assert.equal(facts.error, "PATH_NOT_FOUND");
+    assert.equal(facts.missing, join(dir, "missing.txt"));
+    assert.equal(Object.hasOwn(facts, "tool"), false);
+    assert.equal(Object.hasOwn(facts, "path"), false);
+    const report = reportOf(result, "grep");
+    assert.equal(report?.tool, "grep");
+    assert.deepEqual(report?.path, path);
+    assert.equal(report?.missing, facts.missing);
+    assert.equal(fake.calls.length, 0);
+  }));
 
 test("matched files → full-line hash anchors", async () => {
   await withDir(async (dir) => {
@@ -305,7 +327,7 @@ test("grep payload blocks → only a single complete content or count block omit
         },
       );
       assert.equal(result.isError, undefined);
-      const report = reportOf(result);
+      const report = reportOf(result, "grep");
       assert.ok(report);
       const context = JSON.stringify({ outputMode, fileCount, truncated });
       assert.equal(Object.hasOwn(report, "matches"), reported, context);
@@ -314,7 +336,11 @@ test("grep payload blocks → only a single complete content or count block omit
         assert.equal(report.matches, fileCount * 2, context);
         assert.equal(report.files, fileCount, context);
       }
-      assert.equal(report.outputLimit !== undefined, truncated, context);
+      assert.equal(
+        report.outputLimit,
+        truncated ? formatKiB(budget.grepBytes) : undefined,
+        context,
+      );
       assert.deepEqual(grepCounts(result), { matches: fileCount * 2, files: fileCount }, context);
     }
   }));
@@ -394,12 +420,15 @@ test("file changes after matching → summary modes retain the snapshot and cont
               if (outputMode !== "content") {
                 assert.equal(result.isError, undefined);
                 assert.deepEqual(grepCounts(result), { matches: 1, files: 1 });
-                assert.equal(reportOf(result)?.diagnostics, undefined);
+                assert.equal(reportOf(result, "grep")?.diagnostics, undefined);
                 assert.equal(result.details.incomplete, undefined);
                 assert.match(text(result), /grep\.txt/);
               } else {
-                assert.match(reportOf(result)?.diagnostics ?? "", /grep\.txt/);
-                assert.match(reportOf(result)?.diagnostics ?? "", /File changed during search\./);
+                assert.match(reportOf(result, "grep")?.diagnostics ?? "", /grep\.txt/);
+                assert.match(
+                  reportOf(result, "grep")?.diagnostics ?? "",
+                  /File changed during search\./,
+                );
                 if (keepOtherFile) {
                   assert.equal(result.isError, undefined);
                   assert.deepEqual(grepCounts(result), { matches: 1, files: 1 });
@@ -408,7 +437,7 @@ test("file changes after matching → summary modes retain the snapshot and cont
                   assert.doesNotMatch(text(result), /grep\.txt ·/);
                 } else {
                   assert.equal(result.isError, true);
-                  assert.equal(reportOf(result)?.error, "SEARCH_INCOMPLETE");
+                  assert.equal(reportOf(result, "grep")?.error, "SEARCH_INCOMPLETE");
                 }
               }
             },
@@ -449,7 +478,7 @@ test("excluded changed file → contributes no preview limit or recovery to comp
       outputMode: "content",
       context: 1,
     });
-    const report = reportOf(result);
+    const report = reportOf(result, "grep");
     assert.equal(result.isError, undefined);
     assert.deepEqual(grepCounts(result), { matches: 1, files: 1 });
     assert.match(report?.diagnostics ?? "", /changed\.txt: File changed during search\./);
@@ -487,8 +516,8 @@ test("candidate selection → reports only whole-file candidate facts", async ()
       );
       assert.equal(result.isError, undefined);
       assert.equal(grepCounts(result).matches, 1);
-      assert.equal(reportOf(result)?.candidates, candidates);
-      assert.equal(reportOf(result)?.scanLimit, undefined);
+      assert.equal(reportOf(result, "grep")?.candidates, candidates);
+      assert.equal(reportOf(result, "grep")?.scanLimit, undefined);
       assert.equal(fake.calls[0].kind, multiline ? "paths" : "lines");
     }
   }));
@@ -687,8 +716,8 @@ test("matching rows exceed limit → bounded results carry matchLimit", async ()
       limit,
     });
     assert.match(text(result), /1#[0-9A-Z]+│alpha beta/);
-    assert.equal(reportOf(result)?.matchLimit, limit);
-    assert.match(reportOf(result)?.next ?? "", /Raise limit.*after the last one shown/);
+    assert.equal(reportOf(result, "grep")?.matchLimit, limit);
+    assert.match(reportOf(result, "grep")?.next ?? "", /Raise limit.*after the last one shown/);
   });
 });
 
@@ -739,7 +768,7 @@ test("literal pipe patterns find no match → report the pattern-array recovery 
       const context = JSON.stringify({ pattern, literal, source });
       assert.equal(result.isError, undefined, context);
       assert.deepEqual(grepCounts(result), { matches, files: matches > 0 ? 1 : 0 }, context);
-      const report = reportOf(result);
+      const report = reportOf(result, "grep");
       assert.ok(report);
       assert.equal(Object.hasOwn(report, "literalPipe"), literalPipe, context);
       assert.equal(report.literalPipe, literalPipe ? true : undefined, context);
@@ -772,7 +801,10 @@ test("grep OR arrays accept more than sixteen patterns in one line scan", async 
     const fake = fakeBackend();
     const tool = makeGrepOverrideWithBackend(dir, DEFAULT_CONFIG, fake.backend);
     const patterns = Array.from({ length: 17 }, (_, index) => `pattern${index}`);
-    assert.equal(reportOf(await call(tool, { literal: true, pattern: patterns }))?.matches, 0);
+    assert.equal(
+      reportOf(await call(tool, { literal: true, pattern: patterns }), "grep")?.matches,
+      0,
+    );
     assert.equal(fake.calls.length, 1);
   });
 });
@@ -783,15 +815,15 @@ test("rejects empty patterns while allowing character classes, literals, and emp
     const tool = makeGrepOverrideWithBackend(dir, DEFAULT_CONFIG, fake.backend);
 
     for (const pattern of ["", [], ["valid", ""]]) {
-      await assert.rejects(call(tool, { pattern, literal: true }), rejectsArguments("grep"));
+      await assert.rejects(call(tool, { pattern, literal: true }), rejectsArguments());
     }
     assert.equal(fake.calls.length, 0);
     for (const pattern of ["[\\w.*]*", "^[\\w.*]+$", "[\\w.*]?"]) {
-      assert.equal(reportOf(await call(tool, { pattern, literal: false }))?.matches, 0);
+      assert.equal(reportOf(await call(tool, { pattern, literal: false }), "grep")?.matches, 0);
     }
 
-    assert.equal(reportOf(await call(tool, { pattern: ".*", literal: true }))?.matches, 0);
-    assert.equal(reportOf(await call(tool, { pattern: "^$", literal: false }))?.matches, 0);
+    assert.equal(reportOf(await call(tool, { pattern: ".*", literal: true }), "grep")?.matches, 0);
+    assert.equal(reportOf(await call(tool, { pattern: "^$", literal: false }), "grep")?.matches, 0);
     assert.equal(fake.calls.length, 5);
   });
 });
@@ -801,7 +833,7 @@ test("grep accepts nonempty whitespace literals", async () => {
     const fake = fakeBackend();
     const tool = makeGrepOverrideWithBackend(dir, DEFAULT_CONFIG, fake.backend);
     for (const pattern of ["  ", "\t", ["word", " "]]) {
-      assert.equal(reportOf(await call(tool, { pattern, literal: true }))?.matches, 0);
+      assert.equal(reportOf(await call(tool, { pattern, literal: true }), "grep")?.matches, 0);
     }
     assert.equal(fake.calls.length, 3);
   });
@@ -815,8 +847,8 @@ test("reports empty output and ripgrep execution failures", async () => {
       pattern: "missing",
     });
     assert.equal(noMatches.isError, undefined);
-    assert.equal(reportOf(noMatches)?.matches, 0);
-    assert.equal(reportOf(noMatches)?.files, 0);
+    assert.equal(reportOf(noMatches, "grep")?.matches, 0);
+    assert.equal(reportOf(noMatches, "grep")?.files, 0);
 
     const failed = fakeBackend({ code: 2, stderr: "bad regex" });
     await expectToolFailure(
@@ -918,9 +950,9 @@ test("grep previews invalid UTF-8 without anchors and skips NUL hits in every mo
       context: 1,
     });
     assert.match(text(result), /1│a\n2│�\(/);
-    assert.deepEqual(reportOf(result)?.invalidUtf8, ["invalid.txt"]);
+    assert.deepEqual(reportOf(result, "grep")?.invalidUtf8, ["invalid.txt"]);
     assert.doesNotMatch(text(result), /\d+#/);
-    assert.equal(reportOf(result)?.diagnostics, undefined);
+    assert.equal(reportOf(result, "grep")?.diagnostics, undefined);
     assert.deepEqual(await readFile(invalid), source);
 
     const binary = join(dir, "nul.txt");
@@ -939,7 +971,7 @@ test("grep previews invalid UTF-8 without anchors and skips NUL hits in every mo
         makeGrepOverrideWithBackend(dir, DEFAULT_CONFIG, binaryBackend.backend),
         { literal: true, pattern: "a", path: binary, outputMode, multiline },
       );
-      assert.equal(reportOf(skipped)?.matches, 0);
+      assert.equal(reportOf(skipped, "grep")?.matches, 0);
       assert.equal(skipped.isError, undefined);
     }
     assert.deepEqual(await readFile(binary), binarySource);
@@ -990,9 +1022,9 @@ test("candidate listing reports errors → all output modes retain confirmed mat
           limit,
         });
         assert.match(text(result), /found\.txt/);
-        assert.ok(reportOf(result)?.diagnostics);
+        assert.ok(reportOf(result, "grep")?.diagnostics);
         assert.match(
-          JSON.stringify(reportOf(result)?.diagnostics),
+          JSON.stringify(reportOf(result, "grep")?.diagnostics),
           /unreadable\.txt: Permission denied/,
         );
       }
@@ -1025,7 +1057,7 @@ test("one candidate cannot be read → matches from other files remain available
     });
     assert.match(text(result), /good\.txt · 1 match/);
     assert.doesNotMatch(text(result), /gone\.txt · 1 match/);
-    assert.match(JSON.stringify(reportOf(result)?.diagnostics), /gone\.txt/);
+    assert.match(JSON.stringify(reportOf(result, "grep")?.diagnostics), /gone\.txt/);
   }));
 
 for (const admitted of [2, 1, 0]) {
@@ -1047,10 +1079,10 @@ for (const admitted of [2, 1, 0]) {
       assert.ok(fake.calls[0].args.includes("--no-ignore"));
       assert.equal(fake.calls[0].args.includes("!.git"), false);
       if (admitted === files.length) {
-        assert.equal(reportOf(result)?.diagnostics, undefined);
+        assert.equal(reportOf(result, "grep")?.diagnostics, undefined);
         assert.equal(result.details.incomplete, undefined);
       } else {
-        assert.match(reportOf(result)?.diagnostics ?? "", /directory: Permission denied/);
+        assert.match(reportOf(result, "grep")?.diagnostics ?? "", /directory: Permission denied/);
         if (admitted > 0) assert.equal(result.details.incomplete, true);
       }
       if (admitted > 0) {
@@ -1058,7 +1090,7 @@ for (const admitted of [2, 1, 0]) {
         assert.equal(grepCounts(result).matches, admitted);
       } else {
         assert.equal(result.isError, true);
-        assert.equal(reportOf(result)?.error, "SEARCH_INCOMPLETE");
+        assert.equal(reportOf(result, "grep")?.error, "SEARCH_INCOMPLETE");
       }
     }));
 }
@@ -1103,7 +1135,7 @@ test("small or large read/grep results → reports carry no resultId", async () 
           tool.name === "read" ? { path } : { path, pattern: "needle", literal: true },
         );
         assert.equal(result.isError, undefined);
-        const report = reportOf(result);
+        const report = reportOf(result, tool.name === "read" ? "read" : "grep");
         assert.ok(report);
         assert.equal(Object.hasOwn(report, "resultId"), false);
       }
@@ -1362,7 +1394,7 @@ test("rg rejects line patterns before listing files → successful file fallback
     );
     assert.equal(result.isError, undefined);
     assert.equal(grepCounts(result).matches, 1);
-    assert.equal(reportOf(result)?.diagnostics, undefined);
+    assert.equal(reportOf(result, "grep")?.diagnostics, undefined);
     assert.deepEqual(
       [...lines.calls, ...paths.calls].map(({ kind }) => kind),
       ["lines", "paths"],

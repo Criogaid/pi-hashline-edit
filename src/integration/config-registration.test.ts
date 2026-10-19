@@ -9,6 +9,7 @@ import { computeLineHash } from "../core/hash.ts";
 import { callTool } from "../pi/tool-call.testing.ts";
 import { DEFAULT_CONFIG, type HashlineEditConfig } from "../pi/config.ts";
 import { reportOf } from "../pi/report.ts";
+import { formatKiB } from "../pi/budgets.ts";
 import { expectToolFailure } from "../pi/report-failure.testing.ts";
 
 test("registered tools retain their configuration when another tool set is registered", async (t) => {
@@ -137,15 +138,19 @@ test("registered tools retain their configuration when another tool set is regis
           await writeFile(join(directory, path), `${wide}\n`);
           const bounded = await callTool(tool, { path });
           if (read.maxKiB === 1) {
-            assert.deepEqual(reportOf(bounded)?.lineTooLong, { line: 1, limit: "1 KiB" });
-            assert.equal(bounded.details.truncation.maxBytes, 1024);
+            const maxBytes = read.maxKiB * 1024;
+            assert.deepEqual(reportOf(bounded, "read")?.lineTooLong, {
+              line: 1,
+              limit: formatKiB(maxBytes),
+            });
+            assert.equal(bounded.details.truncation.maxBytes, maxBytes);
             assert.equal(bounded.details.truncation.outputBytes, 0);
           } else {
             assert.ok(
               bounded.content[0].text.includes(`1#${computeLineHash(1, wide, hashLen)}│${wide}`),
             );
-            assert.equal(reportOf(bounded)?.truncatedAt, undefined);
-            assert.equal(reportOf(bounded)?.pagination, undefined);
+            assert.equal(reportOf(bounded, "read")?.outputLimit, undefined);
+            assert.equal(reportOf(bounded, "read")?.pagination, undefined);
           }
         },
       );
@@ -178,7 +183,7 @@ test("registered tools retain their configuration when another tool set is regis
                 `${line}#${computeLineHash(line, lines[line - 1], hashLen)}│${lines[line - 1]}`,
             ),
           );
-          assert.equal(reportOf(result)?.matchLimit, grep.defaultLimit);
+          assert.equal(reportOf(result, "grep")?.matchLimit, grep.defaultLimit);
         },
       );
 

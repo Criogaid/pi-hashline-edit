@@ -269,7 +269,7 @@ test("Windows shared access failure preserves the target, skips then_run, and re
         { toolCallId: "shared-failure", ctx: { cwd: dir } },
       );
       assert.equal(failed.isError, true);
-      const report = reportOf(failed);
+      const report = reportOf(failed, "write");
       assert.ok(report);
       assert.ok(report.publication === "NOT_PUBLISHED" || report.publication === "UNKNOWN");
       assert.equal(report.then_run?.status, "skipped");
@@ -308,7 +308,7 @@ test("Windows shared access failure preserves the target, skips then_run, and re
       { toolCallId: "shared-retry", ctx: { cwd: dir } },
     );
     assert.equal(result.isError, undefined);
-    assert.equal(reportOf(result)?.then_run?.status, "succeeded");
+    assert.equal(reportOf(result, "write")?.then_run?.status, "succeeded");
     assert.equal(commandRuns, 1);
     assert.equal(await readFile(target, "utf8"), "replacement\n");
   }));
