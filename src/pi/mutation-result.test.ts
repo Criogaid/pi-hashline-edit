@@ -10,7 +10,7 @@ import {
   type MutationOutcome,
 } from "./mutation-result.ts";
 import { displayCarriageReturns } from "./anchor-format.ts";
-import { byteRevision } from "./file-commit.ts";
+import { byteRevision } from "./file-revision.ts";
 
 // Checked by tsc; these callers must never run.
 function invalidMutationConstruction(
@@ -48,9 +48,9 @@ for (const [name, before, after] of [
 ] as const) {
   test(`mutation evidence preserves raw patch and logical preview for ${name}`, () => {
     const versions = {
-      baseRevision: byteRevision(before),
-      publishedRevision: byteRevision(after),
-      observedRevision: byteRevision(after),
+      baseRevision: byteRevision(Buffer.from(before)),
+      publishedRevision: byteRevision(Buffer.from(after)),
+      observedRevision: byteRevision(Buffer.from(after)),
     };
     const publication = before === after ? "NOT_PUBLISHED" : "PUBLISHED";
     const details = generateMutationDetails("file.txt", before, after, versions, publication);

@@ -10,7 +10,8 @@ import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import { createActionFusionExecutor } from "../pi/action-fusion.ts";
 import { DEFAULT_CONFIG } from "../pi/config.ts";
 import { makeEditOverride } from "../pi/edit-tool.ts";
-import { byteRevision, commitFile, FileMutationError } from "../pi/file-commit.ts";
+import { commitFile, FileMutationError } from "../pi/file-commit.ts";
+import { byteRevision } from "../pi/file-revision.ts";
 import { describeFailure, reportOf } from "../pi/report.ts";
 import { expectToolFailure } from "../pi/report-failure.testing.ts";
 import { REREAD } from "../pi/report-schema.ts";
@@ -95,7 +96,7 @@ const mutationCases = [
     name: "replace",
     make: (cwd: string, fusion?: ReturnType<typeof createActionFusionExecutor>) =>
       makeReplaceTool(cwd, DEFAULT_CONFIG, fusion),
-    args: { replacements: [{ find: BEFORE, replace: PUBLISHED }] },
+    args: { replacements: [{ literal: true, find: BEFORE, replace: PUBLISHED }] },
   },
   {
     name: "write overwrite",
@@ -132,9 +133,9 @@ for (const fused of [false, true]) {
             assert.equal(result.isError, undefined);
             assert.equal(reportOf(result)?.publication, "PUBLISHED");
             assert.equal(Object.hasOwn(result.details, "observedRevision"), false);
-            assert.equal(result.details.publishedRevision, byteRevision(PUBLISHED));
+            assert.equal(result.details.publishedRevision, byteRevision(Buffer.from(PUBLISHED)));
             if (mutation.name !== "write create")
-              assert.equal(result.details.baseRevision, byteRevision(BEFORE));
+              assert.equal(result.details.baseRevision, byteRevision(Buffer.from(BEFORE)));
             assert.equal(reportOf(result)?.next, REREAD);
             assert.doesNotMatch(text(result), /Updated anchors|retry the tool/);
             assert.equal(reportOf(result)?.then_run, undefined);
@@ -273,7 +274,7 @@ test("concurrent change during pre-publication revision read → rejects without
   for (const phase of ["inspect target", "revision recheck", "no-op check"] as const) {
     await t.test(`${phase} → NOT_PUBLISHED`, async (t) => {
       const { path } = await targetFile(t, BEFORE);
-      const revision = byteRevision(BEFORE);
+      const revision = byteRevision(Buffer.from(BEFORE));
       await withDisturbedRead(
         t,
         path,

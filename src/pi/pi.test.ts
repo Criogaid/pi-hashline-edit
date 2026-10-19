@@ -88,7 +88,7 @@ test("file tools share Pi-style URL and @ path resolution", async () => {
     assert.match(read.content[0].text, /before/);
     await callTool(
       makeReplaceTool(dir, DEFAULT_CONFIG),
-      { path: url, replacements: [{ find: "before", replace: "after" }] },
+      { path: url, replacements: [{ literal: true, find: "before", replace: "after" }] },
       { toolCallId: "replace", ctx },
     );
     await callTool(

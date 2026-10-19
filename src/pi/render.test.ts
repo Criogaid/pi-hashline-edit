@@ -30,6 +30,7 @@ import { formatArgumentError } from "./argument-error.ts";
 import { makeGrepOverride } from "./grep-tool.ts";
 import { openTestSession } from "../testing/session.testing.ts";
 import type { SuccessReport } from "./report-schema.ts";
+import { renderReport } from "./report.ts";
 
 const versions = { publishedRevision: "r", observedRevision: "r" };
 const mutationDetails = (
@@ -52,7 +53,7 @@ test("mutation headers refresh in place and retain isolated per-call counts", ()
     const args = {
       path: "a.txt",
       edits: [{ op: "append" as const, body: ["new"] }],
-      replacements: [{ find: "old", replace: "new" }],
+      replacements: [{ literal: true, find: "old", replace: "new" }],
     };
     const context: any = {
       args,
@@ -356,7 +357,7 @@ test("all tools render argument issues as field diagnostics while preserving mod
         content: "unused",
         mode: "create" as const,
         edits: [{ op: "append" as const, body: ["unused"] }],
-        replacements: [{ find: "unused", replace: "unused" }],
+        replacements: [{ literal: true, find: "unused", replace: "unused" }],
         pattern: "unused",
         literal: true,
         unexpected: true,
@@ -561,5 +562,78 @@ test("command changes or removes the target → completed mutation stays success
     if (disturbance === "changed")
       assert.equal(await readFile(target, "utf8"), "command changed the file\n");
     else await assert.rejects(readFile(target), { code: "ENOENT" });
+  }
+});
+
+test("success renderers receive replayed or hooked reports → display only schema-checked facts", () => {
+  initTheme("dark");
+  const cwd = process.cwd();
+  const cases = [
+    { name: "grep" as const, tool: makeGrepOverride(cwd, DEFAULT_CONFIG) },
+    { name: "read" as const, tool: makeReadOverride(cwd, DEFAULT_CONFIG) },
+    { name: "read" as const, tool: makeReadOverride(cwd, DEFAULT_CONFIG), nativeRead: true },
+    { name: "write" as const, tool: makeWriteOverride(cwd) },
+    { name: "edit" as const, tool: makeEditOverride(cwd, DEFAULT_CONFIG) },
+    { name: "replace" as const, tool: makeReplaceTool(cwd, DEFAULT_CONFIG) },
+  ];
+  for (const { name, tool, nativeRead } of cases) {
+    // Pi renders persisted or hooked details with their result type erased.
+    const render = tool.renderResult as NonNullable<
+      ToolDefinition<TSchema, unknown>["renderResult"]
+    >;
+    const context: Parameters<typeof render>[3] = {
+      args: { path: "a.txt" },
+      state: {},
+      cwd,
+      toolCallId: `${tool.name}-${nativeRead ?? false}`,
+      lastComponent: undefined,
+      invalidate() {},
+      executionStarted: true,
+      argsComplete: true,
+      isPartial: false,
+      expanded: true,
+      showImages: false,
+      isError: false,
+    };
+    const show = (report: unknown, text: string) => {
+      const result = {
+        content: [{ type: "text" as const, text }],
+        details: { nativeRead, report },
+      };
+      const before = structuredClone(result);
+      const output = stripVTControlCharacters(
+        render(result, { isPartial: false, expanded: true }, theme, context).render(240).join("\n"),
+      );
+      assert.deepEqual(result, before);
+      return output;
+    };
+    const payload = (text: string) =>
+      name === "read" && !nativeRead ? `a.txt · 1 lines\n1#ABCD│${text}` : text;
+    const report: SuccessReport = { tool: name, next: "CHECKED_REPORT_RECOVERY" };
+    const checked = show(report, renderReport(report));
+    assert.doesNotMatch(checked, /"next"/);
+    if (!nativeRead) assert.match(checked, /next: CHECKED_REPORT_RECOVERY/);
+    else assert.doesNotMatch(checked, /CHECKED_REPORT_RECOVERY/);
+    for (const invalid of [
+      undefined,
+      null,
+      "foreign report",
+      { ...report, tool: "foreign", next: "UNTRUSTED_REPORT_FACT" },
+      { ...report, foreign: true, next: "UNTRUSTED_REPORT_FACT" },
+      { ...report, then_run: { status: "foreign" }, next: "UNTRUSTED_REPORT_FACT" },
+    ]) {
+      const output = show(invalid, payload("VISIBLE_PAYLOAD"));
+      assert.doesNotMatch(output, /UNTRUSTED_REPORT_FACT|CHECKED_REPORT_RECOVERY/);
+      if (name === "write") assert.equal(output, "");
+      else
+        assert.match(
+          output,
+          name === "edit" || name === "replace" ? /No net change/ : /VISIBLE_PAYLOAD/,
+        );
+    }
+    if (tool.name === "grep" || tool.name === "read") {
+      const foreign = '{"hook":"VISIBLE_JSON"}';
+      assert.ok(show(report, payload(foreign)).includes(foreign));
+    }
   }
 });

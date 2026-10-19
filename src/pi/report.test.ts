@@ -4,7 +4,7 @@ import { stripVTControlCharacters } from "node:util";
 import { formatSize, initTheme } from "@earendil-works/pi-coding-agent";
 import { theme } from "../../node_modules/@earendil-works/pi-coding-agent/dist/modes/interactive/theme/theme.js";
 import { formatArgumentError } from "./argument-error.ts";
-import { renderToolError, withoutReport } from "./render.ts";
+import { renderToolError, splitReport } from "./render.ts";
 import {
   causeOf,
   decodeReport,
@@ -180,7 +180,7 @@ test("success reports → omit repeated call fields while retaining details and 
   assert.ok(last?.type === "text");
   assert.deepEqual(JSON.parse(last.text), { publication: "PUBLISHED", created: true });
   assert.deepEqual(result.details.report, report);
-  assert.deepEqual(withoutReport(result).content, payload);
+  assert.deepEqual(splitReport(result), { content: payload, report });
   assert.equal(result.content.length, 2);
 });
 
@@ -200,14 +200,19 @@ test("success facts without a tool → require call context and still enforce to
     assert.equal(decodeReport(invalid, "write"), undefined);
 });
 
-test("success text with a tool field → remains in content on replay", () => {
-  const saved: Report = { tool: "write", path: "saved.txt", publication: "PUBLISHED" };
-  const payload = [text("saved payload")];
-  const result = {
-    content: [...payload, text(JSON.stringify(saved, null, 2))],
-    details: { report: saved },
-  };
-  assert.deepEqual(withoutReport(result).content, result.content);
+test("checked report with a different trailing block → preserves the entire payload", () => {
+  const report: SuccessReport = { tool: "write", path: "saved.txt", publication: "PUBLISHED" };
+  for (const last of [
+    text(JSON.stringify(report, null, 2)),
+    text(JSON.stringify({ publication: "NOT_PUBLISHED" })),
+    text(renderReport(report) + "\n"),
+    { type: "image" as const, data: "iVBORw0KGgo=", mimeType: "image/png" },
+  ]) {
+    const content = [text("saved payload"), last];
+    const result: Parameters<typeof splitReport>[0] = { content, details: { report } };
+    assert.deepEqual(splitReport(result), { content, report });
+    assert.equal(splitReport(result).content, content);
+  }
 });
 
 test("report-contract: native failure with an independent cause → retains the underlying diagnostic", () => {
@@ -270,7 +275,7 @@ test("invalid details report → falls back to valid text and leaves content int
     const last = expected ? renderReport(expected) : JSON.stringify({ matches: "x" }, null, 2);
     const result = { toolName: "grep", details, content: [text("payload"), text(last)] };
     assert.deepEqual(reportOf(result), expected);
-    assert.deepEqual(withoutReport(result).content, result.content);
+    assert.deepEqual(splitReport(result), { content: result.content, report: undefined });
     assert.equal(result.content.length, 2);
   }
 });

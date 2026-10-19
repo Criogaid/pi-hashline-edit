@@ -5,7 +5,10 @@ import { Worker } from "node:worker_threads";
 for (const { entry, input, expected } of [
   {
     entry: "replace-worker.mjs",
-    input: { source: "before\n", rules: [{ find: "(before)", replace: "$1 after", regex: true }] },
+    input: {
+      source: "before\n",
+      rules: [{ find: "(before)", replace: "$1 after", literal: false }],
+    },
     expected: { text: "before after\n", count: 1 },
   },
   {

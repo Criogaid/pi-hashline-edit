@@ -18,7 +18,6 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { spawn } from "node:child_process";
 import {
-  byteRevision,
   commitFile,
   commitReplacement,
   FileMutationError,
@@ -27,6 +26,7 @@ import {
   type CommitResult,
   type FreshnessObservation,
 } from "./file-commit.ts";
+import { byteRevision } from "./file-revision.ts";
 import { createActionFusionExecutor } from "./action-fusion.ts";
 import { makeWriteOverride } from "./write-tool.ts";
 import { callTool } from "./tool-call.testing.ts";
@@ -347,7 +347,7 @@ test("commit result binds base, published, and observed revisions", async () =>
       baseRevision,
     });
     assert.equal(result.baseRevision, baseRevision);
-    assert.equal(result.publishedRevision, byteRevision("after\n"));
+    assert.equal(result.publishedRevision, byteRevision(Buffer.from("after\n")));
     assert.equal(result.observedRevision, result.publishedRevision);
     assert.equal("revision" in result, false);
   }));

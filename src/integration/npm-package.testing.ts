@@ -70,7 +70,7 @@ test("packed extension completes file, worker, and command operations", {
     () =>
       call("replace", "replace", {
         path: "fixture.txt",
-        replacements: [{ find: "(edited)", replace: "$1 after", regex: true }],
+        replacements: [{ find: "(edited)", replace: "$1 after", literal: false }],
       }),
   ];
   let next = 0;

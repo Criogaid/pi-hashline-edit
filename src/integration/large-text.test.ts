@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { makeReadOverride } from "../pi/read-tool.ts";
 import { makeEditOverride } from "../pi/edit-tool.ts";
-import { byteRevision } from "../pi/file-commit.ts";
+import { byteRevision } from "../pi/file-revision.ts";
 import { makeGrepOverrideWithBackend } from "../pi/grep-tool.ts";
 import { computeLineHash } from "../core/hash.ts";
 import { callTool } from "../pi/tool-call.testing.ts";

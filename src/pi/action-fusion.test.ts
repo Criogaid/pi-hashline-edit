@@ -11,7 +11,8 @@ import { makeWriteOverride } from "./write-tool.ts";
 import { computeLineHash } from "../core/hash.ts";
 import type { ActionFusionProgress, CommandOutcome } from "./action-fusion.ts";
 import { ACTION_FUSION_GUIDELINES, createActionFusionExecutor } from "./action-fusion.ts";
-import { byteRevision, FileMutationError } from "./file-commit.ts";
+import { FileMutationError } from "./file-commit.ts";
+import { byteRevision } from "./file-revision.ts";
 import { DEFAULT_CONFIG } from "./config.ts";
 import { ACTION_FUSION_PROGRESS_SCHEMA, REREAD } from "./report-schema.ts";
 import { Value } from "typebox/value";
@@ -61,7 +62,7 @@ test("then_run schemas reject invalid commands, unknown keys, and excessive time
         tool.name === "edit"
           ? { edits: [{ op: "append", body: ["new"] }] }
           : tool.name === "replace"
-            ? { replacements: [{ find: "old", replace: "new" }] }
+            ? { replacements: [{ literal: true, find: "old", replace: "new" }] }
             : { content: "new\n", mode: "overwrite" };
       for (const then_run of [
         {},
@@ -110,7 +111,7 @@ test("edit and replace share one embedded executor and preserve mutation results
       "replace-1",
       {
         path: "replace.txt",
-        replacements: [{ find: "before", replace: "after" }],
+        replacements: [{ literal: true, find: "before", replace: "after" }],
         then_run: { command: "check replace" },
       },
       undefined,
@@ -338,7 +339,7 @@ test("all mutation tools forward command progress before completion in RPC mode"
           "replace",
           {
             path: "progress.txt",
-            replacements: [{ find: "before", replace: "after" }],
+            replacements: [{ literal: true, find: "before", replace: "after" }],
             then_run: { command: "check" },
           },
           undefined,
@@ -425,7 +426,7 @@ test("progress reports skipped mutations and failed commands without rolling bac
       "replace-skip",
       {
         path: "replace.txt",
-        replacements: [{ find: "missing", replace: "changed" }],
+        replacements: [{ literal: true, find: "missing", replace: "changed" }],
         then_run: { command: "check" },
       },
       undefined,
@@ -572,9 +573,9 @@ test("Fusion uses commit facts when details omit or contradict publication and r
     await writeFile(target, "same\n");
     const commit = {
       publication: "NOT_PUBLISHED" as const,
-      baseRevision: byteRevision("same\n"),
-      publishedRevision: byteRevision("same\n"),
-      observedRevision: byteRevision("same\n"),
+      baseRevision: byteRevision(Buffer.from("same\n")),
+      publishedRevision: byteRevision(Buffer.from("same\n")),
+      observedRevision: byteRevision(Buffer.from("same\n")),
       created: false as const,
     };
     for (const details of [

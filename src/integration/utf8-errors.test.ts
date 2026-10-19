@@ -7,7 +7,7 @@ import { test } from "node:test";
 import { DEFAULT_CONFIG } from "../pi/config.ts";
 import { makeEditOverride } from "../pi/edit-tool.ts";
 import { makeReplaceTool } from "../pi/replace-tool.ts";
-import { byteRevision } from "../pi/file-commit.ts";
+import { byteRevision } from "../pi/file-revision.ts";
 import { callTool } from "../pi/tool-call.testing.ts";
 import { expectToolFailure } from "../pi/report-failure.testing.ts";
 
@@ -33,7 +33,7 @@ test("valid UTF-8 exceeding the runtime string limit → mutations retain the si
       const args =
         tool.name === "edit"
           ? { path, edits: [{ op: "append", body: ["tail"] }] }
-          : { path, replacements: [{ find: "中文", replace: "汉字" }] };
+          : { path, replacements: [{ literal: true, find: "中文", replace: "汉字" }] };
       await expectToolFailure(callTool(tool, args), "FILESYSTEM_ERROR", (report) => {
         assert.doesNotMatch(JSON.stringify(report), /UNSUPPORTED_ENCODING/);
         assert.match(report.message ?? "", /ERR_STRING_TOO_LONG/);

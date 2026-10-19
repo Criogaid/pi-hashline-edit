@@ -7,7 +7,7 @@ import { causeOf } from "../pi/report.ts";
 import type { Cause } from "../pi/report-schema.ts";
 
 const timeoutMs = 10_000;
-const validRules = [{ find: "safe", replace: "changed", regex: true }];
+const validRules = [{ find: "safe", replace: "changed", literal: false }];
 
 test("worker boundary: malformed external reply → rejects its result and facts", async (t) => {
   for (const reply of [

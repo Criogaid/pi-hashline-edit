@@ -12,7 +12,8 @@ import { createActionFusionExecutor } from "./action-fusion.ts";
 import { makeReplaceTool } from "./replace-tool.ts";
 import { makeWriteOverride } from "./write-tool.ts";
 import { makeEditOverride } from "./edit-tool.ts";
-import { byteRevision, commitFreshness, FileMutationError } from "./file-commit.ts";
+import { commitFreshness, FileMutationError } from "./file-commit.ts";
+import { byteRevision } from "./file-revision.ts";
 import { finalizeMutation, postProcessMutation, type MutationOutcome } from "./mutation-result.ts";
 import { CommandNotRun, decodeReport, reportOf } from "./report.ts";
 import { REREAD } from "./report-schema.ts";
@@ -74,7 +75,7 @@ test("replace withholds anchors in progress and after commands change or remove 
           "replace",
           {
             path,
-            replacements: [{ find: "before", replace: "after" }],
+            replacements: [{ literal: true, find: "before", replace: "after" }],
             then_run: { command: "check" },
           },
           undefined,
@@ -257,7 +258,7 @@ test("unpaired surrogate arguments are rejected before Fusion", async (t) => {
         tool: makeReplaceTool(dir, DEFAULT_CONFIG, fusion),
         args: {
           path,
-          replacements: [{ find: "original", replace: "\udfff" }],
+          replacements: [{ literal: true, find: "original", replace: "\udfff" }],
           then_run: { command: "check" },
         },
         field: "replacements[0].replace",
@@ -342,7 +343,7 @@ test("NUL arguments are rejected before Fusion for all mutation tools", async (t
         tool: makeReplaceTool(dir, DEFAULT_CONFIG, fusion),
         args: {
           path,
-          replacements: [{ find: "original", replace: "\0" }],
+          replacements: [{ literal: true, find: "original", replace: "\0" }],
           then_run: { command: "check" },
         },
         field: "replacements[0].replace",
@@ -389,7 +390,7 @@ test("Fusion skips the command when a replacement produces unencodable text", as
       makeReplaceTool(dir, DEFAULT_CONFIG, fusion),
       {
         path,
-        replacements: [{ find: "^.", replace: "x", regex: true }],
+        replacements: [{ find: "^.", replace: "x", literal: false }],
         then_run: { command: "check" },
       },
       { ctx: await ctx(dir, t) },
@@ -439,7 +440,7 @@ const noOpCases = [
   },
   {
     makeTool: (cwd: string, fusion?: Fusion) => makeReplaceTool(cwd, DEFAULT_CONFIG, fusion),
-    params: { replacements: [{ find: "same", replace: "same" }] },
+    params: { replacements: [{ literal: true, find: "same", replace: "same" }] },
   },
   { makeTool: makeWriteOverride, params: { content: "same\n", mode: "overwrite" } },
 ];

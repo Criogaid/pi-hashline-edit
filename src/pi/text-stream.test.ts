@@ -1,9 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { byteRevision } from "./file-commit.ts";
+import { byteRevision } from "./file-revision.ts";
 import { join } from "node:path";
 import { scanTextFile, scanTextLines } from "./text-stream.ts";
 import { splitLines } from "../core/lines.ts";
@@ -53,24 +52,36 @@ test("streamed lines preserve BOM, standalone CR, and boundaries split across ch
     }
   }));
 
-test("streamed byte digests preserve the source revision across BOM, CRLF, and chunk boundaries", async () =>
+test("streamed scans → return the revision of every original byte and byte-based chunk progress", async () =>
   withFile(async (path) => {
-    const source = Buffer.from(`\uFEFFfirst\r\n${"a".repeat(65536)}\r\nlast\r`);
-    await writeFile(path, source);
-    const first = createHash("sha256");
-    const stats = await scanTextFile(path, { onBytes: (bytes) => first.update(bytes) });
-    assert.equal(stats.hasCrLf, true);
-    assert.equal(first.digest("hex"), byteRevision(source));
-    const second = createHash("sha256");
-    await scanTextLines(
-      path,
-      (number) => number === 1,
-      () => {},
-      {
-        onBytes: (bytes) => second.update(bytes),
-      },
-    );
-    assert.equal(second.digest("hex"), byteRevision(source));
+    const chunkBytes = 64 * 1024;
+    for (const source of [
+      Buffer.alloc(0),
+      Buffer.from("\uFEFF"),
+      Buffer.from("first\r\nlast\r\n"),
+      Buffer.from("\uFEFF" + "a".repeat(chunkBytes - 4) + "😀\r\nlast"),
+    ]) {
+      await writeFile(path, source);
+      const chunks: string[] = [];
+      const progress: number[] = [];
+      const stats = await scanTextFile(path, {
+        onChunk(text, bytesRead) {
+          chunks.push(text);
+          progress.push(bytesRead);
+        },
+      });
+      assert.equal(chunks.join(""), source.toString("utf8"));
+      assert.equal(stats.revision, byteRevision(source));
+      assert.equal(stats.byteLength, source.length);
+      assert.equal(progress.at(-1) ?? 0, source.length);
+      if (source.length > chunkBytes) assert.equal(progress[0], chunkBytes);
+      const selected = await scanTextLines(
+        path,
+        (number) => number === 1,
+        () => {},
+      );
+      assert.equal(selected.revision, stats.revision);
+    }
   }));
 
 test("streamed selection discards oversized content and still counts and reads subsequent lines", async () =>
@@ -132,7 +143,6 @@ test("lossy decoding reports invalid UTF-8 across chunk boundaries and preserves
       Buffer.from("\r\nlast"),
     ]);
     await writeFile(path, source);
-    const hash = createHash("sha256");
     const lines: string[] = [];
     const stats = await scanTextLines(
       path,
@@ -140,21 +150,20 @@ test("lossy decoding reports invalid UTF-8 across chunk boundaries and preserves
       (line) => lines.push(line.text ?? ""),
       {
         decoding: "lossy",
-        onBytes: (bytes) => hash.update(bytes),
       },
     );
     assert.equal(stats.validUtf8, false);
     assert.equal(stats.hasNul, false);
     assert.equal(stats.hasCrLf, true);
     assert.deepEqual(lines, splitLines(source.toString("utf8")));
-    assert.equal(hash.digest("hex"), byteRevision(source));
+    assert.equal(stats.revision, byteRevision(source));
     await assert.rejects(
       scanTextFile(path),
       (error: unknown) => error instanceof Utf8DecodingError,
     );
   }));
 
-test("strict scans read all bytes but stop emitting text after a decoding error", async () =>
+test("strict scans encounter invalid UTF-8 → stop emitting text and reject decoding", async () =>
   withFile(async (path) => {
     const chunkBytes = 64 * 1024;
     const prefix = Buffer.alloc(chunkBytes, "a");
@@ -163,18 +172,15 @@ test("strict scans read all bytes but stop emitting text after a decoding error"
     const source = Buffer.concat([prefix, invalid, Buffer.from("later text\n")]);
     await writeFile(path, source);
     const emitted: string[] = [];
-    const scanned: Buffer[] = [];
     await assert.rejects(
       scanTextFile(path, {
         onChunk: (text) => {
           emitted.push(text);
         },
-        onBytes: (bytes) => scanned.push(bytes),
       }),
       (error: unknown) => error instanceof Utf8DecodingError,
     );
     assert.equal(emitted.join(""), prefix.toString("utf8"));
-    assert.deepEqual(Buffer.concat(scanned), source);
   }));
 
 test("lossy scans flush a multibyte sequence split across chunks and incomplete at EOF", async () =>
@@ -204,12 +210,10 @@ test("lossy scans without a text consumer report validity and retain all raw byt
       Buffer.from([0xff, 0xf0, 0x9f]),
     ]);
     await writeFile(path, source);
-    const scanned: Buffer[] = [];
     const stats = await scanTextFile(path, {
-      onBytes: (bytes) => scanned.push(bytes),
       decoding: "lossy",
     });
-    assert.deepEqual(Buffer.concat(scanned), source);
+    assert.equal(stats.revision, byteRevision(source));
     assert.equal(stats.validUtf8, false);
     assert.equal(stats.hasNul, false);
     assert.equal(stats.hasCrLf, true);
@@ -230,17 +234,15 @@ test("NUL suppresses its chunk and all later text without flushing a pending seq
     await writeFile(path, source);
     for (const decoding of ["strict", "lossy"] as const) {
       const emitted: string[] = [];
-      const scanned: Buffer[] = [];
       const stats = await scanTextFile(path, {
         onChunk: (text) => {
           emitted.push(text);
         },
-        onBytes: (bytes) => scanned.push(bytes),
         decoding,
       });
       assert.equal(stats.hasNul, true);
       assert.equal(emitted.join(""), prefix.toString("utf8"));
-      assert.deepEqual(Buffer.concat(scanned), source);
+      assert.equal(stats.revision, byteRevision(source));
     }
   }));
 
@@ -281,7 +283,7 @@ test("valid file truncated across a pending UTF-8 sequence → scans report a ch
       let changed = false;
       await assert.rejects(
         scanTextFile(path, {
-          onBytes: () => {
+          onChunk: () => {
             if (changed) return;
             changed = true;
             truncateSync(path, chunkBytes - 1);

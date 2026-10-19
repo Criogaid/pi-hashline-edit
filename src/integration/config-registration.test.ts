@@ -193,7 +193,7 @@ test("registered tools retain their configuration when another tool set is regis
           await expectToolFailure(
             callTool(tool, {
               path,
-              replacements: [{ find: "^(a+)+$", replace: "changed", regex: true }],
+              replacements: [{ find: "^(a+)+$", replace: "changed", literal: false }],
             }),
             "REGEX_TIMEOUT",
             (report) => {

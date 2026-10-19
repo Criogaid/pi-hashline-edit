@@ -15,7 +15,7 @@ import { makeReplaceTool } from "./replace-tool.ts";
 import { createActionFusionExecutor } from "./action-fusion.ts";
 import { computeLineHash } from "../core/hash.ts";
 import { splitLines } from "../core/lines.ts";
-import { byteRevision } from "./file-commit.ts";
+import { byteRevision } from "./file-revision.ts";
 import { callTool } from "./tool-call.testing.ts";
 import { DEFAULT_CONFIG } from "./config.ts";
 import { formatKiB, DEFAULT_OUTPUT_BUDGETS } from "./budgets.ts";
@@ -139,7 +139,10 @@ test("successful mutation → returns one report without anchor payload", async 
               : tool === "replace"
                 ? {
                     instance: makeReplaceTool(dir, DEFAULT_CONFIG),
-                    params: { path, replacements: [{ find: "old", replace: "new" }] },
+                    params: {
+                      path,
+                      replacements: [{ literal: true, find: "old", replace: "new" }],
+                    },
                   }
                 : {
                     instance: makeWriteOverride(dir),
@@ -617,7 +620,7 @@ test("failed commands preserve mutation results and stay out of all main card re
           const tool = makeReplaceTool(dir, DEFAULT_CONFIG, fusion);
           const args = {
             path: "replace.txt",
-            replacements: [{ find: "before", replace: "after" }],
+            replacements: [{ literal: true, find: "before", replace: "after" }],
           };
           const result = await callTool(
             tool,
@@ -714,7 +717,7 @@ test("text tools reject malformed UTF-8 and NUL bytes without rewriting source b
       ],
       [
         makeReplaceTool(dir, DEFAULT_CONFIG),
-        { path: "invalid-utf8.txt", replacements: [{ find: "a", replace: "b" }] },
+        { path: "invalid-utf8.txt", replacements: [{ literal: true, find: "a", replace: "b" }] },
       ],
     ] as const) {
       assert.equal(failureReport(await call(tool, args)).error, "UNSUPPORTED_ENCODING");
@@ -731,7 +734,7 @@ test("text tools reject malformed UTF-8 and NUL bytes without rewriting source b
       ],
       [
         makeReplaceTool(dir, DEFAULT_CONFIG),
-        { path: "nul.txt", replacements: [{ find: "a", replace: "b" }] },
+        { path: "nul.txt", replacements: [{ literal: true, find: "a", replace: "b" }] },
       ],
     ] as const) {
       assert.equal(failureReport(await call(tool, args)).error, "UNSUPPORTED_TEXT");
@@ -819,7 +822,7 @@ test("edit and replace reject NUL arguments without rewriting source bytes", asy
     await assert.rejects(
       call(makeReplaceTool(dir, DEFAULT_CONFIG), {
         path: "output.txt",
-        replacements: [{ find: "before", replace: "bad\0text" }],
+        replacements: [{ literal: true, find: "before", replace: "bad\0text" }],
       }),
       rejectsArgument("replacements[0].replace", /NUL/),
     );
@@ -1064,7 +1067,7 @@ test("standalone CR replacements remain visible in diffs and exact in patches", 
       await writeFile(file, before);
       const result = await call(makeReplaceTool(dir, DEFAULT_CONFIG), {
         path: file,
-        replacements: [{ find, replace: replacement, regex: true }],
+        replacements: [{ find, replace: replacement, literal: false }],
       });
       assert.equal(await readFile(file, "utf8"), before.replaceAll(find, replacement));
       assert.equal(result.details.firstChangedLine, 1);

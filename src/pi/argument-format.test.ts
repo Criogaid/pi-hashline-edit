@@ -23,7 +23,7 @@ test("all tools receive invalid arguments → return field diagnostics without a
     { tool: makeWriteOverride(cwd), args: { path: "unused", content: "bad\0", mode: "create" } },
     {
       tool: makeReplaceTool(cwd, DEFAULT_CONFIG),
-      args: { path: "unused", replacements: [{ find: "a", replace: "bad\0" }] },
+      args: { path: "unused", replacements: [{ literal: true, find: "a", replace: "bad\0" }] },
     },
   ];
   for (const { tool, args } of cases) {

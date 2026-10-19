@@ -62,8 +62,8 @@ const cases = [
       makeReplaceTool(cwd, DEFAULT_CONFIG, fusion),
     args: {
       replacements: [
-        { find: "(", replace: "bad\0", regex: true },
-        { find: "[", replace: "bad\ud800", regex: true },
+        { find: "(", replace: "bad\0", literal: false },
+        { find: "[", replace: "bad\ud800", literal: false },
       ],
       then_run: invalidCommand,
     },
@@ -126,8 +126,8 @@ test("grep and replace flags → accept V8 modes and reject invalid flags before
       tool: makeReplaceTool(cwd, DEFAULT_CONFIG),
       args: (find: string, literal: boolean, flags: string) => ({
         replacements: [
-          { find: "valid", replace: "first" },
-          { find, replace: "second", regex: !literal, flags },
+          { literal: true, find: "valid", replace: "first" },
+          { find, replace: "second", literal, flags },
         ],
       }),
       field: "replacements[1].flags",

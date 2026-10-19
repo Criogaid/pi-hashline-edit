@@ -16,7 +16,7 @@ const cases = [
   },
   {
     tool: makeReplaceTool(directory, DEFAULT_CONFIG),
-    args: { replacements: [{ find: "before", replace: "after" }] },
+    args: { replacements: [{ literal: true, find: "before", replace: "after" }] },
   },
 ];
 for (const path of ["pipe", "alias"]) {
