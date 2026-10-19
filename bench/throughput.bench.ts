@@ -5,7 +5,7 @@
 
 import { performance } from "node:perf_hooks";
 import { splitLines, createLfTextView } from "../src/core/lines.ts";
-import { computeLineHash, hashFileLines } from "../src/core/hash.ts";
+import { computeLineHash } from "../src/core/hash.ts";
 import { applyEdits } from "../src/core/apply.ts";
 import type { Edit } from "../src/core/types.ts";
 import { DEFAULT_CONFIG } from "../src/pi/config.ts";
@@ -38,11 +38,11 @@ bench("splitLines (CRLF text)", 20, () => {
   splitLines(crlfText);
 });
 
-// 2. computeLineHash & hashFileLines
+// 2. computeLineHash
 const sampleLines = splitLines(lfText);
 console.log(`\n[2. Content Hashing (${sampleLines.length.toLocaleString()} lines)]`);
-bench("hashFileLines (50,000 lines, hashLen=4)", 10, () => {
-  hashFileLines(sampleLines, hashLen);
+bench("computeLineHash (50,000 lines, hashLen=4)", 10, () => {
+  sampleLines.map((content, i) => computeLineHash(i + 1, content, hashLen));
 });
 bench("computeLineHash (single line)", 100_000, () => {
   computeLineHash(1234, "export const configurationKey = 'hashlineEdit.enabled';", hashLen);

@@ -86,8 +86,3 @@ export const HASH_LEN_MAX = 8;
 export function computeLineHash(line: number, content: string, len: number): string {
   return toBase32(fnv1a32Line(line, content), len);
 }
-
-/** Compute compact per-line checksums; callers must treat collisions as possible. */
-export function hashFileLines(lines: readonly string[], len: number): string[] {
-  return lines.map((content, i) => computeLineHash(i + 1, content, len));
-}
