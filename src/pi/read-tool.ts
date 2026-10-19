@@ -30,17 +30,15 @@ import { renderToolError, reportLines, splitReport } from "./render.ts";
 import { POSITIVE_SAFE_INTEGER } from "./schema.ts";
 import { errnoCode } from "../core/errors.ts";
 import { throwIfCancelled } from "./error-text.ts";
-import { reportResult, runTool, type Report, type ReportDetails } from "./report.ts";
+import { reportResult, runTool, type ReportDetails } from "./report.ts";
 import { defaultOutputBudgets, formatKiB, type OutputBudgetProvider } from "./budgets.ts";
 import type { HashlineEditConfig } from "./config.ts";
 import { createArgumentPreparer } from "./argument-validation.ts";
 
 const DEFAULT_OFFSET = 1;
 
-type ReadDetails = ReadToolDetails & {
-  nativeRead?: true;
-  pagination?: NonNullable<Report["pagination"]>;
-} & Partial<ReportDetails>;
+/** Pi's read details for a delegated native read; the report states this read's own facts. */
+type ReadDetails = (ReadToolDetails & { nativeRead?: true }) & Partial<ReportDetails>;
 
 /**
  * First result line: `<path> · <N> lines`, optionally ` (from line <offset>)` and
@@ -209,8 +207,6 @@ export function makeReadOverride(
 
         const rows: string[] = [];
         const crExpansion = Buffer.byteLength(displayCarriageReturns("\r")) - 1;
-        let totalRows = 0;
-        let totalBytes = 0;
         let outputBytes = 0;
         let truncated = false;
         let firstLineExceedsLimit = false;
@@ -220,12 +216,11 @@ export function makeReadOverride(
             absPath,
             (number) => number >= start && number - start < limit,
             (line) => {
+              if (truncated) return;
               const rowBytes =
                 line.byteLength +
                 line.carriageReturns * crExpansion +
                 Buffer.byteLength(anchors.row(line.number, ""));
-              totalBytes += rowBytes + (totalRows++ > 0 ? 1 : 0);
-              if (truncated) return;
               const nextBytes = outputBytes + rowBytes + (rows.length > 0 ? 1 : 0);
               if (nextBytes > maxBytes) {
                 truncated = true;
@@ -245,9 +240,13 @@ export function makeReadOverride(
           throw error;
         }
         if (stats.hasNul) return readNative();
-        // Rows were returned and more remain, whether the line limit or the byte budget stopped them.
+        // Rows were returned and more remain. A caller's own limit is a chosen window: its header
+        // and rows already show where it ends, so only a window the extension cut (default limit
+        // or byte budget) gets a report.
         const pagination =
-          rows.length > 0 && start + rows.length <= stats.totalLines
+          (params.limit === undefined || truncated) &&
+          rows.length > 0 &&
+          start + rows.length <= stats.totalLines
             ? {
                 start,
                 end: start + (rows.length - 1),
@@ -255,39 +254,17 @@ export function makeReadOverride(
                 nextOffset: start + rows.length,
               }
             : undefined;
-        // Pi's ReadToolDetails truncation shape; this read stops only at the byte limit.
-        const truncation = {
-          content: rows.join("\n"),
-          truncated,
-          truncatedBy: truncated ? ("bytes" as const) : null,
-          totalLines: totalRows,
-          totalBytes,
-          outputLines: rows.length,
-          outputBytes,
-          lastLinePartial: false,
-          firstLineExceedsLimit,
-          maxLines: totalRows,
-          maxBytes,
-        };
-
-        // A caller's own limit is a chosen window: its header and rows already show where it
-        // ends, so only a window the extension cut (default limit or byte budget) gets a report.
-        const reportedPagination = params.limit === undefined || truncated ? pagination : undefined;
         const header = `${formatReadHeader(serializePath(cwd, absPath), stats.totalLines, start, stats.finalNewline)}\n`;
         const limitText = formatKiB(maxBytes);
 
         return reportResult(
           {
             ...report,
-            pagination: reportedPagination,
+            pagination,
             outputLimit: truncated && !firstLineExceedsLimit ? limitText : undefined,
             lineTooLong: firstLineExceedsLimit ? { line: start, limit: limitText } : undefined,
           },
-          [{ type: "text" as const, text: header + truncation.content }],
-          {
-            ...(truncated ? { truncation } : {}),
-            ...(pagination ? { pagination } : {}),
-          },
+          [{ type: "text" as const, text: header + rows.join("\n") }],
         );
       });
     },
