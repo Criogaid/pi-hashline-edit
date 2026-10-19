@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { computeLineHash, hashFileLines } from "./hash.ts";
+import { computeLineHash } from "./hash.ts";
 
 const ALLOWED = new Set("0123456789ABCDEFGHJKMNPQRSTVWXYZ");
 
@@ -32,29 +32,9 @@ test("base32 alphabet (without I/L/O/U) in bulk", () => {
   }
 });
 
-test("hashFileLines length equals line count", () => {
-  assert.equal(hashFileLines(["a", "b", "c"], 4).length, 3);
-});
-
-test("hashFileLines empty file", () => {
-  assert.deepEqual(hashFileLines([], 4), []);
-});
-
-test("hashFileLines normally disambiguates repeated content without changing hash length", () => {
-  const lines = ["", "", "", "", "", "}", "}", "}", "return", "return", ",", ","];
-  const hashes = hashFileLines(lines, 4);
-  assert.equal(new Set(hashes).size, hashes.length, "unexpected collision in fixture");
-  for (const h of hashes) assert.equal(h.length, 4, `hash ${h} is not 4 chars`);
-});
-
 test("truncated checksums can collide", () => {
   assert.equal(computeLineHash(1, "const value = 558;", 4), "TM02");
   assert.equal(computeLineHash(1, "const value = 9344;", 4), "TM02");
-});
-
-test("hashFileLines respects the length parameter", () => {
-  assert.equal(hashFileLines(["a", "b"], 6)[0].length, 6);
-  assert.equal(hashFileLines(["a", "b"], 4)[0].length, 4);
 });
 
 test("hashLen 8 has a leading zero due to the 32-bit hash limit", () => {

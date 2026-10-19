@@ -36,10 +36,8 @@ test("command cards share native mouse behavior and preserve independent expansi
   assert.ok(report);
   const progress = {
     toolCallId: "first",
-    path: "file.ts",
     commandText: "check",
     command: "running" as const,
-    publication: "PUBLISHED" as const,
     freshness: "unchanged" as const,
     result: { content: [{ type: "text" as const, text: output }] },
     mutationCompleted: true,
@@ -109,10 +107,8 @@ test("command entries rebuilt before session_start → remain visible and become
   assert.ok(report);
   report({
     toolCallId: "restored",
-    path: "file.ts",
     commandText: "check",
     command: "succeeded",
-    publication: "PUBLISHED",
     freshness: "unchanged",
     result: { content: [{ type: "text", text: output }] },
     mutationCompleted: true,

@@ -36,7 +36,7 @@ const versions = { publishedRevision: "r", observedRevision: "r" };
 const mutationDetails = (
   report: Pick<SuccessReport, "publication" | "freshness" | "then_run">,
 ) => ({
-  ...generateMutationDetails("a.txt", "old\n", "new\n", versions, "PUBLISHED"),
+  ...generateMutationDetails("old\n", "new\n", versions),
   report: {
     tool: "edit" as const,
     path: "a.txt",
@@ -68,7 +68,7 @@ test("mutation headers refresh in place and retain isolated per-call counts", ()
     tool.renderResult(
       {
         content: [{ type: "text", text: "Done" }],
-        details: generateMutationDetails("a.txt", "old\n", "new\n", versions, "PUBLISHED"),
+        details: generateMutationDetails("old\n", "new\n", versions),
       },
       { isPartial: false, expanded: false },
       theme,
@@ -214,9 +214,6 @@ test("unfused write errors retain the native full diagnostic", () => {
     {
       content: [{ type: "text", text: "write failed\nimportant detail" }],
       details: {
-        path: "a.txt",
-        created: false,
-        publication: "NOT_PUBLISHED",
         publishedRevision: "r",
         observedRevision: "r",
       },
@@ -232,16 +229,12 @@ test("mutation previews hide CRLF boundaries even with mixed endings or an unter
   initTheme("dark");
   for (const before of ["old\r\ncontext\r\n", "old\r\ncontext\nlast", "old\r\ncontext\r\nlast"]) {
     const after = before.replace("old", "new");
-    const details = generateMutationDetails(
-      "a.txt",
-      before,
-      after,
-      { publishedRevision: "r", observedRevision: "r" },
-      "PUBLISHED",
-    );
+    const details = generateMutationDetails(before, after, {
+      publishedRevision: "r",
+      observedRevision: "r",
+    });
     assert.equal(details.diff, displayCarriageReturns(generateDiffString(before, after).diff));
     assert.match(details.diff, /␍/);
-    assert.ok(details.patch.includes("-old\r\n"));
     for (const tool of [
       makeEditOverride(process.cwd(), DEFAULT_CONFIG),
       makeReplaceTool(process.cwd(), DEFAULT_CONFIG),
@@ -265,13 +258,10 @@ test("mutation previews hide CRLF boundaries even with mixed endings or an unter
 test("diff previews retain standalone CR and literal control-picture characters", () => {
   initTheme("dark");
   for (const before of ["old\r", "old␍", "old\rcontent\r\n"]) {
-    const details = generateMutationDetails(
-      "a.txt",
-      before,
-      before.replace("old", "new"),
-      { publishedRevision: "r", observedRevision: "r" },
-      "PUBLISHED",
-    );
+    const details = generateMutationDetails(before, before.replace("old", "new"), {
+      publishedRevision: "r",
+      observedRevision: "r",
+    });
     const tool = makeEditOverride(process.cwd(), DEFAULT_CONFIG);
     const result = tool.renderResult(
       { content: [], details },

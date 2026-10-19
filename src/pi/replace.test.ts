@@ -420,7 +420,7 @@ test("replace: count-but-no-net-change does not rewrite and reports it", async (
   });
 });
 
-test("replace: returns details.diff (string) + patch + firstChangedLine", async () => {
+test("replace: returns details.diff as a string", async () => {
   await withDir(async (dir) => {
     const f = join(dir, "f.txt");
     await writeFile(f, "a\nb\nc\n");
@@ -429,8 +429,6 @@ test("replace: returns details.diff (string) + patch + firstChangedLine", async 
       replacements: [{ literal: true, find: "b", replace: "B" }],
     });
     assert.equal(typeof r.details.diff, "string");
-    assert.equal(typeof r.details.patch, "string");
-    assert.equal(typeof r.details.firstChangedLine, "number");
   });
 });
 

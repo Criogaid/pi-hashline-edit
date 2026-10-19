@@ -64,10 +64,8 @@ function harness(entries: any[] = []) {
 
 const waiting: ActionFusionProgress = {
   toolCallId: "call-1",
-  path: "file.ts",
   commandText: "npm test",
   command: "waiting",
-  publication: "NOT_PUBLISHED",
   freshness: "unknown",
   mutationCompleted: false,
 };
@@ -81,7 +79,6 @@ test("one independent card updates live and only persists its endpoints", () => 
   h.report({
     ...waiting,
     command: "running",
-    publication: "PUBLISHED",
     result: { content: [{ type: "text", text: "first test passed" }] },
   });
   assert.match(card.render(100).join("\n"), /running[\s\S]*first test passed/);
@@ -90,7 +87,6 @@ test("one independent card updates live and only persists its endpoints", () => 
   h.report({
     ...waiting,
     command: "succeeded",
-    publication: "PUBLISHED",
     freshness: "changed",
     result: { content: [{ type: "text", text: output }] },
   });
@@ -205,7 +201,6 @@ test("session restore uses final snapshots and marks unfinished calls unknown", 
   h.report({
     ...waiting,
     command: "failed",
-    publication: "PUBLISHED",
     result: {
       content: [{ type: "text", text: "Command exited with code 7" }],
       details: { fullOutputPath: "/tmp/command-output.log" },
@@ -324,7 +319,6 @@ test("timed command cards show remaining seconds only while actively running", (
   const running: ActionFusionProgress = {
     ...waiting,
     command: "running",
-    publication: "PUBLISHED",
     mutationCompleted: true,
     timing: { timeoutSeconds: 10, remainingSeconds: 10 },
   };

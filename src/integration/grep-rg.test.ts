@@ -448,7 +448,6 @@ test("explicit file with different case and a glob → admits the same file on a
   assert.equal(grepCounts(result).files, 1);
   assert.match(result.content[0].text, /1#[0-9A-Z]+│needle/);
   assert.equal(reportOf(result, "grep")?.diagnostics, undefined);
-  assert.equal(result.details.incomplete, undefined);
 });
 
 test("explicit file with a dangling sibling link and a glob → returns complete matches without listing diagnostics", async (t) => {
@@ -492,7 +491,6 @@ test("explicit file with a dangling sibling link and a glob → returns complete
   assert.equal(result.isError, undefined, JSON.stringify(reportOf(result, "grep")));
   assert.equal(grepCounts(result).matches, 1);
   assert.equal(reportOf(result, "grep")?.diagnostics, undefined);
-  assert.equal(result.details.incomplete, undefined);
 });
 
 test("explicit file paths obey ordered glob filters without inheriting ignore rules", async () => {
@@ -946,17 +944,14 @@ test("tools share physical lines and anchors across text representations", async
         edits: [{ op: "replace", anchor, body: ["new"] }],
       });
       assert.equal(await readFile(file, "utf8"), before.replace("old", "new"));
-      assert.equal(edit.details.firstChangedLine, 2);
       assert.match(edit.details.diff, /^-2 old/m);
       assert.match(edit.details.diff, /^\+2 new/m);
       assert.ok(!edit.details.diff.includes("\r"));
-      if (before.includes("a\rb")) assert.ok(edit.details.patch.includes(" a\rb\n"));
-      const replaced = await call(makeReplaceTool(directory, DEFAULT_CONFIG), {
+      await call(makeReplaceTool(directory, DEFAULT_CONFIG), {
         path: file,
         replacements: [{ literal: true, find: "new", replace: "next" }],
       });
       assert.equal(await readFile(file, "utf8"), before.replace("old", "next"));
-      assert.equal(replaced.details.firstChangedLine, 2);
     }
   } finally {
     await rm(directory, { recursive: true, force: true });
@@ -1204,7 +1199,8 @@ test("grep retains original paths and ignores unmatched invalid UTF-8 across man
     assert.equal((result.content[0].text.match(/file \d+\.txt: 1/g) ?? []).length, 70);
     assert.doesNotMatch(result.content[0].text, /invalid\.txt|UNSUPPORTED_ENCODING/);
     assert.doesNotMatch(result.content[0].text, /hashline-grep-/);
-    assert.equal(result.details?.incomplete, undefined);
+    assert.equal(reportOf(result, "grep")?.diagnostics, undefined);
+    assert.equal(reportOf(result, "grep")?.scanLimit, undefined);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
@@ -1242,7 +1238,8 @@ test("NUL files are silently skipped across search scopes and output modes", asy
         );
         assert.match(result.content[0].text, /valid\.txt/);
         assert.doesNotMatch(result.content[0].text, /binary\.txt|UNSUPPORTED_TEXT/);
-        assert.equal(result.details?.incomplete, undefined);
+        assert.equal(reportOf(result, "grep")?.diagnostics, undefined);
+        assert.equal(reportOf(result, "grep")?.scanLimit, undefined);
       }
     }
     assert.deepEqual(await readFile(binary), source);
@@ -1273,7 +1270,8 @@ test("invalid UTF-8 matches use plain previews while valid files retain edit anc
       assert.match(result.content[0].text, /1│before\n2│needle �\n3│after/);
       assert.deepEqual(reportOf(result, "grep")?.invalidUtf8, ["invalid.txt"]);
       assert.doesNotMatch(result.content[0].text, /\d+#/);
-      assert.equal(result.details?.incomplete, undefined);
+      assert.equal(reportOf(result, "grep")?.diagnostics, undefined);
+      assert.equal(reportOf(result, "grep")?.scanLimit, undefined);
       assert.deepEqual(await readFile(invalid), source);
     }
     await writeFile(join(directory, "valid.txt"), "needle\n");
@@ -1296,7 +1294,8 @@ test("invalid UTF-8 matches use plain previews while valid files retain edit anc
       );
       assert.match(result.content[0].text, /invalid\.txt/);
       assert.match(result.content[0].text, /valid\.txt/);
-      assert.equal(result.details?.incomplete, undefined);
+      assert.equal(reportOf(result, "grep")?.diagnostics, undefined);
+      assert.equal(reportOf(result, "grep")?.scanLimit, undefined);
     }
     const multiline = await invoke(
       grep,
@@ -1392,7 +1391,8 @@ test("literal LF and CRLF queries match original valid and invalid UTF-8 files a
           assert.equal(grepCounts(result).matches, 4);
           assert.equal(grepCounts(result).files, 2);
         }
-        assert.equal(result.details?.incomplete, undefined);
+        assert.equal(reportOf(result, "grep")?.diagnostics, undefined);
+        assert.equal(reportOf(result, "grep")?.scanLimit, undefined);
         const lf = await invoke(grep, "lf", {
           path: directory,
           pattern: "alpha\nbeta",

@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { generateDiffString, generateUnifiedPatch } from "@earendil-works/pi-coding-agent";
+import { generateDiffString } from "@earendil-works/pi-coding-agent";
 import {
   commandText,
   finalizeMutation,
@@ -46,22 +46,18 @@ for (const [name, before, after] of [
   ["BOM and literal escapes", "\uFEFFguard\nold\\n\\0", "\uFEFFguard\nnew\\n\\0"],
   ["no-op", "unchanged\n", "unchanged\n"],
 ] as const) {
-  test(`mutation evidence preserves raw patch and logical preview for ${name}`, () => {
+  test(`mutation details preserve byte-faithful diff, logical preview, and revisions for ${name}`, () => {
     const versions = {
       baseRevision: byteRevision(Buffer.from(before)),
       publishedRevision: byteRevision(Buffer.from(after)),
       observedRevision: byteRevision(Buffer.from(after)),
     };
-    const publication = before === after ? "NOT_PUBLISHED" : "PUBLISHED";
-    const details = generateMutationDetails("file.txt", before, after, versions, publication);
+    const details = generateMutationDetails(before, after, versions);
     const raw = generateDiffString(before, after);
     const logical = generateDiffString(before.replace(/\r\n/g, "\n"), after.replace(/\r\n/g, "\n"));
     assert.deepEqual(details, {
       diff: displayCarriageReturns(raw.diff),
       displayDiff: displayCarriageReturns(logical.diff),
-      firstChangedLine: raw.firstChangedLine,
-      patch: generateUnifiedPatch("file.txt", before, after),
-      publication,
       ...versions,
     });
   });

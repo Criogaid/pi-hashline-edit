@@ -62,7 +62,6 @@ test("published post-processing failure → skips command and preserves publicat
     );
     assert.equal(commanded, false);
     assert.ok(progress.every((update) => update.mutationCompleted === false));
-    assert.equal(progress.at(-1)?.publication, "PUBLISHED");
     assert.equal(await readFile(target, "utf8"), "content\n");
   }));
 
@@ -189,7 +188,6 @@ test("command succeeds on an unchanged target → retains the result and complet
     assert.equal(reportOf(completed, "edit")?.then_run?.status, "succeeded");
     assert.equal(reportOf(completed, "edit")?.then_run?.output, "command finished");
     assert.equal(progress.filter((event) => event.command === "succeeded").length, 1);
-    assert.equal(progress.at(-1)?.publication, "PUBLISHED");
     assert.equal(progress.at(-1)?.freshness, "unchanged");
     assert.deepEqual(progress.at(-1)?.result, {
       content: [{ type: "text", text: "command finished" }],

@@ -110,7 +110,6 @@ test("oversized line or multiline input → explicit incomplete-search diagnosti
       if (includeGood) {
         assert.equal(result.isError, undefined);
         assert.equal(grepCounts(result).matches, 1);
-        assert.equal(result.details?.incomplete, true);
       } else {
         assert.equal(result.isError, true);
         assert.equal(reportOf(result, "grep")?.error, "SEARCH_INCOMPLETE");

@@ -314,8 +314,6 @@ test("edit success: details.diff is a string (not the generateDiffString object)
       edits: [{ op: "replace", anchor: h(text, 2), body: ["B"] }],
     });
     assert.equal(typeof r.details.diff, "string", "details.diff must be a string");
-    assert.equal(typeof r.details.patch, "string");
-    assert.equal(typeof r.details.firstChangedLine, "number");
   });
 });
 
@@ -346,9 +344,6 @@ test("native read and write renderers preserve resource titles, previews, and fu
       {
         content: [{ type: "text", text: "first error\nsecond error" }],
         details: {
-          path: "preview.txt",
-          created: false,
-          publication: "NOT_PUBLISHED",
           publishedRevision: "r",
           observedRevision: "r",
         },
@@ -1071,7 +1066,7 @@ test("unique candidate content is independent of oversized neighboring rows", as
     assert.equal(await readFile(file, "utf8"), before.replace("target", "updated"));
   }));
 
-test("standalone CR replacements remain visible in diffs and exact in patches", async () =>
+test("standalone CR replacements remain visible in diffs and exact in file bytes", async () =>
   withDir(async (dir) => {
     const file = join(dir, "cr.txt");
     for (const [before, find, replacement] of [
@@ -1084,12 +1079,9 @@ test("standalone CR replacements remain visible in diffs and exact in patches", 
         replacements: [{ find, replace: replacement, literal: false }],
       });
       assert.equal(await readFile(file, "utf8"), before.replaceAll(find, replacement));
-      assert.equal(result.details.firstChangedLine, 1);
       assert.match(result.details.diff, /^-1 a␍/m);
       assert.match(result.details.diff, /^\+1 a/m);
       assert.ok(!result.details.diff.includes("\r"));
-      assert.ok(result.details.patch.includes(`-a${before.includes("\r\n") ? "\r\n" : "\rb\n"}`));
-      assert.match(result.details.patch, /@@/);
     }
   }));
 
@@ -1351,7 +1343,6 @@ test("copy/move through read anchors → publish bytes bound to the read revisio
       assert.deepEqual(await readFile(file), bytes);
       assert.ok("publishedRevision" in result.details);
       assert.equal(result.details.baseRevision, byteRevision(Buffer.from(source, "utf8")));
-      assert.equal(result.details.publication, "PUBLISHED");
       assert.equal(result.details.publishedRevision, byteRevision(bytes));
       assert.equal(result.details.observedRevision, result.details.publishedRevision);
     }

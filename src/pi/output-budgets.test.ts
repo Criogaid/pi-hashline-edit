@@ -50,7 +50,7 @@ test("model row allowance grows → anchor failures return complete observations
   const text = "中文🙂".repeat(800);
   const applied = applyEdits(
     text,
-    [{ op: "delete", start: { line: 1, hash: wrongHash(text) } }],
+    [{ op: "delete", anchor: { line: 1, hash: wrongHash(text) } }],
     DEFAULT_CONFIG.hashLen,
     0,
   );

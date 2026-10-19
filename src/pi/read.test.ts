@@ -119,9 +119,6 @@ test("read byte truncation counts UTF-8 and separators without cutting anchors",
     const second = "x".repeat(maxBytes - Buffer.byteLength(first) - 2 * prefixBytes);
     await writeFile(join(dir, "large.txt"), `${first}\n${second}\n`);
     const result = await call(makeReadOverride(dir, DEFAULT_CONFIG), { path: "large.txt" });
-    assert.equal(result.details.truncation.outputLines, 1);
-    assert.equal(result.details.truncation.truncatedBy, "bytes");
-    assert.equal(result.details.truncation.maxBytes, maxBytes);
     assert.equal(reportOf(result, "read")?.outputLimit, formatKiB(maxBytes));
     assert.ok(result.content[0].text.includes(`1#${computeLineHash(1, first, hashLen)}│${first}`));
     assert.doesNotMatch(result.content[0].text, /\n2#/);
@@ -137,11 +134,12 @@ test("read reports an oversized first row without suggesting an ineffective retr
   withDir(async (dir) => {
     await writeFile(join(dir, "long.txt"), "x".repeat(DEFAULT_READ_MAX_BYTES));
     const result = await call(makeReadOverride(dir, DEFAULT_CONFIG), { path: "long.txt" });
-    assert.equal(result.details.truncation.firstLineExceedsLimit, true);
-    assert.equal(result.details.truncation.outputLines, 0);
     assert.doesNotMatch(result.content[0].text, /^\d+#/m);
     assert.doesNotMatch(result.content[0].text, /use offset\/limit/);
-    assert.equal(reportOf(result, "read")?.lineTooLong?.line, 1);
+    assert.deepEqual(reportOf(result, "read")?.lineTooLong, {
+      line: 1,
+      limit: formatKiB(DEFAULT_READ_MAX_BYTES),
+    });
     assert.match(reportOf(result, "read")?.next ?? "", /chunks.*bash.*replace/);
   }));
 
@@ -178,7 +176,6 @@ test("read window end chosen by caller or default → only the default offers op
       assert.match(result.content[0].text, new RegExp(`\\n${end}#[0-9A-Z]+│line${end}`));
       assert.doesNotMatch(result.content[0].text, new RegExp(`\\n${end + 1}#[0-9A-Z]+│`));
       const pagination = { start: 1, end, totalLines, nextOffset: end + 1 };
-      assert.deepEqual(result.details.pagination, pagination);
       const report = reportOf(result, "read");
       assert.ok(report);
       if (limit === undefined) {
@@ -209,20 +206,20 @@ test("read pagination supports offset windows and stops suggesting continuation 
       totalLines,
       nextOffset: end + 1,
     });
+    const pagination = reportOf(page, "read")?.pagination;
+    assert.ok(pagination);
     const next = await call(read, {
       path: "pages.txt",
-      offset: page.details.pagination.nextOffset,
+      offset: pagination.nextOffset,
     });
     assert.match(next.content[0].text, new RegExp(`\\n${end + 1}#[0-9A-Z]+│line${end + 1}`));
     assert.match(next.content[0].text, new RegExp(`\\n${totalLines}#[0-9A-Z]+│line${totalLines}`));
     assert.equal(reportOf(next, "read")?.pagination, undefined);
     assert.equal(reportOf(next, "read")?.next, undefined);
-    assert.equal(next.details.pagination, undefined);
     for (const offset of [totalLines - DEFAULT_CONFIG.read.defaultLimit + 1, totalLines + 1]) {
       const result = await call(read, { path: "pages.txt", offset });
       assert.equal(reportOf(result, "read")?.pagination, undefined);
       assert.equal(reportOf(result, "read")?.next, undefined);
-      assert.equal(result.details.pagination, undefined);
     }
   }));
 
@@ -281,21 +278,18 @@ test("read byte truncation retains its budget and a continuation after complete 
       path: "large.txt",
       limit: 2,
     });
-    assert.equal(result.details.truncation.truncatedBy, "bytes");
     assert.deepEqual(reportOf(result, "read")?.pagination, {
       start: 1,
       end: 1,
       totalLines: 3,
       nextOffset: 2,
     });
-    assert.equal(result.details.truncation.maxBytes, DEFAULT_READ_MAX_BYTES);
-    assert.deepEqual(result.details.pagination, reportOf(result, "read")?.pagination);
     assert.equal(reportOf(result, "read")?.outputLimit, formatKiB(DEFAULT_READ_MAX_BYTES));
     assert.match(reportOf(result, "read")?.next ?? "", /offset.*pagination\.nextOffset/);
     assert.doesNotMatch(result.content[0].text, /showing lines|to continue/);
   }));
 
-test("read bounds oversized selected lines while preserving truncation metadata and later anchors", async () =>
+test("read bounds oversized selected lines while reporting limits and preserving later anchors", async () =>
   withDir(async (dir) => {
     const long = "界".repeat(200_000);
     await writeFile(join(dir, "long.txt"), `first\r\n${long}\r\nlast`);
@@ -303,15 +297,14 @@ test("read bounds oversized selected lines while preserving truncation metadata 
     const result = await call(read, { path: "long.txt" });
     assert.match(result.content[0].text, /1#[0-9A-Z]+│first/);
     assert.doesNotMatch(result.content[0].text, /2#[0-9A-Z]+│/);
-    assert.equal(result.details.truncation.firstLineExceedsLimit, false);
-    assert.equal(result.details.truncation.outputLines, 1);
-    const expectedRows = ["first", long, "last"].map(
-      (text, index) => `${index + 1}#${computeLineHash(index + 1, text, 4)}│${text}`,
-    );
-    assert.equal(result.details.truncation.totalBytes, Buffer.byteLength(expectedRows.join("\n")));
+    assert.equal(reportOf(result, "read")?.lineTooLong, undefined);
+    assert.equal(reportOf(result, "read")?.outputLimit, formatKiB(DEFAULT_READ_MAX_BYTES));
     const oversized = await call(read, { path: "long.txt", offset: 2, limit: 1 });
-    assert.equal(oversized.details.truncation.firstLineExceedsLimit, true);
-    assert.equal(oversized.details.truncation.outputBytes, 0);
+    assert.deepEqual(reportOf(oversized, "read")?.lineTooLong, {
+      line: 2,
+      limit: formatKiB(DEFAULT_READ_MAX_BYTES),
+    });
+    assert.doesNotMatch(oversized.content[0].text, /^\d+#/m);
     const last = await call(read, { path: "long.txt", offset: 3, limit: 1 });
     assert.match(last.content[0].text, /3#[0-9A-Z]+│last/);
     assert.match(last.content[0].text, /no trailing newline/);
@@ -322,12 +315,11 @@ test("read budgets visible standalone CR characters using rendered UTF-8 bytes",
     const content = "\r".repeat(90_000);
     await writeFile(join(dir, "cr.txt"), content);
     const result = await call(makeReadOverride(dir, DEFAULT_CONFIG), { path: "cr.txt", limit: 1 });
-    assert.equal(result.details.truncation.firstLineExceedsLimit, true);
-    assert.equal(result.details.truncation.outputBytes, 0);
-    assert.equal(
-      result.details.truncation.totalBytes,
-      Buffer.byteLength(`1#${computeLineHash(1, content, 4)}│${"␍".repeat(content.length)}`),
-    );
+    assert.deepEqual(reportOf(result, "read")?.lineTooLong, {
+      line: 1,
+      limit: formatKiB(DEFAULT_READ_MAX_BYTES),
+    });
+    assert.doesNotMatch(result.content[0].text, /^\d+#/m);
   }));
 
 test("read renders native content without interpreting anchor-like prefixes", async () =>

@@ -198,7 +198,6 @@ test("standalone and Fusion finalizers → take freshness from commit facts", as
           ctx: await ctx(dir, t),
         });
         assert.deepEqual(fused.content, standalone.content);
-        assert.equal(standalone.details.publication, "UNKNOWN");
         assert.equal(reportOf(standalone, "edit")?.publication, publication);
         assert.equal(reportOf(fused, "edit")?.publication, publication);
         assert.equal(reportOf(standalone, "edit")?.freshness, fresh ? undefined : "changed");

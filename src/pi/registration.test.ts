@@ -21,6 +21,7 @@ import { callTool } from "./tool-call.testing.ts";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import type { ActionFusionProgress } from "./action-fusion.ts";
 import { reportOf } from "./report.ts";
+import { formatKiB } from "./budgets.ts";
 import { expectToolFailure } from "./report-failure.testing.ts";
 import { openTestSession } from "../testing/session.testing.ts";
 
@@ -121,7 +122,6 @@ test("mutation cards use Fusion by default and explicit false removes command su
       card.markExecutionStarted();
       const frames: {
         command: string;
-        publication: string;
         mutationCompleted: boolean;
         output: string;
         commandOutput: string;
@@ -177,7 +177,6 @@ test("mutation cards use Fusion by default and explicit false removes command su
         assert.ok(frame.expandedOutput.includes(expectedBackground));
       }
       if (name === "replace") {
-        assert.equal(running.publication, "NOT_PUBLISHED");
         assert.match(running.output, /No net change/);
       }
       card.updateResult({ ...result, isError: false });
@@ -445,7 +444,12 @@ test("configured read defaults bound omitted limits and returned bytes", async (
     assert.match(description, /default 2\)/);
     await writeFile(join(dir, "short.txt"), "a\nb\nc\n");
     const paged = await call(read, { path: "short.txt" });
-    assert.deepEqual(paged.details.pagination, { start: 1, end: 2, totalLines: 3, nextOffset: 3 });
+    assert.deepEqual(reportOf(paged, "read")?.pagination, {
+      start: 1,
+      end: 2,
+      totalLines: 3,
+      nextOffset: 3,
+    });
     assert.match(reportOf(paged, "read")?.next ?? "", /offset.*pagination\.nextOffset/);
     assert.match(paged.content[0].text, /^2#[0-9A-Z]+│b$/m);
     assert.doesNotMatch(paged.content[0].text, /^3#/m);
@@ -453,8 +457,6 @@ test("configured read defaults bound omitted limits and returned bytes", async (
     assert.match(explicit.content[0].text, /^3#[0-9A-Z]+│c$/m);
     await writeFile(join(dir, "wide.txt"), `${"x".repeat(2048)}\n`);
     const wide = await call(read, { path: "wide.txt" });
-    assert.equal(wide.details.truncation.firstLineExceedsLimit, true);
-    assert.equal(wide.details.truncation.outputLines, 0);
-    assert.equal(wide.details.truncation.maxBytes, 1024);
-    assert.equal(wide.details.truncation.outputBytes, 0);
+    assert.deepEqual(reportOf(wide, "read")?.lineTooLong, { line: 1, limit: formatKiB(1024) });
+    assert.doesNotMatch(wide.content[0].text, /^\d+#/m);
   }));

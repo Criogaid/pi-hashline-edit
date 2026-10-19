@@ -192,19 +192,19 @@ test("multiple unresolved anchors and candidate context → one recovery survive
   const cases = [
     ...[2, DEFAULT_OUTPUT_BUDGETS.blockBytes].map((count) => ({
       text: "current\n",
-      edits: Array.from({ length: count }, (): Edit => ({ op: "delete", start: oldAnchor })),
+      edits: Array.from({ length: count }, (): Edit => ({ op: "delete", anchor: oldAnchor })),
       radius: 0,
       omitted: count === DEFAULT_OUTPUT_BUDGETS.blockBytes,
     })),
     {
       text: "current\nold\n",
-      edits: [{ op: "delete", start: oldAnchor } as Edit],
+      edits: [{ op: "delete", anchor: oldAnchor } as Edit],
       radius: 2,
       omitted: false,
     },
     {
       text: "current\nold\nold\n",
-      edits: [{ op: "delete", start: oldAnchor } as Edit],
+      edits: [{ op: "delete", anchor: oldAnchor } as Edit],
       radius: 2,
       omitted: false,
     },
@@ -228,7 +228,7 @@ test("failure list exceeds budget → omitted anchors are never reported as matc
     "current\n",
     Array.from({ length: DEFAULT_OUTPUT_BUDGETS.blockBytes }, () => ({
       op: "delete",
-      start: oldAnchor,
+      anchor: oldAnchor,
     })),
   );
   assert.equal(report.error, "ANCHOR_MISMATCH");
@@ -248,10 +248,10 @@ test("reversed ranges and overlapping edits → original reason and unpublished 
     hash: computeLineHash(line, content, DEFAULT_CONFIG.hashLen),
   });
   const cases: Edit[][] = [
-    [{ op: "delete", start: anchor(3, "c"), end: anchor(1, "a") }],
+    [{ op: "delete", anchor: anchor(3, "c"), end: anchor(1, "a") }],
     [
-      { op: "delete", start: anchor(1, "a"), end: anchor(2, "b") },
-      { op: "replace", start: anchor(2, "b"), body: ["changed"] },
+      { op: "delete", anchor: anchor(1, "a"), end: anchor(2, "b") },
+      { op: "replace", anchor: anchor(2, "b"), body: ["changed"] },
     ],
   ];
   for (const edits of cases) {
@@ -267,13 +267,13 @@ test("unresolved row out of range or oversized → omission facts contain no rec
   const text = "x".repeat(DEFAULT_OUTPUT_BUDGETS.fieldBytes) + "\n";
   const cases = [
     {
-      start: oldAnchor,
+      anchor: oldAnchor,
       reason: new RegExp(`row exceeds ${formatKiB(DEFAULT_OUTPUT_BUDGETS.fieldBytes)}`),
     },
-    { start: { ...oldAnchor, line: 2 }, reason: /cited line is out of range/ },
+    { anchor: { ...oldAnchor, line: 2 }, reason: /cited line is out of range/ },
   ];
-  for (const { start, reason } of cases) {
-    const { report } = rejectedEdit(text, [{ op: "delete", start }]);
+  for (const { anchor, reason } of cases) {
+    const { report } = rejectedEdit(text, [{ op: "delete", anchor }]);
     assert.equal(report.error, "ANCHOR_MISMATCH");
     assert.match(report.failures?.[0].omitted ?? "", reason);
     assert.equal(report.failures?.[0].observed, undefined);

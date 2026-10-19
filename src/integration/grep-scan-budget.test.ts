@@ -81,7 +81,6 @@ test("all-file candidates exceed the scan budget → stop listing and retain sca
         assert.equal(result.isError, undefined);
         assert.equal(grepCounts(result).matches, scenario.matches);
         assert.equal(report.diagnostics, undefined);
-        assert.equal(result.details.incomplete, true);
         assert.equal(report.next, scanLimitNext);
         if (scenario.matches) assert.match(result.content[0].text, /fixture\.txt/);
       }

@@ -14,7 +14,7 @@ function at(text: string, line: number): Anchor {
 
 test("replace single line", () => {
   const text = "a\nb\nc\n";
-  const r = applyEdits(text, [{ op: "replace", start: at(text, 2), body: ["B"] }], 4, 15);
+  const r = applyEdits(text, [{ op: "replace", anchor: at(text, 2), body: ["B"] }], 4, 15);
   assert.equal(r.ok, true);
   if (r.ok) assert.equal(r.text, "a\nB\nc\n");
 });
@@ -22,7 +22,7 @@ test("replace single line", () => {
 test("editing another line preserves standalone carriage returns at EOF", () => {
   for (const ending of ["\n", "\r\n"]) {
     const text = `first${ending}last\r`;
-    const r = applyEdits(text, [{ op: "replace", start: at(text, 1), body: ["changed"] }], 4, 15);
+    const r = applyEdits(text, [{ op: "replace", anchor: at(text, 1), body: ["changed"] }], 4, 15);
     assert.equal(r.ok, true);
     if (r.ok) assert.equal(r.text, `changed${ending}last\r`);
   }
@@ -32,7 +32,7 @@ test("replace range", () => {
   const text = "a\nb\nc\nd\ne\n";
   const r = applyEdits(
     text,
-    [{ op: "replace", start: at(text, 2), end: at(text, 4), body: ["X", "Y"] }],
+    [{ op: "replace", anchor: at(text, 2), end: at(text, 4), body: ["X", "Y"] }],
     4,
     15,
   );
@@ -42,7 +42,7 @@ test("replace range", () => {
 
 test("delete single line / range", () => {
   const text = "a\nb\nc\nd\n";
-  const r = applyEdits(text, [{ op: "delete", start: at(text, 2), end: at(text, 3) }], 4, 15);
+  const r = applyEdits(text, [{ op: "delete", anchor: at(text, 2), end: at(text, 3) }], 4, 15);
   assert.equal(r.ok, true);
   if (r.ok) assert.equal(r.text, "a\nd\n");
 });
@@ -82,7 +82,7 @@ test("multiple out-of-order ops → applied at the right positions", () => {
     text,
     [
       { op: "insert_after", anchor: at(text, 3), body: ["z"] },
-      { op: "replace", start: at(text, 1), body: ["A"] },
+      { op: "replace", anchor: at(text, 1), body: ["A"] },
     ],
     4,
     15,
@@ -97,7 +97,7 @@ test("anchor hash mismatch rejected (line changed)", () => {
   const text = "a\nb\n";
   const r = applyEdits(
     text,
-    [{ op: "replace", start: { line: 1, hash: "WRONG" }, body: ["x"] }],
+    [{ op: "replace", anchor: { line: 1, hash: "WRONG" }, body: ["x"] }],
     4,
     15,
   );
@@ -109,7 +109,7 @@ test("line out of range rejected", () => {
   const text = "a\n";
   const r = applyEdits(
     text,
-    [{ op: "replace", start: { line: 5, hash: computeLineHash(1, "a", 4) }, body: ["x"] }],
+    [{ op: "replace", anchor: { line: 5, hash: computeLineHash(1, "a", 4) }, body: ["x"] }],
     4,
     15,
   );
@@ -122,7 +122,7 @@ test("anchor mismatch when the cited line's content differs (live verification)"
   const text = "a\nb\n";
   const r = applyEdits(
     text,
-    [{ op: "replace", start: { line: 1, hash: computeLineHash(2, "b", 4) }, body: ["x"] }],
+    [{ op: "replace", anchor: { line: 1, hash: computeLineHash(2, "b", 4) }, body: ["x"] }],
     4,
     15,
   );
@@ -134,7 +134,7 @@ test("reverse-order range rejected", () => {
   const text = "a\nb\nc\n";
   const r = applyEdits(
     text,
-    [{ op: "replace", start: at(text, 3), end: at(text, 1), body: ["x"] }],
+    [{ op: "replace", anchor: at(text, 3), end: at(text, 1), body: ["x"] }],
     4,
     15,
   );
@@ -145,13 +145,13 @@ test("reverse-order range rejected", () => {
 test("range starts inside a range or shares its start → reject overlapping edits", () => {
   const text = "a\nb\nc\nd\n";
   for (const edit of [
-    { op: "replace", start: at(text, 3), body: ["y"] },
-    { op: "delete", start: at(text, 2) },
+    { op: "replace", anchor: at(text, 3), body: ["y"] },
+    { op: "delete", anchor: at(text, 2) },
     { op: "insert_after", anchor: at(text, 2), body: ["y"] },
   ] satisfies Edit[]) {
     const result = applyEdits(
       text,
-      [{ op: "replace", start: at(text, 2), end: at(text, 3), body: ["x"] }, edit],
+      [{ op: "replace", anchor: at(text, 2), end: at(text, 3), body: ["x"] }, edit],
       4,
       0,
     );
@@ -164,8 +164,8 @@ test("insertion at a replaced or deleted range start → insert before the range
   const text = "a\nb\nc\nd\n";
   const insertion: Edit = { op: "insert_after", anchor: at(text, 1), body: ["x"] };
   for (const [edit, expected] of [
-    [{ op: "replace", start: at(text, 2), end: at(text, 3), body: ["B"] }, "a\nx\nB\nd\n"],
-    [{ op: "delete", start: at(text, 2), end: at(text, 3) }, "a\nx\nd\n"],
+    [{ op: "replace", anchor: at(text, 2), end: at(text, 3), body: ["B"] }, "a\nx\nB\nd\n"],
+    [{ op: "delete", anchor: at(text, 2), end: at(text, 3) }, "a\nx\nd\n"],
   ] satisfies [Edit, string][]) {
     for (const edits of [
       [insertion, edit],
@@ -197,12 +197,12 @@ test("insertions sharing a gap → preserve array order", () => {
 test("byte-identical edits → validate anchors and preserve the source bytes", () => {
   for (const text of ["a\nb\n", "\uFEFFa\r\nb\n"]) {
     const body = text.startsWith("\uFEFF") ? "\uFEFFa" : "a";
-    const r = applyEdits(text, [{ op: "replace", start: at(text, 1), body: [body] }], 4, 15);
+    const r = applyEdits(text, [{ op: "replace", anchor: at(text, 1), body: [body] }], 4, 15);
     assert.ok(r.ok);
     assert.equal(r.text, text);
     const invalid = applyEdits(
       text,
-      [{ op: "replace", start: at("wrong\nb\n", 1), body: [body] }],
+      [{ op: "replace", anchor: at("wrong\nb\n", 1), body: [body] }],
       4,
       15,
     );
@@ -216,7 +216,7 @@ test("unrelated change elsewhere does NOT block the edit (no global stale check)
   const currentText = "a\nb\nCHANGED\n";
   const r = applyEdits(
     currentText,
-    [{ op: "replace", start: at(readText, 1), body: ["A"] }],
+    [{ op: "replace", anchor: at(readText, 1), body: ["A"] }],
     4,
     15,
   );
@@ -226,7 +226,7 @@ test("unrelated change elsewhere does NOT block the edit (no global stale check)
 
 test("CRLF line endings preserved", () => {
   const text = "a\r\nb\r\n";
-  const r = applyEdits(text, [{ op: "replace", start: at(text, 1), body: ["A"] }], 4, 15);
+  const r = applyEdits(text, [{ op: "replace", anchor: at(text, 1), body: ["A"] }], 4, 15);
   assert.equal(r.ok, true);
   if (r.ok) assert.equal(r.text, "A\r\nb\r\n");
 });
@@ -235,7 +235,7 @@ test("editing a mixed-ending file preserves untouched separators", () => {
   const before = "first\r\nsecond\nthird\r\n";
   const result = applyEdits(
     before,
-    [{ op: "replace", start: at(before, 2), body: ["SECOND"] }],
+    [{ op: "replace", anchor: at(before, 2), body: ["SECOND"] }],
     4,
     15,
   );
@@ -253,7 +253,7 @@ test("inserting and deleting in mixed-ending files preserves surviving separator
   );
   assert.equal(inserted.ok, true);
   if (inserted.ok) assert.equal(inserted.text, "a\r\nb\nx\r\nc\r\nlast");
-  const deleted = applyEdits(before, [{ op: "delete", start: at(before, 2) }], 4, 15);
+  const deleted = applyEdits(before, [{ op: "delete", anchor: at(before, 2) }], 4, 15);
   assert.equal(deleted.ok, true);
   if (deleted.ok) assert.equal(deleted.text, "a\r\nc\r\nlast");
 });
@@ -262,7 +262,7 @@ test("replacing one line with several keeps the block's trailing gap", () => {
   const before = "a\r\nb\nc\r\nd";
   const result = applyEdits(
     before,
-    [{ op: "replace", start: at(before, 2), body: ["X", "Y", "Z"] }],
+    [{ op: "replace", anchor: at(before, 2), body: ["X", "Y", "Z"] }],
     4,
     15,
   );
@@ -274,14 +274,14 @@ test("replacing one line with several keeps the block's trailing gap", () => {
 
 test("a file without a final newline keeps not having one", () => {
   const text = "a\nb";
-  const r = applyEdits(text, [{ op: "replace", start: at(text, 2), body: ["B"] }], 4, 15);
+  const r = applyEdits(text, [{ op: "replace", anchor: at(text, 2), body: ["B"] }], 4, 15);
   assert.equal(r.ok, true);
   if (r.ok) assert.equal(r.text, "a\nB");
 });
 
 test("CRLF without a final newline keeps not having one", () => {
   const text = "a\r\nb";
-  const r = applyEdits(text, [{ op: "replace", start: at(text, 1), body: ["A"] }], 4, 15);
+  const r = applyEdits(text, [{ op: "replace", anchor: at(text, 1), body: ["A"] }], 4, 15);
   assert.equal(r.ok, true);
   if (r.ok) assert.equal(r.text, "A\r\nb");
 });
@@ -299,9 +299,9 @@ test("edits retain empty final logical lines even without an original final newl
     const ending = text.includes("\r\n") ? "\r\n" : "\n";
     const prefix = text.slice(0, text.lastIndexOf("\n") + 1);
     const cases: [Edit, string][] = [
-      [{ op: "replace", start: at(text, line), body: [""] }, prefix + ending],
+      [{ op: "replace", anchor: at(text, line), body: [""] }, prefix + ending],
       [
-        { op: "replace", start: at(text, line), body: ["new", ""] },
+        { op: "replace", anchor: at(text, line), body: ["new", ""] },
         `${prefix}new${ending}${ending}`,
       ],
       [{ op: "append", body: [""] }, text + ending + ending],
@@ -317,7 +317,7 @@ test("edits retain empty final logical lines even without an original final newl
   for (const text of ["\nlast", "head\r\n\r\nlast"]) {
     const result = applyEdits(
       text,
-      [{ op: "delete", start: at(text, splitLines(text).length) }],
+      [{ op: "delete", anchor: at(text, splitLines(text).length) }],
       4,
       15,
     );
@@ -328,11 +328,11 @@ test("edits retain empty final logical lines even without an original final newl
 
 test("a BOM represents an empty first line without a terminator, but not an empty later line", () => {
   const cases: [string, Edit[], string][] = [
-    ["\uFEFFold", [{ op: "replace", start: at("\uFEFFold", 1), body: [""] }], "\uFEFF"],
-    ["\uFEFF", [{ op: "replace", start: at("\uFEFF", 1), body: [""] }], "\uFEFF"],
+    ["\uFEFFold", [{ op: "replace", anchor: at("\uFEFFold", 1), body: [""] }], "\uFEFF"],
+    ["\uFEFF", [{ op: "replace", anchor: at("\uFEFF", 1), body: [""] }], "\uFEFF"],
     ["\uFEFF", [{ op: "append", body: [""] }], "\uFEFF\n\n"],
     ["\uFEFF", [{ op: "prepend", body: ["new"] }], "\uFEFFnew\n\n"],
-    ["\uFEFF\nlast", [{ op: "delete", start: at("\uFEFF\nlast", 2) }], "\uFEFF"],
+    ["\uFEFF\nlast", [{ op: "delete", anchor: at("\uFEFF\nlast", 2) }], "\uFEFF"],
   ];
   for (const [text, edits, expected] of cases) {
     const result = applyEdits(text, edits, 4, 15);
@@ -344,14 +344,14 @@ test("a BOM represents an empty first line without a terminator, but not an empt
 test("large replacement bodies retain snapshot boundaries without a function argument limit", () => {
   const text = "head\r\nold\ntail";
   const body = Array<string>(150_000).fill("x");
-  const result = applyEdits(text, [{ op: "replace", start: at(text, 2), body }], 4, 15);
+  const result = applyEdits(text, [{ op: "replace", anchor: at(text, 2), body }], 4, 15);
   assert.ok(result.ok);
   assert.equal(result.text, `head\r\n${"x\r\n".repeat(body.length - 1)}x\ntail`);
 });
 
 test("noop is still detected when the file lacks a final newline", () => {
   const text = "a\nb";
-  const r = applyEdits(text, [{ op: "replace", start: at(text, 1), body: ["a"] }], 4, 15);
+  const r = applyEdits(text, [{ op: "replace", anchor: at(text, 1), body: ["a"] }], 4, 15);
   assert.ok(r.ok);
   assert.equal(r.text, text);
 });
@@ -363,7 +363,7 @@ test("shifted recovery: content moved down → found with a fresh anchor", () =>
   const currentText = "a\nX\nb\nc\nd\ne\n"; // inserted X after line 1 → "c" moved 3→4
   const r = applyEdits(
     currentText,
-    [{ op: "replace", start: at(readText, 3), body: ["C"] }],
+    [{ op: "replace", anchor: at(readText, 3), body: ["C"] }],
     4,
     15,
   );
@@ -382,7 +382,7 @@ test("rescued anchor lets the retry succeed without a re-read", () => {
   // first attempt with a stale anchor → rescued
   const r1 = applyEdits(
     currentText,
-    [{ op: "replace", start: at(readText, 3), body: ["C"] }],
+    [{ op: "replace", anchor: at(readText, 3), body: ["C"] }],
     4,
     15,
   );
@@ -392,7 +392,13 @@ test("rescued anchor lets the retry succeed without a re-read", () => {
   // Retry with the recovered anchor; the rest of the file stays unchanged.
   const r2 = applyEdits(
     currentText,
-    [{ op: "replace", start: { line: f.recovery.newLine, hash: f.recovery.newHash }, body: ["C"] }],
+    [
+      {
+        op: "replace",
+        anchor: { line: f.recovery.newLine, hash: f.recovery.newHash },
+        body: ["C"],
+      },
+    ],
     4,
     15,
   );
@@ -405,7 +411,7 @@ test("shifted recovery: duplicate content → ambiguous candidates", () => {
   const currentText = "a\nY\nx\nb\nx\nc\n"; // both "x" shifted
   const r = applyEdits(
     currentText,
-    [{ op: "replace", start: at(readText, 2), body: ["Z"] }],
+    [{ op: "replace", anchor: at(readText, 2), body: ["Z"] }],
     4,
     15,
   );
@@ -424,7 +430,7 @@ test("shifted recovery: content genuinely changed → none, with live content", 
   const currentText = "a\nBCHANGED\nc\n"; // "b" is gone
   const r = applyEdits(
     currentText,
-    [{ op: "replace", start: at(readText, 2), body: ["B"] }],
+    [{ op: "replace", anchor: at(readText, 2), body: ["B"] }],
     4,
     15,
   );
@@ -444,7 +450,7 @@ test("full-file recovery finds distant content and anchors beyond the current EO
     lines[newLine - 1] = "target";
     const result = applyEdits(
       lines.join("\n"),
-      [{ op: "delete", start: { line: oldLine, hash: computeLineHash(oldLine, "target", 4) } }],
+      [{ op: "delete", anchor: { line: oldLine, hash: computeLineHash(oldLine, "target", 4) } }],
       4,
       15,
     );
@@ -468,7 +474,7 @@ test("full-file recovery collects both sides while preserving local candidate pr
     for (const line of positions) lines[line - 1] = "target";
     const result = applyEdits(
       lines.join("\n"),
-      [{ op: "delete", start: { line: 50, hash: computeLineHash(50, "target", 4) } }],
+      [{ op: "delete", anchor: { line: 50, hash: computeLineHash(50, "target", 4) } }],
       4,
       15,
     );
@@ -500,8 +506,8 @@ test("collect-all: two stale anchors in one batch → both failures returned", (
   const r = applyEdits(
     currentText,
     [
-      { op: "replace", start: at(readText, 2), body: ["B"] },
-      { op: "replace", start: at(readText, 4), body: ["D"] },
+      { op: "replace", anchor: at(readText, 2), body: ["B"] },
+      { op: "replace", anchor: at(readText, 4), body: ["D"] },
     ],
     4,
     15,
@@ -517,7 +523,12 @@ test("collect-all: two stale anchors in one batch → both failures returned", (
 test("shiftRadius=0 disables rescue (always none)", () => {
   const readText = "a\nb\nc\nd\ne\n";
   const currentText = "a\nX\nb\nc\nd\ne\n";
-  const r = applyEdits(currentText, [{ op: "replace", start: at(readText, 3), body: ["C"] }], 4, 0);
+  const r = applyEdits(
+    currentText,
+    [{ op: "replace", anchor: at(readText, 3), body: ["C"] }],
+    4,
+    0,
+  );
   assert.ok(!r.ok && r.failure.kind === "anchor");
   assert.equal(r.failure.failures[0].recovery.kind, "none");
 });
@@ -532,18 +543,18 @@ test("BOM stays at byte zero through first-line edits while anchors retain their
     const ending = text.includes("\r\n") ? "\r\n" : "\n";
     const rest = text.slice(text.indexOf("\n") + 1);
     const cases: [Edit, string][] = [
-      [{ op: "replace", start: at(text, 1), body: ["changed"] }, `\uFEFFchanged${ending}${rest}`],
+      [{ op: "replace", anchor: at(text, 1), body: ["changed"] }, `\uFEFFchanged${ending}${rest}`],
       [
-        { op: "replace", start: at(text, 1), body: ["\uFEFFchanged"] },
+        { op: "replace", anchor: at(text, 1), body: ["\uFEFFchanged"] },
         `\uFEFFchanged${ending}${rest}`,
       ],
-      [{ op: "delete", start: at(text, 1) }, `\uFEFF${rest}`],
+      [{ op: "delete", anchor: at(text, 1) }, `\uFEFF${rest}`],
       [{ op: "prepend", body: ["new"] }, `\uFEFFnew${ending}${text.slice(1)}`],
       [
         { op: "insert_before", anchor: at(text, 1), body: ["new"] },
         `\uFEFFnew${ending}${text.slice(1)}`,
       ],
-      [{ op: "delete", start: at(text, 1), end: at(text, 2) }, "\uFEFF"],
+      [{ op: "delete", anchor: at(text, 1), end: at(text, 2) }, "\uFEFF"],
     ];
     for (const [edit, expected] of cases) {
       const result = applyEdits(text, [edit], 4, 15);
@@ -554,7 +565,7 @@ test("BOM stays at byte zero through first-line edits while anchors retain their
   for (const text of ["\uFEFF", "\uFEFFfirst"]) {
     const result = applyEdits(
       text,
-      [{ op: "replace", start: at(text, 1), body: ["changed"] }],
+      [{ op: "replace", anchor: at(text, 1), body: ["changed"] }],
       4,
       15,
     );
@@ -564,7 +575,7 @@ test("BOM stays at byte zero through first-line edits while anchors retain their
   const embedded = "\uFEFFfirst\ninside\uFEFFcontent\n";
   const result = applyEdits(
     embedded,
-    [{ op: "replace", start: at(embedded, 1), body: ["changed"] }],
+    [{ op: "replace", anchor: at(embedded, 1), body: ["changed"] }],
     4,
     15,
   );
@@ -576,8 +587,8 @@ test("failed batches report every supplied anchor in input order from one snapsh
   const text = "a\nb\nc\nd\ne\nf\n";
   const stale = { line: 2, hash: "ZZ" };
   const edits: Edit[] = [
-    { op: "replace", start: at(text, 1), end: stale, body: ["A"] },
-    { op: "delete", start: stale, end: at(text, 4) },
+    { op: "replace", anchor: at(text, 1), end: stale, body: ["A"] },
+    { op: "delete", anchor: stale, end: at(text, 4) },
     { op: "insert_after", anchor: at(text, 5), body: ["E"] },
     { op: "insert_before", anchor: stale, body: ["B"] },
     { op: "append", body: ["last"] },
@@ -598,11 +609,11 @@ test("failed batches report every supplied anchor in input order from one snapsh
 test("matched anchor checks do not imply valid ranges", () => {
   const text = "a\nb\nc\n";
   const cases: { edits: Edit[]; kind: "range"; checks: number }[] = [
-    { edits: [{ op: "delete", start: at(text, 3), end: at(text, 1) }], kind: "range", checks: 2 },
+    { edits: [{ op: "delete", anchor: at(text, 3), end: at(text, 1) }], kind: "range", checks: 2 },
     {
       edits: [
-        { op: "replace", start: at(text, 1), end: at(text, 3), body: ["x"] },
-        { op: "delete", start: at(text, 2) },
+        { op: "replace", anchor: at(text, 1), end: at(text, 3), body: ["x"] },
+        { op: "delete", anchor: at(text, 2) },
       ],
       kind: "range",
       checks: 3,
@@ -621,19 +632,19 @@ test("copy/move original ranges → retain captured text and order", () => {
   const text = "A\nB\nC\nD\n";
   const cases: { edit: Edit; expected: string }[] = [
     {
-      edit: { op: "copy", start: at(text, 2), end: at(text, 3), after: at(text, 4) },
+      edit: { op: "copy", anchor: at(text, 2), end: at(text, 3), after: at(text, 4) },
       expected: "A\nB\nC\nD\nB\nC\n",
     },
     {
-      edit: { op: "move", start: at(text, 1), end: at(text, 2), after: at(text, 4) },
+      edit: { op: "move", anchor: at(text, 1), end: at(text, 2), after: at(text, 4) },
       expected: "C\nD\nA\nB\n",
     },
     {
-      edit: { op: "move", start: at(text, 3), end: at(text, 4), before: at(text, 1) },
+      edit: { op: "move", anchor: at(text, 3), end: at(text, 4), before: at(text, 1) },
       expected: "C\nD\nA\nB\n",
     },
     {
-      edit: { op: "copy", start: at(text, 1), end: at(text, 3), after: at(text, 1) },
+      edit: { op: "copy", anchor: at(text, 1), end: at(text, 3), after: at(text, 1) },
       expected: "A\nA\nB\nC\nB\nC\nD\n",
     },
   ];
@@ -646,10 +657,10 @@ test("copy/move original ranges → retain captured text and order", () => {
 
 test("copy source also replaced or deleted → capture original text regardless of batch order", () => {
   const text = "A\nB\nC\nD\n";
-  const copy: Edit = { op: "copy", start: at(text, 1), end: at(text, 2), after: at(text, 4) };
+  const copy: Edit = { op: "copy", anchor: at(text, 1), end: at(text, 2), after: at(text, 4) };
   for (const edit of [
-    { op: "replace", start: at(text, 1), end: at(text, 2), body: ["NEW"] },
-    { op: "delete", start: at(text, 1), end: at(text, 2) },
+    { op: "replace", anchor: at(text, 1), end: at(text, 2), body: ["NEW"] },
+    { op: "delete", anchor: at(text, 1), end: at(text, 2) },
   ] satisfies Edit[]) {
     for (const edits of [
       [copy, edit],
@@ -667,7 +678,7 @@ test("copy/move first-line mixed-ending range → preserve source gaps and keep 
   for (const op of ["copy", "move"] as const) {
     const result = applyEdits(
       text,
-      [{ op, start: at(text, 1), end: at(text, 3), after: at(text, 4) }],
+      [{ op, anchor: at(text, 1), end: at(text, 3), after: at(text, 4) }],
       4,
       0,
     );
@@ -680,7 +691,7 @@ test("copy/move unterminated final line → add interior connectors and preserve
   for (const ending of ["\n", "\r\n"]) {
     const text = `A${ending}B`;
     for (const op of ["copy", "move"] as const) {
-      const result = applyEdits(text, [{ op, start: at(text, 2), before: at(text, 1) }], 4, 0);
+      const result = applyEdits(text, [{ op, anchor: at(text, 2), before: at(text, 1) }], 4, 0);
       assert(result.ok);
       assert.equal(result.text, op === "copy" ? `B${ending}A${ending}B` : `B${ending}A`);
     }
@@ -690,7 +701,7 @@ test("copy/move unterminated final line → add interior connectors and preserve
 test("copy/move line ending in standalone CR → connector retains the CR as line content", () => {
   const text = "A\nB\r";
   for (const op of ["copy", "move"] as const) {
-    const result = applyEdits(text, [{ op, start: at(text, 2), before: at(text, 1) }], 4, 0);
+    const result = applyEdits(text, [{ op, anchor: at(text, 2), before: at(text, 1) }], 4, 0);
     assert(result.ok);
     assert.equal(result.text, op === "copy" ? "B\r\r\nA\nB\r" : "B\r\r\nA");
     assert.equal(splitLines(result.text)[0], "B\r");
@@ -701,7 +712,7 @@ test("copy Unicode and standalone-CR content → preserve every source code unit
   const text = "🙂中文 e\u0301\nkeep\rcontent\n";
   const result = applyEdits(
     text,
-    [{ op: "copy", start: at(text, 1), end: at(text, 2), after: at(text, 2) }],
+    [{ op: "copy", anchor: at(text, 1), end: at(text, 2), after: at(text, 2) }],
     4,
     0,
   );
@@ -716,7 +727,7 @@ test("copy blank or BOM-only line → retain the added logical blank line", () =
   ] as const) {
     const result = applyEdits(
       text,
-      [{ op: "copy", start: at(text, line), after: at(text, line) }],
+      [{ op: "copy", anchor: at(text, line), after: at(text, line) }],
       4,
       0,
     );
@@ -731,7 +742,7 @@ test("move to either adjacent gap → byte-identical no-op", () => {
   for (const destination of [{ before: at(text, 2) }, { after: at(text, 3) }]) {
     const result = applyEdits(
       text,
-      [{ op: "move", start: at(text, 2), end: at(text, 3), ...destination }],
+      [{ op: "move", anchor: at(text, 2), end: at(text, 3), ...destination }],
       4,
       0,
     );
@@ -751,7 +762,7 @@ test("copy/move bad source and destination anchors → aggregate every supplied 
       [
         {
           op: "copy",
-          start: { line: 1, hash: "XXXX" },
+          anchor: { line: 1, hash: "XXXX" },
           end: { line: 2, hash: "XXXX" },
           ...destination,
         },
@@ -777,8 +788,8 @@ test("copy/move captures sharing a gap → preserve original captures in array o
     ["move", "move", "C\nD\nE\n"],
   ] as const) {
     const edits: Edit[] = [
-      { op: first, start: at(text, 1), after: at(text, 5) },
-      { op: second, start: at(text, 2), after: at(text, 5) },
+      { op: first, anchor: at(text, 1), after: at(text, 5) },
+      { op: second, anchor: at(text, 2), after: at(text, 5) },
     ];
     for (const [batch, suffix] of [
       [edits, "A\nB\n"],
@@ -794,9 +805,9 @@ test("copy/move captures sharing a gap → preserve original captures in array o
 test("move interior destination or reversed capture range → reject invalid ranges", () => {
   const text = "A\nB\nC\nD\nE\n";
   for (const edit of [
-    { op: "move", start: at(text, 1), end: at(text, 3), after: at(text, 2) },
-    { op: "move", start: at(text, 1), end: at(text, 3), before: at(text, 2) },
-    { op: "copy", start: at(text, 3), end: at(text, 2), after: at(text, 5) },
+    { op: "move", anchor: at(text, 1), end: at(text, 3), after: at(text, 2) },
+    { op: "move", anchor: at(text, 1), end: at(text, 3), before: at(text, 2) },
+    { op: "copy", anchor: at(text, 3), end: at(text, 2), after: at(text, 5) },
   ] satisfies Edit[]) {
     const result = applyEdits(text, [edit], 4, 0);
     assert(!result.ok && result.failure.kind === "range");
@@ -810,8 +821,8 @@ test("overlapping move sources → reject the complete batch", () => {
   const result = applyEdits(
     text,
     [
-      { op: "move", start: at(text, 1), end: at(text, 2), after: at(text, 5) },
-      { op: "move", start: at(text, 2), end: at(text, 3), before: at(text, 1) },
+      { op: "move", anchor: at(text, 1), end: at(text, 2), after: at(text, 5) },
+      { op: "move", anchor: at(text, 2), end: at(text, 3), before: at(text, 1) },
     ],
     4,
     0,

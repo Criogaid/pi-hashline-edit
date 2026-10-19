@@ -421,7 +421,6 @@ test("file changes after matching → summary modes retain the snapshot and cont
                 assert.equal(result.isError, undefined);
                 assert.deepEqual(grepCounts(result), { matches: 1, files: 1 });
                 assert.equal(reportOf(result, "grep")?.diagnostics, undefined);
-                assert.equal(result.details.incomplete, undefined);
                 assert.match(text(result), /grep\.txt/);
               } else {
                 assert.match(reportOf(result, "grep")?.diagnostics ?? "", /grep\.txt/);
@@ -432,7 +431,6 @@ test("file changes after matching → summary modes retain the snapshot and cont
                 if (keepOtherFile) {
                   assert.equal(result.isError, undefined);
                   assert.deepEqual(grepCounts(result), { matches: 1, files: 1 });
-                  assert.equal(result.details.incomplete, true);
                   assert.match(text(result), /unchanged\.txt · 1 match/);
                   assert.doesNotMatch(text(result), /grep\.txt ·/);
                 } else {
@@ -1087,10 +1085,8 @@ for (const admitted of [2, 1, 0]) {
       assert.equal(fake.calls[0].args.includes("!.git"), false);
       if (admitted === files.length) {
         assert.equal(reportOf(result, "grep")?.diagnostics, undefined);
-        assert.equal(result.details.incomplete, undefined);
       } else {
         assert.match(reportOf(result, "grep")?.diagnostics ?? "", /directory: Permission denied/);
-        if (admitted > 0) assert.equal(result.details.incomplete, true);
       }
       if (admitted > 0) {
         assert.equal(result.isError, undefined);

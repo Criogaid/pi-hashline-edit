@@ -381,7 +381,6 @@ test("all mutation tools forward command progress before completion in RPC mode"
         [false, true, true, true, true],
       );
       assert.deepEqual(events.at(-1)?.result?.content, [{ type: "text", text: "final output" }]);
-      assert.equal(events.at(-1)?.publication, "PUBLISHED");
       assert.equal(updates.at(-1).details.actionFusion.command, "succeeded");
     }
   } finally {
