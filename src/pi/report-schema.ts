@@ -133,11 +133,12 @@ const ANCHOR_FAILURE_SCHEMA = Type.Object(
     search: opt(Type.Union([Type.Literal("local window"), Type.Literal("full file")])),
     candidate: opt(Type.String()),
     content: opt(Type.String()),
-    contentOmitted: opt(Type.String()),
     candidates: opt(Type.Array(Type.String())),
     omittedCandidates: opt(Type.Integer({ minimum: 1 })),
     observed: opt(Type.String()),
-    observedOmitted: opt(Type.String()),
+    omitted: opt(
+      Type.String({ description: "Why content (shifted) or observed (unresolved) is absent." }),
+    ),
   },
   { additionalProperties: false },
 );

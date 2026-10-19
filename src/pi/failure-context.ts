@@ -164,7 +164,7 @@ function failureEntry(
         entry.content = displayCarriageReturns(content);
         shownLines.add(newLine);
       } else {
-        entry.contentOmitted = rowTooLarge;
+        entry.omitted = rowTooLarge;
       }
       break;
     }
@@ -179,9 +179,9 @@ function failureEntry(
     }
     case "none": {
       const row = f.current === null ? null : snapshot.anchors.row(f.cited.line, f.current.content);
-      if (row === null) entry.observedOmitted = "cited line is out of range";
+      if (row === null) entry.omitted = "cited line is out of range";
       else if (Buffer.byteLength(row, "utf8") <= budget.fieldBytes) entry.observed = row;
-      else entry.observedOmitted = rowTooLarge;
+      else entry.omitted = rowTooLarge;
       break;
     }
   }
