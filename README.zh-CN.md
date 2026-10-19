@@ -84,7 +84,7 @@ Grep 按传入顺序访问各个搜索路径，在每个根路径内采用 ripgr
 ```json
 {
   "path": "src/foo.ts",
-  "replacements": [{ "find": "oldName", "replace": "newName" }],
+  "replacements": [{ "find": "oldName", "literal": true, "replace": "newName" }],
   "then_run": { "command": "npm test", "timeout": 60 }
 }
 ```
