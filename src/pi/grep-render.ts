@@ -40,7 +40,10 @@ export function toDisplayLines(raw: string, theme: Theme): string[] {
         next++;
       }
       // Indentation shared by every row is folded into one marker.
-      const base = group.length ? Math.min(...group.map(({ content }) => indentation(content))) : 0;
+      // A reduce, not Math.min(...rows): a spread of every row exceeds the call stack.
+      const base = group.length
+        ? group.reduce((min, { content }) => Math.min(min, indentation(content)), Infinity)
+        : 0;
       const marker = base > 0 ? theme.fg("dim", "›") + " " : "";
       for (const { lineNo, content } of group) {
         out.push(
