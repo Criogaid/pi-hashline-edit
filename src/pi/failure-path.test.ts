@@ -29,7 +29,7 @@ test("published post-processing failure → skips command and preserves publicat
     const fusion = createActionFusionExecutor(
       async () => {
         commanded = true;
-        return { status: "succeeded", output: "never" };
+        return { status: "succeeded", result: { content: [{ type: "text", text: "never" }] } };
       },
       (update) => progress.push(update),
     );
@@ -139,7 +139,7 @@ test("first command fails → releases the queue for the next mutation", async (
     const fusion = createActionFusionExecutor(async () => {
       calls++;
       if (calls === 1) throw new Error("first command failed");
-      return { status: "succeeded", output: "ok" };
+      return { status: "succeeded", result: { content: [{ type: "text", text: "ok" }] } };
     });
     for (const content of ["first\n", "second\n"]) {
       const result = await fusion({
@@ -166,7 +166,10 @@ test("command succeeds on an unchanged target → retains the result and complet
     const target = join(dir, "finalize.txt");
     const progress: ActionFusionProgress[] = [];
     const fusion = createActionFusionExecutor(
-      async () => ({ status: "succeeded", output: "command finished" }),
+      async () => ({
+        status: "succeeded",
+        result: { content: [{ type: "text", text: "command finished" }] },
+      }),
       (event) => progress.push(event),
     );
     const completed = await fusion({
@@ -188,5 +191,7 @@ test("command succeeds on an unchanged target → retains the result and complet
     assert.equal(progress.filter((event) => event.command === "succeeded").length, 1);
     assert.equal(progress.at(-1)?.publication, "PUBLISHED");
     assert.equal(progress.at(-1)?.freshness, "unchanged");
-    assert.equal(progress.at(-1)?.output, "command finished");
+    assert.deepEqual(progress.at(-1)?.result, {
+      content: [{ type: "text", text: "command finished" }],
+    });
   }));

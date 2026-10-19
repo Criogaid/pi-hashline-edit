@@ -485,7 +485,7 @@ test("invalid batches reject every change and never run a fused command", async 
       DEFAULT_CONFIG,
       createActionFusionExecutor(async () => {
         commands++;
-        return { status: "succeeded", output: "done" };
+        return { status: "succeeded", result: { content: [{ type: "text", text: "done" }] } };
       }),
     );
     const first = { find: "bar", replace: "changed" };
@@ -644,7 +644,7 @@ test("successful batches run one command against the complete result", async () 
         assert.equal(input.command, "check");
         commands++;
         assert.equal(await readFile(file, "utf8"), "bar baz");
-        return { status: "succeeded", output: "checked" };
+        return { status: "succeeded", result: { content: [{ type: "text", text: "checked" }] } };
       }),
     );
     const result = await tool.execute(

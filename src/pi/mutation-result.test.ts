@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { generateDiffString, generateUnifiedPatch } from "@earendil-works/pi-coding-agent";
 import {
+  commandText,
   finalizeMutation,
   generateMutationDetails,
   type MutationFacts,
@@ -23,6 +24,17 @@ function invalidMutationConstruction(
   // @ts-expect-error A failed mutation has no diff details.
   const diff: string = result.diff;
 }
+
+test("command content includes images → report text joins only text blocks", () => {
+  assert.equal(
+    commandText([
+      { type: "text", text: "first" },
+      { type: "image", data: "iVBORw0KGgo=", mimeType: "image/png" },
+      { type: "text", text: "second" },
+    ]),
+    "first\nsecond",
+  );
+});
 
 for (const [name, before, after] of [
   ["LF", "guard\nold\ntail\n", "guard\nnew\ntail\n"],

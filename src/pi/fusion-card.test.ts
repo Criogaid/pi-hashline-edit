@@ -1,8 +1,16 @@
 import assert from "node:assert/strict";
 import { after, before, test } from "node:test";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { initTheme } from "@earendil-works/pi-coding-agent";
 import { registerFusionCards } from "./fusion-card.ts";
-import type { ActionFusionProgress } from "./action-fusion.ts";
+import { createActionFusionExecutor, type ActionFusionProgress } from "./action-fusion.ts";
+import type { CommandResult } from "./report-schema.ts";
+import { commandText } from "./mutation-result.ts";
+import { decodeReport } from "./report.ts";
+import { makeWriteOverride } from "./write-tool.ts";
+import { callTool, createToolContext } from "./tool-call.testing.ts";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { ProcessTerminal, TuiMainScreen } from "@earendil-works/pi-tui";
 import { theme as activeTheme } from "../../node_modules/@earendil-works/pi-coding-agent/dist/modes/interactive/theme/theme.js";
@@ -61,7 +69,6 @@ const waiting: ActionFusionProgress = {
   command: "waiting",
   publication: "NOT_PUBLISHED",
   freshness: "unknown",
-  output: "",
   mutationCompleted: false,
 };
 
@@ -75,7 +82,7 @@ test("one independent card updates live and only persists its endpoints", () => 
     ...waiting,
     command: "running",
     publication: "PUBLISHED",
-    output: "first test passed",
+    result: { content: [{ type: "text", text: "first test passed" }] },
   });
   assert.match(card.render(100).join("\n"), /running[\s\S]*first test passed/);
   assert.equal(h.entries.length, 1);
@@ -85,7 +92,7 @@ test("one independent card updates live and only persists its endpoints", () => 
     command: "succeeded",
     publication: "PUBLISHED",
     freshness: "changed",
-    output,
+    result: { content: [{ type: "text", text: output }] },
   });
   assert.equal(h.entries.length, 2);
   assert.equal(h.entries[0].data.command, "waiting");
@@ -98,64 +105,96 @@ test("one independent card updates live and only persists its endpoints", () => 
   assert.match(h.card(h.entries[0], true).render(100).join("\n"), /output line 0\b/);
 });
 
-test("command cards persist one copy of command output and preserve rendered text", async (t) => {
+test("Fusion command outcomes → progress, cards, and reports share result-only output", async (t) => {
+  const success: CommandResult = {
+    content: [
+      { type: "text", text: "first" },
+      { type: "text", text: "second" },
+    ],
+  };
+  const failure: CommandResult = { content: [{ type: "text", text: "boom" }] };
   const cases: readonly {
-    name: string;
-    progress: Pick<ActionFusionProgress, "command" | "output" | "result">;
+    scenario:
+      | "succeeded"
+      | "failed"
+      | "cancelled-error"
+      | "cancelled-empty"
+      | "skipped"
+      | "cancelled";
+    command: ActionFusionProgress["command"];
+    result?: CommandResult;
     text: RegExp;
-    notRun?: boolean;
   }[] = [
+    { scenario: "succeeded", command: "succeeded", result: success, text: /first[\s\S]*second/ },
+    { scenario: "failed", command: "failed", result: failure, text: /boom/ },
+    { scenario: "cancelled-error", command: "cancelled", result: failure, text: /boom/ },
     {
-      name: "result exists → persist result without output",
-      progress: {
-        command: "succeeded",
-        output: "ok",
-        result: { content: [{ type: "text", text: "ok" }] },
-      },
-      text: /ok/,
+      scenario: "cancelled-empty",
+      command: "cancelled",
+      result: { content: [] },
+      text: /Not run: cancelled\./,
     },
-    {
-      name: "result is absent → persist output without result",
-      progress: { command: "failed", output: "boom" },
-      text: /boom/,
-    },
-    {
-      name: "cancelled result has empty text → show the not-run reason",
-      progress: {
-        command: "cancelled",
-        output: "",
-        result: { content: [{ type: "text", text: "" }] },
-      },
-      text: /cancelled/,
-      notRun: true,
-    },
-    {
-      name: "cancelled result has text → omit the not-run reason",
-      progress: {
-        command: "cancelled",
-        output: "partial output",
-        result: { content: [{ type: "text", text: "partial output" }] },
-      },
-      text: /partial output/,
-      notRun: false,
-    },
+    { scenario: "skipped", command: "skipped", text: /Not run: the mutation did not complete/ },
+    { scenario: "cancelled", command: "cancelled", text: /Not run: cancelled\./ },
   ];
-  for (const { name, progress, text, notRun } of cases) {
-    await t.test(name, () => {
+  for (const { scenario, command, result: expected, text } of cases) {
+    await t.test(scenario, async (t) => {
+      const dir = await mkdtemp(join(tmpdir(), "hashline-fusion-card-"));
+      t.after(() => rm(dir, { recursive: true, force: true }));
       const h = harness();
-      h.report(waiting);
-      h.report({ ...waiting, ...progress });
+      const events: ActionFusionProgress[] = [];
+      const controller = new AbortController();
+      if (scenario === "cancelled") controller.abort();
+      let commands = 0;
+      const fusion = createActionFusionExecutor(
+        async () => {
+          commands++;
+          if (scenario === "cancelled-error") controller.abort();
+          if (scenario === "failed" || scenario === "cancelled-error") throw new Error("boom");
+          return scenario === "cancelled-empty"
+            ? { status: "cancelled", result: { content: [] } }
+            : { status: "succeeded", result: success };
+        },
+        (progress) => {
+          events.push(progress);
+          h.report(progress);
+        },
+      );
+      const result = await callTool(
+        makeWriteOverride(dir, fusion),
+        {
+          path: "file.txt",
+          mode: scenario === "skipped" ? "overwrite" : "create",
+          content: "saved\n",
+          then_run: { command: "check" },
+        },
+        { ctx: await createToolContext(dir, t), signal: controller.signal },
+      );
+      assert.equal(commands, expected ? 1 : 0);
+      const final = events.at(-1);
+      assert.ok(final);
+      assert.equal(final.command, command);
+      assert.equal(Object.hasOwn(final, "result"), expected !== undefined);
+      assert.deepEqual(final.result, expected);
+      for (const progress of events) {
+        assert.equal(Object.hasOwn(progress, "output"), false);
+        if (progress.command === "waiting") assert.equal(Object.hasOwn(progress, "result"), false);
+      }
       const saved = h.entries.find((entry) => entry.customType === "hashline-then-run-result");
       assert.ok(saved);
-      assert.equal(Object.hasOwn(saved.data, "result"), progress.result !== undefined);
-      assert.equal(Object.hasOwn(saved.data, "output"), progress.result === undefined);
-      if (progress.result) assert.deepEqual(saved.data.result, progress.result);
-      else assert.equal(saved.data.output, progress.output);
-      for (const view of [h, harness(h.entries)]) {
-        const rendered = view.card(h.entries[0], true).render(160).join("\n");
-        assert.match(rendered, text);
-        if (notRun !== undefined) assert.equal(rendered.includes("Not run: cancelled."), notRun);
-      }
+      assert.equal(Object.hasOwn(saved.data, "result"), expected !== undefined);
+      assert.deepEqual(saved.data.result, expected);
+      for (const entry of h.entries) assert.equal(Object.hasOwn(entry.data, "output"), false);
+      assert.equal(Object.hasOwn(h.entries[0].data, "result"), false);
+      const block = result.content.at(-1);
+      assert.ok(block?.type === "text");
+      const report = decodeReport(block.text, "write");
+      assert.ok(report);
+      const output = expected ? commandText(expected.content) : "";
+      assert.deepEqual(report.then_run, { status: command, ...(output ? { output } : {}) });
+      const rendered = h.card(h.entries[0], true).render(160).join("\n");
+      assert.match(rendered, text);
+      if (command === "cancelled") assert.equal(rendered.includes("Not run: cancelled."), !output);
     });
   }
 });
@@ -167,7 +206,6 @@ test("session restore uses final snapshots and marks unfinished calls unknown", 
     ...waiting,
     command: "failed",
     publication: "PUBLISHED",
-    output: "Command exited with code 7",
     result: {
       content: [{ type: "text", text: "Command exited with code 7" }],
       details: { fullOutputPath: "/tmp/command-output.log" },
@@ -193,21 +231,23 @@ test("session restore uses final snapshots and marks unfinished calls unknown", 
   );
 });
 
-test("session restore accepts exactly one command output representation", async (t) => {
+test("session restore accepts optional result and rejects output snapshots", async (t) => {
   const cases: readonly {
     name: string;
-    fields: Partial<Pick<ActionFusionProgress, "result" | "output">>;
+    fields: { result?: CommandResult; output?: string };
+    command: ActionFusionProgress["command"];
     text?: RegExp;
   }[] = [
     {
       name: "result only → restore result text",
       fields: { result: { content: [{ type: "text", text: "result text" }] } },
+      command: "succeeded",
       text: /result text/,
     },
     {
-      name: "output only → restore output text",
+      name: "output only → ignore snapshot",
       fields: { output: "output text" },
-      text: /output text/,
+      command: "succeeded",
     },
     {
       name: "result and output coexist → ignore snapshot",
@@ -215,10 +255,16 @@ test("session restore accepts exactly one command output representation", async 
         result: { content: [{ type: "text", text: "result text" }] },
         output: "output text",
       },
+      command: "succeeded",
     },
-    { name: "result and output are absent → ignore snapshot", fields: {} },
+    {
+      name: "result is absent → restore the command status",
+      fields: {},
+      command: "cancelled",
+      text: /Not run: cancelled\./,
+    },
   ];
-  for (const { name, fields, text } of cases) {
+  for (const { name, fields, command, text } of cases) {
     await t.test(name, () => {
       for (const event of ["session_start", "session_tree"]) {
         const original = harness();
@@ -229,7 +275,7 @@ test("session restore accepts exactly one command output representation", async 
           data: {
             toolCallId: waiting.toolCallId,
             commandText: waiting.commandText,
-            command: "succeeded",
+            command,
             mutationCompleted: true,
             freshness: "unchanged",
             ...fields,
@@ -289,7 +335,11 @@ test("timed command cards show remaining seconds only while actively running", (
   assert.equal(h.entries.length, 1);
   h.report({ ...running, timing: { timeoutSeconds: 10, remainingSeconds: 0 } });
   assert.match(card.render(160).join("\n"), /0s remaining/);
-  h.report({ ...running, command: "timeout", output: "Command timed out after 10 seconds" });
+  h.report({
+    ...running,
+    command: "timeout",
+    result: { content: [{ type: "text", text: "Command timed out after 10 seconds" }] },
+  });
   assert.doesNotMatch(card.render(160).join("\n"), /remaining/);
   const restored = harness(h.entries);
   restored.restore();

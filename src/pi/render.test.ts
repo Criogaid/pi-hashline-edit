@@ -519,7 +519,7 @@ test("command changes or removes the target → completed mutation stays success
       assert.equal(await readFile(target, "utf8"), "saved\n");
       if (disturbance === "changed") await writeFile(target, "command changed the file\n");
       else await unlink(target);
-      return { status: "succeeded", output: "checked" };
+      return { status: "succeeded", result: { content: [{ type: "text", text: "checked" }] } };
     });
     const tool = withMutationStatus(makeWriteOverride(cwd, fusion));
     const args = {

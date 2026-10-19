@@ -89,7 +89,7 @@ test("edit and replace share one embedded executor and preserve mutation results
     const calls: string[] = [];
     const fusion = createActionFusionExecutor(async (_id, input) => {
       calls.push(input.command);
-      return { status: "succeeded", output: "checked" };
+      return { status: "succeeded", result: { content: [{ type: "text", text: "checked" }] } };
     });
     const edit = makeEditOverride(dir, DEFAULT_CONFIG, fusion);
     const replace = makeReplaceTool(dir, DEFAULT_CONFIG, fusion);
@@ -195,7 +195,7 @@ test("cancelled calls do not mutate or run the command", async (t) => {
     let commanded = false;
     const fusion = createActionFusionExecutor(async () => {
       commanded = true;
-      return { status: "succeeded", output: "" };
+      return { status: "succeeded", result: { content: [] } };
     });
     await assert.rejects(
       fusion({
@@ -226,7 +226,7 @@ test("command changes the target → reports changed freshness", async (t) => {
     await writeFile(target, "before\n");
     const fusion = createActionFusionExecutor(async () => {
       await writeFile(target, "changed by command\n");
-      return { status: "succeeded", output: "changed" };
+      return { status: "succeeded", result: { content: [{ type: "text", text: "changed" }] } };
     });
     const result = await fusion({
       toolCallId: "stale",
@@ -263,7 +263,7 @@ test("unreadable target after mutation → reports unknown freshness and skips t
     let commands = 0;
     const fusion = createActionFusionExecutor(async () => {
       commands++;
-      return { status: "succeeded", output: "unexpected" };
+      return { status: "succeeded", result: { content: [{ type: "text", text: "unexpected" }] } };
     });
     const result = await fusion({
       toolCallId: "unknown",
@@ -302,7 +302,7 @@ test("then_run changes the target → reports changed freshness", async (t) => {
     await writeFile(target, "before\n");
     const fusion = createActionFusionExecutor(async () => {
       await writeFile(target, "command changed\n");
-      return { status: "succeeded", output: "changed" };
+      return { status: "succeeded", result: { content: [{ type: "text", text: "changed" }] } };
     });
     const result = await makeEditOverride(dir, DEFAULT_CONFIG, fusion).execute(
       "edit-stale",
@@ -335,7 +335,9 @@ test("all mutation tools forward command progress before completion in RPC mode"
       async (_id, _input, _signal, _ctx, onUpdate) => {
         assert.equal(events.at(-1)?.command, "running");
         onUpdate?.({ content: [{ type: "text", text: "live output" }], details: undefined });
-        assert.equal(updates.at(-1).details.actionFusion.output, "live output");
+        assert.deepEqual(updates.at(-1).details.actionFusion.result?.content, [
+          { type: "text", text: "live output" },
+        ]);
         assert.ok(
           updates.every(
             (update) =>
@@ -345,8 +347,11 @@ test("all mutation tools forward command progress before completion in RPC mode"
               ),
           ),
         );
-        assert.equal(events.at(-1)?.output, "live output");
-        return { status: "succeeded", output: "final output" };
+        assert.deepEqual(events.at(-1)?.result?.content, [{ type: "text", text: "live output" }]);
+        return {
+          status: "succeeded",
+          result: { content: [{ type: "text", text: "final output" }] },
+        };
       },
       (event) => events.push(event),
     );
@@ -405,7 +410,7 @@ test("all mutation tools forward command progress before completion in RPC mode"
         events.map((event) => event.mutationCompleted),
         [false, true, true, true, true],
       );
-      assert.equal(events.at(-1)?.output, "final output");
+      assert.deepEqual(events.at(-1)?.result?.content, [{ type: "text", text: "final output" }]);
       assert.equal(events.at(-1)?.publication, "PUBLISHED");
       assert.equal(updates.at(-1).details.actionFusion.command, "succeeded");
     }
@@ -444,7 +449,7 @@ test("progress reports skipped mutations and failed commands without rolling bac
       events.map((event) => event.command),
       ["waiting", "skipped"],
     );
-    assert.equal(events.at(-1)!.output, "");
+    assert.equal(events.at(-1)?.result, undefined);
     assert.equal(events.at(-1)!.mutationCompleted, false);
     events.length = 0;
     await writeFile(join(dir, "replace.txt"), "original\n");
@@ -486,7 +491,9 @@ test("progress reports skipped mutations and failed commands without rolling bac
       events.map((event) => event.command),
       ["waiting", "waiting", "running", "failed"],
     );
-    assert.equal(events.at(-1)!.output, "diagnostic\nCommand exited with code 7");
+    assert.deepEqual(events.at(-1)?.result, {
+      content: [{ type: "text", text: "diagnostic\nCommand exited with code 7" }],
+    });
     assert.equal(await readFile(join(dir, "failed.txt"), "utf8"), "published\n");
   } finally {
     await rm(dir, { recursive: true, force: true });
@@ -610,7 +617,7 @@ test("Fusion uses commit facts when details omit or contradict publication and r
         let commands = 0;
         const fusion = createActionFusionExecutor(async () => {
           commands++;
-          return { status: "succeeded", output: "checked" };
+          return { status: "succeeded", result: { content: [{ type: "text", text: "checked" }] } };
         });
         const result = await fusion({
           toolCallId: "commit-facts",
@@ -687,16 +694,23 @@ test("timed command progress ticks during silence, preserves output, and stops a
         t.mock.timers.tick(2_000);
         assert.equal(updates.length, updateCount + 2);
         assert.equal(events.at(-1)?.timing?.remainingSeconds, 8);
-        assert.equal(events.at(-1)?.output, "latest output");
+        assert.deepEqual(events.at(-1)?.result?.content, [{ type: "text", text: "latest output" }]);
         if (outcome === "cancelled") controller.abort();
         finished.resolve({
           status: outcome,
-          output:
-            outcome === "succeeded"
-              ? "complete"
-              : outcome === "timeout"
-                ? "Command timed out"
-                : "command stopped\nunderlying cause",
+          result: {
+            content: [
+              {
+                type: "text",
+                text:
+                  outcome === "succeeded"
+                    ? "complete"
+                    : outcome === "timeout"
+                      ? "Command timed out"
+                      : "command stopped\nunderlying cause",
+              },
+            ],
+          },
         });
         await execution;
         assert.equal(events.at(-1)?.command, outcome);
@@ -704,7 +718,7 @@ test("timed command progress ticks during silence, preserves output, and stops a
         t.mock.timers.tick(20_000);
         assert.equal(updates.length, terminalCount);
       } finally {
-        finished.resolve({ status: "succeeded", output: "" });
+        finished.resolve({ status: "succeeded", result: { content: [] } });
         await rm(dir, { recursive: true, force: true });
       }
     });
@@ -744,10 +758,13 @@ test("commands without an explicit timeout do not start countdown updates", asyn
     t.mock.timers.tick(20_000);
     assert.equal(events.length, count);
     assert.equal(events.at(-1)?.timing, undefined);
-    finished.resolve({ status: "succeeded", output: "complete" });
+    finished.resolve({
+      status: "succeeded",
+      result: { content: [{ type: "text", text: "complete" }] },
+    });
     await execution;
   } finally {
-    finished.resolve({ status: "succeeded", output: "" });
+    finished.resolve({ status: "succeeded", result: { content: [] } });
     await rm(dir, { recursive: true, force: true });
   }
 });
@@ -782,7 +799,7 @@ test("Fusion fails at a mutation or command boundary → reports each command ou
                 : scenario === "command cancelled"
                   ? "cancelled"
                   : "failed",
-            output: "command diagnostic",
+            result: { content: [{ type: "text", text: "command diagnostic" }] },
           };
         });
         const stoppedDuringMutation = [

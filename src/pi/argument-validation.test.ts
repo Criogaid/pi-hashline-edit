@@ -94,7 +94,7 @@ for (const scenario of cases) {
     let commandRuns = 0;
     const fusion = createActionFusionExecutor(async () => {
       commandRuns++;
-      return { status: "succeeded", output: "ran" };
+      return { status: "succeeded", result: { content: [{ type: "text", text: "ran" }] } };
     });
     const tool = scenario.make(cwd, fusion);
     const args: unknown = JSON.parse(JSON.stringify({ path, ...scenario.args, unexpected: true }));

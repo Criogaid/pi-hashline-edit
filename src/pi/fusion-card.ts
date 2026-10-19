@@ -25,34 +25,33 @@ import {
 } from "@earendil-works/pi-tui";
 import { Type, type Static, type TSchema } from "typebox";
 import { Value } from "typebox/value";
-import { ACTION_FUSION_PROGRESS_SCHEMA, COMMAND_RESULT_SCHEMA } from "./report-schema.ts";
-import { commandText, type ActionFusionProgress } from "./action-fusion.ts";
+import { ACTION_FUSION_PROGRESS_SCHEMA } from "./report-schema.ts";
+import type { ActionFusionProgress } from "./action-fusion.ts";
+import { commandText } from "./mutation-result.ts";
 import type { MutationRenderState } from "./render.ts";
 
 const CARD_TYPE = "hashline-then-run";
 const RESULT_TYPE = "hashline-then-run-result";
 
 const CARD_PROPERTIES = ACTION_FUSION_PROGRESS_SCHEMA.properties;
-const CARD_FIELDS = {
-  toolCallId: CARD_PROPERTIES.toolCallId,
-  commandText: CARD_PROPERTIES.commandText,
-  command: CARD_PROPERTIES.command,
-  timing: CARD_PROPERTIES.timing,
-  mutationCompleted: CARD_PROPERTIES.mutationCompleted,
-  freshness: CARD_PROPERTIES.freshness,
-};
-/** A card stores the command's session result, or only its output text when none exists. */
-const COMMAND_CARD_SCHEMA = Type.Union([
-  Type.Object({ ...CARD_FIELDS, result: COMMAND_RESULT_SCHEMA }, { additionalProperties: false }),
-  Type.Object({ ...CARD_FIELDS, output: CARD_PROPERTIES.output }, { additionalProperties: false }),
-]);
+const COMMAND_CARD_SCHEMA = Type.Object(
+  {
+    toolCallId: CARD_PROPERTIES.toolCallId,
+    commandText: CARD_PROPERTIES.commandText,
+    command: CARD_PROPERTIES.command,
+    result: CARD_PROPERTIES.result,
+    timing: CARD_PROPERTIES.timing,
+    mutationCompleted: CARD_PROPERTIES.mutationCompleted,
+    freshness: CARD_PROPERTIES.freshness,
+  },
+  { additionalProperties: false },
+);
 type CommandCardData = Static<typeof COMMAND_CARD_SCHEMA>;
 
 function commandCardData({
   toolCallId,
   commandText,
   command,
-  output,
   result,
   timing,
   mutationCompleted,
@@ -65,12 +64,8 @@ function commandCardData({
     mutationCompleted,
     freshness,
     ...(timing ? { timing } : {}),
-    ...(result ? { result } : { output }),
+    ...(result ? { result } : {}),
   };
-}
-
-function cardOutput(card: CommandCardData): string {
-  return "result" in card ? commandText(card.result.content) : card.output;
 }
 
 const TARGET_STATE = {
@@ -84,7 +79,8 @@ const TARGET_STATE = {
  * states: whether the mutation completed and the target's freshness.
  */
 function notRunReason(card: CommandCardData): string | undefined {
-  if (card.command === "cancelled" && !cardOutput(card)) return "Not run: cancelled.";
+  if (card.command === "cancelled" && !(card.result && commandText(card.result.content)))
+    return "Not run: cancelled.";
   if (card.command !== "skipped") return undefined;
   const { mutationCompleted, freshness } = card;
   if (!mutationCompleted) return "Not run: the mutation did not complete.";
@@ -232,15 +228,8 @@ export function registerFusionCards(pi: ExtensionAPI) {
           return box;
         },
         renderResult(value, options, theme, context) {
-          const card = current();
-          const command = card.command;
-          if (
-            "result" in card ||
-            card.output ||
-            command === "succeeded" ||
-            command === "failed" ||
-            command === "timeout"
-          ) {
+          // Every command that ran or failed to start has a result; waiting and skipped ones do not.
+          if (current().result) {
             result = bash.renderResult!(value, options, theme, {
               ...context,
               lastComponent: result,
@@ -262,9 +251,7 @@ export function registerFusionCards(pi: ExtensionAPI) {
           });
           native.updateResult(
             {
-              ...("result" in value
-                ? value.result
-                : { content: [{ type: "text", text: value.output }] }),
+              ...(value.result ?? { content: [] }),
               isError: value.command === "failed" || value.command === "timeout",
             },
             (value.command === "waiting" || value.command === "running") &&

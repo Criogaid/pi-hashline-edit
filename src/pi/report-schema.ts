@@ -93,6 +93,7 @@ export const COMMAND_RESULT_SCHEMA = Type.Object(
   },
   { additionalProperties: false },
 );
+export type CommandResult = Static<typeof COMMAND_RESULT_SCHEMA>;
 
 /** Fusion updates cross RPC and transcript boundaries before a final tool report exists. */
 export const ACTION_FUSION_PROGRESS_SCHEMA = Type.Object(
@@ -103,7 +104,6 @@ export const ACTION_FUSION_PROGRESS_SCHEMA = Type.Object(
     command: Type.Union([COMMAND_STATUS_SCHEMA, Type.Literal("waiting"), Type.Literal("running")]),
     publication: PUBLICATION_SCHEMA,
     freshness: FRESHNESS_SCHEMA,
-    output: Type.String(),
     result: opt(COMMAND_RESULT_SCHEMA),
     mutationCompleted: Type.Boolean(),
     timing: opt(

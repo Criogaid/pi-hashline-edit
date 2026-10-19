@@ -160,7 +160,10 @@ for (const observation of [1, 2]) {
         const fusion = createActionFusionExecutor(
           async () => {
             commands++;
-            return { status: "succeeded", output: "checked" };
+            return {
+              status: "succeeded",
+              result: { content: [{ type: "text", text: "checked" }] },
+            };
           },
           (progress) => {
             if (progress.mutationCompleted) mutationCompleted = true;
@@ -213,7 +216,7 @@ test("disturbance during post-command freshness read → retains publication and
         let commands = 0;
         const fusion = createActionFusionExecutor(async () => {
           commands++;
-          return { status: "succeeded", output: "checked" };
+          return { status: "succeeded", result: { content: [{ type: "text", text: "checked" }] } };
         });
         const ctx = await createToolContext(directory, t);
         const result = await withDisturbedRead(
@@ -310,7 +313,7 @@ test("concurrent change during editable snapshot read → skips Fusion with NOT_
   let commands = 0;
   const fusion = createActionFusionExecutor(async () => {
     commands++;
-    return { status: "succeeded", output: "checked" };
+    return { status: "succeeded", result: { content: [{ type: "text", text: "checked" }] } };
   });
   const ctx = await createToolContext(directory, t);
   await withDisturbedRead(

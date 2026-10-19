@@ -16,6 +16,7 @@ import { generateDiffString, generateUnifiedPatch } from "@earendil-works/pi-cod
 import { displayCarriageReturns } from "./anchor-format.ts";
 import { normalizeLineEndings } from "../core/lines.ts";
 import type {
+  CommandResult,
   CommandStatus,
   FailureReport,
   MutationToolName,
@@ -92,10 +93,19 @@ export interface MutationOutcome<TDetails, TTool extends MutationToolName = Muta
   readonly facts: MutationFacts<TTool>;
 }
 
+/** The text blocks of a command result, joined as then_run reports its output. */
+export function commandText(content: CommandResult["content"]): string {
+  return content
+    .filter((block) => block.type === "text")
+    .map((block) => block.text)
+    .join("\n");
+}
+
 /** What Action Fusion states about the command; it never restates file state. */
 export interface CommandFacts {
   readonly status: CommandStatus;
-  readonly output?: string;
+  /** Absent when the command never produced a result. */
+  readonly result?: CommandResult;
   /** A progress observer failed; command and file outcomes are unaffected. */
   readonly progressError?: unknown;
 }
@@ -110,6 +120,7 @@ export function finalizeMutation<TDetails extends object, TTool extends Mutation
   budget: OutputBudgets = DEFAULT_OUTPUT_BUDGETS,
 ): AgentToolResult<TDetails & ReportDetails<SuccessReport>> {
   const fresh = observation.freshness === "unchanged";
+  const output = command?.result ? commandText(command.result.content) : "";
   // Tool-indexed facts preserve the correlation that object spread loses.
   const report = {
     tool,
@@ -118,9 +129,7 @@ export function finalizeMutation<TDetails extends object, TTool extends Mutation
     ...facts,
     freshness: fresh ? undefined : observation.freshness,
     freshnessError: causeOf(observation.error, budget.fieldBytes),
-    then_run: command
-      ? { status: command.status, ...(command.output ? { output: command.output } : {}) }
-      : undefined,
+    then_run: command ? { status: command.status, ...(output ? { output } : {}) } : undefined,
     progressError: causeOf(command?.progressError, budget.fieldBytes),
   } as SuccessReport;
   return reportResult(report, [], details);

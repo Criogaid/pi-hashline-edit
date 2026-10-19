@@ -13,6 +13,7 @@ import {
   type ThenRunInput,
 } from "../pi/action-fusion.ts";
 import { makeWriteOverride } from "../pi/write-tool.ts";
+import { commandText } from "../pi/mutation-result.ts";
 
 /** Exercise the default runner through a real parent tool call, with no provider traffic. */
 async function openSession(
@@ -144,7 +145,12 @@ test("cancelling a real session Bash command → reports cancellation and keeps 
 }, async (t) => {
   const started = Promise.withResolvers<void>();
   const f = await openSession(t, undefined, (event) => {
-    if (event.command === "running" && event.output.includes("READY")) started.resolve();
+    if (
+      event.command === "running" &&
+      event.result &&
+      commandText(event.result.content).includes("READY")
+    )
+      started.resolve();
   });
   await writeFile(
     join(f.cwd, "command.mjs"),
@@ -268,7 +274,9 @@ test("session Bash override and tool_result hook → then_run uses their final r
   assert.match(result.text, /HOOK_REJECTED_OVERRIDE/);
   assert.doesNotMatch(result.text, /OVERRIDE_RESULT/);
   assert.deepEqual(
-    f.progress.find((event) => event.output === "OVERRIDE_PROGRESS")?.result,
+    f.progress.find(
+      (event) => event.result && commandText(event.result.content) === "OVERRIDE_PROGRESS",
+    )?.result,
     partial,
   );
   assert.deepEqual(f.progress.at(-1)?.result, final);

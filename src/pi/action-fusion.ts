@@ -33,6 +33,7 @@ import {
   type FreshnessObservation,
 } from "./file-commit.ts";
 import {
+  commandText,
   finalizeMutation,
   type CommandFacts,
   type MutationOutcome,
@@ -44,6 +45,7 @@ import { causeOf, CommandNotRun, type ReportDetails } from "./report.ts";
 import { DEFAULT_OUTPUT_BUDGETS, type OutputBudgets } from "./budgets.ts";
 import type {
   ActionFusionProgress,
+  CommandResult,
   CommandStatus,
   Freshness,
   MutationToolName,
@@ -119,21 +121,10 @@ export function withThenRunDescription(description: string, actionFusion: boolea
     : description;
 }
 
-/** The text blocks of a command result, joined as then_run reports its output. */
-export function commandText(
-  content: NonNullable<ActionFusionProgress["result"]>["content"],
-): string {
-  return content
-    .filter((block) => block.type === "text")
-    .map((block) => block.text)
-    .join("\n");
-}
-
 /** Keep command state independent of its diagnostic text and of file publication. */
 export interface CommandOutcome {
   readonly status: Exclude<CommandStatus, "skipped">;
-  readonly output: string;
-  readonly result?: ActionFusionProgress["result"];
+  readonly result: CommandResult;
   /** Preserve the session tool's request to stop after this tool batch. */
   readonly terminate?: boolean;
 }
@@ -161,9 +152,7 @@ async function defaultCommandRunner(
   // Use the session's callable Bash, including overrides, validation, permission
   // hooks and tool_result hooks. Tool failures resolve with isError, not rejection.
   const { result, isError } = await ctx.executeTool("bash", input, { signal, onUpdate });
-  const output = commandText(result.content);
   const command = {
-    output,
     terminate: result.terminate,
     result: { content: result.content, details: result.details },
   };
@@ -180,6 +169,7 @@ async function defaultCommandRunner(
   // timeout as text. Only recognize its final diagnostic for the requested
   // timeout; a failed command's output may itself mention or quote a timeout.
   const timeoutDiagnostic = `Command timed out after ${input.timeout} seconds`;
+  const output = commandText(result.content);
   const timedOut =
     !hasExitCode &&
     input.timeout !== undefined &&
@@ -259,13 +249,12 @@ export function createActionFusionExecutor(
   > {
     let completedMutation: MutationOutcome<TDetails, TTool> | undefined;
     let progressFailure: unknown;
-    let commandResult: ActionFusionProgress["result"];
+    let commandResult: CommandResult | undefined;
     let commandTiming: { readonly timeoutSeconds: number; readonly deadlineMs: number } | undefined;
     const report = (
       command: ActionFusionProgress["command"],
       publication: PublicationStatus,
       freshness: Freshness,
-      output = "",
     ) => {
       if (!thenRun) return;
       const progress: ActionFusionProgress = {
@@ -275,7 +264,6 @@ export function createActionFusionExecutor(
         command,
         publication,
         freshness,
-        output,
         ...(commandResult ? { result: commandResult } : {}),
         mutationCompleted: completedMutation !== undefined,
         ...(commandTiming
@@ -332,7 +320,7 @@ export function createActionFusionExecutor(
       const { publication, publishedRevision } = outcome.commit;
       report("waiting", publication, "unknown");
       const settle = (observation: FreshnessObservation, command?: CommandFacts) => {
-        if (command) report(command.status, publication, observation.freshness, command.output);
+        if (command) report(command.status, publication, observation.freshness);
         const settled = finalizeMutation(
           tool,
           displayPath,
@@ -356,7 +344,6 @@ export function createActionFusionExecutor(
       if (before.freshness !== "unchanged") return settle(before, { status: "skipped" });
 
       report("running", publication, "unchanged");
-      let output = "";
       let command: CommandOutcome;
       // The executor owns the heartbeat lifetime; Pi Bash owns timeout and process cleanup.
       let heartbeat: ReturnType<typeof setInterval> | undefined;
@@ -371,29 +358,28 @@ export function createActionFusionExecutor(
             };
             if (onProgress || onUpdate) {
               heartbeat = setInterval(
-                () => report("running", publication, "unknown", output),
+                () => report("running", publication, "unknown"),
                 MILLISECONDS_PER_SECOND,
               );
               heartbeat.unref();
             }
           }
           commandResult = { content: partial.content, details: partial.details };
-          output = commandText(partial.content);
-          report("running", publication, "unknown", output);
+          report("running", publication, "unknown");
         });
-        output = command.output;
-        commandResult = command.result;
       } catch (error) {
-        output = errorMessage(error);
-        commandResult = undefined;
-        command = { status: signal?.aborted ? "cancelled" : "failed", output };
+        command = {
+          status: signal?.aborted ? "cancelled" : "failed",
+          result: { content: [{ type: "text", text: errorMessage(error) }] },
+        };
       } finally {
         if (heartbeat) clearInterval(heartbeat);
       }
+      commandResult = command.result;
       terminate = command.terminate;
       return settle(await observeFreshness(absolutePath, publishedRevision), {
         status: command.status,
-        output,
+        result: command.result,
       });
     }).catch((error: unknown) => {
       // Failures before the mutation started (such as resolving the queue key) also skip the command.

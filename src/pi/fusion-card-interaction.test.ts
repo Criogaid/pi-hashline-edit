@@ -41,7 +41,7 @@ test("command cards share native mouse behavior and preserve independent expansi
     command: "running" as const,
     publication: "PUBLISHED" as const,
     freshness: "unchanged" as const,
-    output,
+    result: { content: [{ type: "text" as const, text: output }] },
     mutationCompleted: true,
   };
   report(progress);
@@ -82,7 +82,11 @@ test("command cards share native mouse behavior and preserve independent expansi
   assert.equal(first.handleMouse(event)?.handled, true);
   assert.match(first.render(100).join("\n"), /command output 0\b/);
   assert.doesNotMatch(second.render(100).join("\n"), /command output 0\b/);
-  report({ ...progress, command: "succeeded", output: `${output}\nfinished` });
+  report({
+    ...progress,
+    command: "succeeded",
+    result: { content: [{ type: "text", text: `${output}\nfinished` }] },
+  });
   first.invalidate();
   assert.match(first.render(40).join("\n"), /command output 0\b/);
   assert.match(first.render(100).join("\n"), /finished/);
@@ -110,7 +114,7 @@ test("command entries rebuilt before session_start → remain visible and become
     command: "succeeded",
     publication: "PUBLISHED",
     freshness: "unchanged",
-    output,
+    result: { content: [{ type: "text", text: output }] },
     mutationCompleted: true,
   });
   const entry = sessionManager
