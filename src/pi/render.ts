@@ -256,7 +256,7 @@ export function renderMutationResult<TArgs>(
     | {
         displayDiff?: string;
         report?: Report;
-        actionFusion?: Partial<Pick<ActionFusionProgress, "publication" | "mutationCompleted">>;
+        actionFusion?: Partial<Pick<ActionFusionProgress, "mutationCompleted">>;
       }
     | undefined
   >,

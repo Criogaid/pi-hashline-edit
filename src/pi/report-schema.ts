@@ -99,10 +99,8 @@ export type CommandResult = Static<typeof COMMAND_RESULT_SCHEMA>;
 export const ACTION_FUSION_PROGRESS_SCHEMA = Type.Object(
   {
     toolCallId: Type.String(),
-    path: Type.String(),
     commandText: Type.String(),
     command: Type.Union([COMMAND_STATUS_SCHEMA, Type.Literal("waiting"), Type.Literal("running")]),
-    publication: PUBLICATION_SCHEMA,
     freshness: FRESHNESS_SCHEMA,
     result: opt(COMMAND_RESULT_SCHEMA),
     mutationCompleted: Type.Boolean(),

@@ -26,12 +26,7 @@ import { basename, dirname, resolve } from "node:path";
 import type { AgentToolResult, AgentToolUpdateCallback } from "@earendil-works/pi-agent-core";
 import type { ExtensionToolContext } from "@earendil-works/pi-coding-agent";
 import { Type, type Static, type TObject, type TProperties } from "typebox";
-import {
-  commitFreshness,
-  FileMutationError,
-  observeFreshness,
-  type FreshnessObservation,
-} from "./file-commit.ts";
+import { commitFreshness, observeFreshness, type FreshnessObservation } from "./file-commit.ts";
 import {
   commandText,
   finalizeMutation,
@@ -49,7 +44,6 @@ import type {
   CommandStatus,
   Freshness,
   MutationToolName,
-  PublicationStatus,
   SuccessReport,
 } from "./report-schema.ts";
 export type { ActionFusionProgress } from "./report-schema.ts";
@@ -130,11 +124,6 @@ type CommandRunner = (
   ctx: ExtensionToolContext,
   onUpdate?: AgentToolUpdateCallback<unknown>,
 ) => Promise<CommandOutcome>;
-
-/** Publication of a mutation failure, for progress reports; the failure report states it to the model. */
-function publicationOf(error: unknown): PublicationStatus {
-  return error instanceof FileMutationError ? error.publication : "NOT_PUBLISHED";
-}
 
 async function defaultCommandRunner(
   _toolCallId: string,
@@ -243,18 +232,12 @@ export function createActionFusionExecutor(
     let progressFailure: unknown;
     let commandResult: CommandResult | undefined;
     let commandTiming: { readonly timeoutSeconds: number; readonly deadlineMs: number } | undefined;
-    const report = (
-      command: ActionFusionProgress["command"],
-      publication: PublicationStatus,
-      freshness: Freshness,
-    ) => {
+    const report = (command: ActionFusionProgress["command"], freshness: Freshness) => {
       if (!thenRun) return;
       const progress: ActionFusionProgress = {
         toolCallId,
-        path: absolutePath,
         commandText: thenRun.command,
         command,
-        publication,
         freshness,
         ...(commandResult ? { result: commandResult } : {}),
         mutationCompleted: completedMutation !== undefined,
@@ -288,10 +271,10 @@ export function createActionFusionExecutor(
     };
     /** A mutation that did not complete keeps its own failure; Fusion adds only the command status. */
     const notRun = (error: unknown, command: "skipped" | "cancelled") => {
-      report(command, publicationOf(error), "unknown");
+      report(command, "unknown");
       return new CommandNotRun(error, command, causeOf(progressFailure, budget.fieldBytes));
     };
-    report("waiting", "NOT_PUBLISHED", "unknown");
+    report("waiting", "unknown");
     let terminate: boolean | undefined;
     const result = await withQueue(absolutePath, async () => {
       try {
@@ -309,10 +292,10 @@ export function createActionFusionExecutor(
         throw error;
       }
 
-      const { publication, publishedRevision } = outcome.commit;
-      report("waiting", publication, "unknown");
+      const { publishedRevision } = outcome.commit;
+      report("waiting", "unknown");
       const settle = (observation: FreshnessObservation, command?: CommandFacts) => {
-        if (command) report(command.status, publication, observation.freshness);
+        if (command) report(command.status, observation.freshness);
         // The report states publication, freshness, and the command status once.
         return finalizeMutation(
           tool,
@@ -330,7 +313,7 @@ export function createActionFusionExecutor(
       if (signal?.aborted) return settle(before, { status: "cancelled" });
       if (before.freshness !== "unchanged") return settle(before, { status: "skipped" });
 
-      report("running", publication, "unchanged");
+      report("running", "unchanged");
       let command: CommandOutcome;
       // The executor owns the heartbeat lifetime; Pi Bash owns timeout and process cleanup.
       let heartbeat: ReturnType<typeof setInterval> | undefined;
@@ -344,15 +327,12 @@ export function createActionFusionExecutor(
               deadlineMs: Date.now() + thenRun.timeout * MILLISECONDS_PER_SECOND,
             };
             if (onProgress || onUpdate) {
-              heartbeat = setInterval(
-                () => report("running", publication, "unknown"),
-                MILLISECONDS_PER_SECOND,
-              );
+              heartbeat = setInterval(() => report("running", "unknown"), MILLISECONDS_PER_SECOND);
               heartbeat.unref();
             }
           }
           commandResult = { content: partial.content, details: partial.details };
-          report("running", publication, "unknown");
+          report("running", "unknown");
         });
       } catch (error) {
         command = {
