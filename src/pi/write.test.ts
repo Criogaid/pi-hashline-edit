@@ -194,7 +194,6 @@ test("write returns its summary and command output after an unchanged then_run",
     );
     assert.equal(reportOf(result)?.created, true);
     assert.deepEqual(reportOf(result)?.then_run, { status: "succeeded", output: "checked" });
-    assert.equal(result.details.actionFusion.freshness, "unchanged");
   }));
 
 test("write reports changed freshness when then_run changes the target", async () =>
@@ -222,7 +221,6 @@ test("write reports changed freshness when then_run changes the target", async (
     assert.equal(reportOf(result)?.next, REREAD);
     assert.deepEqual(reportOf(result)?.then_run, { status: "succeeded", output: "checked" });
     assert.doesNotMatch(text, /Fresh anchors:|\b1#[0-9A-Z]+\b/);
-    assert.equal(result.details.actionFusion.freshness, "changed");
     const rendered = write
       .renderResult(result, { isPartial: false }, theme, { isError: false })
       .render(100)
@@ -252,8 +250,7 @@ test("write reports missing freshness when then_run removes the target", async (
       context(dir),
     );
     const text = result.content.map((block: any) => block.text).join("\n");
-    assert.ok(result.details.actionFusion);
-    assert.equal(result.details.actionFusion.freshness, "missing");
+    assert.equal(reportOf(result)?.freshness, "missing");
     assert.equal(reportOf(result)?.next, REREAD);
     assert.doesNotMatch(text, /Fresh anchors:/);
   }));
@@ -273,9 +270,8 @@ test("write preserves command failure and changed freshness", async () =>
       context(dir),
     );
     const text = result.content.map((block: any) => block.text).join("\n");
-    assert.ok(result.details.actionFusion);
-    assert.equal(result.details.actionFusion.freshness, "changed");
-    assert.equal(result.details.actionFusion.command, "failed");
+    assert.equal(reportOf(result)?.freshness, "changed");
+    assert.equal(reportOf(result)?.then_run?.status, "failed");
     assert.equal(reportOf(result)?.next, REREAD);
     assert.doesNotMatch(text, /Fresh anchors:/);
   }));

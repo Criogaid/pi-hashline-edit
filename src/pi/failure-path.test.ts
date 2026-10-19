@@ -86,12 +86,9 @@ test("command fails and modifies the target → reports changed freshness and co
       signal: undefined,
       ctx: await createToolContext(dir, t),
     });
-    assert.deepEqual(outcome.details.actionFusion, {
-      publication: "PUBLISHED",
-      command: "failed",
-      freshness: "changed",
-    });
     const report = reportOf(outcome);
+    assert.equal(report?.publication, "PUBLISHED");
+    assert.equal(report?.then_run?.status, "failed");
     assert.equal(report?.freshness, "changed");
     assert.equal(report?.next, REREAD);
     assert.equal(report?.then_run?.output, "command failed");
@@ -125,8 +122,8 @@ test("cancellation after publication → does not rerun mutation and still inspe
       signal: controller.signal,
       ctx: await createToolContext(dir, t),
     });
-    assert.equal(outcome.details.actionFusion.command, "cancelled");
-    assert.equal(outcome.details.actionFusion.freshness, "unchanged");
+    assert.equal(reportOf(outcome)?.then_run?.status, "cancelled");
+    assert.equal(reportOf(outcome)?.freshness, undefined);
     assert.equal(mutations, 1);
     assert.equal(await readFile(target, "utf8"), "mutation\n");
   }));

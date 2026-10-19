@@ -20,11 +20,7 @@ import { renderDiffPreview } from "./render.ts";
 import { withMutationStatus } from "./fusion-card.ts";
 import { makeWriteOverride } from "./write-tool.ts";
 import { generateMutationDetails } from "./mutation-result.ts";
-import {
-  createActionFusionExecutor,
-  type ActionFusionDetails,
-  type ActionFusionProgress,
-} from "./action-fusion.ts";
+import { createActionFusionExecutor, type ActionFusionProgress } from "./action-fusion.ts";
 import { DEFAULT_CONFIG } from "./config.ts";
 import { toDisplayLines } from "./grep-render.ts";
 import { makeReadOverride } from "./read-tool.ts";
@@ -33,17 +29,18 @@ import { renderToolError } from "./render.ts";
 import { formatArgumentError } from "./argument-error.ts";
 import { makeGrepOverride } from "./grep-tool.ts";
 import { openTestSession } from "../testing/session.testing.ts";
+import type { SuccessReport } from "./report-schema.ts";
 
 const versions = { publishedRevision: "r", observedRevision: "r" };
-const mutationDetails = (actionFusion?: ActionFusionDetails) => ({
+const mutationDetails = (
+  report: Pick<SuccessReport, "publication" | "freshness" | "then_run">,
+) => ({
   ...generateMutationDetails("a.txt", "old\n", "new\n", versions, "PUBLISHED"),
   report: {
     tool: "edit" as const,
     path: "a.txt",
-    publication: actionFusion?.publication,
-    freshness: actionFusion?.freshness === "unchanged" ? undefined : actionFusion?.freshness,
+    ...report,
   },
-  actionFusion,
 });
 
 test("mutation headers refresh in place and retain isolated per-call counts", () => {
@@ -153,7 +150,7 @@ test("mutation card owns stale-anchor notices without internal status", () => {
       details: mutationDetails({
         publication: "PUBLISHED",
         freshness: "changed",
-        command: "failed",
+        then_run: { status: "failed" },
       }),
     },
     { isPartial: false, expanded: false },
@@ -179,8 +176,6 @@ test("mutation card omits status when then_run was not requested", () => {
       content: [{ type: "text", text: "Edited a.txt." }],
       details: mutationDetails({
         publication: "PUBLISHED",
-        freshness: "unchanged",
-        command: "not_requested",
       }),
     },
     { isPartial: false, expanded: false },
@@ -197,7 +192,6 @@ test("mutation card omits status when then_run was not requested", () => {
       details: mutationDetails({
         publication: "PUBLISHED",
         freshness: "changed",
-        command: "not_requested",
       }),
     },
     { isPartial: false, expanded: false },
@@ -302,8 +296,6 @@ test("withMutationStatus renderResult initializes mutationShell defensively", ()
       content: [{ type: "text", text: "Edited a.txt." }],
       details: mutationDetails({
         publication: "PUBLISHED",
-        freshness: "unchanged",
-        command: "not_requested",
       }),
     },
     { isPartial: false, expanded: false },
@@ -560,7 +552,6 @@ test("command changes or removes the target → completed mutation stays success
     });
     assert.ok(completedFrames.length > 0);
     assert.ok(completedFrames.every((frame) => frame.includes(theme.getBgAnsi("toolSuccessBg"))));
-    assert.equal(result.details.actionFusion.freshness, disturbance);
     context.isPartial = false;
     tool.renderCall!(args, theme, context);
     renderResult(result, { isPartial: false, expanded: false }, theme, context);

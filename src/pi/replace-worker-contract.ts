@@ -1,19 +1,10 @@
-/** Replacement-specific result shape; shared worker errors are checked by the host. */
-import { Type } from "typebox";
+/** Replacement worker request and reply decoder; shared worker errors are checked by the host. */
 import { workerReplyDecoder } from "./regex-worker-contract.ts";
-import type { Replacement } from "../core/replace.ts";
+import { REPLACEMENT_RESULT_SCHEMA, type Replacement } from "../core/replace-schema.ts";
 
 export interface ReplacementRequest {
   readonly source: string;
   readonly rules: readonly Replacement[];
 }
 
-export const decodeWorkerReply = workerReplyDecoder(
-  Type.Object(
-    {
-      text: Type.String(),
-      count: Type.Integer({ minimum: 1 }),
-    },
-    { additionalProperties: false },
-  ),
-);
+export const decodeWorkerReply = workerReplyDecoder(REPLACEMENT_RESULT_SCHEMA);

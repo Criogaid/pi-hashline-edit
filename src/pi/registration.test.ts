@@ -144,7 +144,6 @@ test("mutation cards use Fusion by default and explicit false removes command su
         },
         ctx: { cwd: dir },
       });
-      assert.equal(result.details.actionFusion.command, "failed");
       assert.equal(
         reportOf(result)?.publication,
         name === "replace" ? "NOT_PUBLISHED" : "PUBLISHED",

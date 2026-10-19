@@ -219,43 +219,6 @@ test("cancelled calls do not mutate or run the command", async (t) => {
   }
 });
 
-test("command changes the target → reports changed freshness", async (t) => {
-  const dir = await tempDir();
-  try {
-    const target = join(dir, "stale.txt");
-    await writeFile(target, "before\n");
-    const fusion = createActionFusionExecutor(async () => {
-      await writeFile(target, "changed by command\n");
-      return { status: "succeeded", result: { content: [{ type: "text", text: "changed" }] } };
-    });
-    const result = await fusion({
-      toolCallId: "stale",
-      tool: "edit",
-      displayPath: target,
-      absolutePath: target,
-      thenRun: { command: "mutate target" },
-      mutate: async () => {
-        await writeFile(target, "after mutation\n");
-        return publishedMutation("after mutation\n", {
-          content: [{ type: "text", text: "mutated" }],
-          details: undefined,
-        });
-      },
-      signal: undefined,
-      ctx: await ctx(dir, t),
-    });
-    const output = result.content
-      .filter((block) => block.type === "text")
-      .map((block) => (block.type === "text" ? block.text : ""))
-      .join("\n");
-    assert.equal(reportOf(result)?.next, REREAD);
-    assert.doesNotMatch(output, /ANCHOR/);
-    assert.equal((result.details as any)?.actionFusion?.freshness, "changed");
-  } finally {
-    await rm(dir, { recursive: true, force: true });
-  }
-});
-
 test("unreadable target after mutation → reports unknown freshness and skips the command", async (t) => {
   const dir = await tempDir();
   try {
@@ -287,7 +250,7 @@ test("unreadable target after mutation → reports unknown freshness and skips t
       .map((block) => (block.type === "text" ? block.text : ""))
       .join("\n");
     assert.equal(commands, 0);
-    assert.equal((result.details as any).actionFusion.freshness, "unknown");
+    assert.equal(reportOf(result)?.freshness, "unknown");
     assert.doesNotMatch(output, /ANCHOR/);
     assert.equal(reportOf(result)?.next, REREAD);
   } finally {
@@ -315,9 +278,10 @@ test("then_run changes the target → reports changed freshness", async (t) => {
       undefined,
       await ctx(dir, t),
     );
-    const output = result.content.map((block: any) => block.text ?? "").join("\n");
-    assert.ok(result.details.actionFusion);
-    assert.equal(result.details.actionFusion.freshness, "changed");
+    const output = result.content
+      .map((block) => (block.type === "text" ? block.text : ""))
+      .join("\n");
+    assert.equal(reportOf(result)?.freshness, "changed");
     assert.equal(reportOf(result)?.next, REREAD);
     assert.doesNotMatch(output, /Updated anchors|\b1#[0-9A-Z]+│/);
     assert.equal(await readFile(target, "utf8"), "command changed\n");
@@ -399,7 +363,11 @@ test("all mutation tools forward command progress before completion in RPC mode"
       events.length = 0;
       updates.length = 0;
       await writeFile(join(dir, "progress.txt"), "before\n");
-      await run();
+      const result = await run();
+      assert.equal(Object.hasOwn(result.details, "actionFusion"), false);
+      assert.equal(result.details.report.publication, "PUBLISHED");
+      assert.equal(result.details.report.then_run?.status, "succeeded");
+      assert.equal(Object.hasOwn(result.details.report, "freshness"), false);
       for (const update of updates)
         assert.equal(Value.Check(ACTION_FUSION_PROGRESS_SCHEMA, update.details.actionFusion), true);
       assert.deepEqual(
@@ -485,8 +453,7 @@ test("progress reports skipped mutations and failed commands without rolling bac
       undefined,
       await ctx(dir, t),
     );
-    assert.ok(failed.details.actionFusion);
-    assert.equal(failed.details.actionFusion.command, "failed");
+    assert.equal(reportOf(failed)?.then_run?.status, "failed");
     assert.deepEqual(
       events.map((event) => event.command),
       ["waiting", "waiting", "running", "failed"],
@@ -583,7 +550,8 @@ test("published mutation failure → preserves the original failure and states c
 
     assert.ok(caught instanceof CommandNotRun);
     assert.equal(caught.status, "skipped");
-    assert.equal(caught.error, mutationError);
+    assert.equal(caught.cause, mutationError);
+    assert.equal(Object.hasOwn(caught, "error"), false);
     const report = describeFailure("edit", caught, { mutation: true });
     assert.equal(report.publication, "PUBLISHED");
     assert.equal(report.stage, "post_process");
@@ -637,11 +605,7 @@ test("Fusion uses commit facts when details omit or contradict publication and r
         for (const [key, value] of Object.entries(details ?? {}))
           assert.deepEqual(Reflect.get(result.details, key), value);
         assert.equal(reportOf(result)?.publication, "NOT_PUBLISHED");
-        assert.deepEqual(result.details.actionFusion, {
-          publication: "NOT_PUBLISHED",
-          command: thenRun ? "succeeded" : "not_requested",
-          freshness: "unchanged",
-        });
+        assert.equal(reportOf(result)?.then_run?.status, thenRun ? "succeeded" : undefined);
         assert.equal(commands, thenRun ? 1 : 0);
         assert.equal(await readFile(target, "utf8"), "same\n");
       }
@@ -859,17 +823,8 @@ test("Fusion fails at a mutation or command boundary → reports each command ou
           diagnostic = result.content
             .map((block) => (block.type === "text" ? block.text : ""))
             .join("\n");
-          const details: unknown = result.details;
-          assert.ok(details !== null && typeof details === "object" && "actionFusion" in details);
-          const state = details.actionFusion;
-          assert.ok(
-            state !== null &&
-              typeof state === "object" &&
-              "command" in state &&
-              "publication" in state,
-          );
-          assert.equal(state.command, expectedCommand);
-          assert.equal(state.publication, "PUBLISHED");
+          assert.equal(result.details.report.publication, "PUBLISHED");
+          assert.equal(renderReport(result.details.report), diagnostic);
         }
         const report = JSON.parse(diagnostic);
         assert.equal(report.then_run.status, expectedCommand);

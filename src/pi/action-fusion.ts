@@ -69,12 +69,6 @@ export const ACTION_FUSION_GUIDELINES = [
   "then_run is a parameter of edit, replace, and write, not a separate tool.",
 ];
 
-export interface ActionFusionDetails {
-  readonly publication: PublicationStatus;
-  readonly command: CommandStatus | "not_requested";
-  readonly freshness: Freshness;
-}
-
 type ProgressReporter = (progress: ActionFusionProgress, ctx: ExtensionToolContext) => void;
 
 /** The tools that accept then_run. */
@@ -244,9 +238,7 @@ export function createActionFusionExecutor(
     signal: AbortSignal | undefined;
     ctx: ExtensionToolContext;
     onUpdate?: AgentToolUpdateCallback<MutationResultDetails<TDetails>>;
-  }): Promise<
-    AgentToolResult<TDetails & ReportDetails<SuccessReport> & { actionFusion: ActionFusionDetails }>
-  > {
+  }): Promise<AgentToolResult<TDetails & ReportDetails<SuccessReport>>> {
     let completedMutation: MutationOutcome<TDetails, TTool> | undefined;
     let progressFailure: unknown;
     let commandResult: CommandResult | undefined;
@@ -321,7 +313,8 @@ export function createActionFusionExecutor(
       report("waiting", publication, "unknown");
       const settle = (observation: FreshnessObservation, command?: CommandFacts) => {
         if (command) report(command.status, publication, observation.freshness);
-        const settled = finalizeMutation(
+        // The report states publication, freshness, and the command status once.
+        return finalizeMutation(
           tool,
           displayPath,
           outcome,
@@ -329,12 +322,6 @@ export function createActionFusionExecutor(
           command && { ...command, progressError: progressFailure },
           budget,
         );
-        const actionFusion: ActionFusionDetails = {
-          publication,
-          command: command?.status ?? "not_requested",
-          freshness: observation.freshness,
-        };
-        return { ...settled, details: { ...settled.details, actionFusion } };
       };
       if (thenRun === undefined) return settle(commitFreshness(outcome.commit));
 

@@ -239,16 +239,8 @@ test("grep flags: JavaScript modes preserve native matching through the real sea
   }
 });
 
-test("grep flags: native flag and Unicode syntax errors reject the corresponding argument", async () => {
+test("grep flags: invalid Unicode syntax rejects the pattern argument", async () => {
   const tool = makeGrepOverrideWithBackend(process.cwd(), DEFAULT_CONFIG, {});
-  for (const literal of [false, true]) {
-    for (const flags of ["x", "uv"]) {
-      await assert.rejects(
-        callTool(tool, { path: "missing.txt", pattern: "a", literal, flags }),
-        rejectsArgument("flags"),
-      );
-    }
-  }
   await assert.rejects(
     callTool(tool, {
       path: "missing.txt",

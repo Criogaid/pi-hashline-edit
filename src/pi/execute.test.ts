@@ -685,8 +685,7 @@ test("failed commands preserve mutation results and stay out of all main card re
       await writeFile(join(dir, path), "before\n");
       const { result, rendered } = await run();
       assert.equal("isError" in result, false);
-      assert.equal(result.details.actionFusion?.command, "failed");
-      assert.equal(result.details.actionFusion?.publication, "PUBLISHED");
+      assert.equal(reportOf(result)?.publication, "PUBLISHED");
       const last = result.content.at(-1);
       assert.ok(last?.type === "text");
       assert.equal(reportOf(result)?.then_run?.status, "failed");
@@ -1397,8 +1396,8 @@ test("copy/move with fused command → execute after the complete transfer and p
         { ctx: { cwd: dir } },
       );
       assert.ok("publishedRevision" in result.details);
-      assert.equal(result.details.actionFusion?.command, "failed");
-      assert.equal(result.details.publication, "PUBLISHED");
+      assert.equal(reportOf(result)?.then_run?.status, "failed");
+      assert.equal(reportOf(result)?.publication, "PUBLISHED");
       assert.equal(result.details.publishedRevision, byteRevision(Buffer.from(expected, "utf8")));
       assert.equal(await readFile(file, "utf8"), expected);
       assert.equal(commands, 1);

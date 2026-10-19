@@ -26,11 +26,11 @@ import type {
 } from "./report-schema.ts";
 import { causeOf, reportResult, type ReportDetails } from "./report.ts";
 import { DEFAULT_OUTPUT_BUDGETS, type OutputBudgets } from "./budgets.ts";
-import type { ActionFusionDetails, ActionFusionProgress } from "./action-fusion.ts";
+import type { ActionFusionProgress } from "./action-fusion.ts";
 
-/** Final success carries tool details; final failure carries only its report. */
+/** Final success carries tool details; final failure carries only its report; neither carries progress. */
 export type MutationFinalDetails<TDetails> =
-  | (TDetails & ReportDetails<SuccessReport> & { actionFusion?: ActionFusionDetails })
+  | (TDetails & ReportDetails<SuccessReport> & { actionFusion?: never })
   | (ReportDetails<FailureReport> & { actionFusion?: never });
 
 /** Progress can precede the mutation and carries no final report yet. */

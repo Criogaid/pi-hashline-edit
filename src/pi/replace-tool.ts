@@ -32,8 +32,8 @@ import {
 import type { AgentToolUpdateCallback } from "@earendil-works/pi-agent-core";
 import { Type, type Static } from "typebox";
 import { applyReplacements } from "../core/replace.ts";
-import { buildRegex } from "../core/regex.ts";
-import { REPLACEMENTS_SCHEMA, REGEX_FLAGS_PATTERN } from "../core/replace-schema.ts";
+import { buildRegex, regexFlagsError } from "../core/regex.ts";
+import { REPLACEMENTS_SCHEMA } from "../core/replace-schema.ts";
 import { runRegexReplacements } from "./replace-regex.ts";
 import { unwritableTextError } from "../core/text.ts";
 import {
@@ -95,20 +95,20 @@ function replaceHeader(args: ReplaceParams, theme: Theme, counts?: DiffCounts): 
   return t;
 }
 
-/** Report unwritable replacement text and regex compile errors; Pi checks field shapes. */
+/** Report unwritable replacement text, flags V8 rejects, and regex compile errors; Pi checks field shapes. */
 function checkReplaceArguments(args: unknown, report: ReportArgumentIssue): void {
   const rules = argumentItems((args as { replacements?: unknown } | null)?.replacements);
-  const validFlags = new RegExp(REGEX_FLAGS_PATTERN);
   rules.forEach((rule, index) => {
     const { find, replace, regex, flags } = (rule ?? {}) as Record<string, unknown>;
     const unwritable = typeof replace === "string" ? unwritableTextError(replace) : undefined;
     if (unwritable) report(`replacements[${index}].replace`, unwritable.message);
-    if (
-      regex === true &&
-      typeof find === "string" &&
-      find !== "" &&
-      (flags === undefined || (typeof flags === "string" && validFlags.test(flags)))
-    ) {
+    if (flags !== undefined && typeof flags !== "string") return;
+    const flagsError = regexFlagsError(flags);
+    if (flagsError) {
+      report(`replacements[${index}].flags`, flagsError);
+      return;
+    }
+    if (regex === true && typeof find === "string" && find !== "") {
       try {
         buildRegex(find, true, flags);
       } catch (error) {

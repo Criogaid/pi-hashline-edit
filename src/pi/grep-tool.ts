@@ -24,7 +24,7 @@ import { searchFiles } from "./grep-search.ts";
 import { toDisplayLines } from "./grep-render.ts";
 import { runRgLines, runRgPaths, type GrepBackend } from "./rg-process.ts";
 import { smartIgnoreCase } from "../core/search-analysis.ts";
-import { buildRegex } from "../core/regex.ts";
+import { buildRegex, regexFlagsError } from "../core/regex.ts";
 import { DEFAULT_GREP_FLAGS } from "../core/search.ts";
 import { errorMessage } from "../core/errors.ts";
 import { GREP_CONTEXT_RANGE, POSITIVE_SAFE_INTEGER } from "./schema.ts";
@@ -123,10 +123,9 @@ type GrepTool = ToolDefinition<
 function checkGrepArguments(args: unknown, report: ReportArgumentIssue): void {
   const { pattern, literal, flags } = (args ?? {}) as Record<string, unknown>;
   if (typeof literal !== "boolean" || (flags !== undefined && typeof flags !== "string")) return;
-  try {
-    buildRegex("", false, flags ?? DEFAULT_GREP_FLAGS);
-  } catch (error) {
-    report("flags", errorMessage(error));
+  const flagsError = regexFlagsError(flags ?? DEFAULT_GREP_FLAGS);
+  if (flagsError) {
+    report("flags", flagsError);
     return;
   }
   if (literal) return;

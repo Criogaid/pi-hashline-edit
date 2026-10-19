@@ -8,12 +8,13 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { openTestSession, responseStream } from "../testing/session.testing.ts";
 import {
   createActionFusionExecutor,
-  type ActionFusionDetails,
   type ActionFusionProgress,
   type ThenRunInput,
 } from "../pi/action-fusion.ts";
 import { makeWriteOverride } from "../pi/write-tool.ts";
 import { commandText } from "../pi/mutation-result.ts";
+import { reportOf } from "../pi/report.ts";
+import type { CommandStatus } from "../pi/report-schema.ts";
 
 /** Exercise the default runner through a real parent tool call, with no provider traffic. */
 async function openSession(
@@ -80,7 +81,7 @@ async function openSession(
       assert.equal(await readFile(join(cwd, "saved.txt"), "utf8"), "saved\n");
       return {
         modelRequests: responses,
-        state: (result.details as unknown as { actionFusion: ActionFusionDetails }).actionFusion,
+        report: reportOf(result),
         text: result.content
           .filter((block) => block.type === "text")
           .map((block) => block.text)
@@ -94,7 +95,7 @@ const commandCases: {
   name: string;
   source: string;
   timeout?: number;
-  command: ActionFusionDetails["command"];
+  command: CommandStatus;
   diagnostic: RegExp;
 }[] = [
   {
@@ -134,7 +135,9 @@ for (const { name, source, timeout, command, diagnostic } of commandCases) {
       command: "node command.mjs",
       ...(timeout === undefined ? {} : { timeout }),
     });
-    assert.deepEqual(result.state, { publication: "PUBLISHED", command, freshness: "unchanged" });
+    assert.equal(result.report?.publication, "PUBLISHED");
+    assert.equal(result.report?.then_run?.status, command);
+    assert.equal(result.report?.freshness, undefined);
     assert.match(result.text, diagnostic);
     assert.equal(f.progress.at(-1)?.command, command);
   });
@@ -160,11 +163,8 @@ test("cancelling a real session Bash command → reports cancellation and keeps 
   await started.promise;
   await f.abort();
   const result = await pending;
-  assert.deepEqual(result.state, {
-    publication: "PUBLISHED",
-    command: "cancelled",
-    freshness: "unchanged",
-  });
+  assert.equal(result.report?.publication, "PUBLISHED");
+  assert.equal(result.report?.then_run?.status, "cancelled");
   assert.match(result.text, /Command aborted/);
   assert.equal(f.progress.at(-1)?.command, "cancelled");
 });
@@ -213,11 +213,8 @@ test("session Bash tool_call blocks then_run → no command side effect, mutatio
     "import { writeFileSync } from 'node:fs'; writeFileSync('command-ran', 'yes');\n",
   );
   const result = await f.run({ command: "node command.mjs" });
-  assert.deepEqual(result.state, {
-    publication: "PUBLISHED",
-    command: "failed",
-    freshness: "unchanged",
-  });
+  assert.equal(result.report?.publication, "PUBLISHED");
+  assert.equal(result.report?.then_run?.status, "failed");
   assert.match(result.text, /BLOCKED_BY_POLICY/);
   assert.equal(result.modelRequests, 1, "Preserve the policy hook's request to stop the batch");
   await assert.rejects(readFile(join(f.cwd, "command-ran")), { code: "ENOENT" });
@@ -266,11 +263,7 @@ test("session Bash override and tool_result hook → then_run uses their final r
   );
   const result = await f.run({ command: "node command.mjs" });
   assert.equal(executions, 1);
-  assert.deepEqual(result.state, {
-    publication: "PUBLISHED",
-    command: "failed",
-    freshness: "unchanged",
-  });
+  assert.equal(result.report?.then_run?.status, "failed");
   assert.match(result.text, /HOOK_REJECTED_OVERRIDE/);
   assert.doesNotMatch(result.text, /OVERRIDE_RESULT/);
   assert.deepEqual(

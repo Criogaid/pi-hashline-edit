@@ -31,7 +31,7 @@ Pi integration. Cross-cutting contracts live in the root `AGENTS.md`; this file 
 
 ## Regex workers
 
-`regex-worker.ts` owns serialized requests, timeout, cancellation, and cleanup for grep and replace workers. Their `.mjs` bootstraps load TypeScript through `jiti`, because workers do not inherit Pi's loader; workers never import the Pi runtime and trust inputs validated at tool entry. `replace-regex.ts` sends regex batches to `core/replace.ts`; literal-only batches remain in-process. `config.ts` owns both timeout settings. The host validates exactly-one-result replies with `regex-worker-contract.ts`, using result schemas and code-specific facts from `report-schema.ts`; `replace-worker-contract.ts` owns replacement request/result shapes. Bound worker failures only in the receiving tool.
+`regex-worker.ts` owns serialized requests, timeout, cancellation, and cleanup for grep and replace workers. Their `.mjs` bootstraps load TypeScript through `jiti`, because workers do not inherit Pi's loader; workers never import the Pi runtime and trust inputs validated at tool entry. `replace-regex.ts` sends regex batches to `core/replace.ts`; literal-only batches remain in-process. `config.ts` owns both timeout settings. The host validates exactly-one-result replies with `regex-worker-contract.ts`, using result schemas and code-specific facts from `report-schema.ts`; `replace-worker-contract.ts` owns the replacement request; the result schema lives with the engine in `core/replace-schema.ts`. Bound worker failures only in the receiving tool.
 
 ## Reports and rendering
 

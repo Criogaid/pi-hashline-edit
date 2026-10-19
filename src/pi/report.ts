@@ -174,7 +174,6 @@ export interface FailureContext {
  * imports this module.
  */
 export class CommandNotRun extends Error {
-  readonly error: unknown;
   readonly status: Extract<CommandStatus, "skipped" | "cancelled">;
   readonly progressError: Cause | undefined;
 
@@ -185,7 +184,6 @@ export class CommandNotRun extends Error {
   ) {
     super(errorMessage(error), { cause: error });
     this.name = "CommandNotRun";
-    this.error = error;
     this.status = status;
     this.progressError = progressError;
   }
@@ -225,7 +223,8 @@ export function describeFailure(
   let command: CommandNotRun | undefined;
   if (error instanceof CommandNotRun) {
     command = error;
-    error = error.error;
+    // The mutation's own failure, unchanged.
+    error = error.cause;
   }
   const failure = classify(error, context.signal);
   const budget = context.budget ?? DEFAULT_OUTPUT_BUDGETS;

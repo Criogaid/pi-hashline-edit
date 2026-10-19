@@ -130,17 +130,15 @@ for (const fused of [false, true]) {
               () => callTool(mutation.make(directory, fusion), { path, ...mutation.args }),
             );
             assert.equal(result.isError, undefined);
-            assert.equal(result.details.publication, "PUBLISHED");
+            assert.equal(reportOf(result)?.publication, "PUBLISHED");
             assert.equal(Object.hasOwn(result.details, "observedRevision"), false);
             assert.equal(result.details.publishedRevision, byteRevision(PUBLISHED));
             if (mutation.name !== "write create")
               assert.equal(result.details.baseRevision, byteRevision(BEFORE));
             assert.equal(reportOf(result)?.next, REREAD);
             assert.doesNotMatch(text(result), /Updated anchors|retry the tool/);
-            if (fused) {
-              assert.equal(result.details.actionFusion.command, "not_requested");
-              assert.equal(result.details.actionFusion.freshness, "changed");
-            }
+            assert.equal(reportOf(result)?.then_run, undefined);
+            assert.equal(reportOf(result)?.freshness, "changed");
             await assertTarget(path, PUBLISHED, disturbance);
           },
         );
@@ -189,10 +187,8 @@ for (const observation of [1, 2]) {
             ),
         );
         assert.equal(commands, 0);
-        assert.equal(result.details.publication, "PUBLISHED");
-        assert.equal(result.details.actionFusion.publication, "PUBLISHED");
-        assert.equal(result.details.actionFusion.command, "skipped");
         const report = reportOf(result);
+        assert.equal(report?.publication, "PUBLISHED");
         assert.equal(report?.then_run?.status, "skipped");
         assert.equal(report?.freshness, disturbance === "I/O failure" ? "unknown" : "changed");
         if (disturbance === "I/O failure") {
@@ -238,10 +234,10 @@ test("disturbance during post-command freshness read → retains publication and
             ),
         );
         assert.equal(commands, 1);
-        assert.equal(result.details.publication, "PUBLISHED");
-        assert.equal(result.details.actionFusion.command, "succeeded");
+        assert.equal(reportOf(result)?.publication, "PUBLISHED");
+        assert.equal(reportOf(result)?.then_run?.status, "succeeded");
         assert.equal(
-          result.details.actionFusion.freshness,
+          reportOf(result)?.freshness,
           disturbance === "I/O failure" ? "unknown" : "changed",
         );
         assert.equal(reportOf(result)?.next, REREAD);

@@ -81,11 +81,9 @@ test("replace withholds anchors in progress and after commands change or remove 
           (update: any) => updates.push(update),
           await ctx(dir, t),
         );
-        assert.ok(result.details.actionFusion);
-        assert.equal(result.details.actionFusion.freshness, state);
-        assert.equal(result.details.publication, "PUBLISHED");
         assert.doesNotMatch(text(result), /Updated anchors|\d+#[0-9A-Z]+│/);
         assert.equal(reportOf(result)?.freshness, state);
+        assert.equal(reportOf(result)?.publication, "PUBLISHED");
         assert.equal(reportOf(result)?.next, REREAD);
         assert.equal(result.content.length, 1);
         for (const update of updates)
@@ -128,9 +126,8 @@ test("progress callback failures preserve publication and do not prevent the com
       );
       assert.equal(commands, 1);
       assert.equal(await readFile(path, "utf8"), "saved\n");
-      assert.ok(result.details.actionFusion);
-      assert.equal(result.details.actionFusion.publication, "PUBLISHED");
-      assert.equal(result.details.actionFusion.command, "succeeded");
+      assert.equal(reportOf(result)?.publication, "PUBLISHED");
+      assert.equal(reportOf(result)?.then_run?.status, "succeeded");
       assert.match(text(result), /display unavailable/);
     }
     const fusion = createActionFusionExecutor(undefined, () => {
@@ -156,9 +153,9 @@ test("progress callback failures preserve publication and do not prevent the com
       }),
       (error: unknown) =>
         error instanceof CommandNotRun &&
-        error.error instanceof FileMutationError &&
-        error.error.publication === "PUBLISHED" &&
-        /original failure/.test(error.error.message),
+        error.cause instanceof FileMutationError &&
+        error.cause.publication === "PUBLISHED" &&
+        /original failure/.test(error.cause.message),
     );
   } finally {
     await rm(dir, { recursive: true, force: true });
@@ -470,20 +467,16 @@ test("all mutation tools succeed without rewriting on no-op, with and without Fu
           await ctx(dir, t),
         );
         assert.equal(reportOf(result)?.publication, "NOT_PUBLISHED");
-        assert.equal(result.details.publication, "NOT_PUBLISHED");
         const revision = byteRevision(Buffer.from("same\n"));
         for (const key of ["baseRevision", "publishedRevision", "observedRevision"])
           assert.equal(result.details[key], revision);
         assert.equal("revision" in result.details, false);
         assert.doesNotMatch(text(result), /Updated anchors|\d+#[0-9A-Z]+│/);
         assert.equal(commands, mode === "command" ? 1 : 0);
-        if (mode !== "standalone") {
-          assert.equal(
-            result.details.actionFusion.command,
-            mode === "command" ? "succeeded" : "not_requested",
-          );
-          assert.equal(result.details.actionFusion.freshness, "unchanged");
-        }
+        assert.equal(
+          reportOf(result)?.then_run?.status,
+          mode === "command" ? "succeeded" : undefined,
+        );
         const after = await stat(path);
         assert.deepEqual(
           [after.ino, after.mtimeMs, after.ctimeMs],
@@ -530,16 +523,13 @@ test("no-op Fusion still detects external changes and reports command failures",
           undefined,
           await ctx(dir, t),
         );
-        assert.equal(result.details.publication, "NOT_PUBLISHED");
+        assert.equal(reportOf(result)?.publication, "NOT_PUBLISHED");
         assert.equal(commands, scenario === "before" ? 0 : 1);
         assert.equal(
-          result.details.actionFusion.command,
+          reportOf(result)?.then_run?.status,
           scenario === "before" ? "skipped" : scenario === "failed" ? "failed" : "succeeded",
         );
-        assert.equal(
-          result.details.actionFusion.freshness,
-          scenario === "failed" ? "unchanged" : "changed",
-        );
+        assert.equal(reportOf(result)?.freshness, scenario === "failed" ? undefined : "changed");
       }
     }
   } finally {

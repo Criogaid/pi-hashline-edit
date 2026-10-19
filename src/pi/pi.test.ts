@@ -111,7 +111,7 @@ test("file tools share Pi-style URL and @ path resolution", async () => {
       commands++;
       return { status: "succeeded", result: { content: [{ type: "text", text: "checked" }] } };
     });
-    const fused = await callTool(
+    await callTool(
       makeWriteOverride(dir, fusion),
       {
         path: `@${url}`,
@@ -121,8 +121,6 @@ test("file tools share Pi-style URL and @ path resolution", async () => {
       },
       { toolCallId: "fused", ctx },
     );
-    assert.ok(fused.details.actionFusion);
-    assert.equal(fused.details.actionFusion.command, "succeeded");
     assert.equal(commands, 1);
   } finally {
     await rm(dir, { recursive: true, force: true });

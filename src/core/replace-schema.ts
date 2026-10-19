@@ -1,7 +1,5 @@
-/** Tool-validated replacement rules and their engine type; no Pi runtime imports. */
+/** Tool-validated replacement rules, the engine's result, and their types; no Pi runtime imports. */
 import { Type, type Static } from "typebox";
-
-export const REGEX_FLAGS_PATTERN = "^[gimsuyd]*$";
 
 export const REPLACEMENT_SCHEMA = Type.Object(
   {
@@ -19,7 +17,6 @@ export const REPLACEMENT_SCHEMA = Type.Object(
     ),
     flags: Type.Optional(
       Type.String({
-        pattern: REGEX_FLAGS_PATTERN,
         description: "Extra regex flags, also applied in literal mode; g is always added.",
       }),
     ),
@@ -32,3 +29,13 @@ export const REPLACEMENTS_SCHEMA = Type.Array(REPLACEMENT_SCHEMA, {
   description: "Rules applied to the original content; inserted text is not searched again.",
 });
 export type Replacement = Readonly<Static<typeof REPLACEMENT_SCHEMA>>;
+
+/** A replacement batch's new text and match count; the host checks it again across the worker boundary. */
+export const REPLACEMENT_RESULT_SCHEMA = Type.Object(
+  {
+    text: Type.String(),
+    count: Type.Integer({ minimum: 1 }),
+  },
+  { additionalProperties: false },
+);
+export type ReplacementResult = Static<typeof REPLACEMENT_RESULT_SCHEMA>;

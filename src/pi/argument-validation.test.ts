@@ -13,6 +13,7 @@ import { makeWriteOverride } from "./write-tool.ts";
 import { callTool } from "./tool-call.testing.ts";
 import { argumentError, rejectsArgument } from "./argument-error.testing.ts";
 import { POSITIVE_SAFE_INTEGER } from "./schema.ts";
+import { reportOf } from "./report.ts";
 
 const invalidCommand = { command: "", timeout: 0 };
 const anchorHash = "A".repeat(DEFAULT_CONFIG.hashLen);
@@ -110,6 +111,50 @@ for (const scenario of cases) {
     assert.equal(commandRuns, 0);
   });
 }
+
+test("grep and replace flags → accept V8 modes and reject invalid flags before patterns or file reads", async (t) => {
+  const cwd = await mkdtemp(join(tmpdir(), "hashline-flags-"));
+  t.after(() => rm(cwd, { recursive: true, force: true }));
+  const path = join(cwd, "missing.txt");
+  const tools = [
+    {
+      tool: makeGrepOverride(cwd, DEFAULT_CONFIG),
+      args: (find: string, literal: boolean, flags: string) => ({ pattern: find, literal, flags }),
+      field: "flags",
+    },
+    {
+      tool: makeReplaceTool(cwd, DEFAULT_CONFIG),
+      args: (find: string, literal: boolean, flags: string) => ({
+        replacements: [
+          { find: "valid", replace: "first" },
+          { find, replace: "second", regex: !literal, flags },
+        ],
+      }),
+      field: "replacements[1].flags",
+    },
+  ];
+  for (const { tool, args, field } of tools) {
+    for (const literal of [false, true]) {
+      for (const flags of ["v", "uv", "x"]) {
+        await t.test(`${tool.name}/${literal ? "literal" : "regex"}/${flags}`, async () => {
+          const input = { path, ...args(flags === "v" ? "a" : "(", literal, flags) };
+          if (flags === "v") {
+            const result = await callTool(tool, input);
+            assert.equal(reportOf(result)?.error, "PATH_NOT_FOUND");
+          } else {
+            await assert.rejects(callTool(tool, input), (error: unknown) => {
+              const report = argumentError(error);
+              assert.equal(report.issues.length, 1);
+              assert.equal(report.issues[0].field, field);
+              assert.match(report.issues[0].reason, /Invalid flags supplied to RegExp constructor/);
+              return true;
+            });
+          }
+        });
+      }
+    }
+  }
+});
 
 test("known edit operations with empty bodies → report the actionable issue once", async () => {
   const tool = makeEditOverride(process.cwd(), DEFAULT_CONFIG);

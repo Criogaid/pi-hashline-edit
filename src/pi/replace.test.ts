@@ -55,12 +55,11 @@ test("replace schema requires a non-empty replacements array", async () => {
   }
 });
 
-test("replace schema rejects empty paths, empty find, and unsupported flags", async () => {
+test("replace schema rejects empty paths and empty find", async () => {
   const tool = makeReplaceTool(process.cwd(), DEFAULT_CONFIG);
   for (const args of [
     { path: "", replacements: [{ find: "old", replace: "new" }] },
     { path: "f.txt", replacements: [{ find: "", replace: "new" }] },
-    { path: "f.txt", replacements: [{ find: "old", replace: "new", flags: "x" }] },
   ]) {
     await assert.rejects(call(tool, args), rejectsArguments("replace"), JSON.stringify(args));
   }
@@ -116,14 +115,6 @@ test("replace rejects unwritable text and invalid regex before reading a missing
       await assert.rejects(callTool(tool, { path: file, replacements: [rule] }), expected);
       await assert.rejects(readFile(file, "utf8"), { code: "ENOENT" });
     }
-    await assert.rejects(
-      callTool(tool, {
-        path: file,
-        replacements: [{ find: "(", replace: "x", regex: true, flags: "z" }],
-      }),
-      rejectsArgument("replacements[0].flags", /must match pattern/),
-    );
-    await assert.rejects(readFile(file, "utf8"), { code: "ENOENT" });
   }));
 
 test("replace literal: replaces all occurrences", async () => {
@@ -369,32 +360,6 @@ test("replace: handles large match counts without an arbitrary cap", async () =>
     });
     assert.equal(reportOf(result)?.matches, 2500);
     assert.equal(await readFile(f, "utf-8"), "b\n".repeat(2500));
-  });
-});
-
-test("replace: invalid regex throws a friendly message", async () => {
-  await withDir(async (dir) => {
-    await writeFile(join(dir, "f.txt"), "a\n");
-    await assert.rejects(
-      call(makeReplaceTool(dir, DEFAULT_CONFIG), {
-        path: "f.txt",
-        replacements: [{ find: "(unclosed", replace: "x", regex: true }],
-      }),
-      /Invalid regular expression/i,
-    );
-  });
-});
-
-test("replace: invalid flag char throws", async () => {
-  await withDir(async (dir) => {
-    await writeFile(join(dir, "f.txt"), "a\n");
-    await assert.rejects(
-      callTool(makeReplaceTool(dir, DEFAULT_CONFIG), {
-        path: "f.txt",
-        replacements: [{ find: "a", replace: "x", flags: "z" }],
-      }),
-      rejectsArgument("replacements[0].flags"),
-    );
   });
 });
 
@@ -662,9 +627,7 @@ test("successful batches run one command against the complete result", async () 
       { cwd: dir } as Parameters<typeof tool.execute>[4],
     );
     assert.equal(commands, 1);
-    assert.ok(result.details.actionFusion);
-    assert.equal(result.details.actionFusion.command, "succeeded");
-    assert.equal(result.details.actionFusion.freshness, "unchanged");
+    assert.equal(reportOf(result)?.then_run?.status, "succeeded");
     assert.equal(reportOf(result)?.then_run?.output, "checked");
   }));
 
