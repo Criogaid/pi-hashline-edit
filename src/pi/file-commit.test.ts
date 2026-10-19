@@ -39,18 +39,12 @@ function invalidCommitStates() {
     created: true,
     publication: "NOT_PUBLISHED",
     publishedRevision: "r",
-  };
-  // @ts-expect-error Replacing an existing target retains its base revision.
-  const missingBase: CommitResult = {
-    created: false,
-    publication: "PUBLISHED",
-    publishedRevision: "r",
+    observedRevision: "r",
   };
   // @ts-expect-error A no-op has a confirmed observed revision.
   const unobservedNoop: CommitResult = {
     created: false,
     publication: "NOT_PUBLISHED",
-    baseRevision: "r",
     publishedRevision: "r",
   };
   // @ts-expect-error A known freshness state cannot carry a read error.
@@ -337,7 +331,7 @@ test("cancellation racing publication never reports a settled operation as unpub
     if (publication === "PUBLISHED") assert.equal(finalContent, newContent);
   }));
 
-test("commit result binds base, published, and observed revisions", async () =>
+test("bound overwrite → reports published and observed revisions for the published bytes", async () =>
   withTemp(async (dir) => {
     const target = join(dir, "versions.txt");
     await writeFile(target, "before\n");
@@ -346,10 +340,10 @@ test("commit result binds base, published, and observed revisions", async () =>
       mode: "overwrite",
       baseRevision,
     });
-    assert.equal(result.baseRevision, baseRevision);
+    assert.equal(result.publication, "PUBLISHED");
+    assert.equal(await readFile(target, "utf8"), "after\n");
     assert.equal(result.publishedRevision, byteRevision(Buffer.from("after\n")));
     assert.equal(result.observedRevision, result.publishedRevision);
-    assert.equal("revision" in result, false);
   }));
 
 test("commit rejects lossy UTF-8 output before modifying or creating files", async () =>
@@ -389,7 +383,6 @@ test("identical commits preserve the file and still enforce mode, revision, and 
     });
     assert.deepEqual(result, {
       created: false,
-      baseRevision: revision,
       publishedRevision: revision,
       observedRevision: revision,
       publication: "NOT_PUBLISHED",
@@ -423,7 +416,7 @@ test("identical commits preserve the file and still enforce mode, revision, and 
     assert.equal(created.publication, "PUBLISHED");
   }));
 
-test("no-op commit with baseRevision validates disk revision against external modifications", async () =>
+test("file changes after the read → bound commits reject changed and unchanged output", async () =>
   withTemp(async (dir) => {
     const target = join(dir, "target.txt");
     const initialContent = "line 1\nline 2\n";
@@ -435,40 +428,32 @@ test("no-op commit with baseRevision validates disk revision against external mo
     await writeFile(target, "line 1\nmodified line 2\n");
     const externalRevision = await fileRevision(target);
 
-    // A no-op replacement (same text as snapshot) must reject because disk has changed.
-    await assert.rejects(
-      commitReplacement(target, snapshot.text, snapshot.baseRevision),
-      (error: unknown) =>
-        error instanceof FileMutationError &&
-        error.stage === "prepare" &&
-        error.publication === "NOT_PUBLISHED" &&
-        error.errorCode === "FILE_CHANGED" &&
-        /after it was read/.test(error.message),
-    );
-    // Disk content must remain untouched by the rejected commit.
-    assert.equal(await readFile(target, "utf8"), "line 1\nmodified line 2\n");
-    assert.equal(await fileRevision(target), externalRevision);
-
-    // The direct commit path enforces the same snapshot revision.
-    await assert.rejects(
-      commitFile(target, snapshot.text, {
-        mode: "overwrite",
-        baseRevision: snapshot.baseRevision,
-      }),
-      (error: unknown) =>
-        error instanceof FileMutationError &&
-        error.stage === "prepare" &&
-        error.publication === "NOT_PUBLISHED" &&
-        error.errorCode === "FILE_CHANGED" &&
-        /after it was read/.test(error.message),
-    );
+    for (const content of [snapshot.text, "replacement\n"]) {
+      for (const commit of [
+        () => commitReplacement(target, content, snapshot.baseRevision),
+        () =>
+          commitFile(target, content, { mode: "overwrite", baseRevision: snapshot.baseRevision }),
+      ]) {
+        await assert.rejects(
+          commit,
+          (error: unknown) =>
+            error instanceof FileMutationError &&
+            error.stage === "prepare" &&
+            error.publication === "NOT_PUBLISHED" &&
+            error.errorCode === "FILE_CHANGED",
+        );
+        assert.equal(await readFile(target, "utf8"), "line 1\nmodified line 2\n");
+        assert.equal(await fileRevision(target), externalRevision);
+      }
+    }
 
     // Without baseRevision, overwrite hashes the current target instead of using the snapshot.
     const overwriteResult = await commitFile(target, snapshot.text, {
       mode: "overwrite",
     });
     assert.equal(overwriteResult.publication, "PUBLISHED");
-    assert.equal(overwriteResult.baseRevision, externalRevision);
+    assert.equal(overwriteResult.publishedRevision, snapshot.baseRevision);
+    assert.equal(overwriteResult.observedRevision, overwriteResult.publishedRevision);
     assert.equal(await readFile(target, "utf8"), initialContent);
 
     // When target does not change externally, no-op commit succeeds and confirms observed revision.
@@ -479,7 +464,6 @@ test("no-op commit with baseRevision validates disk revision against external mo
       freshSnapshot.baseRevision,
     );
     assert.equal(noopResult.publication, "NOT_PUBLISHED");
-    assert.equal(noopResult.baseRevision, freshSnapshot.baseRevision);
     assert.equal(noopResult.publishedRevision, freshSnapshot.baseRevision);
     assert.equal(noopResult.observedRevision, freshSnapshot.baseRevision);
   }));

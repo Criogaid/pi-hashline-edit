@@ -173,7 +173,6 @@ test("standalone and Fusion finalizers → take freshness from commit facts", as
           facts: {},
           commit: {
             publication,
-            baseRevision: "published",
             publishedRevision: "published",
             observedRevision,
             created: false,

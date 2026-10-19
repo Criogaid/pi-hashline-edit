@@ -573,7 +573,6 @@ test("Fusion takes publication and freshness from commit facts independently of 
     await writeFile(target, "same\n");
     const commit = {
       publication: "NOT_PUBLISHED" as const,
-      baseRevision: byteRevision(Buffer.from("same\n")),
       publishedRevision: byteRevision(Buffer.from("same\n")),
       observedRevision: byteRevision(Buffer.from("same\n")),
       created: false as const,
