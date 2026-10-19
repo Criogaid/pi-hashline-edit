@@ -20,7 +20,7 @@ pi 扩展 `@criogaid/pi-hashline-edit`，注册入口为 `src/index.ts`。它替
 - Classify only Node's confirmed malformed UTF-8 error as `UNSUPPORTED_ENCODING`; preserve other decoder failures and their causes. Streaming validity checks catch only `Utf8DecodingError`.
 - `edit` 的空正文行是实际逻辑行；末尾空行需要终止符才能保留时补上终止符，BOM-only 单行除外。非空末行保留原有最终换行状态。
 - Use the shared CRLF-to-LF view for valid UTF-8 in `read/grep/edit/replace`; standalone CR and literal source escapes remain content. Map mutation offsets back to the original bytes; `write` uses the supplied full content and line endings exactly.
-- Skip NUL files in grep. Keep invalid UTF-8 output as plain preview rows; matching uses the lossy preview text. Verify every matched file against the full revision it was matched on, in every output mode.
+- Skip NUL files in grep. Keep invalid UTF-8 output as plain preview rows; matching uses the lossy preview text. Content mode re-reads each matched file and keeps it only when that read has the revision it was matched on; files and count modes report the searched snapshot without re-reading.
 - Validate grep patterns and flags with V8 at tool entry; resolve case overrides once into `GrepQuery.flags`. Native `RegExp` in `src/core/search.ts` decides every grep match on the LF view; rg only lists candidates and never decides a match. Candidate derivation may widen but never narrow.
 - 行 hash 是可碰撞的位置相关 checksum。恢复候选由调用方重新提交验证；range 验证边界见 README。
 - `edit/replace` 提交绑定实际读取字节的 revision。Action Fusion 以提交层返回的 `publishedRevision` 为 freshness 基线；revision 不进入工具结果。
