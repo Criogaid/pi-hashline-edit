@@ -70,6 +70,30 @@ export const COMMAND_STATUS_SCHEMA = Type.Union([
 ]);
 export type CommandStatus = Static<typeof COMMAND_STATUS_SCHEMA>;
 
+/** A then_run command's session tool result, as the TUI renders it. */
+export const COMMAND_RESULT_SCHEMA = Type.Object(
+  {
+    content: Type.Array(
+      Type.Union([
+        Type.Object(
+          {
+            type: Type.Literal("text"),
+            text: Type.String(),
+            textSignature: opt(Type.String()),
+          },
+          { additionalProperties: false },
+        ),
+        Type.Object(
+          { type: Type.Literal("image"), data: Type.String(), mimeType: Type.String() },
+          { additionalProperties: false },
+        ),
+      ]),
+    ),
+    details: opt(Type.Unknown()),
+  },
+  { additionalProperties: false },
+);
+
 /** Fusion updates cross RPC and transcript boundaries before a final tool report exists. */
 export const ACTION_FUSION_PROGRESS_SCHEMA = Type.Object(
   {
@@ -80,30 +104,7 @@ export const ACTION_FUSION_PROGRESS_SCHEMA = Type.Object(
     publication: PUBLICATION_SCHEMA,
     freshness: FRESHNESS_SCHEMA,
     output: Type.String(),
-    result: opt(
-      Type.Object(
-        {
-          content: Type.Array(
-            Type.Union([
-              Type.Object(
-                {
-                  type: Type.Literal("text"),
-                  text: Type.String(),
-                  textSignature: opt(Type.String()),
-                },
-                { additionalProperties: false },
-              ),
-              Type.Object(
-                { type: Type.Literal("image"), data: Type.String(), mimeType: Type.String() },
-                { additionalProperties: false },
-              ),
-            ]),
-          ),
-          details: opt(Type.Unknown()),
-        },
-        { additionalProperties: false },
-      ),
-    ),
+    result: opt(COMMAND_RESULT_SCHEMA),
     mutationCompleted: Type.Boolean(),
     timing: opt(
       Type.Object(

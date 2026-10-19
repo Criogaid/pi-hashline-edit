@@ -25,7 +25,7 @@ import {
 } from "@earendil-works/pi-tui";
 import { Type, type Static, type TSchema } from "typebox";
 import { Value } from "typebox/value";
-import { ACTION_FUSION_PROGRESS_SCHEMA } from "./report-schema.ts";
+import { ACTION_FUSION_PROGRESS_SCHEMA, COMMAND_RESULT_SCHEMA } from "./report-schema.ts";
 import { commandText, type ActionFusionProgress } from "./action-fusion.ts";
 import type { MutationRenderState } from "./render.ts";
 
@@ -33,20 +33,19 @@ const CARD_TYPE = "hashline-then-run";
 const RESULT_TYPE = "hashline-then-run-result";
 
 const CARD_PROPERTIES = ACTION_FUSION_PROGRESS_SCHEMA.properties;
-const COMMAND_CARD_SCHEMA = Type.Object(
-  {
-    toolCallId: CARD_PROPERTIES.toolCallId,
-    commandText: CARD_PROPERTIES.commandText,
-    command: CARD_PROPERTIES.command,
-    // A card stores the command result, or only its output text when no result exists.
-    output: Type.Optional(CARD_PROPERTIES.output),
-    result: CARD_PROPERTIES.result,
-    timing: CARD_PROPERTIES.timing,
-    mutationCompleted: CARD_PROPERTIES.mutationCompleted,
-    freshness: CARD_PROPERTIES.freshness,
-  },
-  { additionalProperties: false },
-);
+const CARD_FIELDS = {
+  toolCallId: CARD_PROPERTIES.toolCallId,
+  commandText: CARD_PROPERTIES.commandText,
+  command: CARD_PROPERTIES.command,
+  timing: CARD_PROPERTIES.timing,
+  mutationCompleted: CARD_PROPERTIES.mutationCompleted,
+  freshness: CARD_PROPERTIES.freshness,
+};
+/** A card stores the command's session result, or only its output text when none exists. */
+const COMMAND_CARD_SCHEMA = Type.Union([
+  Type.Object({ ...CARD_FIELDS, result: COMMAND_RESULT_SCHEMA }, { additionalProperties: false }),
+  Type.Object({ ...CARD_FIELDS, output: CARD_PROPERTIES.output }, { additionalProperties: false }),
+]);
 type CommandCardData = Static<typeof COMMAND_CARD_SCHEMA>;
 
 function commandCardData({
@@ -71,7 +70,7 @@ function commandCardData({
 }
 
 function cardOutput(card: CommandCardData): string {
-  return card.result ? commandText(card.result.content) : (card.output ?? "");
+  return "result" in card ? commandText(card.result.content) : card.output;
 }
 
 const TARGET_STATE = {
@@ -183,18 +182,14 @@ export function registerFusionCards(pi: ExtensionAPI) {
     if (!card) {
       const current = () => states.get(initial.toolCallId) ?? initial;
       const statusText = new Text("", 0, 0);
-      let outputPadding: number | undefined;
+      let outputPadding = settings.getOutputPad();
       let box = new Box(outputPadding, 1);
       let call: Component | undefined;
       let result: Component | undefined;
       const renderers: Pick<typeof bash, "renderShell" | "renderCall" | "renderResult"> = {
         renderShell: "self",
         renderCall(args, theme, context) {
-          const hostSettings = pi.getSettings();
-          const padding =
-            "outputPad" in hostSettings && typeof hostSettings.outputPad === "number"
-              ? hostSettings.outputPad
-              : undefined;
+          const padding = SettingsManager.inMemory(pi.getSettings()).getOutputPad();
           if (padding !== outputPadding) {
             outputPadding = padding;
             box = new Box(outputPadding, 1);
@@ -240,7 +235,7 @@ export function registerFusionCards(pi: ExtensionAPI) {
           const card = current();
           const command = card.command;
           if (
-            card.result ||
+            "result" in card ||
             card.output ||
             command === "succeeded" ||
             command === "failed" ||
@@ -267,7 +262,9 @@ export function registerFusionCards(pi: ExtensionAPI) {
           });
           native.updateResult(
             {
-              ...(value.result ?? { content: [{ type: "text", text: value.output ?? "" }] }),
+              ...("result" in value
+                ? value.result
+                : { content: [{ type: "text", text: value.output }] }),
               isError: value.command === "failed" || value.command === "timeout",
             },
             (value.command === "waiting" || value.command === "running") &&
