@@ -42,21 +42,19 @@ export type CommitOptions = { readonly signal?: AbortSignal } & (
   | { readonly mode: "overwrite"; readonly baseRevision?: string }
 );
 
-export interface MutationVersions {
-  baseRevision?: string;
-  publishedRevision: string;
+/** The published bytes' revision and, when stable, the revision observed right after. */
+interface CommitRevisions {
+  readonly publishedRevision: string;
   /** Absent when a concurrent change prevented a stable observation after publication. */
-  observedRevision?: string;
+  readonly observedRevision?: string;
 }
 
-export type CommitResult = MutationVersions &
+export type CommitResult = CommitRevisions &
   (
-    | { readonly created: true; readonly publication: "PUBLISHED"; readonly baseRevision?: never }
-    | { readonly created: false; readonly publication: "PUBLISHED"; readonly baseRevision: string }
+    | { readonly created: boolean; readonly publication: "PUBLISHED" }
     | {
         readonly created: false;
         readonly publication: "NOT_PUBLISHED";
-        readonly baseRevision: string;
         readonly observedRevision: string;
       }
   );
@@ -334,7 +332,6 @@ export async function commitFile(
     }
     return {
       created: false,
-      baseRevision: target.beforeRevision,
       publishedRevision,
       observedRevision: publishedRevision,
       publication: "NOT_PUBLISHED",
@@ -376,9 +373,7 @@ export async function commitFile(
     published = true;
     await syncDirectory(publishDirectory);
     const committed: CommitResult = {
-      ...(target.existed
-        ? { created: false, baseRevision: target.beforeRevision }
-        : { created: true, baseRevision: target.beforeRevision }),
+      created: !target.existed,
       publishedRevision,
       publication: "PUBLISHED",
     };
@@ -451,7 +446,7 @@ export type FreshnessObservation =
     };
 
 /** Freshness known from the commit result alone, before any later observation. */
-export function commitFreshness(commit: MutationVersions): FreshnessObservation {
+export function commitFreshness(commit: CommitRevisions): FreshnessObservation {
   return {
     freshness: commit.publishedRevision === commit.observedRevision ? "unchanged" : "changed",
   };
