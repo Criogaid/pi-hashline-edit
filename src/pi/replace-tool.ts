@@ -149,7 +149,15 @@ export function makeReplaceTool(
       theme: Theme,
       context: ReplaceRenderContext,
     ) {
-      return renderMutationResult(result, options, theme, context, "Replacing…", replaceHeader);
+      return renderMutationResult(
+        result,
+        options,
+        theme,
+        context,
+        "Replacing…",
+        replaceHeader,
+        "replace",
+      );
     },
 
     async execute(

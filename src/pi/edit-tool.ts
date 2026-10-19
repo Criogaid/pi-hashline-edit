@@ -329,7 +329,7 @@ export function makeEditOverride(
       theme: Theme,
       context: EditRenderContext,
     ) {
-      return renderMutationResult(result, options, theme, context, "Editing…", editHeader);
+      return renderMutationResult(result, options, theme, context, "Editing…", editHeader, "edit");
     },
 
     async execute(

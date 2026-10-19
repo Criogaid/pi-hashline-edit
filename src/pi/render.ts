@@ -18,6 +18,7 @@ import {
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import { Text, type Component } from "@earendil-works/pi-tui";
 import type { ActionFusionProgress } from "./action-fusion.ts";
+import type { MutationToolName, ReportTool } from "./report-schema.ts";
 import { renderReport, reportEntries, reportOf, type Report, detailsReport } from "./report.ts";
 
 /** Max diff lines shown when a result is rendered collapsed. */
@@ -231,10 +232,11 @@ export function splitReport(result: Pick<AgentToolResult<unknown>, "content" | "
 export function renderToolError(
   result: Pick<AgentToolResult<unknown>, "content"> &
     Partial<Pick<AgentToolResult<unknown>, "details">>,
+  tool: ReportTool,
   theme: Theme,
   expanded: boolean,
 ): Text {
-  const report = reportOf(result);
+  const report = reportOf(result, tool);
   const lines = report
     ? reportLines(report, theme)
     : result.content.flatMap((block) =>
@@ -263,10 +265,11 @@ export function renderMutationResult<TArgs>(
   context: { isError: boolean; args: TArgs; state?: MutationRenderState },
   pending: string,
   header: (args: TArgs, theme: Theme, counts?: DiffCounts) => string,
+  tool: MutationToolName,
 ): Text {
   if (isPartial && result.details?.actionFusion?.mutationCompleted !== true)
     return new Text(theme.fg("warning", pending), 0, 0);
-  if (context.isError) return renderToolError(result, theme, expanded);
+  if (context.isError) return renderToolError(result, tool, theme, expanded);
   const diff = result.details?.displayDiff;
   // Refresh in place: invalidation inside a renderer re-enters updateDisplay.
   publishDiffCounts(diff, context, (counts) => {

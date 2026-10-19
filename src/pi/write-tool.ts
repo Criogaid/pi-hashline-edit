@@ -86,7 +86,7 @@ export function makeWriteOverride(
       theme: Theme,
       context: WriteRenderContext,
     ) {
-      if (context.isError) return renderToolError(result, theme, options.expanded);
+      if (context.isError) return renderToolError(result, "write", theme, options.expanded);
       const { report } = splitReport(result);
       const facts = report ? reportLines(report, theme, WRITE_CARD_SHOWN) : [];
       if (facts.length) return new Text(facts.join("\n"), 0, 0);

@@ -205,7 +205,7 @@ export function makeGrepOverrideWithBackend(
       context: Parameters<NonNullable<GrepTool["renderResult"]>>[3],
     ) {
       if (isPartial) return new Text(theme.fg("warning", "Searching…"), 0, 0);
-      if (context?.isError) return renderToolError(result, theme, expanded);
+      if (context?.isError) return renderToolError(result, "grep", theme, expanded);
       const { content, report } = splitReport(result);
       const payload = content[0];
       return renderOutputPreview(

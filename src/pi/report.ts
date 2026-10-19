@@ -6,8 +6,8 @@
  * owns publication, stage, and freshness; each tool owns its outcome facts;
  * Action Fusion owns `then_run`. This module builds the
  * report of a success or a failure, derives its single `next`, and owns the
- * one model-facing serialization: one JSON object in schema order, with tool
- * and path omitted on success. A success puts it after the content payload;
+ * one model-facing serialization: one JSON object in schema order, without the
+ * call's own tool and path. A success puts it after the content payload;
  * a failure is the report alone. The TUI receives the full report in details.
  *
  * Throw sites classify failures as `HashlineError` (core/errors.ts); a failure
@@ -56,29 +56,19 @@ export function reportEntries(report: Report): [string, unknown][] {
   });
 }
 
-/** Serialize facts in schema order; successful results do not repeat their call's tool and path. */
+/** Serialize facts in schema order; a result never repeats its call's tool and path. */
 export function renderReport(report: Report): string {
-  const entries = reportEntries(report).filter(
-    ([key]) => report.error !== undefined || !ENVELOPE.has(key),
-  );
+  const entries = reportEntries(report).filter(([key]) => !ENVELOPE.has(key));
   return JSON.stringify(Object.fromEntries(entries), null, 2);
 }
 
-/** Decode a text report; success text omits its tool, which the originating call supplies. */
-export function decodeReport(text: string, contextTool?: string): Report | undefined {
+/** Decode a text report; the text omits its tool, which the originating call supplies. */
+export function decodeReport(text: string, contextTool: ReportTool): Report | undefined {
   if (!text.startsWith("{")) return undefined;
   try {
     let value: unknown = JSON.parse(text);
-    if (
-      contextTool !== undefined &&
-      typeof value === "object" &&
-      value !== null &&
-      !Array.isArray(value) &&
-      !("tool" in value) &&
-      !("error" in value)
-    ) {
+    if (typeof value === "object" && value !== null && !Array.isArray(value) && !("tool" in value))
       value = { tool: contextTool, ...value };
-    }
     return Value.Check(WIRE_REPORT_SCHEMA, value) ? (value as Report) : undefined;
   } catch (error) {
     if (error instanceof SyntaxError || error instanceof RangeError || error instanceof TypeError)
@@ -100,18 +90,14 @@ export function detailsReport(details: unknown): Report | undefined {
 }
 
 /** Tool results carry their report in details; Pi argument failures carry it as their final text block. */
-export function reportOf(result: {
-  readonly content?: Content;
-  readonly details?: unknown;
-  readonly toolName?: string;
-  readonly isError?: boolean;
-}): Report | undefined {
+export function reportOf(
+  result: { readonly content?: Content; readonly details?: unknown },
+  tool: ReportTool,
+): Report | undefined {
   const report = detailsReport(result.details);
   if (report) return report;
   const last = result.content?.at(-1);
-  return last?.type === "text"
-    ? decodeReport(last.text, result.isError ? undefined : result.toolName)
-    : undefined;
+  return last?.type === "text" ? decodeReport(last.text, tool) : undefined;
 }
 
 const ENVELOPE = new Set(["tool", "path"]);

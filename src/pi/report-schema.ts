@@ -7,7 +7,7 @@
  * failure report is the entire result; a success report follows the tool's
  * content payload (read rows, grep rows). Each field has one
  * owning layer (README "Reports"), so no fact can be stated twice. report.ts
- * omits tool and path from success text; render.ts uses the full report for the TUI.
+ * omits the call's tool and path from result text; render.ts uses the full report for the TUI.
  *
  * Types derive from these schemas. src/core imports only types from this module,
  * so engines stay independent of Pi. The worker loads TypeBox at its data boundary.
