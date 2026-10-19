@@ -4,10 +4,10 @@
  * so it travels as the thrown message only. Oversized issues are omitted whole.
  */
 import { DEFAULT_OUTPUT_BUDGETS, type OutputBudgets } from "./budgets.ts";
-import { boundedText, renderReport } from "./report.ts";
-import type { ArgumentIssue, FailureReport, ReportTool } from "./report-schema.ts";
+import { boundedText, renderReport, type ReportText } from "./report.ts";
+import type { ArgumentIssue, FailureReport } from "./report-schema.ts";
 
-type ArgumentRejection = Extract<FailureReport, { error: "INVALID_ARGUMENTS" }>;
+type ArgumentRejection = ReportText<Extract<FailureReport, { error: "INVALID_ARGUMENTS" }>>;
 
 /**
  * State each distinct fix once, on the first reported issue that needs it:
@@ -29,7 +29,6 @@ function encode(report: ArgumentRejection): string {
 
 /** Encode actionable field diagnostics without repeating the call's arguments. */
 export function formatArgumentError(
-  tool: ReportTool,
   issues: readonly ArgumentIssue[],
   schemaLimited: boolean,
   budget: OutputBudgets = DEFAULT_OUTPUT_BUDGETS,
@@ -41,7 +40,6 @@ export function formatArgumentError(
   }));
   const base = {
     error: "INVALID_ARGUMENTS" as const,
-    tool,
     ...(schemaLimited ? { schemaLimited: true as const } : {}),
   };
   const fits = (text: string) => Buffer.byteLength(text) <= budget.blockBytes;

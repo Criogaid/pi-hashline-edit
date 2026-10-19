@@ -48,8 +48,13 @@ export interface ReportDetails<TReport extends Report = Report> {
 
 type Content = AgentToolResult<unknown>["content"];
 
+/** What a report's text states: the originating call supplies its tool and path. */
+export type ReportText<R extends Report = Report> = R extends unknown
+  ? Omit<R, "tool" | "path">
+  : never;
+
 /** The fields a report states, in schema order; both renderers list them in this order. */
-export function reportEntries(report: Report): [string, unknown][] {
+export function reportEntries(report: ReportText): [string, unknown][] {
   return Object.keys(REPORT_SCHEMA.properties).flatMap((key) => {
     const value = (report as Record<string, unknown>)[key];
     return value === undefined ? [] : [[key, value] as [string, unknown]];
@@ -57,7 +62,7 @@ export function reportEntries(report: Report): [string, unknown][] {
 }
 
 /** Serialize facts in schema order; a result never repeats its call's tool and path. */
-export function renderReport(report: Report): string {
+export function renderReport(report: ReportText): string {
   const entries = reportEntries(report).filter(([key]) => !ENVELOPE.has(key));
   return JSON.stringify(Object.fromEntries(entries), null, 2);
 }

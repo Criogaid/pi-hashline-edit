@@ -69,7 +69,6 @@ export function createArgumentPreparer<T extends TObject>(
       if (!observation) {
         throw new Error(
           formatArgumentError(
-            name,
             [{ field: "$", reason: errorMessage(schemaFailure) }],
             false,
             budgets(),
@@ -90,7 +89,7 @@ export function createArgumentPreparer<T extends TObject>(
         ? result.issues
         : [{ field: "$", reason: errorMessage(schemaFailure) }];
     if (schemaFailure !== undefined || result.issues.length > 0) {
-      throw new Error(formatArgumentError(name, reported, result.limited, budgets()), {
+      throw new Error(formatArgumentError(reported, result.limited, budgets()), {
         cause: schemaFailure,
       });
     }
