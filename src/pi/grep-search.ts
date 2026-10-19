@@ -5,7 +5,6 @@
  *
  * @module pi-hashline-edit/pi
  */
-import { createHash } from "node:crypto";
 import { stat } from "node:fs/promises";
 import { availableParallelism } from "node:os";
 import { countLines } from "../core/lines.ts";
@@ -117,7 +116,6 @@ async function searchFile(
 ): Promise<{ rows: Rows; snapshot: SearchFileSnapshot } | undefined> {
   if (query.multiline && (await stat(filePath)).size > MAX_MULTILINE_SEARCH_BYTES)
     throw new SearchFileLimitError(true);
-  const hash = createHash("sha256");
   const rows: Rows = [];
   let lineOffset = 0;
   let nextWanted = 0;
@@ -169,11 +167,10 @@ async function searchFile(
   let pending = "";
   /** Length of pending through its last line feed. */
   let complete = 0;
-  let bytes = 0;
   const stats = await scanTextFile(filePath, {
-    onChunk: async (text) => {
+    onChunk: async (text, bytesRead) => {
       if (query.multiline) {
-        if (bytes <= MAX_MULTILINE_SEARCH_BYTES) pending += text;
+        if (bytesRead <= MAX_MULTILINE_SEARCH_BYTES) pending += text;
         return;
       }
       const lf = text.lastIndexOf("\n");
@@ -188,19 +185,16 @@ async function searchFile(
       }
     },
     signal,
-    onBytes: (chunk) => {
-      bytes += chunk.length;
-      hash.update(chunk);
-    },
     decoding: "lossy",
   });
   if (stats.hasNul) return undefined;
-  if (bytes > MAX_MULTILINE_SEARCH_BYTES && query.multiline) throw new SearchFileLimitError(true);
+  if (stats.byteLength > MAX_MULTILINE_SEARCH_BYTES && query.multiline)
+    throw new SearchFileLimitError(true);
   await send(pending);
   return {
     rows,
     snapshot: {
-      revision: hash.digest("hex"),
+      revision: stats.revision,
       validUtf8: stats.validUtf8,
       totalLines: stats.totalLines,
     },

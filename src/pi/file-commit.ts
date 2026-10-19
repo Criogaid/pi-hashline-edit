@@ -19,7 +19,7 @@ import {
 } from "node:fs/promises";
 import type { BigIntStats, Stats } from "node:fs";
 import { dirname, join } from "node:path";
-import { createHash } from "node:crypto";
+import { byteRevision } from "./file-revision.ts";
 import { decodeEditableText, unwritableTextError } from "../core/text.ts";
 import {
   errnoCode,
@@ -81,10 +81,6 @@ export class FileMutationError<C extends ErrorCode = ErrorCode> extends Hashline
     this.stage = stage;
     this.publication = publication;
   }
-}
-
-export function byteRevision(content: string | Uint8Array): string {
-  return createHash("sha256").update(content).digest("hex");
 }
 
 function requireRegularFile(target: Stats | BigIntStats): void {

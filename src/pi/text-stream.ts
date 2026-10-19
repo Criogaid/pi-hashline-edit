@@ -1,5 +1,5 @@
 /**
- * Streaming text scans: one read of a file yields its bytes, its NUL and UTF-8 validity, line
+ * Streaming text scans: one read of a file yields its revision, its NUL and UTF-8 validity, line
  * statistics, and the decoded text or selected lines.
  *
  * @module pi-hashline-edit/pi
@@ -8,24 +8,28 @@ import { createReadStream } from "node:fs";
 import { createUtf8Decoder, Utf8DecodingError, type Utf8Decoding } from "../core/text.ts";
 import { throwIfCancelled } from "./error-text.ts";
 import { withFileRead } from "./file-read.ts";
+import { createRevisionHasher } from "./file-revision.ts";
 
 const TEXT_READ_CHUNK_BYTES = 64 * 1024;
 
-/** Scan whole-file bytes; lossy decoding reports validity without rejecting malformed UTF-8. */
+/**
+ * Scan whole-file bytes; lossy decoding reports validity without rejecting malformed UTF-8.
+ * The revision covers exactly the bytes this scan read; onChunk also receives the bytes read so far.
+ */
 export async function scanTextFile(
   path: string,
   options: {
-    readonly onChunk?: (text: string) => void | Promise<void>;
+    readonly onChunk?: (text: string, bytesRead: number) => void | Promise<void>;
     readonly signal?: AbortSignal;
-    readonly onBytes?: (bytes: Buffer) => void;
     readonly decoding?: Utf8Decoding;
   } = {},
 ) {
-  const { onChunk, signal, onBytes, decoding = "strict" } = options;
+  const { onChunk, signal, decoding = "strict" } = options;
   return withFileRead(path, signal, async (handle) => {
     const decode = createUtf8Decoder();
     // Strict decoding always decides validity; lossy text is decoded only for a chunk consumer.
     const lossy = decoding === "lossy" && onChunk ? createUtf8Decoder("lossy") : undefined;
+    const revision = createRevisionHasher();
     let byteLength = 0;
     let lineFeeds = 0;
     let lastByte = -1;
@@ -41,7 +45,7 @@ export async function scanTextFile(
     try {
       for await (const chunk of stream) {
         const bytes = chunk as Buffer;
-        onBytes?.(bytes);
+        revision.update(bytes);
         byteLength += bytes.length;
         hasNul ||= bytes.includes(0);
         hasCrLf ||= (lastByte === 13 && bytes[0] === 10) || bytes.includes("\r\n");
@@ -63,7 +67,7 @@ export async function scanTextFile(
           }
         }
         if (lossy) text = lossy(bytes, true);
-        if (text !== undefined) await onChunk?.(text);
+        if (text !== undefined) await onChunk?.(text, byteLength);
       }
     } catch (error) {
       // Node's stream abort raises its own AbortError; report the shared cancellation text.
@@ -83,9 +87,10 @@ export async function scanTextFile(
       }
       if (lossy) tail = lossy();
       else if (decodingError && decoding === "strict") throw decodingError;
-      if (tail) await onChunk?.(tail);
+      if (tail) await onChunk?.(tail, byteLength);
     }
     return {
+      revision: revision.digest(),
       byteLength,
       totalLines: lineFeeds + (lastByte !== -1 && lastByte !== 10 ? 1 : 0),
       finalNewline: lastByte === -1 || lastByte === 10,
@@ -112,7 +117,6 @@ export async function scanTextLines(
   options: {
     readonly signal?: AbortSignal;
     readonly maxLineBytes?: number;
-    readonly onBytes?: (bytes: Buffer) => void;
     readonly decoding?: Utf8Decoding;
   } = {},
 ) {
@@ -143,10 +147,9 @@ export async function scanTextLines(
     number++;
     selected = select(number);
   };
-  const { signal, onBytes, decoding } = options;
+  const { signal, decoding } = options;
   const stats = await scanTextFile(path, {
     signal,
-    onBytes,
     decoding,
     onChunk: (text) => {
       let start = 0;

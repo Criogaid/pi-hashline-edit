@@ -4,7 +4,6 @@
  *
  * @module pi-hashline-edit/pi
  */
-import { createHash } from "node:crypto";
 import { truncateHead, formatSize } from "@earendil-works/pi-coding-agent";
 import { DiagnosticBuffer } from "./diagnostic-buffer.ts";
 import { createAnchorFormatter, displayCarriageReturns, plainRow } from "./anchor-format.ts";
@@ -123,7 +122,6 @@ async function formatMatches(options: FormatMatchesOptions) {
               const matchedRows = new Set<number>();
               // Counted only if this file passes verification and joins the output.
               let truncated = false;
-              const hash = createHash("sha256");
               const stats = await scanTextLines(
                 filePath,
                 (number) => windowSet.has(number),
@@ -144,7 +142,6 @@ async function formatMatches(options: FormatMatchesOptions) {
                 },
                 {
                   signal: scanSignal,
-                  onBytes: (bytes) => hash.update(bytes),
                   decoding: "lossy",
                 },
               );
@@ -152,7 +149,7 @@ async function formatMatches(options: FormatMatchesOptions) {
               if (matchLines.some(({ lineNumber }) => !matchedRows.has(lineNumber))) {
                 throw searchChangedError();
               }
-              if (snapshot.revision !== hash.digest("hex")) {
+              if (snapshot.revision !== stats.revision) {
                 throw searchChangedError();
               }
               const header = `${formatFileHeader(formatPath(filePath), matchLines.length)}\n`;
