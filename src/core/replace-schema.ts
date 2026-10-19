@@ -6,7 +6,7 @@ export const REPLACEMENT_SCHEMA = Type.Object(
     find: Type.String({
       minLength: 1,
       description:
-        "Text to find, read as literal decides. CRLF in the file reads as LF, so a line break is \\n; in literal mode a backslash followed by n matches those two characters. In regex mode, ^ and $ need the m flag to match per line; \\d, \\w, and \\b are ASCII-based.",
+        "What to match: plain text when literal is true, a JavaScript regex when false. CRLF in the file reads as LF, so a line break is \\n; in literal mode a backslash followed by n matches those two characters. In regex mode, ^ and $ need the m flag to match per line; \\d, \\w, and \\b are ASCII-based.",
     }),
     literal: Type.Boolean({
       description:
