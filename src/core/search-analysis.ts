@@ -11,9 +11,8 @@
 import { RegExpParser, visitRegExpAST, type AST } from "@eslint-community/regexpp";
 import { caseVariants } from "./case-fold.ts";
 import {
+  acceptedClassStrings,
   nativeCharacterRanges,
-  classStrings,
-  membership,
   total,
   type CharacterNode,
   surrogatePair,
@@ -147,10 +146,12 @@ function andFilters(filters: readonly Prefilter[]): Prefilter {
 }
 
 function orFilters(filters: readonly Prefilter[]): Prefilter {
-  if (!filters.length || filters.some((filter) => filter.kind === "all")) return ALL;
-  let result = filters[0];
-  for (const filter of filters.slice(1)) {
-    if (result.kind === "all" || filter.kind === "all") return ALL;
+  const known = filters.filter((filter) => filter.kind !== "all");
+  if (!known.length || known.length < filters.length) return ALL;
+  let result: Prefilter = known[0];
+  for (const filter of known.slice(1)) {
+    // Distribution can drop every bounded clause, leaving no condition.
+    if (result.kind === "all") return ALL;
     const left = result.kind === "and" ? result.filters : [result];
     const right = filter.kind === "and" ? filter.filters : [filter];
     // CNF distribution creates AND clauses; keeping only bounded clauses is a widening.
@@ -247,9 +248,9 @@ function quantified(node: AST.Quantifier, ctx: Context): Info {
 
 function classInfo(node: CharacterNode, ctx: Context): Info {
   if (node.type === "CharacterSet" && node.kind === "any") return UNKNOWN;
-  const strings = classStrings(node);
-  if (!strings) return UNKNOWN;
   const flags = `${ctx.ignoreCase ? "i" : ""}${ctx.unicodeSets ? "v" : ctx.unicode ? "u" : ""}`;
+  const strings = acceptedClassStrings(node, flags);
+  if (!strings) return UNKNOWN;
   const ranges = nativeCharacterRanges(node.raw, flags);
   if (total(ranges) > MAX_CLASS_CHARS) return UNKNOWN;
   const units: Unit[] = [];
@@ -257,9 +258,7 @@ function classInfo(node: CharacterNode, ctx: Context): Info {
     for (let point = low; point <= high; point++)
       units.push(charUnit(point, { ...ctx, ignoreCase: false }));
   const infos: Info[] = units.length ? [{ exact: [[unionUnits(units)]], filter: ALL }] : [];
-  const accepts = membership(node.raw, flags);
   for (const value of strings) {
-    if (!accepts.test(value)) continue;
     const sequence = [...value].map((char) => charUnit(char.codePointAt(0)!, ctx));
     infos.push(
       sequence.length <= MAX_SEQUENCE_LENGTH

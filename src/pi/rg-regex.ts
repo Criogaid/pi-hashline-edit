@@ -24,8 +24,8 @@ import {
   contains,
   nativeCharacterRanges,
   foldRanges,
-  membership,
   type Ranges,
+  acceptedClassStrings,
   classStrings,
   type CharacterNode,
   surrogatePair,
@@ -219,7 +219,7 @@ function assertionPlans(elements: readonly AST.Element[], ctx: Context): readonl
         if (node.negate) {
           if (adjacent.length !== asserted.length) return [plan];
           return adjacent.map((item, at) =>
-            restrict(plan, item, complement(asserted[at], everything(ctx)[0][1]), ctx),
+            restrict(plan, item, complement(asserted[at], maxElement(ctx)), ctx),
           );
         }
         let constrained = plan;
@@ -243,7 +243,7 @@ function assertionPlans(elements: readonly AST.Element[], ctx: Context): readonl
             plan = restrict(
               plan,
               other,
-              isWord === node.negate ? word : complement(word, everything(ctx)[0][1]),
+              isWord === node.negate ? word : complement(word, maxElement(ctx)),
               ctx,
             );
         }
@@ -269,8 +269,8 @@ function assertionPlans(elements: readonly AST.Element[], ctx: Context): readonl
 
 const intersects = (ranges: Ranges, other: Ranges) => intersect(ranges, other).length !== 0;
 
-/** Everything one element can consume: one code point with u, one UTF-16 unit without. */
-const everything = (ctx: Context): Ranges => (ctx.unicode ? [[0, MAX_SCALAR]] : [[0, MAX_UNIT]]);
+/** The largest value one element can consume: a code point with u, a UTF-16 unit without. */
+const maxElement = (ctx: Context): number => (ctx.unicode ? MAX_SCALAR : MAX_UNIT);
 
 const folded = (ranges: Ranges, ctx: Context): Ranges =>
   ctx.ignoreCase ? foldRanges(ranges, ctx.unicode) : ranges;
@@ -378,11 +378,9 @@ function stringPattern(strings: readonly string[], ctx: Context): string {
 }
 
 function characterPattern(node: CharacterNode, ctx: Context): string {
-  const strings = classStrings(node);
-  if (!strings) return ANY_TEXT;
+  const accepted = acceptedClassStrings(node, nativeFlags(node, ctx));
+  if (!accepted) return ANY_TEXT;
   const ranges = scalarRanges(node, ctx);
-  const accepts = membership(node.raw, nativeFlags(node, ctx));
-  const accepted = strings.filter((value) => accepts.test(value));
   return choice([
     ...(ranges.length ? [unit(ranges, ctx)] : []),
     ...(accepted.length
@@ -623,11 +621,9 @@ function finiteWords(node: AST.Element, ctx: Context): readonly string[] | undef
   const result: string[] = [];
   for (const [low, high] of ranges)
     for (let point = low; point <= high; point++) result.push(String.fromCodePoint(point));
-  const strings = classStrings(node);
+  const strings = acceptedClassStrings(node, nativeFlags(node, ctx));
   if (!strings) return undefined;
-  const accepts = membership(node.raw, nativeFlags(node, ctx));
   for (const value of strings) {
-    if (!accepts.test(value)) continue;
     let words: readonly string[] = [""];
     for (const char of value) {
       const variants = ignoreCaseAt(node, ctx) ? caseVariants(char, ctx.unicode) : [char];

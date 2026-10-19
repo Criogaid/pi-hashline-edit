@@ -139,6 +139,20 @@ export function foldRanges(ranges: Ranges, unicode: boolean): Ranges {
   return nativeCharacterRanges(source, unicode ? "iu" : "i");
 }
 
+/**
+ * The multi-character strings a class node matches under `flags`; undefined when a string
+ * property cannot be enumerated here.
+ */
+export function acceptedClassStrings(
+  node: CharacterNode,
+  flags: string,
+): readonly string[] | undefined {
+  const strings = classStrings(node);
+  if (!strings?.length) return strings;
+  const accepts = membership(node.raw, flags);
+  return strings.filter((value) => accepts.test(value));
+}
+
 /** String representatives of a class; undefined means a string property is not enumerable here. */
 export function classStrings(node: ClassNode): readonly string[] | undefined {
   switch (node.type) {

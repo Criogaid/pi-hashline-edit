@@ -11,7 +11,7 @@ const MAX_ASCII = 0x7f;
 let unitGroups: readonly (readonly number[])[] | undefined;
 
 /** Code units that ignoreCase treats as equal: ECMA-262 Canonicalize without the u flag. */
-export function equivalentCases(): readonly (readonly number[])[] {
+function equivalentCases(): readonly (readonly number[])[] {
   if (unitGroups) return unitGroups;
   const groups = new Map<number, number[]>();
   for (let unit = 0; unit <= MAX_UNIT; unit++) {
