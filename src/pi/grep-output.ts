@@ -268,7 +268,7 @@ export async function grepOutput(
     /** A literal pattern contains `|`, which matches only that character. */
     readonly literalPipe: boolean;
   },
-): Promise<{ payload?: string; facts: GrepFacts; incomplete: boolean }> {
+): Promise<{ payload?: string; facts: GrepFacts }> {
   const {
     search,
     warnings,
@@ -287,11 +287,10 @@ export async function grepOutput(
     return {
       // A literal `|` finding nothing most likely meant alternatives.
       facts: { matches: 0, files: 0, ...searchFacts, literalPipe: literalPipe || undefined },
-      incomplete: search.scanLimitReached,
     };
   }
   const formatted = await formatMatches({ ...options, files: search.files, budget });
-  const { payload, facts } = assembleGrepOutput({
+  return assembleGrepOutput({
     formatted,
     warnings,
     outputMode,
@@ -300,5 +299,4 @@ export async function grepOutput(
     searchFacts,
     budget,
   });
-  return { payload, facts, incomplete: warnings.length > 0 || search.scanLimitReached };
 }

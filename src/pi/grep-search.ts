@@ -29,7 +29,6 @@ export interface GrepFileMatch {
 interface SearchFileSnapshot {
   readonly revision: string;
   readonly validUtf8: boolean;
-  readonly totalLines: number;
 }
 
 /** Whole-file input of a multiline query; README's search limits link here. */
@@ -193,11 +192,7 @@ async function searchFile(
   await send(pending);
   return {
     rows,
-    snapshot: {
-      revision: stats.revision,
-      validUtf8: stats.validUtf8,
-      totalLines: stats.totalLines,
-    },
+    snapshot: { revision: stats.revision, validUtf8: stats.validUtf8 },
   };
 }
 

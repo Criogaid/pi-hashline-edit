@@ -115,10 +115,7 @@ function createGrepSchema({ defaultLimit, defaultContext }: HashlineEditConfig["
 type GrepSchema = ReturnType<typeof createGrepSchema>;
 /** How grep presents matches; grep-output formats each mode. */
 export type GrepOutputMode = NonNullable<Static<GrepSchema>["outputMode"]>;
-type GrepTool = ToolDefinition<
-  GrepSchema,
-  ({ incomplete?: true } & Partial<ReportDetails>) | undefined
->;
+type GrepTool = ToolDefinition<GrepSchema, Partial<ReportDetails> | undefined>;
 /** Validate JavaScript syntax once; the search never rejects a pattern V8 accepts. */
 function checkGrepArguments(args: unknown, report: ReportArgumentIssue): void {
   const { pattern, literal, flags } = (args ?? {}) as Record<string, unknown>;
@@ -272,7 +269,7 @@ export function makeGrepOverrideWithBackend(
           signal,
           warnings,
         });
-        const { payload, facts, incomplete } = await grepOutput({
+        const { payload, facts } = await grepOutput({
           cwd,
           search,
           outputMode,
@@ -287,7 +284,6 @@ export function makeGrepOverrideWithBackend(
         return reportResult(
           { tool: "grep" as const, path: params.path, ...facts },
           payload === undefined ? [] : [{ type: "text" as const, text: payload }],
-          incomplete ? { incomplete: true as const } : undefined,
         );
       });
     },
