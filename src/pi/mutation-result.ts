@@ -6,13 +6,7 @@
  */
 
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
-import {
-  commitVersions,
-  FileMutationError,
-  type CommitResult,
-  type FreshnessObservation,
-  type MutationVersions,
-} from "./file-commit.ts";
+import { FileMutationError, type CommitResult, type FreshnessObservation } from "./file-commit.ts";
 import { generateDiffString } from "@earendil-works/pi-coding-agent";
 import { displayCarriageReturns } from "./anchor-format.ts";
 import { normalizeLineEndings } from "../core/lines.ts";
@@ -39,13 +33,10 @@ export type MutationResultDetails<TDetails> =
   | MutationFinalDetails<TDetails>
   | (Partial<TDetails> & { actionFusion: ActionFusionProgress });
 
-/**
- * The diff of the shared logical text, which the card and Pi's session export both show,
- * and the commit's revisions.
- */
-export function generateMutationDetails(before: string, after: string, commit: MutationVersions) {
+/** The diff of the shared logical text, which the card and Pi's session export both show. */
+export function generateMutationDetails(before: string, after: string) {
   const { diff } = generateDiffString(normalizeLineEndings(before), normalizeLineEndings(after));
-  return { diff: displayCarriageReturns(diff), ...commitVersions(commit) };
+  return { diff: displayCarriageReturns(diff) };
 }
 
 /** Keep result-building failures distinct from file publication failures. */

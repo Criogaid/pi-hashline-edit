@@ -149,7 +149,7 @@ export async function runTextMutation<TTool extends MutationToolName>(
   const commit = await commitReplacement(absolutePath, next.text, baseRevision, signal);
   return postProcessMutation(commit.publication, () => ({
     commit,
-    details: generateMutationDetails(currentText, next.text, commit),
+    details: generateMutationDetails(currentText, next.text),
     facts: next.facts,
   }));
 }

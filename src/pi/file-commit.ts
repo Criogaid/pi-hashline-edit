@@ -49,19 +49,6 @@ export interface MutationVersions {
   observedRevision?: string;
 }
 
-/** The revisions a mutation result details for its caller; the report states publication. */
-export function commitVersions({
-  baseRevision,
-  publishedRevision,
-  observedRevision,
-}: MutationVersions): MutationVersions {
-  return {
-    ...(baseRevision === undefined ? {} : { baseRevision }),
-    publishedRevision,
-    ...(observedRevision === undefined ? {} : { observedRevision }),
-  };
-}
-
 export type CommitResult = MutationVersions &
   (
     | { readonly created: true; readonly publication: "PUBLISHED"; readonly baseRevision?: never }

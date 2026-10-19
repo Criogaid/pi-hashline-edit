@@ -13,7 +13,7 @@ import {
   withThenRunSchema,
   type ThenRunInput,
 } from "./action-fusion.ts";
-import { commitFile, commitVersions, type MutationVersions } from "./file-commit.ts";
+import { commitFile } from "./file-commit.ts";
 import { executeMutation, type ActionFusionExecutor } from "./mutation-runner.ts";
 import { throwIfCancelled } from "./error-text.ts";
 import { createArgumentPreparer } from "./argument-validation.ts";
@@ -41,7 +41,8 @@ function createWriteSchema(actionFusion: boolean) {
   return withThenRunSchema(writeSchema, "write", actionFusion);
 }
 type WriteParams = Static<typeof writeSchema> & { then_run?: ThenRunInput };
-type WriteMutationDetails = MutationVersions;
+/** write shows the built-in card; its report states every fact. */
+type WriteMutationDetails = object;
 type WriteDetails = MutationResultDetails<WriteMutationDetails>;
 /** The write card's call line shows the content; the command card owns then_run. */
 const WRITE_CARD_SHOWN = new Set(["publication", "created", "then_run", "progressError"]);
@@ -113,7 +114,7 @@ export function makeWriteOverride(
             });
             return {
               commit,
-              details: commitVersions(commit),
+              details: {},
               facts: commit.created ? { created: true } : {},
             };
           },

@@ -23,7 +23,7 @@ pi 扩展 `@criogaid/pi-hashline-edit`，注册入口为 `src/index.ts`。它替
 - Skip NUL files in grep. Keep invalid UTF-8 output as plain preview rows; matching uses the lossy preview text. Verify every matched file against the full revision it was matched on, in every output mode.
 - Validate grep patterns and flags with V8 at tool entry; resolve case overrides once into `GrepQuery.flags`. Native `RegExp` in `src/core/search.ts` decides every grep match on the LF view; rg only lists candidates and never decides a match. Candidate derivation may widen but never narrow.
 - 行 hash 是可碰撞的位置相关 checksum。恢复候选由调用方重新提交验证；range 验证边界见 README。
-- `edit/replace` 提交绑定实际读取字节的 revision。工具结果使用 `publishedRevision`；Action Fusion 以 mutation 返回的 `publishedRevision` 为 freshness 基线。
+- `edit/replace` 提交绑定实际读取字节的 revision。Action Fusion 以提交层返回的 `publishedRevision` 为 freshness 基线；revision 不进入工具结果。
 - Return successful mutations as one report without anchor rows; keep anchors in read/grep output and edit failure diagnostics. Keep diffs in mutation details for the TUI.
 - 不为旧版本保存的数据（会话回放中的结果、报告、Fusion 卡片）保留兼容：格式变更直接破坏性更新，旧数据按非法输入处理；唯一例外是会导致 Pi 崩溃的输入。
 - 保留提交阶段与 `NOT_PUBLISHED` / `PUBLISHED` / `UNKNOWN` 状态，分别报告文件发布结果和后续命令结果。
@@ -51,7 +51,7 @@ pi 扩展 `@criogaid/pi-hashline-edit`，注册入口为 `src/index.ts`。它替
 - Do not use Claude for new model-backed experiments.
 - 在能暴露问题的最低层级写：`core/` 纯函数优先，其次是工具层，最后才是跨工具流程。能在 `apply.test.ts` 里测的边界，不经文件系统在 `execute.test.ts` 里测。
 - 工具层测试通过 `tool-call.testing.ts` 的 `callTool` 按生产顺序驱动，包括非法输入，不为测试开辟生产中不存在的调用路径。
-- 优先断言行为和状态：文件字节、`publishedRevision`、返回结构、错误码。提示语只断言关键部分，预算数值引用 `budgets.ts` 的常量，不写死。
+- 优先断言行为和状态：文件字节、返回结构、错误码。提示语只断言关键部分，预算数值引用 `budgets.ts` 的常量，不写死。
 - 同一契约只测一遍。多个输入变体用表驱动；`edit` 与 `replace` 等共用流程的行为，写成一个共享用例跑多个工具。
 - 渲染测试必须断言用户可见的具体内容。只验证“不抛错”的用例不写。
 - 修复 bug 时补一条回归测试，并先确认它在旧代码上失败。行为契约变更时，同一提交里改写保护旧契约的测试，不留给 CI 去发现。
