@@ -20,7 +20,7 @@ import { splitLines } from "../core/lines.ts";
 import type { Anchor, AnchorFailure, ApplyFailure } from "../core/types.ts";
 import { mergeRanges } from "../core/ranges.ts";
 import { HashlineError } from "../core/errors.ts";
-import { DEFAULT_OUTPUT_BUDGETS, formatKiB, type OutputBudgets } from "./budgets.ts";
+import { DEFAULT_OUTPUT_BUDGETS, formatByteSize, type OutputBudgets } from "./budgets.ts";
 import { boundedFacts } from "./report.ts";
 import type { AnchorFailureFact, ErrorFacts } from "./report-schema.ts";
 
@@ -141,7 +141,7 @@ function failureEntry(
   shownLines: Set<number>,
   budget: OutputBudgets,
 ): AnchorFailureFact {
-  const rowTooLarge = `row exceeds ${formatKiB(budget.fieldBytes)}`;
+  const rowTooLarge = `row exceeds ${formatByteSize(budget.fieldBytes)}`;
   const entry: { -readonly [K in keyof AnchorFailureFact]: AnchorFailureFact[K] } = {
     field: `edits[${f.opIndex}].${f.which}`,
     op: f.op,

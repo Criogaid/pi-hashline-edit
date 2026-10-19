@@ -3,7 +3,7 @@
  * model-facing search warnings. Retain the opening context and final cause;
  * mark omitted text instead of silently dropping diagnostics.
  */
-import { formatKiB } from "./budgets.ts";
+import { formatByteSize } from "./budgets.ts";
 
 /** Cut only at UTF-8 boundaries; diagnostics may contain a single oversized line. */
 function byteSlice(text: string, maxBytes: number, tail: boolean): string {
@@ -25,7 +25,7 @@ export class DiagnosticBuffer {
 
   constructor(maxBytes: number) {
     this.maxBytes = maxBytes;
-    this.notice = `\n[Diagnostics truncated (${formatKiB(maxBytes)} limit); middle omitted.]\n`;
+    this.notice = `\n[Diagnostics truncated (${formatByteSize(maxBytes)} limit); middle omitted.]\n`;
     const contentBytes = maxBytes - Buffer.byteLength(this.notice);
     this.headBytes = Math.floor(contentBytes / 2);
     this.tailBytes = contentBytes - this.headBytes;

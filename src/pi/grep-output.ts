@@ -4,13 +4,13 @@
  *
  * @module pi-hashline-edit/pi
  */
-import { truncateHead, formatSize } from "@earendil-works/pi-coding-agent";
+import { truncateHead } from "@earendil-works/pi-coding-agent";
 import { DiagnosticBuffer } from "./diagnostic-buffer.ts";
 import { createAnchorFormatter, plainRow } from "./anchor-format.ts";
 import type { GrepFileMatch, searchFiles } from "./grep-search.ts";
 import { MAX_UNNARROWED_SCAN_BYTES } from "./grep-candidates.ts";
 import { scanTextLines } from "./text-stream.ts";
-import { DEFAULT_OUTPUT_BUDGETS, formatKiB, type OutputBudgets } from "./budgets.ts";
+import { DEFAULT_OUTPUT_BUDGETS, formatByteSize, type OutputBudgets } from "./budgets.ts";
 import { fileReadWarning, searchChangedError } from "./error-text.ts";
 import { HashlineError } from "../core/errors.ts";
 import { serializePath } from "./path.ts";
@@ -249,7 +249,7 @@ export function assembleGrepOutput(options: AssembleGrepOutputOptions): {
       ...(countsShown ? {} : { matches, files }),
       ...searchFacts,
       matchLimit: matchLimitReached ? effectiveLimit : undefined,
-      outputLimit: truncation.truncated ? formatKiB(budget.grepBytes) : undefined,
+      outputLimit: truncation.truncated ? formatByteSize(budget.grepBytes) : undefined,
       linePreviewLimit: linesTruncated ? budget.grepPreviewUnits : undefined,
       invalidUtf8: invalidUtf8.length ? invalidUtf8 : undefined,
       diagnostics: warnings.length ? searchDiagnostics(warnings, budget) : undefined,
@@ -280,7 +280,7 @@ export async function grepOutput(
   } = options;
   const searchFacts: SearchFacts = {
     candidates: search.candidates === "lines" ? undefined : search.candidates,
-    scanLimit: search.scanLimitReached ? formatSize(MAX_UNNARROWED_SCAN_BYTES) : undefined,
+    scanLimit: search.scanLimitReached ? formatByteSize(MAX_UNNARROWED_SCAN_BYTES) : undefined,
   };
   if (search.files.length === 0) {
     if (warnings.length)

@@ -31,7 +31,7 @@ import { POSITIVE_SAFE_INTEGER } from "./schema.ts";
 import { errnoCode } from "../core/errors.ts";
 import { throwIfCancelled } from "./error-text.ts";
 import { reportResult, runTool, type ReportDetails } from "./report.ts";
-import { defaultOutputBudgets, formatKiB, type OutputBudgetProvider } from "./budgets.ts";
+import { defaultOutputBudgets, formatByteSize, type OutputBudgetProvider } from "./budgets.ts";
 import type { HashlineEditConfig } from "./config.ts";
 import { createArgumentPreparer } from "./argument-validation.ts";
 
@@ -255,7 +255,7 @@ export function makeReadOverride(
               }
             : undefined;
         const header = `${formatReadHeader(serializePath(cwd, absPath), stats.totalLines, start, stats.finalNewline)}\n`;
-        const limitText = formatKiB(maxBytes);
+        const limitText = formatByteSize(maxBytes);
 
         return reportResult(
           {

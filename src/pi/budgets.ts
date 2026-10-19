@@ -48,7 +48,9 @@ export function outputBudgetsFor(contextWindow: number | undefined): OutputBudge
 /** Standalone tool factories have no session model until a provider is supplied. */
 export const defaultOutputBudgets: OutputBudgetProvider = () => DEFAULT_OUTPUT_BUDGETS;
 
-/** Size wording for notices, e.g. `16 KiB`. */
-export function formatKiB(bytes: number): string {
-  return `${bytes / 1024} KiB`;
+const MIB = 1024 * 1024;
+
+/** Size wording for every model-facing limit: whole MiB as `256 MiB`, otherwise `16 KiB`. */
+export function formatByteSize(bytes: number): string {
+  return bytes % MIB === 0 ? `${bytes / MIB} MiB` : `${bytes / 1024} KiB`;
 }
