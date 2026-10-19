@@ -130,6 +130,18 @@ test("project settings replace global groups while absent project settings use g
     assert.deepEqual(loadConfig(root), DEFAULT_CONFIG);
   }));
 
+test("project hashlineEdit is null → replaces global settings with defaults", () =>
+  withSettings(async (write, root, agentDir) => {
+    const globalConfig = { ...DEFAULT_CONFIG, enabled: false, hashLen: 8 };
+    await writeFile(
+      join(agentDir, "settings.json"),
+      JSON.stringify({ hashlineEdit: globalConfig }),
+    );
+    assert.deepEqual(loadConfig(root), globalConfig);
+    await write({ hashlineEdit: null });
+    assert.deepEqual(loadConfig(root), DEFAULT_CONFIG);
+  }));
+
 test("invalid tool groups default independently without discarding valid sibling groups", () =>
   withSettings(async (write, root) => {
     const configured = {
