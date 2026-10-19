@@ -106,3 +106,19 @@ test("display row parsing rejects headers, notices, and invalid line references"
     assert.equal(parseDisplayRow(row), null, row);
   }
 });
+
+test("Unicode line separators in display rows → preserves the complete content", async (t) => {
+  const formatter = createAnchorFormatter(4);
+  for (const separator of ["\u2028", "\u2029"]) {
+    const content = `before${separator}after`;
+    for (const [name, row, parse] of [
+      ["anchored", formatter.row(12, content), parseHashline],
+      ["anchored display", formatter.row(12, content), parseDisplayRow],
+      ["plain display", plainRow(12, content), parseDisplayRow],
+    ] as const) {
+      await t.test(`${name} ${JSON.stringify(separator)}`, () => {
+        assert.deepEqual(parse(row), { lineNo: "12", content });
+      });
+    }
+  }
+});

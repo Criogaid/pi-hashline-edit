@@ -18,6 +18,7 @@ import { generateMutationDetails } from "./mutation-result.ts";
 import { createActionFusionExecutor, type ActionFusionProgress } from "./action-fusion.ts";
 import { DEFAULT_CONFIG } from "./config.ts";
 import { toDisplayLines } from "./grep-render.ts";
+import { parseFileHeader } from "./grep-output.ts";
 import { makeReadOverride } from "./read-tool.ts";
 import { callTool } from "./tool-call.testing.ts";
 import { renderToolError } from "./render.ts";
@@ -279,6 +280,35 @@ test("withMutationStatus renderResult initializes mutationShell defensively", ()
   assert.ok(container);
   assert.ok(context.state.mutationShell);
   assert.ok(context.state.mutationShell.box);
+});
+
+test("150,000 rows in one grep group → renders every row with shared indentation folded", () => {
+  initTheme("dark");
+  const rowCount = 150_000;
+  const header = `many.txt · ${rowCount} matches`;
+  const raw = [
+    header,
+    ...Array.from(
+      { length: rowCount },
+      (_, index) => `${index + 1}#ABCD│${index === 0 ? "    " : "  "}hit`,
+    ),
+  ].join("\n");
+  const lines = toDisplayLines(raw, theme).map(stripVTControlCharacters);
+  assert.equal(lines.length, rowCount + 1);
+  assert.equal(lines[0], header);
+  const width = String(rowCount).length;
+  assert.equal(lines[1], `   ${"1".padStart(width)}: ›   hit`);
+  assert.equal(lines[2], `   ${"2".padStart(width)}: › hit`);
+  assert.equal(lines.at(-1), `   ${rowCount}: › hit`);
+});
+
+test("Unicode line separators in grep paths → parses the full file header", async (t) => {
+  for (const separator of ["\u2028", "\u2029"]) {
+    await t.test(JSON.stringify(separator), () => {
+      const path = `before${separator}after.txt`;
+      assert.deepEqual(parseFileHeader(`${path} · 2 matches`), { path, summary: "2 matches" });
+    });
+  }
 });
 
 test("grep renders anchored and plain groups with shared width and folded indentation", () => {

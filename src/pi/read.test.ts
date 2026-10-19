@@ -13,6 +13,7 @@ import { callTool } from "./tool-call.testing.ts";
 import { DEFAULT_CONFIG } from "./config.ts";
 import { DEFAULT_OUTPUT_BUDGETS, formatByteSize } from "./budgets.ts";
 import { reportOf } from "./report.ts";
+import { createAnchorFormatter } from "./anchor-format.ts";
 
 const DEFAULT_READ_MAX_BYTES = DEFAULT_OUTPUT_BUDGETS.readBytes;
 
@@ -359,3 +360,52 @@ test("read accepts safe offsets and limits whose sum exceeds the safe integer ra
       else assert.doesNotMatch(result.content[0].text, /│/);
     }
   }));
+
+test("Unicode line separators in a read path or middle row → renders every following row", async (t) => {
+  const tool = makeReadOverride(process.cwd(), DEFAULT_CONFIG);
+  const render = tool.renderResult;
+  assert.ok(render);
+  const formatter = createAnchorFormatter(DEFAULT_CONFIG.hashLen);
+  for (const separator of ["\u2028", "\u2029"]) {
+    for (const location of ["path", "middle row"]) {
+      await t.test(`${location} ${JSON.stringify(separator)}`, () => {
+        const path = location === "path" ? `before${separator}after.txt` : "read.txt";
+        const lines = [
+          "first",
+          location === "middle row" ? `before${separator}after` : "middle",
+          "third",
+          "last",
+        ];
+        const header = `${path} · ${lines.length} lines`;
+        const raw = [header, ...lines.map((line, index) => formatter.row(index + 1, line))].join(
+          "\n",
+        );
+        const rendered = render(
+          { content: [{ type: "text", text: raw }], details: undefined },
+          { expanded: true, isPartial: false },
+          stubTheme,
+          {
+            args: { path },
+            state: {},
+            cwd: process.cwd(),
+            toolCallId: "unicode-read",
+            lastComponent: undefined,
+            invalidate() {},
+            executionStarted: true,
+            argsComplete: true,
+            isPartial: false,
+            expanded: true,
+            showImages: false,
+            isError: false,
+          },
+        )
+          .render(120)
+          .map((line) => line.trimEnd());
+        assert.deepEqual(rendered, [
+          header,
+          ...lines.map((line, index) => `   ${index + 1}: ${line}`),
+        ]);
+      });
+    }
+  }
+});
