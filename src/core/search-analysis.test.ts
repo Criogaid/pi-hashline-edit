@@ -197,3 +197,12 @@ test("word escape → keeps word-containing files and rejects punctuation-only f
   assert.ok(hasCandidateBytes(Buffer.from("---a---"), prefilter));
   assert.equal(hasCandidateBytes(Buffer.from("---"), prefilter), false);
 });
+
+test("deeply nested uppercase pattern → smart case stays sensitive and prefilter retains native hits", () => {
+  for (const depth of [50, 200, 500, 1_000, 2_000, 4_000]) {
+    const pattern = `${"(?:".repeat(depth)}A${")".repeat(depth)}`;
+    assert.equal(new RegExp(pattern).test("A"), true);
+    assert.equal(smartIgnoreCase([pattern], false), false);
+    assert.equal(hasCandidateBytes(Buffer.from("A"), extractPrefilter(query(pattern))), true);
+  }
+});

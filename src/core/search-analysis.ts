@@ -317,20 +317,22 @@ function analyzeAlternatives(alternatives: readonly AST.Alternative[], ctx: Cont
 }
 
 /**
- * Parse a pattern V8 already accepted; undefined when regexpp lacks its syntax or
- * exceeds its own limits, which only makes an analysis less precise.
+ * Analyze a pattern V8 already accepted; undefined when regexpp lacks its syntax
+ * or parsing or analysis exceeds its limits, which only makes candidates less precise.
  */
-export function parseQueryPattern(
+export function analyzeQueryPattern<T>(
   pattern: string,
   literal: boolean,
   flags: string,
-): AST.Pattern | undefined {
+  analyze: (parsed: AST.Pattern) => T,
+): T | undefined {
   const source = regexSource(pattern, literal);
   try {
-    return new RegExpParser({ ecmaVersion: 2025 }).parsePattern(source, 0, source.length, {
+    const parsed = new RegExpParser({ ecmaVersion: 2025 }).parsePattern(source, 0, source.length, {
       unicode: flags.includes("u"),
       unicodeSets: flags.includes("v"),
     });
+    return analyze(parsed);
   } catch (error) {
     if (error instanceof SyntaxError || error instanceof RangeError) return undefined;
     throw error;
@@ -344,16 +346,17 @@ export function smartIgnoreCase(
   flags = "",
 ): boolean {
   return !patterns.some((pattern) => {
-    const parsed = parseQueryPattern(pattern, literal, flags);
-    if (!parsed) return true;
-    let uppercase = false;
-    visitRegExpAST(parsed, {
-      onCharacterEnter({ value }) {
-        const text = String.fromCodePoint(value);
-        uppercase ||= text !== text.toLowerCase();
-      },
+    const uppercase = analyzeQueryPattern(pattern, literal, flags, (parsed) => {
+      let found = false;
+      visitRegExpAST(parsed, {
+        onCharacterEnter({ value }) {
+          const text = String.fromCodePoint(value);
+          found ||= text !== text.toLowerCase();
+        },
+      });
+      return found;
     });
-    return uppercase;
+    return uppercase ?? true;
   });
 }
 
@@ -366,9 +369,11 @@ export function extractPrefilter(query: GrepQuery): Prefilter {
     unicodeSets: query.flags.includes("v"),
   };
   return orFilters(
-    query.patterns.map((pattern) => {
-      const parsed = parseQueryPattern(pattern, query.literal, query.flags);
-      return parsed ? filterOf(analyzeAlternatives(parsed.alternatives, ctx)) : ALL;
-    }),
+    query.patterns.map(
+      (pattern) =>
+        analyzeQueryPattern(pattern, query.literal, query.flags, (parsed) =>
+          filterOf(analyzeAlternatives(parsed.alternatives, ctx)),
+        ) ?? ALL,
+    ),
   );
 }

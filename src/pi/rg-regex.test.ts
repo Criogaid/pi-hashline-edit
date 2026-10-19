@@ -48,3 +48,20 @@ test("capture disables i inside a caseless reference → retain the reference's 
     ["a[Aa]"],
   );
 });
+
+test("deeply nested pattern → line candidates retain the native match", () => {
+  for (const depth of [50, 200, 500, 1_000, 2_000, 4_000]) {
+    const pattern = `${"(?:".repeat(depth)}A${")".repeat(depth)}`;
+    assert.equal(new RegExp(pattern).test("A"), true);
+    const candidates = lineCandidatePatterns({
+      patterns: [pattern],
+      literal: false,
+      flags: "",
+      multiline: false,
+    });
+    // An unavailable line analysis delegates candidate discovery to the file prefilter.
+    assert.ok(
+      candidates === undefined || candidates.some((candidate) => new RegExp(candidate).test("A")),
+    );
+  }
+});

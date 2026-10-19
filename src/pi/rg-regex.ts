@@ -31,7 +31,7 @@ import {
   surrogatePair,
 } from "../core/character-set.ts";
 import { caseVariants } from "../core/case-fold.ts";
-import { parseQueryPattern } from "../core/search-analysis.ts";
+import { analyzeQueryPattern } from "../core/search-analysis.ts";
 import type { GrepQuery } from "../core/search.ts";
 
 const LF = 0x0a;
@@ -686,13 +686,14 @@ export function lineCandidatePatterns(query: GrepQuery): string[] | undefined {
   };
   const patterns: string[] = [];
   for (const pattern of query.patterns) {
-    const parsed = parseQueryPattern(pattern, query.literal, query.flags);
-    if (!parsed) return undefined;
-    const translated = choice(
-      bindingContexts(parsed, ctx).map((context) =>
-        alternatives(parsed.alternatives, context, { first: true, last: true }),
+    const translated = analyzeQueryPattern(pattern, query.literal, query.flags, (parsed) =>
+      choice(
+        bindingContexts(parsed, ctx).map((context) =>
+          alternatives(parsed.alternatives, context, { first: true, last: true }),
+        ),
       ),
     );
+    if (translated === undefined) return undefined;
     if (
       translated.length + patterns.reduce((sum, value) => sum + value.length, 0) >
       MAX_LINE_PATTERN_UNITS
