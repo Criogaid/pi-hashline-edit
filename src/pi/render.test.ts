@@ -6,14 +6,9 @@ import { readFile, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import { visibleWidth } from "@earendil-works/pi-tui";
-import {
-  generateDiffString,
-  initTheme,
-  type ToolDefinition,
-} from "@earendil-works/pi-coding-agent";
+import { initTheme, type ToolDefinition } from "@earendil-works/pi-coding-agent";
 import type { TSchema } from "typebox";
 import { theme } from "../../node_modules/@earendil-works/pi-coding-agent/dist/modes/interactive/theme/theme.js";
-import { displayCarriageReturns } from "./anchor-format.ts";
 import { makeEditOverride } from "./edit-tool.ts";
 import { makeReplaceTool } from "./replace-tool.ts";
 import { renderDiffPreview } from "./render.ts";
@@ -32,11 +27,10 @@ import { openTestSession } from "../testing/session.testing.ts";
 import type { SuccessReport } from "./report-schema.ts";
 import { renderReport } from "./report.ts";
 
-const versions = { publishedRevision: "r", observedRevision: "r" };
 const mutationDetails = (
   report: Pick<SuccessReport, "publication" | "freshness" | "then_run">,
 ) => ({
-  ...generateMutationDetails("old\n", "new\n", versions),
+  ...generateMutationDetails("old\n", "new\n"),
   report: {
     tool: "edit" as const,
     path: "a.txt",
@@ -68,7 +62,7 @@ test("mutation headers refresh in place and retain isolated per-call counts", ()
     tool.renderResult(
       {
         content: [{ type: "text", text: "Done" }],
-        details: generateMutationDetails("old\n", "new\n", versions),
+        details: generateMutationDetails("old\n", "new\n"),
       },
       { isPartial: false, expanded: false },
       theme,
@@ -213,10 +207,7 @@ test("unfused write errors retain the native full diagnostic", () => {
   tool.renderResult!(
     {
       content: [{ type: "text", text: "write failed\nimportant detail" }],
-      details: {
-        publishedRevision: "r",
-        observedRevision: "r",
-      },
+      details: {},
     },
     { isPartial: false, expanded: false },
     theme,
@@ -229,12 +220,7 @@ test("mutation previews hide CRLF boundaries even with mixed endings or an unter
   initTheme("dark");
   for (const before of ["old\r\ncontext\r\n", "old\r\ncontext\nlast", "old\r\ncontext\r\nlast"]) {
     const after = before.replace("old", "new");
-    const details = generateMutationDetails(before, after, {
-      publishedRevision: "r",
-      observedRevision: "r",
-    });
-    assert.equal(details.diff, displayCarriageReturns(generateDiffString(before, after).diff));
-    assert.match(details.diff, /␍/);
+    const details = generateMutationDetails(before, after);
     for (const tool of [
       makeEditOverride(process.cwd(), DEFAULT_CONFIG),
       makeReplaceTool(process.cwd(), DEFAULT_CONFIG),
@@ -258,10 +244,7 @@ test("mutation previews hide CRLF boundaries even with mixed endings or an unter
 test("diff previews retain standalone CR and literal control-picture characters", () => {
   initTheme("dark");
   for (const before of ["old\r", "old␍", "old\rcontent\r\n"]) {
-    const details = generateMutationDetails(before, before.replace("old", "new"), {
-      publishedRevision: "r",
-      observedRevision: "r",
-    });
+    const details = generateMutationDetails(before, before.replace("old", "new"));
     const tool = makeEditOverride(process.cwd(), DEFAULT_CONFIG);
     const result = tool.renderResult(
       { content: [], details },
@@ -429,7 +412,7 @@ test("argument cards preserve omission notices and all expanded issues", () => {
     field: `edits[${index}].body`,
     reason: `中文🙂 ${index}: supply a line.\n${"context ".repeat(50)}\nFinal cause: empty body.`,
   }));
-  const diagnostic = formatArgumentError("edit", issues, true);
+  const diagnostic = formatArgumentError(issues, true);
   const parsed = argumentError(new Error(diagnostic));
   assert.ok(parsed.schemaLimited && parsed.omittedIssues);
   const result = {
@@ -474,7 +457,7 @@ test("unrecognized or malformed JSON errors retain their original diagnostic", (
 test("argument diagnostics wrap Unicode and multiline reasons at narrow terminal widths", () => {
   const field = "edits[0].body";
   const reason = '中文🙂: supply at least one line.\nUse ["空行"] for this example.';
-  const diagnostic = formatArgumentError("edit", [{ field, reason }], false);
+  const diagnostic = formatArgumentError([{ field, reason }], false);
   const result = { content: [{ type: "text" as const, text: diagnostic }] };
   for (const appearance of ["dark", "light"] as const) {
     initTheme(appearance);

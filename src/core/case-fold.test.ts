@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { caseVariants, equivalentCases } from "./case-fold.ts";
+import { caseVariants } from "./case-fold.ts";
+import { MAX_UNIT } from "./character-set.ts";
 
 for (const [char, unicode, expected] of [
   ["k", false, ["K", "k"]],
@@ -30,11 +31,13 @@ for (const [char, unicode, expected] of [
   });
 }
 
-test("non-Unicode equivalence groups → every member agrees with native RegExp", () => {
-  for (const group of equivalentCases()) {
-    const source = `^\\u${group[0].toString(16).padStart(4, "0")}$`;
+test("Cartesian non-Unicode code units → case variants agree with native RegExp", () => {
+  for (let unit = 0; unit <= MAX_UNIT; unit++) {
+    const char = String.fromCharCode(unit);
+    const source = `^\\u${unit.toString(16).padStart(4, "0")}$`;
     const native = new RegExp(source, "i");
-    for (const unit of group)
-      assert.ok(native.test(String.fromCharCode(unit)), `${source}: ${unit}`);
+    const variants = caseVariants(char, false);
+    assert.ok(variants.includes(char), source);
+    for (const variant of variants) assert.ok(native.test(variant), `${source}: ${variant}`);
   }
 });

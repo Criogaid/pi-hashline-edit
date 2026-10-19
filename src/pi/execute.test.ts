@@ -15,7 +15,6 @@ import { makeReplaceTool } from "./replace-tool.ts";
 import { createActionFusionExecutor } from "./action-fusion.ts";
 import { computeLineHash } from "../core/hash.ts";
 import { splitLines } from "../core/lines.ts";
-import { byteRevision } from "./file-revision.ts";
 import { callTool } from "./tool-call.testing.ts";
 import { DEFAULT_CONFIG } from "./config.ts";
 import { formatKiB, DEFAULT_OUTPUT_BUDGETS } from "./budgets.ts";
@@ -170,7 +169,8 @@ test("successful mutation → returns one report without anchor payload", async 
             publication: "PUBLISHED",
             ...(tool === "replace" ? { matches: count } : {}),
           });
-          if (tool !== "write") assert.match(result.details.displayDiff, /new/);
+          if (tool !== "write") assert.match(result.details.diff, /new/);
+          else assert.deepEqual(result.details, { report: reportOf(result, "write") });
         }),
       );
     }
@@ -343,10 +343,7 @@ test("native read and write renderers preserve resource titles, previews, and fu
     const error = write.renderResult(
       {
         content: [{ type: "text", text: "first error\nsecond error" }],
-        details: {
-          publishedRevision: "r",
-          observedRevision: "r",
-        },
+        details: {},
       },
       { isPartial: false, expanded: false },
       stubTheme,
@@ -795,7 +792,7 @@ test("edit rejects unwritable body lines before reading a missing target", async
     }
   }));
 
-test("edit preserves a UTF-8 BOM and reports bound mutation revisions", async () =>
+test("editing a BOM-prefixed file → publishes the changed bytes with the BOM intact", async () =>
   withDir(async (dir) => {
     const target = join(dir, "bom.txt");
     const source = "\ufeffguard\nold\n";
@@ -808,10 +805,8 @@ test("edit preserves a UTF-8 BOM and reports bound mutation revisions", async ()
       });
       const expected = Buffer.from(line === 1 ? "\ufeffnew\nold\n" : "\ufeffguard\nnew\n", "utf8");
       assert.deepEqual(await readFile(target), expected);
-      assert.equal(result.details.baseRevision, byteRevision(original));
-      assert.equal(result.details.publishedRevision, byteRevision(expected));
-      assert.equal(result.details.observedRevision, result.details.publishedRevision);
-      assert.equal("revision" in result.details, false);
+      assert.equal(reportOf(result, "edit")?.publication, "PUBLISHED");
+      assert.equal(reportOf(result, "edit")?.freshness, undefined);
     }
   }));
 
@@ -1318,7 +1313,7 @@ test("edit verification → uses the supplied hash length", async () =>
     assert.equal(await readFile(join(dir, "registered.txt"), "utf8"), "after\n");
   }));
 
-test("copy/move through read anchors → publish bytes bound to the read revision", async () =>
+test("copy/move through read anchors → publishes captured bytes with BOM and mixed endings intact", async () =>
   withDir(async (dir) => {
     const path = "transfer.txt";
     const file = join(dir, path);
@@ -1341,10 +1336,8 @@ test("copy/move through read anchors → publish bytes bound to the read revisio
       const expected = op === "copy" ? source + "A\r\nB\n" : "\uFEFFC\r\nD\nA\r\nB\n";
       const bytes = Buffer.from(expected, "utf8");
       assert.deepEqual(await readFile(file), bytes);
-      assert.ok("publishedRevision" in result.details);
-      assert.equal(result.details.baseRevision, byteRevision(Buffer.from(source, "utf8")));
-      assert.equal(result.details.publishedRevision, byteRevision(bytes));
-      assert.equal(result.details.observedRevision, result.details.publishedRevision);
+      assert.equal(result.isError, undefined);
+      assert.equal(reportOf(result, "edit")?.publication, "PUBLISHED");
     }
   }));
 
@@ -1403,10 +1396,9 @@ test("copy/move with fused command → execute after the complete transfer and p
         },
         { ctx: { cwd: dir } },
       );
-      assert.ok("publishedRevision" in result.details);
       assert.equal(reportOf(result, "edit")?.then_run?.status, "failed");
       assert.equal(reportOf(result, "edit")?.publication, "PUBLISHED");
-      assert.equal(result.details.publishedRevision, byteRevision(Buffer.from(expected, "utf8")));
+      assert.equal(reportOf(result, "edit")?.freshness, undefined);
       assert.equal(await readFile(file, "utf8"), expected);
       assert.equal(commands, 1);
     }

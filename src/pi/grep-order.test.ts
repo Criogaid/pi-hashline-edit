@@ -11,7 +11,7 @@ import { searchText, type LineSearchInput, type SearchInput } from "../core/sear
 import { DEFAULT_CONFIG } from "./config.ts";
 import { reportOf } from "./report.ts";
 import type { GrepBackend } from "./rg-process.ts";
-import type { CheckedWorkerError } from "./regex-worker-contract.ts";
+import type { WorkerError } from "./report-cause.ts";
 import { callTool } from "./tool-call.testing.ts";
 
 test("out-of-order file completions → listing order fixes rows, warnings, and the limit cutoff", {
@@ -160,7 +160,7 @@ test("file-associated failure → listing position decides failure or cutoff, wh
   t.after(() => fs.rm(dir, { recursive: true, force: true }));
   const names = ["a.txt", "z.txt"];
   for (const name of names) await fs.writeFile(join(dir, name), `needle ${name}\n`);
-  const timeout: CheckedWorkerError = {
+  const timeout: WorkerError = {
     code: "REGEX_TIMEOUT",
     message: "Regex evaluation timed out.",
     facts: { timeoutMs: DEFAULT_CONFIG.grep.regexTimeoutMs },

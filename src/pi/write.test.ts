@@ -108,8 +108,9 @@ test("write supports create-only and overwrite-only modes", async () =>
       options,
     );
     assert.doesNotMatch(created.content[0].text, /Revision:|[0-9a-f]{64}/);
-    assert.equal(created.details.publishedRevision, await fileRevision(target));
-    assert.equal("revision" in created.details, false);
+    assert.deepEqual(await readFile(target), Buffer.from("new\n"));
+    assert.equal(reportOf(created, "write")?.publication, "PUBLISHED");
+    assert.equal(reportOf(created, "write")?.created, true);
     const exists = await callTool(
       write,
       { path: "new.txt", content: "bad\n", mode: "create" },

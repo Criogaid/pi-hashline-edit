@@ -566,7 +566,7 @@ test("published mutation failure → preserves the original failure and states c
   }
 });
 
-test("Fusion uses commit facts when details omit or contradict publication and revision", async (t) => {
+test("Fusion takes publication and freshness from commit facts independently of diff details", async (t) => {
   const dir = await tempDir();
   try {
     const target = join(dir, "unchanged.txt");
@@ -578,10 +578,7 @@ test("Fusion uses commit facts when details omit or contradict publication and r
       observedRevision: byteRevision(Buffer.from("same\n")),
       created: false as const,
     };
-    for (const details of [
-      undefined,
-      { publication: "UNKNOWN", publishedRevision: "wrong", observedRevision: "wrong" },
-    ]) {
+    for (const details of [{}, { diff: "" }]) {
       for (const thenRun of [undefined, { command: "check" }]) {
         let commands = 0;
         const fusion = createActionFusionExecutor(async () => {
@@ -597,15 +594,16 @@ test("Fusion uses commit facts when details omit or contradict publication and r
           signal: undefined,
           ctx: await ctx(dir, t),
           mutate: async () => ({
-            details: details ?? {},
+            details,
             facts: {},
             commit,
           }),
         });
         assert.equal(result.content.length, 1);
-        for (const [key, value] of Object.entries(details ?? {}))
+        for (const [key, value] of Object.entries(details))
           assert.deepEqual(Reflect.get(result.details, key), value);
         assert.equal(reportOf(result, "edit")?.publication, "NOT_PUBLISHED");
+        assert.equal(reportOf(result, "edit")?.freshness, undefined);
         assert.equal(reportOf(result, "edit")?.then_run?.status, thenRun ? "succeeded" : undefined);
         assert.equal(commands, thenRun ? 1 : 0);
         assert.equal(await readFile(target, "utf8"), "same\n");

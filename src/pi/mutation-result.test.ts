@@ -10,7 +10,6 @@ import {
   type MutationOutcome,
 } from "./mutation-result.ts";
 import { displayCarriageReturns } from "./anchor-format.ts";
-import { byteRevision } from "./file-revision.ts";
 
 // Checked by tsc; these callers must never run.
 function invalidMutationConstruction(
@@ -46,19 +45,11 @@ for (const [name, before, after] of [
   ["BOM and literal escapes", "\uFEFFguard\nold\\n\\0", "\uFEFFguard\nnew\\n\\0"],
   ["no-op", "unchanged\n", "unchanged\n"],
 ] as const) {
-  test(`mutation details preserve byte-faithful diff, logical preview, and revisions for ${name}`, () => {
-    const versions = {
-      baseRevision: byteRevision(Buffer.from(before)),
-      publishedRevision: byteRevision(Buffer.from(after)),
-      observedRevision: byteRevision(Buffer.from(after)),
-    };
-    const details = generateMutationDetails(before, after, versions);
-    const raw = generateDiffString(before, after);
+  test(`${name} mutation → details contain only the logical-view diff`, () => {
+    const details = generateMutationDetails(before, after);
     const logical = generateDiffString(before.replace(/\r\n/g, "\n"), after.replace(/\r\n/g, "\n"));
     assert.deepEqual(details, {
-      diff: displayCarriageReturns(raw.diff),
-      displayDiff: displayCarriageReturns(logical.diff),
-      ...versions,
+      diff: displayCarriageReturns(logical.diff),
     });
   });
 }

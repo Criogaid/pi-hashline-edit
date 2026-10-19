@@ -115,7 +115,7 @@ for (const fused of [false, true]) {
     for (const mutation of mutationCases) {
       for (const disturbance of ["append", "delete"] as const) {
         await t.test(
-          `${mutation.name}: ${disturbance} → published without a stable revision`,
+          `${mutation.name}: ${disturbance} → retains publication and reports changed freshness`,
           async (t) => {
             const { directory, path } = await targetFile(
               t,
@@ -136,10 +136,6 @@ for (const fused of [false, true]) {
               mutation.name === "edit" ? "edit" : mutation.name === "replace" ? "replace" : "write",
             );
             assert.equal(report?.publication, "PUBLISHED");
-            assert.equal(Object.hasOwn(result.details, "observedRevision"), false);
-            assert.equal(result.details.publishedRevision, byteRevision(Buffer.from(PUBLISHED)));
-            if (mutation.name !== "write create")
-              assert.equal(result.details.baseRevision, byteRevision(Buffer.from(BEFORE)));
             assert.equal(report?.next, REREAD);
             assert.doesNotMatch(text(result), /Updated anchors|retry the tool/);
             assert.equal(report?.then_run, undefined);
@@ -305,6 +301,37 @@ test("concurrent change during pre-publication revision read → rejects without
         },
       );
       await assertTarget(path, BEFORE, "append");
+    });
+  }
+});
+
+test("file changes after the editable snapshot → rejects publication against the read bytes", async (t) => {
+  for (const mutation of mutationCases.filter(
+    ({ name }) => name === "edit" || name === "replace",
+  )) {
+    await t.test(mutation.name, async (t) => {
+      const { directory, path } = await targetFile(t, BEFORE);
+      const nativeOpen = fs.promises.open;
+      let targetReads = 0;
+      t.mock.method(fs.promises, "open", async (...args: Parameters<typeof nativeOpen>) => {
+        if (args[0] === path && ++targetReads === 2) fs.appendFileSync(path, CONCURRENT_APPEND);
+        return nativeOpen(...args);
+      });
+      syncBuiltinESMExports();
+      try {
+        await expectToolFailure(
+          callTool(mutation.make(directory), { path, ...mutation.args }),
+          "FILE_CHANGED",
+          (report) => {
+            assert.equal(report.publication, "NOT_PUBLISHED");
+          },
+        );
+        assert.equal(targetReads, 2);
+        await assertTarget(path, BEFORE, "append");
+      } finally {
+        t.mock.restoreAll();
+        syncBuiltinESMExports();
+      }
     });
   }
 });

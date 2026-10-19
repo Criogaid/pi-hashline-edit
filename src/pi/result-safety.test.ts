@@ -169,11 +169,7 @@ test("standalone and Fusion finalizers → take freshness from commit facts", as
     for (const publication of ["PUBLISHED", "NOT_PUBLISHED"] as const) {
       for (const observedRevision of ["published", "external"]) {
         const mutation = {
-          details: {
-            publication: "UNKNOWN",
-            publishedRevision: "ignored",
-            observedRevision: "ignored",
-          },
+          details: { diff: "" },
           facts: {},
           commit: {
             publication,
@@ -201,11 +197,7 @@ test("standalone and Fusion finalizers → take freshness from commit facts", as
         assert.equal(reportOf(standalone, "edit")?.publication, publication);
         assert.equal(reportOf(fused, "edit")?.publication, publication);
         assert.equal(reportOf(standalone, "edit")?.freshness, fresh ? undefined : "changed");
-        assert.deepEqual(mutation.details, {
-          publication: "UNKNOWN",
-          publishedRevision: "ignored",
-          observedRevision: "ignored",
-        });
+        assert.deepEqual(mutation.details, { diff: "" });
       }
     }
   } finally {
@@ -467,10 +459,7 @@ test("all mutation tools succeed without rewriting on no-op, with and without Fu
           await ctx(dir, t),
         );
         assert.equal(reportOf(result, tool.name)?.publication, "NOT_PUBLISHED");
-        const revision = byteRevision(Buffer.from("same\n"));
-        for (const key of ["baseRevision", "publishedRevision", "observedRevision"])
-          assert.equal(result.details[key], revision);
-        assert.equal("revision" in result.details, false);
+        assert.equal(reportOf(result, tool.name)?.freshness, undefined);
         assert.doesNotMatch(text(result), /Updated anchors|\d+#[0-9A-Z]+│/);
         assert.equal(commands, mode === "command" ? 1 : 0);
         assert.equal(

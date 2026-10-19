@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { makeReadOverride } from "../pi/read-tool.ts";
 import { makeEditOverride } from "../pi/edit-tool.ts";
-import { byteRevision } from "../pi/file-revision.ts";
+import { reportOf } from "../pi/report.ts";
 import { makeGrepOverrideWithBackend } from "../pi/grep-tool.ts";
 import { computeLineHash } from "../core/hash.ts";
 import { callTool } from "../pi/tool-call.testing.ts";
@@ -110,7 +110,7 @@ test("copy/move a 150,000-line block → publish every captured line", async (t)
       "utf8",
     );
     assert.deepEqual(await readFile(path), expected);
-    assert.ok("publishedRevision" in result.details);
-    assert.equal(result.details.publishedRevision, byteRevision(expected));
+    assert.equal(result.isError, undefined);
+    assert.equal(reportOf(result, "edit")?.publication, "PUBLISHED");
   }
 });

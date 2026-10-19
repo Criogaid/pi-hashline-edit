@@ -36,7 +36,7 @@ test("model budget grows → argument issues remain complete JSON with counted o
     fix: "Supply a line.",
   }));
   const reports = [outputBudgetsFor(1), small, large].map((budget) => {
-    const text = formatArgumentError("edit", issues, false, budget);
+    const text = formatArgumentError(issues, false, budget);
     assert.ok(Buffer.byteLength(text) <= budget.blockBytes);
     const report = decodeReport(text, "edit");
     assert.ok(report);

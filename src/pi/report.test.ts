@@ -69,7 +69,7 @@ test("structured failure → omits call fields from text and renders the complet
 });
 
 test("Pi argument failure transported as text → renders field facts after serialization", () => {
-  const diagnostic = formatArgumentError("grep", [{ field: "pattern", reason: "missing" }], false);
+  const diagnostic = formatArgumentError([{ field: "pattern", reason: "missing" }], false);
   const result = JSON.parse(JSON.stringify({ content: [text(diagnostic)] }));
   assert.equal(Object.hasOwn(JSON.parse(diagnostic), "tool"), false);
   assert.equal(Object.hasOwn(JSON.parse(diagnostic), "path"), false);
@@ -99,7 +99,7 @@ test("argument reports with obsolete fields → remain raw on replay", () => {
 });
 
 test("invalid serialized report → retains the raw diagnostic", () => {
-  const valid = formatArgumentError("edit", [{ field: "path", reason: "missing" }], false);
+  const valid = formatArgumentError([{ field: "path", reason: "missing" }], false);
   for (const invalid of [
     '{"tool":"edit","arbitrary":"user file"}',
     '{"tool":"replace","error":"NO_MATCH","message":"missing rule"}',
@@ -300,7 +300,6 @@ test("invalid details report → falls back to valid text and leaves content int
 
 test("output byte limit → follows the scan limit and precedes the line preview limit", () => {
   const serialized = renderReport({
-    tool: "grep",
     candidates: "all",
     scanLimit: formatSize(MAX_UNNARROWED_SCAN_BYTES),
     outputLimit: formatKiB(DEFAULT_OUTPUT_BUDGETS.grepBytes),
