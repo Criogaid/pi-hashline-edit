@@ -188,7 +188,7 @@ export const FACT_FIELDS = {
   offset: Type.Integer({ minimum: 0 }),
   timeoutMs: Type.Integer({ minimum: 1 }),
   exitCode: Type.Union([Type.Integer(), Type.Null()]),
-  // read outcome.
+  // read outcome; `outputLimit` below is shared with grep.
   pagination: Type.Object(
     {
       start: Type.Integer(),
@@ -198,7 +198,6 @@ export const FACT_FIELDS = {
     },
     { additionalProperties: false },
   ),
-  truncatedAt: Type.String({ description: "The byte budget that stopped the output." }),
   lineTooLong: Type.Object(
     { line: Type.Integer(), limit: Type.String() },
     { additionalProperties: false },
@@ -215,7 +214,7 @@ export const FACT_FIELDS = {
     description:
       "Bytes of files read when every file was a candidate; later files were not searched.",
   }),
-  outputLimit: Type.String({ description: "Pi's output byte limit that cut the result." }),
+  outputLimit: Type.String({ description: "The output byte budget that cut the result." }),
   linePreviewLimit: Type.Integer({ description: "UTF-16 units kept in a cut line preview." }),
   invalidUtf8: Type.Array(Type.String(), {
     description: "Files shown as plain previews; their rows are not edit anchors.",
@@ -416,7 +415,7 @@ export const REPORT_SCHEMA = Type.Object({
 type ReportFields = Omit<Static<typeof REPORT_SCHEMA>, "error"> & { error?: ErrorCode };
 
 const SUCCESS_DEFINITIONS = {
-  read: facts([], ["pagination", "truncatedAt", "lineTooLong"]),
+  read: facts([], ["pagination", "outputLimit", "lineTooLong"]),
   grep: facts(
     [],
     [

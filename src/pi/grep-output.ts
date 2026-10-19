@@ -10,7 +10,7 @@ import { createAnchorFormatter, displayCarriageReturns, plainRow } from "./ancho
 import type { GrepFileMatch, searchFiles } from "./grep-search.ts";
 import { MAX_UNNARROWED_SCAN_BYTES } from "./grep-candidates.ts";
 import { scanTextLines } from "./text-stream.ts";
-import { DEFAULT_OUTPUT_BUDGETS, type OutputBudgets } from "./budgets.ts";
+import { DEFAULT_OUTPUT_BUDGETS, formatKiB, type OutputBudgets } from "./budgets.ts";
 import { fileReadWarning, searchChangedError } from "./error-text.ts";
 import { HashlineError } from "../core/errors.ts";
 import { serializePath } from "./path.ts";
@@ -248,7 +248,7 @@ export function assembleGrepOutput(options: AssembleGrepOutputOptions): {
       ...(countsShown ? {} : { matches, files }),
       ...searchFacts,
       matchLimit: matchLimitReached ? effectiveLimit : undefined,
-      outputLimit: truncation.truncated ? formatSize(budget.grepBytes) : undefined,
+      outputLimit: truncation.truncated ? formatKiB(budget.grepBytes) : undefined,
       linePreviewLimit: linesTruncated ? budget.grepPreviewUnits : undefined,
       invalidUtf8: invalidUtf8.length ? invalidUtf8 : undefined,
       diagnostics: warnings.length ? searchDiagnostics(warnings, budget) : undefined,

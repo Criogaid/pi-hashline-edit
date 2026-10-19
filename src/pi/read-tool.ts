@@ -280,7 +280,7 @@ export function makeReadOverride(
           {
             ...report,
             pagination: reportedPagination,
-            truncatedAt: truncated && !firstLineExceedsLimit ? limitText : undefined,
+            outputLimit: truncated && !firstLineExceedsLimit ? limitText : undefined,
             lineTooLong: firstLineExceedsLimit ? { line: start, limit: limitText } : undefined,
           },
           [{ type: "text" as const, text: header + truncation.content }],
