@@ -13,7 +13,6 @@ import { makeReplaceTool } from "./replace-tool.ts";
 import { makeWriteOverride } from "./write-tool.ts";
 import { makeEditOverride } from "./edit-tool.ts";
 import { commitFreshness, FileMutationError } from "./file-commit.ts";
-import { byteRevision } from "./file-revision.ts";
 import { finalizeMutation, postProcessMutation, type MutationOutcome } from "./mutation-result.ts";
 import { CommandNotRun, decodeReport, reportOf } from "./report.ts";
 import { REREAD } from "./report-schema.ts";

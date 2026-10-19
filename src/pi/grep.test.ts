@@ -1,4 +1,4 @@
-import { argumentError, rejectsArgument, rejectsArguments } from "./argument-error.testing.ts";
+import { rejectsArgument, rejectsArguments } from "./argument-error.testing.ts";
 /**
  * Deterministic grep override tests. Ripgrep and built-in grep are injected;
  * fixture files live only in a per-test system temporary directory.

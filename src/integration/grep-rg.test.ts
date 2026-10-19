@@ -34,7 +34,6 @@ import { DEFAULT_CONFIG } from "../pi/config.ts";
 import { canonicalPath } from "../pi/path.ts";
 import { reportOf } from "../pi/report.ts";
 import { grepCounts } from "../pi/grep-output.testing.ts";
-import { expectToolFailure } from "../pi/report-failure.testing.ts";
 import { hostCompiles, unsupportedByHost } from "../testing/regex-host.testing.ts";
 
 const invoke = (
