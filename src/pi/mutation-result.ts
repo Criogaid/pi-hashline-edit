@@ -40,22 +40,12 @@ export type MutationResultDetails<TDetails> =
   | (Partial<TDetails> & { actionFusion: ActionFusionProgress });
 
 /**
- * A byte-faithful diff (Pi's session export reads it), a separate preview of the shared
- * logical text for the card, and the commit's revisions.
+ * The diff of the shared logical text, which the card and Pi's session export both show,
+ * and the commit's revisions.
  */
 export function generateMutationDetails(before: string, after: string, commit: MutationVersions) {
-  const { diff } = generateDiffString(before, after);
-  const logicalBefore = normalizeLineEndings(before);
-  const logicalAfter = normalizeLineEndings(after);
-  const displayDiff =
-    logicalBefore === before && logicalAfter === after
-      ? diff
-      : generateDiffString(logicalBefore, logicalAfter).diff;
-  return {
-    diff: displayCarriageReturns(diff),
-    displayDiff: displayCarriageReturns(displayDiff),
-    ...commitVersions(commit),
-  };
+  const { diff } = generateDiffString(normalizeLineEndings(before), normalizeLineEndings(after));
+  return { diff: displayCarriageReturns(diff), ...commitVersions(commit) };
 }
 
 /** Keep result-building failures distinct from file publication failures. */

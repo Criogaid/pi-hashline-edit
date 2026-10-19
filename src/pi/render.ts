@@ -254,7 +254,7 @@ const MUTATION_CARD_SHOWN = new Set(["then_run", "progressError"]);
 export function renderMutationResult<TArgs>(
   result: AgentToolResult<
     | {
-        displayDiff?: string;
+        diff?: string;
         report?: Report;
         actionFusion?: Partial<Pick<ActionFusionProgress, "mutationCompleted">>;
       }
@@ -270,7 +270,7 @@ export function renderMutationResult<TArgs>(
   if (isPartial && result.details?.actionFusion?.mutationCompleted !== true)
     return new Text(theme.fg("warning", pending), 0, 0);
   if (context.isError) return renderToolError(result, tool, theme, expanded);
-  const diff = result.details?.displayDiff;
+  const diff = result.details?.diff;
   // Refresh in place: invalidation inside a renderer re-enters updateDisplay.
   publishDiffCounts(diff, context, (counts) => {
     context.state?.callText?.setText(header(context.args, theme, counts));
