@@ -11,6 +11,7 @@ import { searchText, type LineSearchInput, type SearchInput } from "../core/sear
 import { DEFAULT_CONFIG } from "./config.ts";
 import { reportOf } from "./report.ts";
 import type { GrepBackend } from "./rg-process.ts";
+import type { CheckedWorkerError } from "./regex-worker-contract.ts";
 import { callTool } from "./tool-call.testing.ts";
 
 test("out-of-order file completions → listing order fixes rows, warnings, and the limit cutoff", {
@@ -144,5 +145,134 @@ test("out-of-order file completions → listing order fixes rows, warnings, and 
       });
     }
     assert.deepEqual(outputs[0], outputs[1]);
+  }
+});
+
+test("file-associated failure → listing position decides failure or cutoff, while cancellation stays immediate", {
+  timeout: 15_000,
+}, async (t) => {
+  t.mock.method(os, "availableParallelism", () => 3);
+  syncBuiltinESMExports();
+  const { makeGrepOverrideWithBackend } = await import("./grep-tool.ts");
+  t.mock.restoreAll();
+  syncBuiltinESMExports();
+  const dir = await fs.mkdtemp(join(os.tmpdir(), "hl-grep-failure-order-"));
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  const names = ["a.txt", "z.txt"];
+  for (const name of names) await fs.writeFile(join(dir, name), `needle ${name}\n`);
+  const timeout: CheckedWorkerError = {
+    code: "REGEX_TIMEOUT",
+    message: "Regex evaluation timed out.",
+    facts: { timeoutMs: DEFAULT_CONFIG.grep.regexTimeoutMs },
+  };
+  const failures = [
+    {
+      name: "timeout",
+      code: timeout.code,
+      finish: (worker: Worker) => worker.emit("message", { error: timeout }),
+    },
+    {
+      name: "worker error",
+      code: "REGEX_WORKER_FAILED",
+      finish: (worker: Worker) => worker.emit("error", new Error("Worker crashed")),
+    },
+    {
+      name: "inconsistent rows",
+      code: "REGEX_WORKER_FAILED",
+      finish: (worker: Worker) =>
+        worker.emit("message", {
+          result: { totalLines: 2, lines: [{ lineNumber: 1, column: 0 }] },
+        }),
+    },
+  ] as const;
+  const backend: GrepBackend = {
+    runRgPaths: async () => assert.fail("This query uses line candidates"),
+    runRgLines: async (_rg, _args, _signal, _maxLines, onFile) => {
+      for (const name of names) if (!(await onFile(join(dir, name), undefined))) break;
+      return { code: 0, stderr: "", stopped: false };
+    },
+  };
+  for (const failure of failures) {
+    for (const outcome of ["limited", "failed", "cancelled"] as const) {
+      const outputs: unknown[] = [];
+      for (const failureFirst of outcome === "cancelled" ? [true] : [false, true]) {
+        await t.test(
+          JSON.stringify({ failure: failure.name, outcome, failureFirst }),
+          async (t) => {
+            const ready = Promise.withResolvers<void>();
+            const pending = new Map<
+              string,
+              {
+                worker: Worker;
+                input: SearchInput;
+                stopped: ReturnType<typeof Promise.withResolvers<void>>;
+              }
+            >();
+            const terminate = Worker.prototype.terminate;
+            t.mock.method(Worker.prototype, "terminate", function (this: Worker) {
+              for (const file of pending.values()) if (file.worker === this) file.stopped.resolve();
+              return terminate.call(this);
+            });
+            t.mock.method(
+              Worker.prototype,
+              "postMessage",
+              function (this: Worker, input: SearchInput | LineSearchInput) {
+                assert.ok("source" in input);
+                const name = input.source.includes("a.txt") ? "a.txt" : "z.txt";
+                pending.set(name, { worker: this, input, stopped: Promise.withResolvers<void>() });
+                if (pending.size === names.length) ready.resolve();
+              },
+            );
+            const controller = new AbortController();
+            const running = callTool(
+              makeGrepOverrideWithBackend(dir, DEFAULT_CONFIG, backend),
+              {
+                path: dir,
+                pattern: "needle",
+                literal: true,
+                limit: outcome === "failed" ? 2 : 1,
+              },
+              { signal: controller.signal },
+            );
+            try {
+              await Promise.race([
+                ready.promise,
+                running.then(() => assert.fail("Search finished before both workers were held")),
+              ]);
+              const early = pending.get("a.txt");
+              const late = pending.get("z.txt");
+              assert.ok(early && late);
+              const succeed = () =>
+                early.worker.emit("message", { result: searchText(early.input) });
+              if (failureFirst) failure.finish(late.worker);
+              else succeed();
+              await (failureFirst ? late : early).stopped.promise;
+              if (outcome === "cancelled") controller.abort();
+              else if (failureFirst) succeed();
+              else failure.finish(late.worker);
+              const result = await running;
+              const report = reportOf(result);
+              if (outcome === "limited") {
+                assert.equal(result.isError, undefined, JSON.stringify(report));
+                assert.equal(report?.matchLimit, 1);
+                assert.equal(report?.diagnostics, undefined);
+                assert.match(result.content[0].text, /1#[0-9A-Z]+│needle a\.txt/);
+              } else {
+                assert.equal(result.isError, true);
+                assert.equal(
+                  report?.error,
+                  outcome === "cancelled" ? "OPERATION_ABORTED" : failure.code,
+                );
+              }
+              outputs.push(result.content);
+            } finally {
+              controller.abort();
+              await running;
+            }
+          },
+        );
+      }
+      if (outputs.length === 2) assert.deepEqual(outputs[0], outputs[1]);
+    }
   }
 });

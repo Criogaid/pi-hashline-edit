@@ -55,7 +55,7 @@ class SearchFileLimitError extends Error {
   }
 }
 
-/** A worker failure inside a file scan; it fails the search instead of becoming a read warning. */
+/** A worker failure inside a file scan; never classify it as a file-read warning. */
 class WorkerFailure {
   readonly error: unknown;
   constructor(error: unknown) {
@@ -71,11 +71,10 @@ interface Queued {
   readonly candidate: Candidate;
   readonly position: number;
 }
-/** A searched candidate: its matches, a warning in place of a search, or neither. */
-interface Settled {
-  readonly file?: GrepFileMatch;
-  readonly warning?: string;
-}
+/** A searched candidate, including fatal failures that only matter before the ordered cutoff. */
+type Settled =
+  | { readonly file?: GrepFileMatch; readonly warning?: string }
+  | { readonly error: unknown };
 
 /**
  * The candidate lines among the next lines of a request source, as the LF view shows them.
@@ -258,9 +257,10 @@ export async function searchFiles(options: {
   let enqueued = 0;
   let committed = 0;
   const commit = () => {
-    for (let result = settled.get(committed); result && !matchLimitReached; ) {
+    for (let result = settled.get(committed); result && !stopped(); ) {
       settled.delete(committed++);
-      if (result.warning) warnings.push(result.warning);
+      if ("error" in result) fail(result.error);
+      else if (result.warning) warnings.push(result.warning);
       else if (result.file) {
         const rows = result.file.rows.slice(0, limit - matches);
         files.push({ ...result.file, rows });
@@ -279,18 +279,19 @@ export async function searchFiles(options: {
       const found = await searchFile(candidate, query, () => limit - matches, run, poolSignal);
       result = found?.rows.length ? { file: { filePath, ...found } } : {};
     } catch (error) {
-      // A file after the limit cannot change the result, so neither can its failure.
-      if (matchLimitReached) return;
-      if (error instanceof WorkerFailure) throw error.error;
+      throwIfCancelled(poolSignal);
       const warning =
         error instanceof SearchFileLimitError
           ? `${filePath}: ${error.message}`
           : fileReadWarning(filePath, error, poolSignal);
-      if (!warning) throw error;
-      result = { warning };
+      result = warning
+        ? { warning }
+        : { error: error instanceof WorkerFailure ? error.error : error };
     }
     settled.set(position, result);
     commit();
+    // Nothing after a fatal candidate can be needed; retire its worker without reusing a failure.
+    return !("error" in result);
   };
 
   const workers: Promise<void>[] = [];
@@ -302,7 +303,7 @@ export async function searchFiles(options: {
       poolSignal,
       async (run) => {
         for (let file = await next(); file !== undefined; file = await next())
-          await searchPath(file, run);
+          if (!(await searchPath(file, run))) break;
       },
       { maxOldGenerationSizeMb: MAX_SEARCH_HEAP_MB },
     ).catch((error) => {
