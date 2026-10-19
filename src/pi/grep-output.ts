@@ -6,7 +6,7 @@
  */
 import { truncateHead, formatSize } from "@earendil-works/pi-coding-agent";
 import { DiagnosticBuffer } from "./diagnostic-buffer.ts";
-import { createAnchorFormatter, displayCarriageReturns, plainRow } from "./anchor-format.ts";
+import { createAnchorFormatter, plainRow } from "./anchor-format.ts";
 import type { GrepFileMatch, searchFiles } from "./grep-search.ts";
 import { MAX_UNNARROWED_SCAN_BYTES } from "./grep-candidates.ts";
 import { scanTextLines } from "./text-stream.ts";
@@ -128,8 +128,9 @@ async function formatMatches(options: FormatMatchesOptions) {
                 (line) => {
                   if (line.text === undefined) return;
                   if (columns.has(line.number)) matchedRows.add(line.number);
+                  // Rows make CR visible one unit for one, so preview columns stay source columns.
                   const { text: display, wasTruncated } = previewLine(
-                    displayCarriageReturns(line.text),
+                    line.text,
                     columns.get(line.number),
                     budget.grepPreviewUnits,
                   );

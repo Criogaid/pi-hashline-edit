@@ -76,12 +76,8 @@ export function createLfTextView(source: string) {
  */
 export function splitLines(text: string): string[] {
   if (text === "") return [];
-  if (!text.includes("\r")) {
-    return (text.endsWith("\n") ? text.slice(0, -1) : text).split("\n");
-  }
-  const normalized = text.replaceAll("\r\n", "\n");
-  const lines = (normalized.endsWith("\n") ? normalized.slice(0, -1) : normalized).split("\n");
-  return lines;
+  const normalized = normalizeLineEndings(text);
+  return (normalized.endsWith("\n") ? normalized.slice(0, -1) : normalized).split("\n");
 }
 
 /** Whether the text uses CRLF at all (any `\r\n` counts; mixed files report "crlf"). */
