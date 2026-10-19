@@ -84,7 +84,7 @@ Argument mistakes are reported per field, with what the field means and how to f
 ```json
 {
   "path": "src/foo.ts",
-  "replacements": [{ "find": "oldName", "replace": "newName" }],
+  "replacements": [{ "find": "oldName", "literal": true, "replace": "newName" }],
   "then_run": { "command": "npm test", "timeout": 60 }
 }
 ```

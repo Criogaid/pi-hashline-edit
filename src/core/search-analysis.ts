@@ -326,7 +326,7 @@ export function parseQueryPattern(
   literal: boolean,
   flags: string,
 ): AST.Pattern | undefined {
-  const source = regexSource(pattern, !literal);
+  const source = regexSource(pattern, literal);
   try {
     return new RegExpParser({ ecmaVersion: 2025 }).parsePattern(source, 0, source.length, {
       unicode: flags.includes("u"),

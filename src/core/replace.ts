@@ -49,7 +49,7 @@ export function applyReplacements(
   const view = createLfTextView(source);
   const fallbackEnding = detectLineEnding(source) === "crlf" ? "\r\n" : "\n";
   for (const [index, rule] of rules.entries()) {
-    const regex = buildRegex(rule.find, rule.regex === true, rule.flags);
+    const regex = buildRegex(rule.find, rule.literal, rule.flags);
     let count = 0;
     const replacement = normalizeLineEndings(rule.replace);
     for (const match of view.text.matchAll(regex)) {
@@ -61,7 +61,7 @@ export function applyReplacements(
         end,
         rule: index,
         text: restoreLineEndings(
-          rule.regex ? expandReplacement(replacement, match, view.text) : replacement,
+          rule.literal ? replacement : expandReplacement(replacement, match, view.text),
           source.slice(start, end),
           fallbackEnding,
         ),

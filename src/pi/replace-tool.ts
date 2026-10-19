@@ -9,7 +9,8 @@
  * lines belongs to `edit`.
  *
  * - Both modes match the shared LF view and restore original line separators.
- * - Literal mode keeps `$` verbatim; regex mode expands JavaScript replacement tokens.
+ * - Each rule states `literal`: literal mode keeps `$` verbatim; regex mode expands
+ *   JavaScript replacement tokens.
  * - `flags` adds regex flags in either mode; `g` is always forced so every
  *   occurrence is replaced. `i` (case-insensitive), `m` (per-line ^/$),
  *   `s` (dotall), `u` (unicode) all work.
@@ -99,7 +100,7 @@ function replaceHeader(args: ReplaceParams, theme: Theme, counts?: DiffCounts): 
 function checkReplaceArguments(args: unknown, report: ReportArgumentIssue): void {
   const rules = argumentItems((args as { replacements?: unknown } | null)?.replacements);
   rules.forEach((rule, index) => {
-    const { find, replace, regex, flags } = (rule ?? {}) as Record<string, unknown>;
+    const { find, replace, literal, flags } = (rule ?? {}) as Record<string, unknown>;
     const unwritable = typeof replace === "string" ? unwritableTextError(replace) : undefined;
     if (unwritable) report(`replacements[${index}].replace`, unwritable.message);
     if (flags !== undefined && typeof flags !== "string") return;
@@ -108,9 +109,9 @@ function checkReplaceArguments(args: unknown, report: ReportArgumentIssue): void
       report(`replacements[${index}].flags`, flagsError);
       return;
     }
-    if (regex === true && typeof find === "string" && find !== "") {
+    if (literal === false && typeof find === "string" && find !== "") {
       try {
-        buildRegex(find, true, flags);
+        buildRegex(find, false, flags);
       } catch (error) {
         report(`replacements[${index}].find`, errorMessage(error));
       }
@@ -179,7 +180,7 @@ function runReplace(
 ) {
   return runTextMutation<"replace">(target, async (currentText) => {
     // The regex worker reports its own cancellation; a literal batch runs synchronously.
-    const { text, count } = rules.some((rule) => rule.regex === true)
+    const { text, count } = rules.some((rule) => !rule.literal)
       ? await runRegexReplacements(currentText, rules, config.replace.regexTimeoutMs, target.signal)
       : applyReplacements(currentText, rules);
     return { text, facts: { matches: count } };

@@ -75,7 +75,7 @@ function multilineRows(source: string, regex: RegExp, limit: number): Rows {
 }
 
 const queryRegexes = (query: GrepQuery) =>
-  query.patterns.map((pattern) => buildRegex(pattern, !query.literal, query.flags));
+  query.patterns.map((pattern) => buildRegex(pattern, query.literal, query.flags));
 
 /** The first match column of one physical line, or undefined when no pattern matches it. */
 function lineColumn(regexes: readonly RegExp[], text: string): number | undefined {

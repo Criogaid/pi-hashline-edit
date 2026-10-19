@@ -6,15 +6,15 @@ export const REPLACEMENT_SCHEMA = Type.Object(
     find: Type.String({
       minLength: 1,
       description:
-        "Text, or a JavaScript regex when regex is true. CRLF in the file reads as LF, so a line break is \\n; in literal mode a backslash followed by n matches those two characters. In regex mode, ^ and $ need the m flag to match per line; \\d, \\w, and \\b are ASCII-based.",
+        "Text to find, read as literal decides. CRLF in the file reads as LF, so a line break is \\n; in literal mode a backslash followed by n matches those two characters. In regex mode, ^ and $ need the m flag to match per line; \\d, \\w, and \\b are ASCII-based.",
+    }),
+    literal: Type.Boolean({
+      description:
+        "true: find matches exactly, including regex punctuation, and replace keeps $ as is. false: find is a JavaScript regex and replace expands $1, $<name>, and $&; use it only for an intentional regex.",
     }),
     replace: Type.String({
-      description:
-        "Replacement text; the file's line endings are kept. Literal mode keeps $ as is; regex mode expands $1, $<name>, and $&.",
+      description: "Replacement text; the file's line endings are kept.",
     }),
-    regex: Type.Optional(
-      Type.Boolean({ description: "Treat find as a JavaScript regex (default false)." }),
-    ),
     flags: Type.Optional(
       Type.String({
         description: "Extra regex flags, also applied in literal mode; g is always added.",

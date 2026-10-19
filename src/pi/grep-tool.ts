@@ -135,7 +135,7 @@ function checkGrepArguments(args: unknown, report: ReportArgumentIssue): void {
   for (const [field, value] of fields) {
     if (typeof value !== "string" || value === "") continue;
     try {
-      buildRegex(value, true, flags ?? DEFAULT_GREP_FLAGS);
+      buildRegex(value, false, flags ?? DEFAULT_GREP_FLAGS);
     } catch (error) {
       report(field, errorMessage(error));
     }
