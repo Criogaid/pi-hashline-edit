@@ -169,7 +169,7 @@ function argumentLines(report: Report, theme: Theme): string[] {
   for (const { field, reason, fix } of report.issues ?? []) {
     const [first, ...rest] = reason.split("\n");
     lines.push(`${theme.fg("accent", theme.bold(field))}: ${theme.fg("error", first)}`);
-    lines.push(...rest.map((line) => `  ${theme.fg("error", line)}`));
+    for (const line of rest) lines.push(`  ${theme.fg("error", line)}`);
     if (fix) lines.push(`  ${theme.fg("dim", fix)}`);
   }
   return lines;
@@ -203,11 +203,11 @@ export function reportLines(
         ),
       );
     if (report.message !== undefined)
-      lines.push(...report.message.split("\n").map((line) => theme.fg("error", line)));
+      for (const line of report.message.split("\n")) lines.push(theme.fg("error", line));
   }
   for (const [key, value] of reportEntries(report)) {
     if (ENVELOPE_FIELDS.includes(key) || shown.has(key)) continue;
-    lines.push(...factLines(key, value, theme));
+    for (const line of factLines(key, value, theme)) lines.push(line);
   }
   if (report.next !== undefined) lines.push(`${theme.fg("dim", "next:")} ${report.next}`);
   return lines;

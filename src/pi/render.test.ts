@@ -11,7 +11,7 @@ import type { TSchema } from "typebox";
 import { theme } from "../../node_modules/@earendil-works/pi-coding-agent/dist/modes/interactive/theme/theme.js";
 import { makeEditOverride } from "./edit-tool.ts";
 import { makeReplaceTool } from "./replace-tool.ts";
-import { renderDiffPreview } from "./render.ts";
+import { renderDiffPreview, reportLines } from "./render.ts";
 import { withMutationStatus } from "./fusion-card.ts";
 import { makeWriteOverride } from "./write-tool.ts";
 import { generateMutationDetails } from "./mutation-result.ts";
@@ -26,7 +26,8 @@ import { formatArgumentError } from "./argument-error.ts";
 import { makeGrepOverride } from "./grep-tool.ts";
 import { openTestSession } from "../testing/session.testing.ts";
 import type { SuccessReport } from "./report-schema.ts";
-import { renderReport } from "./report.ts";
+import { renderReport, type Report } from "./report.ts";
+import { MAX_CONTENT_KIB, outputBudgetsFor } from "./budgets.ts";
 
 const mutationDetails = (
   report: Pick<SuccessReport, "publication" | "freshness" | "then_run">,
@@ -638,5 +639,41 @@ test("success renderers receive replayed or hooked reports → display only sche
       const foreign = '{"hook":"VISIBLE_JSON"}';
       assert.ok(show(report, payload(foreign)).includes(foreign));
     }
+  }
+});
+
+test("report text has many short lines within the byte budget → renders every diagnostic line", async (t) => {
+  initTheme("dark");
+  const newlineCount = 150_000;
+  const message = `first${"\n".repeat(newlineCount)}last`;
+  assert.ok(Buffer.byteLength(message) < outputBudgetsFor(MAX_CONTENT_KIB * 1024).fieldBytes);
+  const cases: readonly { name: string; report: Report; lines: number }[] = [
+    {
+      name: "failure message",
+      report: { tool: "read", error: "UNCLASSIFIED", message },
+      lines: newlineCount + 2,
+    },
+    {
+      name: "search diagnostic",
+      report: { tool: "grep", diagnostics: message },
+      lines: newlineCount + 1,
+    },
+    {
+      name: "argument reason",
+      report: {
+        tool: "edit",
+        error: "INVALID_ARGUMENTS",
+        issues: [{ field: "path", reason: message }],
+      },
+      lines: newlineCount + 2,
+    },
+  ];
+  for (const entry of cases) {
+    await t.test(entry.name, () => {
+      const lines = reportLines(entry.report, theme).map(stripVTControlCharacters);
+      assert.equal(lines.length, entry.lines);
+      assert.ok(lines.some((line) => line.includes("first")));
+      assert.equal(lines.at(-1)?.trim(), "last");
+    });
   }
 });
