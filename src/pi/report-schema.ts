@@ -488,7 +488,7 @@ const SUCCESS_SCHEMAS = Object.entries(SUCCESS_DEFINITIONS).map(([tool, schema])
     { additionalProperties: false },
   ),
 );
-/** Closed records after call context supplies a missing success tool; failure facts remain code-specific. */
+/** Closed records after the originating call supplies the tool; failure facts remain code-specific. */
 export const WIRE_REPORT_SCHEMA = Type.Union([...FAILURE_SCHEMAS, ...SUCCESS_SCHEMAS]);
 
 // Static counterparts of the per-tool and per-code wire schemas above, built from the same fields.
