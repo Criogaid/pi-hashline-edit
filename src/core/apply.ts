@@ -114,10 +114,7 @@ function verifyAnchor(
     recovery = { kind: "none" };
   }
 
-  const current =
-    line >= 1 && line <= lines.length
-      ? { hash: computeLineHash(line, lines[line - 1], hashLen), content: lines[line - 1] }
-      : null;
+  const current = line >= 1 && line <= lines.length ? { content: lines[line - 1] } : null;
 
   return { opIndex, which, op, cited, recovery, current };
 }
@@ -130,13 +127,11 @@ type TranslateResult =
 type RangeError = Pick<Extract<ApplyFailure, { kind: "range" }>, "code" | "message">;
 
 function checkedAnchor(
-  edit: Edit,
   opIndex: number,
   which: AnchorCheck["which"],
-  cited: Anchor,
   failure: AnchorFailure | null,
 ): AnchorCheck {
-  return { opIndex, which, op: edit.op, cited, status: failure ? "mismatched" : "matched" };
+  return { opIndex, which, status: failure ? "mismatched" : "matched" };
 }
 
 /** Verify an Edit against the snapshot and plan its mutation spans and captured source. */
@@ -155,12 +150,12 @@ function translateEdit(
       const failures: AnchorFailure[] = [];
       const checks: AnchorCheck[] = [];
       const anchorF = verifyAnchor(lines, edit.anchor, "anchor", opIndex, edit.op, hashLen, radius);
-      checks.push(checkedAnchor(edit, opIndex, "anchor", edit.anchor, anchorF));
+      checks.push(checkedAnchor(opIndex, "anchor", anchorF));
       if (anchorF) failures.push(anchorF);
       let endLine = edit.anchor.line;
       if (edit.end) {
         const endF = verifyAnchor(lines, edit.end, "end", opIndex, edit.op, hashLen, radius);
-        checks.push(checkedAnchor(edit, opIndex, "end", edit.end, endF));
+        checks.push(checkedAnchor(opIndex, "end", endF));
         if (endF) failures.push(endF);
         endLine = edit.end.line;
       }
@@ -180,7 +175,7 @@ function translateEdit(
           hashLen,
           radius,
         );
-        checks.push(checkedAnchor(edit, opIndex, destination.which, destination.cited, failure));
+        checks.push(checkedAnchor(opIndex, destination.which, failure));
         if (failure) failures.push(failure);
       }
       if (failures.length > 0) return { ok: false, anchorFailures: failures, checks };
@@ -241,7 +236,7 @@ function translateEdit(
     case "insert_after":
     case "insert_before": {
       const failure = verifyAnchor(lines, edit.anchor, "anchor", opIndex, edit.op, hashLen, radius);
-      const checks = [checkedAnchor(edit, opIndex, "anchor", edit.anchor, failure)];
+      const checks = [checkedAnchor(opIndex, "anchor", failure)];
       if (failure) return { ok: false, anchorFailures: [failure], checks };
       const line = edit.anchor.line - (edit.op === "insert_before" ? 1 : 0);
       return { ok: true, checks, ops: [{ lo: line, hi: line, kind: "body", newLines: edit.body }] };

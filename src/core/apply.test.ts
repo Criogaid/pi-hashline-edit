@@ -597,12 +597,12 @@ test("failed batches report every supplied anchor in input order from one snapsh
   const result = applyEdits(text, edits, 4, 15);
   assert.ok(!result.ok && result.failure.kind === "anchor");
   assert.deepEqual(result.failure.checks, [
-    { opIndex: 0, op: "replace", which: "anchor", cited: at(text, 1), status: "matched" },
-    { opIndex: 0, op: "replace", which: "end", cited: stale, status: "mismatched" },
-    { opIndex: 1, op: "delete", which: "anchor", cited: stale, status: "mismatched" },
-    { opIndex: 1, op: "delete", which: "end", cited: at(text, 4), status: "matched" },
-    { opIndex: 2, op: "insert_after", which: "anchor", cited: at(text, 5), status: "matched" },
-    { opIndex: 3, op: "insert_before", which: "anchor", cited: stale, status: "mismatched" },
+    { opIndex: 0, which: "anchor", status: "matched" },
+    { opIndex: 0, which: "end", status: "mismatched" },
+    { opIndex: 1, which: "anchor", status: "mismatched" },
+    { opIndex: 1, which: "end", status: "matched" },
+    { opIndex: 2, which: "anchor", status: "matched" },
+    { opIndex: 3, which: "anchor", status: "mismatched" },
   ]);
 });
 

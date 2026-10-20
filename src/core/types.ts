@@ -73,7 +73,7 @@ export type AnchorRecovery =
  *
  * `opIndex` is the 0-based position in the input `edits[]`; `which` names the
  * op's source/insertion anchor, range end, or before/after destination; `op` is the op kind.
- * `current` is the cited line's live content + hash (null if the line number is
+ * `current` is the cited line's live content (null if the line number is
  * out of range) — surfaced when recovery is `none` so the model can self-diagnose.
  */
 export interface AnchorFailure {
@@ -82,15 +82,13 @@ export interface AnchorFailure {
   readonly op: Edit["op"];
   readonly cited: Anchor;
   readonly recovery: AnchorRecovery;
-  readonly current: { readonly hash: string; readonly content: string } | null;
+  readonly current: { readonly content: string } | null;
 }
 
 /** Record for one supplied anchor in the immutable apply snapshot. */
 export interface AnchorCheck {
   readonly opIndex: number;
   readonly which: AnchorField;
-  readonly op: Edit["op"];
-  readonly cited: Anchor;
   readonly status: "matched" | "mismatched";
 }
 
