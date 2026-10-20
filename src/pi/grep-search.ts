@@ -1,7 +1,7 @@
 /**
  * Native RegExp matching in a bounded worker pool. grep-candidates supplies absolute paths
- * and optional candidate lines; this module owns queue backpressure, deduplication, worker
- * cleanup, and each matched file's revision.
+ * and optional candidate lines; this module owns queue backpressure, worker cleanup, and
+ * each matched file's revision.
  *
  * @module pi-hashline-edit/pi
  */
@@ -308,12 +308,8 @@ export async function searchFiles(options: {
       releaseAll();
     });
 
-  const seen = new Set<string>();
   const enqueue = async (candidate: Candidate) => {
-    const { filePath } = candidate;
     if (stopped()) return false;
-    if (seen.has(filePath)) return true;
-    seen.add(filePath);
     queue.push({ candidate, position: enqueued++ });
     if (idle.length) idle.shift()!();
     else if (workers.length < SEARCH_WORKERS) workers.push(startWorker());
@@ -333,6 +329,7 @@ export async function searchFiles(options: {
       scope,
       query,
       signal: poolSignal,
+      stopped,
       onCandidate: enqueue,
     });
   } catch (error) {

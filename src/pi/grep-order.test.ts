@@ -148,6 +148,50 @@ test("out-of-order file completions → listing order fixes rows, warnings, and 
   }
 });
 
+test("match limit reached before a repeated candidate → stop listing before later diagnostics", async (t) => {
+  const { makeGrepOverrideWithBackend } = await import("./grep-tool.ts");
+  const dir = await fs.mkdtemp(join(os.tmpdir(), "hl-grep-duplicate-stop-"));
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  const file = join(dir, "fixture.txt");
+  await fs.writeFile(file, "needle\n");
+  for (const query of [
+    { pattern: "needle", literal: true, multiline: false },
+    { pattern: "needle", literal: true, multiline: true },
+    { pattern: ".", literal: false, multiline: true },
+  ]) {
+    await t.test(JSON.stringify(query), async (t) => {
+      const evaluated = Promise.withResolvers<void>();
+      t.mock.method(
+        Worker.prototype,
+        "postMessage",
+        function (this: Worker, input: SearchInput | LineSearchInput) {
+          assert.ok("source" in input);
+          this.emit("message", { result: searchText(input) });
+          evaluated.resolve();
+        },
+      );
+      const list = async (onFile: (path: string) => boolean | Promise<boolean>) => {
+        await onFile(file);
+        await evaluated.promise;
+        await setImmediate();
+        const stopped = !(await onFile(file));
+        return { code: stopped ? 0 : 2, stderr: stopped ? "" : "later diagnostic", stopped };
+      };
+      const result = await callTool(
+        makeGrepOverrideWithBackend(dir, DEFAULT_CONFIG, {
+          runRgLines: (_rg, _args, _signal, _maxLines, onFile) =>
+            list((path) => onFile(path, undefined)),
+          runRgPaths: (_rg, _args, _signal, onFile) => list(onFile),
+        }),
+        { path: file, ...query, limit: 1, outputMode: "files" },
+      );
+      assert.equal(result.isError, undefined);
+      assert.deepEqual(result.content[0], { type: "text", text: "fixture.txt" });
+      assert.equal(reportOf(result, "grep")?.diagnostics, undefined);
+    });
+  }
+});
+
 test("file-associated failure → listing position decides failure or cutoff, while cancellation stays immediate", {
   timeout: 15_000,
 }, async (t) => {

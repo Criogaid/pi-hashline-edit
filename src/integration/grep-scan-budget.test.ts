@@ -13,6 +13,27 @@ import { reportOf } from "../pi/report.ts";
 import { grepCounts } from "../pi/grep-output.testing.ts";
 import { callTool } from "../pi/tool-call.testing.ts";
 
+test("repeated all-file candidates → count each file once toward the scan budget", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "hl-grep-repeated-scan-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const padding = join(directory, "a.bin");
+  const fixture = join(directory, "b.txt");
+  await writeFile(padding, "");
+  await truncate(padding, MAX_MULTILINE_SEARCH_BYTES);
+  await writeFile(fixture, "ab\n");
+  const repeats = Math.ceil(MAX_UNNARROWED_SCAN_BYTES / MAX_MULTILINE_SEARCH_BYTES);
+  const result = await callTool(makeGrepOverrideWithBackend(directory, DEFAULT_CONFIG, {}), {
+    path: [...Array<string>(repeats).fill(padding), fixture],
+    pattern: ".",
+    literal: false,
+    multiline: true,
+    outputMode: "files",
+  });
+  assert.equal(result.isError, undefined);
+  assert.deepEqual(result.content[0], { type: "text", text: "b.txt" });
+  assert.equal(reportOf(result, "grep")?.scanLimit, undefined);
+});
+
 test("all-file candidates exceed the scan budget → stop listing and retain scan facts with or without matches", async (t) => {
   const directory = await mkdtemp(join(tmpdir(), "hl-grep-scan-budget-"));
   t.after(() => rm(directory, { recursive: true, force: true }));

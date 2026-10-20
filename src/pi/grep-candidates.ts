@@ -1,8 +1,8 @@
 /**
  * Candidate selection: rg lists candidate lines through the rg-regex translation, or candidate
  * files through the prefilter's necessary literals, with conservative fallback and a
- * whole-scope scan budget. rg-process runs rg and parses its records; this module decides
- * which rg runs to make.
+ * whole-scope scan budget. This module deduplicates candidates before charging that budget.
+ * rg-process runs rg and parses its records; this module decides which rg runs to make.
  *
  * @module pi-hashline-edit/pi
  */
@@ -131,33 +131,38 @@ export async function listCandidates(options: {
   readonly scope: SearchScope;
   readonly query: GrepQuery;
   readonly signal: AbortSignal;
+  readonly stopped: () => boolean;
   readonly onCandidate: (candidate: Candidate) => Promise<boolean>;
 }): Promise<{
   readonly listing?: RgRunResult;
   readonly candidates: CandidateSource;
   readonly scanLimitReached: boolean;
 }> {
-  const { backend, rgPath, scope, query, signal, onCandidate } = options;
+  const { backend, rgPath, scope, query, signal, stopped, onCandidate } = options;
   if (scope.searchPaths.length === 0) return { candidates: "lines", scanLimitReached: false };
-  let listedAny = false;
-  const offer = (path: string, lines?: readonly number[]) => {
-    listedAny = true;
-    return onCandidate({ filePath: resolve(path), lines });
-  };
   let candidates: CandidateSource = "lines";
+  let listedAny = false;
   let scanned = 0;
   let scanLimitReached = false;
-  const offerWithinBudget = async (path: string) => {
-    if (scanned >= MAX_UNNARROWED_SCAN_BYTES) {
-      scanLimitReached = true;
-      return false;
+  const seen = new Set<string>();
+  const offer = async (path: string, lines?: readonly number[]) => {
+    listedAny = true;
+    if (stopped()) return false;
+    const filePath = resolve(path);
+    if (seen.has(filePath)) return true;
+    seen.add(filePath);
+    if (candidates === "all") {
+      if (scanned >= MAX_UNNARROWED_SCAN_BYTES) {
+        scanLimitReached = true;
+        return false;
+      }
+      scanned += await stat(filePath).then(
+        ({ size }) => size,
+        // The search reports unreadable files; a failed size probe must not exclude them.
+        () => 0,
+      );
     }
-    scanned += await stat(resolve(path)).then(
-      ({ size }) => size,
-      // The search reports unreadable files; a failed size probe must not exclude them.
-      () => 0,
-    );
-    return offer(path);
+    return onCandidate({ filePath, lines });
   };
   const scoped = [...scopeArgs(scope), "--", ...scope.searchPaths];
   const patterns = query.multiline ? undefined : lineCandidatePatterns(query);
@@ -180,14 +185,7 @@ export async function listCandidates(options: {
   if (!listing || (listing.code === 2 && !listedAny)) {
     const prefilter = extractPrefilter(query);
     candidates = prefilter.kind === "all" ? "all" : "files";
-    listing = await runCandidatePaths(
-      backend.runRgPaths,
-      rgPath,
-      prefilter,
-      scoped,
-      signal,
-      candidates === "all" ? offerWithinBudget : (path) => offer(path),
-    );
+    listing = await runCandidatePaths(backend.runRgPaths, rgPath, prefilter, scoped, signal, offer);
   }
   return { listing, candidates, scanLimitReached };
 }
