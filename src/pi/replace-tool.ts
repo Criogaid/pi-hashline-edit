@@ -80,9 +80,6 @@ const replaceSchema = Type.Object(
   { additionalProperties: false },
 );
 
-function createReplaceSchema(actionFusion: boolean) {
-  return withThenRunSchema(replaceSchema, "replace", actionFusion);
-}
 type ReplaceParams = Static<typeof replaceSchema> & { then_run?: ThenRunInput };
 
 /** Call-header line: `replace path — N rules`, plus `+N -N` once diff counts are known. */
@@ -120,7 +117,7 @@ export function makeReplaceTool(
   fusion?: ActionFusionExecutor,
   budgets: OutputBudgetProvider = defaultOutputBudgets,
 ) {
-  const parameters = createReplaceSchema(fusion !== undefined);
+  const parameters = withThenRunSchema(replaceSchema, "replace", fusion !== undefined);
   return {
     name: "replace" as const,
     label: "replace",

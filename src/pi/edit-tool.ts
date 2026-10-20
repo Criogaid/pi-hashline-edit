@@ -165,9 +165,6 @@ function buildEditSchema(hashLen: number) {
 }
 type EditSchema = ReturnType<typeof buildEditSchema>;
 
-function createEditSchema(actionFusion: boolean, hashLen: number) {
-  return withThenRunSchema(buildEditSchema(hashLen), "edit", actionFusion);
-}
 type EditParams = Static<EditSchema> & { then_run?: ThenRunInput };
 
 type EditOpInput = Static<EditSchema>["edits"][number];
@@ -295,7 +292,7 @@ export function makeEditOverride(
 ) {
   // Schema, verification, and recovery use the registered configuration.
   const { hashLen, shiftRadius } = config;
-  const parameters = createEditSchema(fusion !== undefined, hashLen);
+  const parameters = withThenRunSchema(buildEditSchema(hashLen), "edit", fusion !== undefined);
 
   return {
     name: "edit" as const,

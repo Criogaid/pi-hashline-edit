@@ -37,9 +37,6 @@ const writeSchema = Type.Object(
   { additionalProperties: false },
 );
 
-function createWriteSchema(actionFusion: boolean) {
-  return withThenRunSchema(writeSchema, "write", actionFusion);
-}
 type WriteParams = Static<typeof writeSchema> & { then_run?: ThenRunInput };
 /** write shows the built-in card; its report states every fact. */
 type WriteMutationDetails = object;
@@ -55,7 +52,7 @@ export function makeWriteOverride(
   fusion?: ActionFusionExecutor,
   budgets: OutputBudgetProvider = defaultOutputBudgets,
 ) {
-  const parameters = createWriteSchema(fusion !== undefined);
+  const parameters = withThenRunSchema(writeSchema, "write", fusion !== undefined);
   const builtin = createWriteToolDefinition(cwd);
   return {
     name: "write" as const,
