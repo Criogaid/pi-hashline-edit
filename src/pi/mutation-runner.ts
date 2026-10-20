@@ -88,7 +88,7 @@ export async function executeMutation<
   const { then_run, ...mutationParams } = call.params;
   const displayPath = mutationParams.path;
   const budget = (spec.budgets ?? defaultOutputBudgets)();
-  return runTool(tool, { path: displayPath, mutation: true, signal, budget }, async () => {
+  return runTool(tool, { path: displayPath, signal, budget }, async () => {
     const absolutePath = canonicalPath(cwd, displayPath);
     const target: MutationTarget = { absolutePath, signal, budget };
     const mutate = (): Promise<MutationOutcome<TDetails, TTool>> =>

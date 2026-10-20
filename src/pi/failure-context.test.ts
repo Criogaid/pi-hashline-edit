@@ -183,7 +183,7 @@ function rejectedEdit(text: string, edits: Edit[], shiftRadius = 0) {
   );
   return {
     failure: result.failure,
-    report: describeFailure("edit", error, { path: "file.txt", mutation: true }),
+    report: describeFailure("edit", error, { path: "file.txt" }),
   };
 }
 const oldAnchor = { line: 1, hash: computeLineHash(1, "old", DEFAULT_CONFIG.hashLen) };

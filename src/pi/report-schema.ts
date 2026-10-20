@@ -442,7 +442,7 @@ const SUCCESS_DEFINITIONS = {
 } as const;
 export type ReportTool = keyof typeof SUCCESS_DEFINITIONS;
 /** Tools whose reports carry publication, freshness, and the then_run outcome. */
-const MUTATION_TOOLS = ["edit", "replace", "write"] as const satisfies readonly ReportTool[];
+export const MUTATION_TOOLS = ["edit", "replace", "write"] as const satisfies readonly ReportTool[];
 export type MutationToolName = (typeof MUTATION_TOOLS)[number];
 /** Argument rejections may omit message; Pi supplies none for them. */
 const MESSAGE_OPTIONAL = "INVALID_ARGUMENTS" satisfies ErrorCode;

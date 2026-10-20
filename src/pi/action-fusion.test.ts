@@ -553,7 +553,7 @@ test("published mutation failure → preserves the original failure and states c
     assert.equal(caught.status, "skipped");
     assert.equal(caught.cause, mutationError);
     assert.equal(Object.hasOwn(caught, "error"), false);
-    const report = describeFailure("edit", caught, { mutation: true });
+    const report = describeFailure("edit", caught, {});
     assert.equal(report.publication, "PUBLISHED");
     assert.equal(report.stage, "post_process");
     assert.equal(report.then_run?.status, "skipped");
@@ -811,7 +811,7 @@ test("Fusion fails at a mutation or command boundary → reports each command ou
         if (stoppedDuringMutation) {
           await assert.rejects(invocation, (error: unknown) => {
             assert.ok(error instanceof CommandNotRun);
-            const report = describeFailure("edit", error, { mutation: true });
+            const report = describeFailure("edit", error, {});
             diagnostic = renderReport(report);
             assert.equal(report.then_run?.status, expectedCommand);
             return true;

@@ -26,6 +26,7 @@ import { cancellationError } from "./error-text.ts";
 import { FileMutationError } from "./file-commit.ts";
 import {
   ERROR_DEFINITIONS,
+  MUTATION_TOOLS,
   OUTCOME_NEXT,
   PUBLICATION_NEXT,
   REPORT_SCHEMA,
@@ -159,8 +160,6 @@ export function failureResult(
 interface FailureContext {
   /** The path or paths the call names, as supplied. */
   readonly path?: string | readonly string[];
-  /** Mutation tools report `publication` and `stage` on every failure. */
-  readonly mutation?: boolean;
   readonly signal?: AbortSignal;
   readonly budget?: OutputBudgets;
 }
@@ -226,12 +225,13 @@ export function describeFailure(
   }
   const failure = classify(error, context.signal);
   const budget = context.budget ?? DEFAULT_OUTPUT_BUDGETS;
-  const publication = context.mutation
+  const mutation = MUTATION_TOOLS.some((name) => name === tool);
+  const publication = mutation
     ? failure instanceof FileMutationError
       ? failure.publication
       : ("NOT_PUBLISHED" as const)
     : undefined;
-  const stage = context.mutation
+  const stage = mutation
     ? failure instanceof FileMutationError
       ? failure.stage
       : ("prepare" as const)

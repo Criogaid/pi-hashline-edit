@@ -73,7 +73,7 @@ test("model row allowance grows → anchor failures return complete observations
     const report = describeFailure(
       "edit",
       describeEditFailure(applied.failure, snapshot, false, budget),
-      { mutation: true, budget },
+      { budget },
     );
     assert.equal(report.error, "ANCHOR_MISMATCH");
     return report;
@@ -126,9 +126,7 @@ test("worker error reaches the tool → text is bounded once using the selected 
   );
   assert.ok(reply && "error" in reply);
   const error = restoreWorkerError(reply.error);
-  const reports = [small, large].map((budget) =>
-    describeFailure("replace", error, { mutation: true, budget }),
-  );
+  const reports = [small, large].map((budget) => describeFailure("replace", error, { budget }));
   assert.ok(Buffer.byteLength(reports[0].message!) <= small.fieldBytes);
   assert.ok(Buffer.byteLength(reports[0].cause!.message) <= small.fieldBytes);
   assert.equal(reports[1].message, text);

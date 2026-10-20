@@ -53,7 +53,7 @@ test("published post-processing failure → skips command and preserves publicat
       }),
       (error: unknown) => {
         assert.ok(error instanceof CommandNotRun);
-        const report = describeFailure("edit", error, { mutation: true });
+        const report = describeFailure("edit", error, {});
         assert.equal(report.publication, "PUBLISHED");
         assert.equal(report.then_run?.status, "skipped");
         assert.match(report.next ?? "", /change is saved; do not repeat/);

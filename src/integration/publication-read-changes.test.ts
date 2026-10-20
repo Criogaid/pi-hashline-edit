@@ -291,10 +291,7 @@ test("concurrent change during pre-publication revision read → rejects without
               assert.ok(error instanceof FileMutationError);
               assert.equal(error.publication, "NOT_PUBLISHED");
               assert.equal(error.errorCode, "FILE_CHANGED");
-              assert.equal(
-                describeFailure("write", error, { mutation: true }).next,
-                "Retry the call.",
-              );
+              assert.equal(describeFailure("write", error, {}).next, "Retry the call.");
               return true;
             },
           );

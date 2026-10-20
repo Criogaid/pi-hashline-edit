@@ -326,3 +326,11 @@ test("hooked details contain a cyclic report cause → preserves payload and dec
   assert.deepEqual(reportOf(result, "read"), fallback);
   assert.deepEqual(splitReport(result), { content, report: undefined });
 });
+
+test("native mutation failure before commit → retains publication and stage", () => {
+  for (const tool of ["edit", "replace", "write"] as const) {
+    const report = describeFailure(tool, new Error("native failure"), {});
+    assert.equal(report.publication, "NOT_PUBLISHED", tool);
+    assert.equal(report.stage, "prepare", tool);
+  }
+});
