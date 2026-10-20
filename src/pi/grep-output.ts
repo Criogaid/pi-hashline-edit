@@ -14,7 +14,7 @@ import { formatByteSize, type OutputBudgets } from "./budgets.ts";
 import { fileReadWarning, searchChangedError } from "./error-text.ts";
 import { HashlineError } from "../core/errors.ts";
 import { serializePath } from "./path.ts";
-import type { Report } from "./report-schema.ts";
+import type { Report, SuccessFacts } from "./report-schema.ts";
 import type { GrepOutputMode } from "./grep-tool.ts";
 
 /** UTF-16 units kept before the match column when a preview window is cut. */
@@ -191,21 +191,6 @@ async function formatMatches(options: FormatMatchesOptions) {
   return { blocks, matches, files: fileCount };
 }
 
-/** What grep states about its outcome beside the payload rows. */
-type GrepFacts = Pick<
-  Report,
-  | "matches"
-  | "files"
-  | "candidates"
-  | "matchLimit"
-  | "scanLimit"
-  | "outputLimit"
-  | "linePreviewLimit"
-  | "invalidUtf8"
-  | "diagnostics"
-  | "literalPipe"
->;
-
 interface AssembleGrepOutputOptions {
   readonly formatted: Awaited<ReturnType<typeof formatMatches>>;
   readonly warnings: readonly string[];
@@ -219,7 +204,7 @@ interface AssembleGrepOutputOptions {
 /** Join the payload within the call's byte budget and state each limit, omission, and diagnostic once. */
 export function assembleGrepOutput(options: AssembleGrepOutputOptions): {
   payload: string;
-  facts: GrepFacts;
+  facts: SuccessFacts<"grep">;
 } {
   const {
     formatted,
@@ -276,7 +261,7 @@ export async function grepOutput(
     /** A literal pattern contains `|`, which matches only that character. */
     readonly literalPipe: boolean;
   },
-): Promise<{ payload?: string; facts: GrepFacts }> {
+): Promise<{ payload?: string; facts: SuccessFacts<"grep"> }> {
   const { search, warnings, outputMode, effectiveLimit, literalPipe, budget } = options;
   const searchFacts: SearchFacts = {
     candidates: search.candidates === "lines" ? undefined : search.candidates,
