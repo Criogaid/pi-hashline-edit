@@ -1,7 +1,6 @@
 /**
  * Model-facing byte budgets. README "Output budgets" documents this policy.
  * The context window is a capacity hint, not a tokenizer or remaining-context counter.
- * This module also loads in the replacement worker; keep it free of Pi runtime imports.
  */
 
 const BYTES_PER_CONTEXT_TOKEN = 1;

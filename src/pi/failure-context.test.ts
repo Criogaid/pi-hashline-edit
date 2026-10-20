@@ -30,7 +30,12 @@ function ambiguous(lines: readonly string[], positions: number[], hashLen = 4): 
   });
 }
 function neighborhoods(text: string, failures: readonly AnchorFailure[], hashLen = 4) {
-  return ambiguousCandidateNeighborhoods(text, failures, createAnchorFormatter(hashLen));
+  return ambiguousCandidateNeighborhoods(
+    text,
+    failures,
+    createAnchorFormatter(hashLen),
+    DEFAULT_OUTPUT_BUDGETS,
+  );
 }
 function rows(result: ReturnType<typeof neighborhoods>) {
   return result.facts.candidateNeighborhoods?.flatMap((group) => group.rows) ?? [];
@@ -180,10 +185,11 @@ function rejectedEdit(text: string, edits: Edit[], shiftRadius = 0) {
     result.failure,
     { currentText: text, anchors: createAnchorFormatter(DEFAULT_CONFIG.hashLen) },
     edits.length > 1,
+    DEFAULT_OUTPUT_BUDGETS,
   );
   return {
     failure: result.failure,
-    report: describeFailure("edit", error, { path: "file.txt" }),
+    report: describeFailure("edit", error, { path: "file.txt", budget: DEFAULT_OUTPUT_BUDGETS }),
   };
 }
 const oldAnchor = { line: 1, hash: computeLineHash(1, "old", DEFAULT_CONFIG.hashLen) };

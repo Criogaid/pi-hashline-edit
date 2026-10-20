@@ -10,7 +10,7 @@ import { createAnchorFormatter, plainRow } from "./anchor-format.ts";
 import type { GrepFileMatch, searchFiles } from "./grep-search.ts";
 import { MAX_UNNARROWED_SCAN_BYTES } from "./grep-candidates.ts";
 import { scanTextLines } from "./text-stream.ts";
-import { DEFAULT_OUTPUT_BUDGETS, formatByteSize, type OutputBudgets } from "./budgets.ts";
+import { formatByteSize, type OutputBudgets } from "./budgets.ts";
 import { fileReadWarning, searchChangedError } from "./error-text.ts";
 import { HashlineError } from "../core/errors.ts";
 import { serializePath } from "./path.ts";
@@ -210,7 +210,7 @@ interface AssembleGrepOutputOptions {
   readonly matchLimitReached: boolean;
   readonly effectiveLimit: number;
   readonly searchFacts?: SearchFacts;
-  readonly budget?: OutputBudgets;
+  readonly budget: OutputBudgets;
 }
 
 /** Join the payload within the call's byte budget and state each limit, omission, and diagnostic once. */
@@ -225,7 +225,7 @@ export function assembleGrepOutput(options: AssembleGrepOutputOptions): {
     matchLimitReached,
     effectiveLimit,
     searchFacts = {},
-    budget = DEFAULT_OUTPUT_BUDGETS,
+    budget,
   } = options;
   const { blocks, linesTruncated, invalidUtf8, matches, files } = formatted;
 
@@ -257,22 +257,14 @@ export function assembleGrepOutput(options: AssembleGrepOutputOptions): {
  * matched; a search that cannot confirm any result fails with SEARCH_INCOMPLETE instead.
  */
 export async function grepOutput(
-  options: Omit<FormatMatchesOptions, "files" | "budget"> & {
-    readonly budget?: OutputBudgets;
+  options: Omit<FormatMatchesOptions, "files"> & {
     readonly search: Awaited<ReturnType<typeof searchFiles>>;
     readonly effectiveLimit: number;
     /** A literal pattern contains `|`, which matches only that character. */
     readonly literalPipe: boolean;
   },
 ): Promise<{ payload?: string; facts: GrepFacts }> {
-  const {
-    search,
-    warnings,
-    outputMode,
-    effectiveLimit,
-    literalPipe,
-    budget = DEFAULT_OUTPUT_BUDGETS,
-  } = options;
+  const { search, warnings, outputMode, effectiveLimit, literalPipe, budget } = options;
   const searchFacts: SearchFacts = {
     candidates: search.candidates === "lines" ? undefined : search.candidates,
     scanLimit: search.scanLimitReached ? formatByteSize(MAX_UNNARROWED_SCAN_BYTES) : undefined,

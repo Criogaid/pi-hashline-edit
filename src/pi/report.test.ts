@@ -69,7 +69,11 @@ test("structured failure → omits call fields from text and renders the complet
 });
 
 test("Pi argument failure transported as text → renders field facts after serialization", () => {
-  const diagnostic = formatArgumentError([{ field: "pattern", reason: "missing" }], false);
+  const diagnostic = formatArgumentError(
+    [{ field: "pattern", reason: "missing" }],
+    false,
+    DEFAULT_OUTPUT_BUDGETS,
+  );
   const result = JSON.parse(JSON.stringify({ content: [text(diagnostic)] }));
   assert.equal(Object.hasOwn(JSON.parse(diagnostic), "tool"), false);
   assert.equal(Object.hasOwn(JSON.parse(diagnostic), "path"), false);
@@ -99,7 +103,11 @@ test("argument reports with obsolete fields → remain raw on replay", () => {
 });
 
 test("invalid serialized report → retains the raw diagnostic", () => {
-  const valid = formatArgumentError([{ field: "path", reason: "missing" }], false);
+  const valid = formatArgumentError(
+    [{ field: "path", reason: "missing" }],
+    false,
+    DEFAULT_OUTPUT_BUDGETS,
+  );
   for (const invalid of [
     '{"tool":"edit","arbitrary":"user file"}',
     '{"tool":"replace","error":"NO_MATCH","message":"missing rule"}',
@@ -132,7 +140,7 @@ test("native failure with deeply nested cause → retains the terminal diagnosti
   let error: Error = terminal;
   for (let index = 0; index < 12; index++)
     error = Object.assign(new Error(`layer ${index}`, { cause: error }), { code: "EIO" });
-  const report = describeFailure("grep", error, { path: "source" });
+  const report = describeFailure("grep", error, { path: "source", budget: DEFAULT_OUTPUT_BUDGETS });
   const serialized = renderReport(report);
   const decoded = decodeReport(serialized, "grep");
   assert.ok(decoded);
@@ -149,7 +157,7 @@ test("wide and repeated cause graph with a cycle → retains every distinct fail
   const errors = Array.from({ length: 24 }, (_, index) => new Error(`failure ${index}`));
   const aggregate = new AggregateError([repeated, repeated, ...errors], "root");
   aggregate.cause = aggregate;
-  const cause = causeOf(aggregate);
+  const cause = causeOf(aggregate, DEFAULT_OUTPUT_BUDGETS.fieldBytes);
   assert.ok(cause);
   assert.equal(cause.cause, undefined);
   assert.deepEqual(
@@ -162,6 +170,7 @@ test("wide and repeated cause graph with a cycle → retains every distinct fail
 test("oversized cause message → retains opening and terminal text within the message budget", () => {
   const cause = causeOf(
     new Error(`opening${"\u0000".repeat(DEFAULT_OUTPUT_BUDGETS.fieldBytes * 2)}terminal`),
+    DEFAULT_OUTPUT_BUDGETS.fieldBytes,
   );
   assert.ok(cause);
   assert.match(cause.message, /^opening/);
@@ -174,7 +183,10 @@ test("native filesystem failure → reports its diagnostic once without a synthe
   for (const code of ["EACCES", "ELOOP", "ENOTDIR"]) {
     for (const message of [`${code}: cannot inspect source`, "cannot inspect source"]) {
       const native = Object.assign(new Error(message), { code });
-      const report = describeFailure("grep", native, { path: "source" });
+      const report = describeFailure("grep", native, {
+        path: "source",
+        budget: DEFAULT_OUTPUT_BUDGETS,
+      });
       assert.equal(report.error, "FILESYSTEM_ERROR");
       assert.equal(report.cause, undefined);
       assert.match(report.message ?? "", new RegExp(code));
@@ -235,7 +247,10 @@ test("checked report with a different trailing block → preserves the entire pa
 test("report-contract: native failure with an independent cause → retains the underlying diagnostic", () => {
   const underlying = Object.assign(new Error("disk read failed"), { code: "EIO" });
   const native = new Error("cannot inspect source", { cause: underlying });
-  const report = describeFailure("read", native, { path: "source" });
+  const report = describeFailure("read", native, {
+    path: "source",
+    budget: DEFAULT_OUTPUT_BUDGETS,
+  });
   assert.equal(report.message, native.message);
   assert.equal(report.cause?.message, underlying.message);
   assert.equal(report.cause?.code, "EIO");
@@ -329,7 +344,9 @@ test("hooked details contain a cyclic report cause → preserves payload and dec
 
 test("native mutation failure before commit → retains publication and stage", () => {
   for (const tool of ["edit", "replace", "write"] as const) {
-    const report = describeFailure(tool, new Error("native failure"), {});
+    const report = describeFailure(tool, new Error("native failure"), {
+      budget: DEFAULT_OUTPUT_BUDGETS,
+    });
     assert.equal(report.publication, "NOT_PUBLISHED", tool);
     assert.equal(report.stage, "prepare", tool);
   }

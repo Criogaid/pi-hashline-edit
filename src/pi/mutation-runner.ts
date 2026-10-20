@@ -35,7 +35,7 @@ import {
 import { canonicalPath } from "./path.ts";
 import { throwIfCancelled } from "./error-text.ts";
 import { runTool } from "./report.ts";
-import { defaultOutputBudgets, type OutputBudgetProvider, type OutputBudgets } from "./budgets.ts";
+import type { OutputBudgetProvider, OutputBudgets } from "./budgets.ts";
 
 export type ActionFusionExecutor = ReturnType<typeof createActionFusionExecutor>;
 
@@ -57,7 +57,7 @@ interface MutationToolSpec<
   readonly tool: TTool;
   readonly cwd: string;
   readonly fusion: ActionFusionExecutor | undefined;
-  readonly budgets?: OutputBudgetProvider;
+  readonly budgets: OutputBudgetProvider;
   /** Perform the mutation. Runs inside the file mutation queue. */
   run(
     params: Omit<TParams, "then_run">,
@@ -87,7 +87,7 @@ export async function executeMutation<
   const { toolCallId, signal, onUpdate, ctx } = call;
   const { then_run, ...mutationParams } = call.params;
   const displayPath = mutationParams.path;
-  const budget = (spec.budgets ?? defaultOutputBudgets)();
+  const budget = spec.budgets();
   return runTool(tool, { path: displayPath, signal, budget }, async () => {
     const absolutePath = canonicalPath(cwd, displayPath);
     const target: MutationTarget = { absolutePath, signal, budget };

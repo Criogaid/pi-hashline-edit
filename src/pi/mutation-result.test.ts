@@ -10,6 +10,7 @@ import {
   type MutationOutcome,
 } from "./mutation-result.ts";
 import { displayCarriageReturns } from "./anchor-format.ts";
+import { DEFAULT_OUTPUT_BUDGETS } from "./budgets.ts";
 
 // Checked by tsc; these callers must never run.
 function invalidMutationConstruction(
@@ -18,8 +19,15 @@ function invalidMutationConstruction(
 ) {
   // @ts-expect-error edit has no replacement-count fact.
   const editFacts: MutationFacts<"edit"> = { matches: 1 };
-  // @ts-expect-error Replacement facts cannot be finalized as edit facts.
-  finalizeMutation("edit", "file.txt", replacement, { freshness: "unchanged" });
+  finalizeMutation(
+    "edit",
+    "file.txt",
+    // @ts-expect-error Replacement facts cannot be finalized as edit facts.
+    replacement,
+    { freshness: "unchanged" },
+    undefined,
+    DEFAULT_OUTPUT_BUDGETS,
+  );
   // @ts-expect-error A failed mutation has no diff details.
   const diff: string = result.diff;
 }

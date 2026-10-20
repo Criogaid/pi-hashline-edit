@@ -3,6 +3,7 @@ import { Worker } from "node:worker_threads";
 import { test } from "node:test";
 import { HashlineError } from "../core/errors.ts";
 import { runRegexReplacements } from "../pi/replace-regex.ts";
+import { DEFAULT_OUTPUT_BUDGETS } from "../pi/budgets.ts";
 import { causeOf } from "../pi/report.ts";
 import type { Cause } from "../pi/report-schema.ts";
 
@@ -74,7 +75,7 @@ test("worker boundary: deep structured cause reply → preserves the terminal ca
     (error: unknown) => {
       assert.ok(error instanceof HashlineError);
       assert.equal(error.errorCode, "REGEX_WORKER_FAILED");
-      assert.deepEqual(causeOf(error.cause), cause);
+      assert.deepEqual(causeOf(error.cause, DEFAULT_OUTPUT_BUDGETS.fieldBytes), cause);
       return true;
     },
   );

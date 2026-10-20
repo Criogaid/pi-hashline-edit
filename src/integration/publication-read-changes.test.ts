@@ -8,6 +8,7 @@ import { join } from "node:path";
 import { test, type TestContext } from "node:test";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import { createActionFusionExecutor } from "../pi/action-fusion.ts";
+import { DEFAULT_OUTPUT_BUDGETS } from "../pi/budgets.ts";
 import { DEFAULT_CONFIG } from "../pi/config.ts";
 import { makeEditOverride } from "../pi/edit-tool.ts";
 import { commitFile, FileMutationError } from "../pi/file-commit.ts";
@@ -291,7 +292,10 @@ test("concurrent change during pre-publication revision read → rejects without
               assert.ok(error instanceof FileMutationError);
               assert.equal(error.publication, "NOT_PUBLISHED");
               assert.equal(error.errorCode, "FILE_CHANGED");
-              assert.equal(describeFailure("write", error, {}).next, "Retry the call.");
+              assert.equal(
+                describeFailure("write", error, { budget: DEFAULT_OUTPUT_BUDGETS }).next,
+                "Retry the call.",
+              );
               return true;
             },
           );

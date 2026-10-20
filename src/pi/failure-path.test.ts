@@ -5,6 +5,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { createActionFusionExecutor, type ActionFusionProgress } from "./action-fusion.ts";
 import { FileMutationError } from "./file-commit.ts";
+import { DEFAULT_OUTPUT_BUDGETS } from "./budgets.ts";
 import { REREAD } from "./report-schema.ts";
 import { CommandNotRun, describeFailure, reportOf } from "./report.ts";
 import { createToolContext } from "./tool-call.testing.ts";
@@ -35,6 +36,7 @@ test("published post-processing failure → skips command and preserves publicat
     );
     await assert.rejects(
       fusion({
+        budget: DEFAULT_OUTPUT_BUDGETS,
         toolCallId: "published",
         tool: "edit",
         displayPath: "published.txt",
@@ -53,7 +55,7 @@ test("published post-processing failure → skips command and preserves publicat
       }),
       (error: unknown) => {
         assert.ok(error instanceof CommandNotRun);
-        const report = describeFailure("edit", error, {});
+        const report = describeFailure("edit", error, { budget: DEFAULT_OUTPUT_BUDGETS });
         assert.equal(report.publication, "PUBLISHED");
         assert.equal(report.then_run?.status, "skipped");
         assert.match(report.next ?? "", /change is saved; do not repeat/);
@@ -73,6 +75,7 @@ test("command fails and modifies the target → reports changed freshness and co
       throw new Error("command failed");
     });
     const outcome = await fusion({
+      budget: DEFAULT_OUTPUT_BUDGETS,
       toolCallId: "failed",
       tool: "edit",
       displayPath: "failed.txt",
@@ -108,6 +111,7 @@ test("cancellation after publication → does not rerun mutation and still inspe
       throw new Error("timed out");
     });
     const outcome = await fusion({
+      budget: DEFAULT_OUTPUT_BUDGETS,
       toolCallId: "cancelled",
       tool: "edit",
       displayPath: "cancelled.txt",
@@ -139,6 +143,7 @@ test("first command fails → releases the queue for the next mutation", async (
     });
     for (const content of ["first\n", "second\n"]) {
       const result = await fusion({
+        budget: DEFAULT_OUTPUT_BUDGETS,
         toolCallId: content,
         tool: "edit",
         displayPath: "queue.txt",
@@ -172,6 +177,7 @@ test("command succeeds on an unchanged target → retains the result and complet
       (event) => progress.push(event),
     );
     const completed = await fusion({
+      budget: DEFAULT_OUTPUT_BUDGETS,
       toolCallId: "finalize",
       tool: "edit",
       displayPath: "finalize.txt",

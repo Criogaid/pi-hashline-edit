@@ -20,7 +20,7 @@ import type {
   SuccessReport,
 } from "./report-schema.ts";
 import { causeOf, reportResult, type ReportDetails } from "./report.ts";
-import { DEFAULT_OUTPUT_BUDGETS, type OutputBudgets } from "./budgets.ts";
+import type { OutputBudgets } from "./budgets.ts";
 import type { ActionFusionProgress } from "./action-fusion.ts";
 
 /** Final success carries tool details; final failure carries only its report; neither carries progress. */
@@ -92,8 +92,8 @@ export function finalizeMutation<TDetails extends object, TTool extends Mutation
   path: string,
   { commit, details, facts }: MutationOutcome<TDetails, NoInfer<TTool>>,
   observation: FreshnessObservation,
-  command?: CommandFacts,
-  budget: OutputBudgets = DEFAULT_OUTPUT_BUDGETS,
+  command: CommandFacts | undefined,
+  budget: OutputBudgets,
 ): AgentToolResult<TDetails & ReportDetails<SuccessReport>> {
   const fresh = observation.freshness === "unchanged";
   const output = command?.result ? commandText(command.result.content) : "";

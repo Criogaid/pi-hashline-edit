@@ -27,7 +27,7 @@ import { makeGrepOverride } from "./grep-tool.ts";
 import { openTestSession } from "../testing/session.testing.ts";
 import type { SuccessReport } from "./report-schema.ts";
 import { renderReport, type Report } from "./report.ts";
-import { MAX_CONTENT_KIB, outputBudgetsFor } from "./budgets.ts";
+import { DEFAULT_OUTPUT_BUDGETS, MAX_CONTENT_KIB, outputBudgetsFor } from "./budgets.ts";
 
 const mutationDetails = (
   report: Pick<SuccessReport, "publication" | "freshness" | "then_run">,
@@ -443,7 +443,7 @@ test("argument cards preserve omission notices and all expanded issues", () => {
     field: `edits[${index}].body`,
     reason: `中文🙂 ${index}: supply a line.\n${"context ".repeat(50)}\nFinal cause: empty body.`,
   }));
-  const diagnostic = formatArgumentError(issues, true);
+  const diagnostic = formatArgumentError(issues, true, DEFAULT_OUTPUT_BUDGETS);
   const parsed = argumentError(new Error(diagnostic));
   assert.ok(parsed.schemaLimited && parsed.omittedIssues);
   const result = {
@@ -488,7 +488,7 @@ test("unrecognized or malformed JSON errors retain their original diagnostic", (
 test("argument diagnostics wrap Unicode and multiline reasons at narrow terminal widths", () => {
   const field = "edits[0].body";
   const reason = '中文🙂: supply at least one line.\nUse ["空行"] for this example.';
-  const diagnostic = formatArgumentError([{ field, reason }], false);
+  const diagnostic = formatArgumentError([{ field, reason }], false, DEFAULT_OUTPUT_BUDGETS);
   const result = { content: [{ type: "text" as const, text: diagnostic }] };
   for (const appearance of ["dark", "light"] as const) {
     initTheme(appearance);

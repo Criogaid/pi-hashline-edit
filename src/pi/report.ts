@@ -20,7 +20,7 @@ import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import { Value } from "typebox/value";
 import { errorMessage, errnoCode, filesystemErrorCode, HashlineError } from "../core/errors.ts";
 import { boundedText, causeOf } from "./report-cause.ts";
-import { DEFAULT_OUTPUT_BUDGETS, type OutputBudgets } from "./budgets.ts";
+import type { OutputBudgets } from "./budgets.ts";
 export { boundedText, causeOf } from "./report-cause.ts";
 import { cancellationError } from "./error-text.ts";
 import { FileMutationError } from "./file-commit.ts";
@@ -161,7 +161,7 @@ interface FailureContext {
   /** The path or paths the call names, as supplied. */
   readonly path?: string | readonly string[];
   readonly signal?: AbortSignal;
-  readonly budget?: OutputBudgets;
+  readonly budget: OutputBudgets;
 }
 
 /**
@@ -224,7 +224,7 @@ export function describeFailure(
     error = error.cause;
   }
   const failure = classify(error, context.signal);
-  const budget = context.budget ?? DEFAULT_OUTPUT_BUDGETS;
+  const budget = context.budget;
   const mutation = MUTATION_TOOLS.some((name) => name === tool);
   const publication = mutation
     ? failure instanceof FileMutationError

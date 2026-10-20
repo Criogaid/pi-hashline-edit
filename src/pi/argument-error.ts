@@ -3,7 +3,7 @@
  * with field issues within one byte budget. Pi raises it before execution,
  * so it travels as the thrown message only. Oversized issues are omitted whole.
  */
-import { DEFAULT_OUTPUT_BUDGETS, type OutputBudgets } from "./budgets.ts";
+import type { OutputBudgets } from "./budgets.ts";
 import { boundedText, renderReport, type ReportText } from "./report.ts";
 import type { ArgumentIssue, FailureReport } from "./report-schema.ts";
 
@@ -31,7 +31,7 @@ function encode(report: ArgumentRejection): string {
 export function formatArgumentError(
   issues: readonly ArgumentIssue[],
   schemaLimited: boolean,
-  budget: OutputBudgets = DEFAULT_OUTPUT_BUDGETS,
+  budget: OutputBudgets,
 ): string {
   const boundedIssues = issues.map(({ field, reason, fix }) => ({
     field,

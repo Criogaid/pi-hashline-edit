@@ -10,7 +10,6 @@ import {
   HashlineError,
   type HashlineErrorOptions,
 } from "../core/errors.ts";
-import { DEFAULT_OUTPUT_BUDGETS } from "./budgets.ts";
 import { DiagnosticBuffer } from "./diagnostic-buffer.ts";
 import type { Cause, ErrorCode } from "./report-schema.ts";
 
@@ -28,7 +27,7 @@ export function restoreCause(data: Cause | undefined): Error | undefined {
 }
 
 /** One free-text value within its budget, keeping the opening and the final cause. */
-export function boundedText(text: string, maxBytes = DEFAULT_OUTPUT_BUDGETS.fieldBytes): string {
+export function boundedText(text: string, maxBytes: number): string {
   if (Buffer.byteLength(text) <= maxBytes) return text;
   const buffer = new DiagnosticBuffer(maxBytes);
   buffer.append(text);
@@ -82,7 +81,7 @@ export function workerFailure(caught: unknown): WorkerFailure {
 /** Preserve underlying failures; visit each native error once to avoid cycles and repeats. */
 export function causeOf(
   error: unknown,
-  maxBytes = DEFAULT_OUTPUT_BUDGETS.fieldBytes,
+  maxBytes: number,
   seen = new Set<unknown>(),
 ): Cause | undefined {
   if (error === undefined || seen.has(error)) return undefined;

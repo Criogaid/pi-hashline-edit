@@ -135,6 +135,7 @@ test("progress callback failures preserve publication and do not prevent the com
     });
     await assert.rejects(
       fusion({
+        budget: DEFAULT_OUTPUT_BUDGETS,
         toolCallId: "failed",
         absolutePath: join(dir, "failed"),
         tool: "write",
@@ -180,8 +181,16 @@ test("standalone and Fusion finalizers → take freshness from commit facts", as
         const fresh = observedRevision === "published";
         const observation = commitFreshness(mutation.commit);
         assert.equal(observation.freshness, fresh ? "unchanged" : "changed");
-        const standalone = finalizeMutation("edit", "file", mutation, observation);
+        const standalone = finalizeMutation(
+          "edit",
+          "file",
+          mutation,
+          observation,
+          undefined,
+          DEFAULT_OUTPUT_BUDGETS,
+        );
         const fused = await createActionFusionExecutor()({
+          budget: DEFAULT_OUTPUT_BUDGETS,
           tool: "edit",
           displayPath: "file",
           toolCallId: "no-command",

@@ -13,6 +13,7 @@ import type { ActionFusionProgress, CommandOutcome } from "./action-fusion.ts";
 import { ACTION_FUSION_GUIDELINES, createActionFusionExecutor } from "./action-fusion.ts";
 import { FileMutationError } from "./file-commit.ts";
 import { byteRevision } from "./file-revision.ts";
+import { DEFAULT_OUTPUT_BUDGETS } from "./budgets.ts";
 import { DEFAULT_CONFIG } from "./config.ts";
 import { ACTION_FUSION_PROGRESS_SCHEMA, REREAD } from "./report-schema.ts";
 import { Value } from "typebox/value";
@@ -145,6 +146,7 @@ test("mutation failure skips the command and command failure does not roll back"
     });
     await assert.rejects(
       fusion({
+        budget: DEFAULT_OUTPUT_BUDGETS,
         toolCallId: "x",
         tool: "edit",
         displayPath: join(dir, "missing.txt"),
@@ -165,6 +167,7 @@ test("mutation failure skips the command and command failure does not roll back"
     const target = join(dir, "changed.txt");
     await writeFile(target, "changed\n");
     const result = await fusion({
+      budget: DEFAULT_OUTPUT_BUDGETS,
       toolCallId: "y",
       tool: "edit",
       displayPath: target,
@@ -201,6 +204,7 @@ test("cancelled calls do not mutate or run the command", async (t) => {
     });
     await assert.rejects(
       fusion({
+        budget: DEFAULT_OUTPUT_BUDGETS,
         toolCallId: "x",
         tool: "edit",
         displayPath: join(dir, "cancelled.txt"),
@@ -231,6 +235,7 @@ test("unreadable target after mutation → reports unknown freshness and skips t
       return { status: "succeeded", result: { content: [{ type: "text", text: "unexpected" }] } };
     });
     const result = await fusion({
+      budget: DEFAULT_OUTPUT_BUDGETS,
       toolCallId: "unknown",
       tool: "edit",
       displayPath: missing,
@@ -481,6 +486,7 @@ test("concurrent mutations on case-differing paths serialize on Windows", {
       releaseFirst = resolve;
     });
     const p1 = fusion({
+      budget: DEFAULT_OUTPUT_BUDGETS,
       toolCallId: "1",
       tool: "edit",
       displayPath: join(dir, "caseTest.txt"),
@@ -498,6 +504,7 @@ test("concurrent mutations on case-differing paths serialize on Windows", {
     });
     await firstStarted.promise;
     const p2 = fusion({
+      budget: DEFAULT_OUTPUT_BUDGETS,
       toolCallId: "2",
       tool: "edit",
       displayPath: join(dir, "CASETEST.TXT"),
@@ -534,6 +541,7 @@ test("published mutation failure → preserves the original failure and states c
     let caught: unknown;
     try {
       await fusion({
+        budget: DEFAULT_OUTPUT_BUDGETS,
         toolCallId: "test-rewrap",
         tool: "edit",
         displayPath: join(dir, "target.txt"),
@@ -553,7 +561,7 @@ test("published mutation failure → preserves the original failure and states c
     assert.equal(caught.status, "skipped");
     assert.equal(caught.cause, mutationError);
     assert.equal(Object.hasOwn(caught, "error"), false);
-    const report = describeFailure("edit", caught, {});
+    const report = describeFailure("edit", caught, { budget: DEFAULT_OUTPUT_BUDGETS });
     assert.equal(report.publication, "PUBLISHED");
     assert.equal(report.stage, "post_process");
     assert.equal(report.then_run?.status, "skipped");
@@ -585,6 +593,7 @@ test("Fusion takes publication and freshness from commit facts independently of 
           return { status: "succeeded", result: { content: [{ type: "text", text: "checked" }] } };
         });
         const result = await fusion({
+          budget: DEFAULT_OUTPUT_BUDGETS,
           toolCallId: "commit-facts",
           tool: "edit",
           displayPath: target,
@@ -634,6 +643,7 @@ test("timed command progress ticks during silence, preserves output, and stops a
           (event) => events.push(event),
         );
         const execution = fusion({
+          budget: DEFAULT_OUTPUT_BUDGETS,
           toolCallId: outcome,
           tool: "edit",
           displayPath: join(dir, "target.txt"),
@@ -703,6 +713,7 @@ test("commands without an explicit timeout do not start countdown updates", asyn
       (event) => events.push(event),
     );
     const execution = fusion({
+      budget: DEFAULT_OUTPUT_BUDGETS,
       toolCallId: "untimed",
       tool: "edit",
       displayPath: join(dir, "target.txt"),
@@ -780,6 +791,7 @@ test("Fusion fails at a mutation or command boundary → reports each command ou
                 ? "failed"
                 : "skipped";
         const invocation = fusion({
+          budget: DEFAULT_OUTPUT_BUDGETS,
           toolCallId: scenario,
           tool: "edit",
           displayPath: target,
@@ -811,7 +823,7 @@ test("Fusion fails at a mutation or command boundary → reports each command ou
         if (stoppedDuringMutation) {
           await assert.rejects(invocation, (error: unknown) => {
             assert.ok(error instanceof CommandNotRun);
-            const report = describeFailure("edit", error, {});
+            const report = describeFailure("edit", error, { budget: DEFAULT_OUTPUT_BUDGETS });
             diagnostic = renderReport(report);
             assert.equal(report.then_run?.status, expectedCommand);
             return true;

@@ -46,6 +46,7 @@ test("diagnostics within the budget are unchanged", () => {
 
 test("search warning aggregation retains the final cause and labels truncation", () => {
   const { facts, payload } = assembleGrepOutput({
+    budget: DEFAULT_OUTPUT_BUDGETS,
     formatted: {
       blocks: ["confirmed match"],
       linesTruncated: false,

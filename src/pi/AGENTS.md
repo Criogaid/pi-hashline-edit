@@ -44,7 +44,7 @@ Pi integration. Cross-cutting contracts live in the root `AGENTS.md`; this file 
 
 ## Budgets and config
 
-- `budgets.ts` derives model-facing byte budgets from the selected model's declared `contextWindow`, with bounded defaults for unknown limits. `model-budgets.ts` caches one immutable snapshot per extension, calculated lazily and replaced when selection or capacity changes; preparation shares its provider, and each execution captures the snapshot before its asynchronous work. Model-derived content budgets share the `MAX_CONTENT_KIB` ceiling that the explicit `read.maxKiB` range also uses.
+- `budgets.ts` derives model-facing byte budgets from the selected model's declared `contextWindow`, with bounded defaults for unknown limits. Standalone tool factories default to its provider; internal helpers require the resolved budget or explicit byte limit. `model-budgets.ts` caches one immutable snapshot per extension, calculated lazily and replaced when selection or capacity changes; preparation shares its provider, and each execution captures the snapshot before its asynchronous work. Model-derived content budgets share the `MAX_CONTENT_KIB` ceiling that the explicit `read.maxKiB` range also uses.
 - `config.ts` defines the `hashlineEdit` settings as one TypeBox schema: top-level `enabled`, `actionFusion`, `hashLen`, `shiftRadius` control shared behavior; the `read`, `grep`, and `replace` groups hold tool-specific settings. Missing or invalid optional `read.maxKiB` selects automatic model sizing.
 
 ## Action Fusion

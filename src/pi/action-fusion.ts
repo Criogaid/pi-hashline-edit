@@ -37,7 +37,7 @@ import {
 import { errnoCode, errorMessage } from "../core/errors.ts";
 import { throwIfCancelled } from "./error-text.ts";
 import { causeOf, CommandNotRun, type ReportDetails } from "./report.ts";
-import { DEFAULT_OUTPUT_BUDGETS, type OutputBudgets } from "./budgets.ts";
+import type { OutputBudgets } from "./budgets.ts";
 import type {
   ActionFusionProgress,
   CommandResult,
@@ -208,7 +208,7 @@ export function createActionFusionExecutor(
     displayPath,
     absolutePath,
     thenRun,
-    budget = DEFAULT_OUTPUT_BUDGETS,
+    budget,
     mutate,
     signal,
     ctx,
@@ -220,7 +220,7 @@ export function createActionFusionExecutor(
     displayPath: string;
     absolutePath: string;
     thenRun: ThenRunInput | undefined;
-    budget?: OutputBudgets;
+    budget: OutputBudgets;
     mutate: () => Promise<MutationOutcome<TDetails, NoInfer<TTool>>>;
     signal: AbortSignal | undefined;
     ctx: ExtensionToolContext;

@@ -10,7 +10,7 @@ import { ObjectOptions, Type, type Static, type TObject, type TSchema } from "ty
 import { errorMessage } from "../core/errors.ts";
 import { diagnoseArguments } from "./argument-diagnostics.ts";
 import { formatArgumentError } from "./argument-error.ts";
-import { defaultOutputBudgets, type OutputBudgetProvider } from "./budgets.ts";
+import type { OutputBudgetProvider } from "./budgets.ts";
 import type { ArgumentIssue, ReportTool } from "./report-schema.ts";
 
 /** Report one semantic issue: what is wrong (a fact), and how to correct it when the fact alone does not say. */
@@ -25,8 +25,8 @@ export function argumentItems(value: unknown): readonly unknown[] {
 export function createArgumentPreparer<T extends TObject>(
   name: ReportTool,
   parameters: T,
-  check?: CheckArguments,
-  budgets: OutputBudgetProvider = defaultOutputBudgets,
+  check: CheckArguments | undefined,
+  budgets: OutputBudgetProvider,
 ): (args: unknown) => Static<T> {
   const validate = (schema: TSchema, args: unknown): unknown =>
     validateToolArguments(
