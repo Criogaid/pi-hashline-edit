@@ -416,22 +416,20 @@ export async function commitFile(
     try {
       await rm(tempDir, { recursive: true, force: true });
     } catch (error) {
-      if (!published) {
-        if (failure !== undefined) throw failure;
-        throw error;
-      }
-      throw new FileMutationError(
-        "POST_PROCESS_FAILED",
-        "post_process",
-        "PUBLISHED",
-        "Temporary cleanup failed.",
-        {
-          cause:
-            failure === undefined
-              ? error
-              : new AggregateError([failure, error], "post-publication cleanup also failed"),
-        },
-      );
+      // Before publication, preserve the classified failure already being propagated.
+      if (published)
+        throw new FileMutationError(
+          "POST_PROCESS_FAILED",
+          "post_process",
+          "PUBLISHED",
+          "Temporary cleanup failed.",
+          {
+            cause:
+              failure === undefined
+                ? error
+                : new AggregateError([failure, error], "post-publication cleanup also failed"),
+          },
+        );
     }
   }
 }

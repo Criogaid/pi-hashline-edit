@@ -1,4 +1,5 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import fs, { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { syncBuiltinESMExports } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import assert from "node:assert/strict";
@@ -8,7 +9,8 @@ import { FileMutationError } from "./file-commit.ts";
 import { DEFAULT_OUTPUT_BUDGETS } from "./budgets.ts";
 import { REREAD } from "./report-schema.ts";
 import { CommandNotRun, describeFailure, reportOf } from "./report.ts";
-import { createToolContext } from "./tool-call.testing.ts";
+import { callTool, createToolContext } from "./tool-call.testing.ts";
+import { makeWriteOverride } from "./write-tool.ts";
 import { publishedMutation } from "./mutation-outcome.testing.ts";
 
 async function withTemp<T>(run: (dir: string) => Promise<T>): Promise<T> {
@@ -20,6 +22,45 @@ async function withTemp<T>(run: (dir: string) => Promise<T>): Promise<T> {
   }
 }
 const mutation = (content: string) => publishedMutation(content, { content: [], details: {} });
+
+test("temporary preparation and cleanup failures → preserve the commit failure and target bytes", async (t) =>
+  withTemp(async (dir) => {
+    const target = join(dir, "unpublished.txt");
+    await writeFile(target, "before\n");
+    const nativeOpen = fs.open;
+    const original = Object.assign(new Error("temporary open failed"), { code: "EIO" });
+    let failCleanup = false;
+    try {
+      t.mock.method(fs, "open", async (...args: Parameters<typeof nativeOpen>) => {
+        if (String(args[0]).includes(".hashline-commit-") && args[1] === "w") throw original;
+        return nativeOpen(...args);
+      });
+      const nativeRm = fs.rm;
+      t.mock.method(fs, "rm", async (...args: Parameters<typeof nativeRm>) => {
+        if (failCleanup && String(args[0]).includes(".hashline-commit-"))
+          throw Object.assign(new Error("temporary cleanup failed"), { code: "EACCES" });
+        return nativeRm(...args);
+      });
+      syncBuiltinESMExports();
+      for (failCleanup of [false, true]) {
+        const result = await callTool(makeWriteOverride(dir), {
+          path: target,
+          mode: "overwrite",
+          content: "after\n",
+        });
+        const report = reportOf(result, "write");
+        assert.equal(result.isError, true);
+        assert.equal(report?.error, "PUBLISH_FAILED");
+        assert.equal(report.stage, "commit");
+        assert.equal(report.publication, "NOT_PUBLISHED");
+        assert.deepEqual(report.cause, { code: original.code, message: original.message });
+        assert.equal(await readFile(target, "utf8"), "before\n");
+      }
+    } finally {
+      t.mock.restoreAll();
+      syncBuiltinESMExports();
+    }
+  }));
 
 test("published post-processing failure → skips command and preserves publication state", async (t) =>
   withTemp(async (dir) => {
