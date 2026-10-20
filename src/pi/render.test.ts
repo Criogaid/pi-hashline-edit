@@ -11,7 +11,7 @@ import type { TSchema } from "typebox";
 import { theme } from "../../node_modules/@earendil-works/pi-coding-agent/dist/modes/interactive/theme/theme.js";
 import { makeEditOverride } from "./edit-tool.ts";
 import { makeReplaceTool } from "./replace-tool.ts";
-import { renderDiffPreview, reportLines } from "./render.ts";
+import { renderDiffPreview, renderMutationResult, reportLines } from "./render.ts";
 import { withMutationStatus } from "./fusion-card.ts";
 import { makeWriteOverride } from "./write-tool.ts";
 import { generateMutationDetails } from "./mutation-result.ts";
@@ -38,6 +38,35 @@ const mutationDetails = (
     path: "a.txt",
     ...report,
   },
+});
+
+test("empty logical diff → render according to confirmed publication state", () => {
+  initTheme("dark");
+  const diff = generateMutationDetails("same\r\nsame\n", "same\nsame\r\n");
+  assert.equal(diff.diff, "");
+  for (const publication of ["PUBLISHED", "NOT_PUBLISHED", undefined] as const) {
+    const output = stripVTControlCharacters(
+      renderMutationResult(
+        {
+          content: [],
+          details: { ...diff, report: { tool: "edit", publication } },
+        },
+        { isPartial: false, expanded: true },
+        theme,
+        { isError: false, args: {} },
+        "Editing…",
+        () => "",
+        "edit",
+      )
+        .render(100)
+        .join("\n"),
+    );
+    if (publication === "NOT_PUBLISHED") assert.match(output, /No net change/);
+    else {
+      assert.doesNotMatch(output, /No net change/);
+      assert.match(output, publication === "PUBLISHED" ? /Updated/ : /No diff available/);
+    }
+  }
 });
 
 test("mutation headers refresh in place and retain isolated per-call counts", () => {
@@ -632,7 +661,7 @@ test("success renderers receive replayed or hooked reports → display only sche
       else
         assert.match(
           output,
-          name === "edit" || name === "replace" ? /No net change/ : /VISIBLE_PAYLOAD/,
+          name === "edit" || name === "replace" ? /No diff available/ : /VISIBLE_PAYLOAD/,
         );
     }
     if (tool.name === "grep" || tool.name === "read") {

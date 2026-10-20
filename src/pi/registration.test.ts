@@ -177,10 +177,11 @@ test("mutation cards use Fusion by default and explicit false removes command su
         assert.ok(frame.expandedOutput.includes(expectedBackground));
       }
       if (name === "replace") {
-        assert.match(running.output, /No net change/);
+        assert.match(running.output, /No diff available/);
       }
       card.updateResult({ ...result, isError: false });
       assert.ok(card.render(100).join("\n").includes(theme.getBgAnsi("toolSuccessBg")));
+      if (name === "replace") assert.match(card.render(100).join("\n"), /No net change/);
       card.setExpanded(true);
       assert.doesNotMatch(card.render(100).join("\n"), /publication=|freshness=/);
       assert.doesNotMatch(card.render(100).join("\n"), /Command exited|then_run:failed/);

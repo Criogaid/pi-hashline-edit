@@ -277,9 +277,12 @@ export function renderMutationResult<TArgs>(
   });
   const { report } = splitReport(result);
   const facts = report ? reportLines(report, theme, MUTATION_CARD_SHOWN) : [];
-  // Only identical content produces no diff.
-  const body = diff
-    ? renderDiffPreview(diff, expanded, theme)
-    : theme.fg("success", "No net change");
+  const emptyDiff =
+    report?.publication === "NOT_PUBLISHED"
+      ? "No net change"
+      : report?.publication === "PUBLISHED"
+        ? "Updated; no logical line diff"
+        : "No diff available";
+  const body = diff ? renderDiffPreview(diff, expanded, theme) : theme.fg("success", emptyDiff);
   return new Text([body, ...facts].join("\n"), 0, 0);
 }
