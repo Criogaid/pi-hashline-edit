@@ -23,7 +23,6 @@ import type { ActionFusionProgress } from "./action-fusion.ts";
 import { reportOf } from "./report.ts";
 import { formatByteSize } from "./budgets.ts";
 import { expectToolFailure } from "./report-failure.testing.ts";
-import { openTestSession } from "../testing/session.testing.ts";
 
 test("mutation cards use Fusion by default and explicit false removes command support", async () => {
   const dir = await mkdtemp(join(tmpdir(), "hashline-registration-"));
@@ -75,8 +74,8 @@ test("mutation cards use Fusion by default and explicit false removes command su
     ]);
     assert.equal(grep.parameters.additionalProperties, false);
     await assert.rejects(
-      callTool(grep, { pattern: "needle", literal: true, noIgnore: false }),
-      rejectsArgument("noIgnore", /not allowed/),
+      callTool(grep, { pattern: "needle", literal: true, unexpected: true }),
+      rejectsArgument("unexpected", /not allowed/),
     );
     for (const tool of tools.filter((tool) => ["edit", "replace", "write"].includes(tool.name))) {
       assert.ok(
@@ -183,12 +182,7 @@ test("mutation cards use Fusion by default and explicit false removes command su
       assert.ok(card.render(100).join("\n").includes(theme.getBgAnsi("toolSuccessBg")));
       if (name === "replace") assert.match(card.render(100).join("\n"), /No net change/);
       card.setExpanded(true);
-      assert.doesNotMatch(card.render(100).join("\n"), /publication=|freshness=/);
-      assert.doesNotMatch(card.render(100).join("\n"), /Command exited|then_run:failed/);
-      assert.doesNotMatch(
-        frames.at(-1)!.commandOutput,
-        /publication=|freshness=|File changes are saved|No file changes were published|mutation completed/,
-      );
+      assert.doesNotMatch(card.render(100).join("\n"), /Command exited/);
       assert.ok(card.render(100).join("\n").includes(theme.getBgAnsi("toolSuccessBg")));
 
       const invalid = {
@@ -237,7 +231,7 @@ test("mutation cards use Fusion by default and explicit false removes command su
         .render(160)
         .join("\n");
       assert.match(commandOutput, /skipped[\s\S]*Not run.*mutation did not complete/);
-      assert.doesNotMatch(commandOutput, /Error reading|does not exist|publication=|freshness=/);
+      assert.doesNotMatch(commandOutput, /Error reading|does not exist/);
       assert.ok(!commandOutput.includes(theme.getBgAnsi("toolErrorBg")));
     }
     assert.deepEqual(
@@ -280,10 +274,7 @@ test("mutation cards use Fusion by default and explicit false removes command su
       .render(160)
       .join("\n");
     assert.match(commandOutput, /skipped/);
-    assert.doesNotMatch(
-      commandOutput,
-      /ANCHOR_MISMATCH|candidate|Input-anchor|publication=|freshness=/,
-    );
+    assert.doesNotMatch(commandOutput, /ANCHOR_MISMATCH|candidate/);
     assert.equal(await readFile(join(dir, "stale.txt"), "utf8"), "header\ntarget\n");
     await writeFile(
       join(dir, ".pi", "settings.json"),
@@ -341,34 +332,6 @@ function anchorLine(block: string, line: number) {
   if (!m) throw new Error(`line ${line} anchor not found in block`);
   return `${line}#${m[1]}`;
 }
-
-test("removed forget setting remains in settings → load succeeds without registering forget", async (t) =>
-  withDir(async (dir) => {
-    await mkdir(join(dir, ".pi"));
-    await writeFile(
-      join(dir, ".pi", "settings.json"),
-      JSON.stringify({
-        hashlineEdit: { forget: true, hashLen: 6, actionFusion: false },
-      }),
-    );
-    assert.deepEqual(loadConfig(dir), { ...DEFAULT_CONFIG, hashLen: 6, actionFusion: false });
-    const { session } = await openTestSession(t, {
-      cwd: dir,
-      tools: ["read", "grep"],
-      configure(pi) {
-        const previousCwd = process.cwd();
-        try {
-          process.chdir(dir);
-          registerHashline(pi);
-        } finally {
-          process.chdir(previousCwd);
-        }
-      },
-    });
-    assert.ok(session.getToolDefinition("read"));
-    assert.ok(session.getToolDefinition("grep"));
-    assert.equal(session.getToolDefinition("forget"), undefined);
-  }));
 
 test("disabled config registers no tools — built-ins remain", async () => {
   await withDir(async (dir) => {

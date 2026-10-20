@@ -55,7 +55,7 @@ test("actionFusion defaults on and honors explicit disabling", () =>
     }
   }));
 
-test("config rejects fractional values and tolerates malformed settings shapes", () =>
+test("invalid or unknown settings → preserve valid leaves and default malformed values", () =>
   withSettings(async (write, root) => {
     for (const value of [3.5, -1, "4", null]) {
       await write({ hashlineEdit: { hashLen: value, shiftRadius: value } });
@@ -72,9 +72,8 @@ test("config rejects fractional values and tolerates malformed settings shapes",
       await write(rootValue);
       assert.deepEqual(loadConfig(root), DEFAULT_CONFIG);
     }
-    await write({ hashlineEdit: { hashLen: 8, shiftRadius: 0 } });
-    assert.equal(loadConfig(root).hashLen, 8);
-    assert.equal(loadConfig(root).shiftRadius, 0);
+    await write({ hashlineEdit: { hashLen: 8, shiftRadius: 0, unexpected: true } });
+    assert.deepEqual(loadConfig(root), { ...DEFAULT_CONFIG, hashLen: 8, shiftRadius: 0 });
   }));
 
 test("tool groups resolve each setting independently", () =>

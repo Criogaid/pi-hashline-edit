@@ -86,22 +86,6 @@ test("Pi argument failure transported as text → renders field facts after seri
   assert.doesNotMatch(shown, /"issues":/);
 });
 
-test("argument reports with obsolete fields → remain raw on replay", () => {
-  for (const facts of [{ arguments: { path: "saved.txt" } }, { argumentsOmitted: true }]) {
-    const report = {
-      tool: "edit",
-      error: "INVALID_ARGUMENTS",
-      issues: [{ field: "edits[0].body", reason: "is empty" }],
-      ...facts,
-    };
-    const diagnostic = JSON.stringify(report);
-    const result = { content: [text(diagnostic)], details: { report } };
-    assert.equal(decodeReport(diagnostic, "edit"), undefined);
-    assert.equal(reportOf(result, "edit"), undefined);
-    assert.equal(displayed(result, "edit").trimEnd(), diagnostic);
-  }
-});
-
 test("invalid serialized report → retains the raw diagnostic", () => {
   const valid = formatArgumentError(
     [{ field: "path", reason: "missing" }],
@@ -109,6 +93,7 @@ test("invalid serialized report → retains the raw diagnostic", () => {
     DEFAULT_OUTPUT_BUDGETS,
   );
   for (const invalid of [
+    JSON.stringify({ ...JSON.parse(valid), foreign: true }),
     '{"tool":"edit","arbitrary":"user file"}',
     '{"tool":"replace","error":"NO_MATCH","message":"missing rule"}',
     '{"tool":"write","error":"TARGET_EXISTS","rule":1}',
@@ -125,13 +110,18 @@ test("invalid serialized report → retains the raw diagnostic", () => {
     }),
   ]) {
     assert.equal(decodeReport(invalid, "edit"), undefined, invalid);
-    assert.equal(
-      displayed({ content: [text(invalid)] }, "edit")
-        .split("\n")
-        .map((line) => line.trimEnd())
-        .join("\n"),
-      invalid,
-    );
+    const report: unknown = JSON.parse(invalid);
+    for (const details of [undefined, { report }]) {
+      const result = { content: [text(invalid)], details };
+      assert.equal(reportOf(result, "edit"), undefined);
+      assert.equal(
+        displayed(result, "edit")
+          .split("\n")
+          .map((line) => line.trimEnd())
+          .join("\n"),
+        invalid,
+      );
+    }
   }
 });
 

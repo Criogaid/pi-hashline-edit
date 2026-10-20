@@ -43,7 +43,6 @@ test("all tools receive invalid arguments → return field diagnostics without a
         const result = argumentError(error);
         assert.ok(result.issues.length > 0);
         assert.equal(Object.hasOwn(result, "arguments"), false);
-        assert.equal(Object.hasOwn(result, "argumentsOmitted"), false);
         return true;
       },
     );

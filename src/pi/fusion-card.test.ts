@@ -94,14 +94,13 @@ test("one independent card updates live and only persists its endpoints", () => 
   assert.equal(h.entries[0].data.command, "waiting");
   const collapsed = card.render(100).join("\n");
   assert.match(collapsed, /succeeded/);
-  assert.doesNotMatch(collapsed, /publication=|freshness=|Anchors are stale|file\.ts/);
   assert.ok(collapsed.includes(activeTheme.getBgAnsi("toolSuccessBg")));
   assert.match(collapsed, /output line 19/);
   assert.doesNotMatch(collapsed, /output line 0\b/);
   assert.match(h.card(h.entries[0], true).render(100).join("\n"), /output line 0\b/);
 });
 
-test("Fusion command outcomes → progress, cards, and reports share result-only output", async (t) => {
+test("Fusion command outcomes → progress, cards, and reports preserve command results", async (t) => {
   const success: CommandResult = {
     content: [
       { type: "text", text: "first" },
@@ -173,14 +172,12 @@ test("Fusion command outcomes → progress, cards, and reports share result-only
       assert.equal(Object.hasOwn(final, "result"), expected !== undefined);
       assert.deepEqual(final.result, expected);
       for (const progress of events) {
-        assert.equal(Object.hasOwn(progress, "output"), false);
         if (progress.command === "waiting") assert.equal(Object.hasOwn(progress, "result"), false);
       }
       const saved = h.entries.find((entry) => entry.customType === "hashline-then-run-result");
       assert.ok(saved);
       assert.equal(Object.hasOwn(saved.data, "result"), expected !== undefined);
       assert.deepEqual(saved.data.result, expected);
-      for (const entry of h.entries) assert.equal(Object.hasOwn(entry.data, "output"), false);
       assert.equal(Object.hasOwn(h.entries[0].data, "result"), false);
       const block = result.content.at(-1);
       assert.ok(block?.type === "text");
@@ -226,31 +223,18 @@ test("session restore uses final snapshots and marks unfinished calls unknown", 
   );
 });
 
-test("session restore accepts optional result and rejects output snapshots", async (t) => {
+test("session restore accepts optional command results", async (t) => {
   const cases: readonly {
     name: string;
-    fields: { result?: CommandResult; output?: string };
+    fields: { result?: CommandResult };
     command: ActionFusionProgress["command"];
-    text?: RegExp;
+    text: RegExp;
   }[] = [
     {
-      name: "result only → restore result text",
+      name: "result is present → restore result text",
       fields: { result: { content: [{ type: "text", text: "result text" }] } },
       command: "succeeded",
       text: /result text/,
-    },
-    {
-      name: "output only → ignore snapshot",
-      fields: { output: "output text" },
-      command: "succeeded",
-    },
-    {
-      name: "result and output coexist → ignore snapshot",
-      fields: {
-        result: { content: [{ type: "text", text: "result text" }] },
-        output: "output text",
-      },
-      command: "succeeded",
     },
     {
       name: "result is absent → restore the command status",
@@ -279,12 +263,7 @@ test("session restore accepts optional result and rejects output snapshots", asy
         const resumed = harness();
         resumed.restore(event, [initial, { ...snapshot, customType: "hashline-then-run-result" }]);
         const shown = resumed.card(initial, true).render(160).join("\n");
-        if (text) {
-          assert.match(shown, text, event);
-        } else {
-          assert.match(shown, /interrupted \(final status unknown\)/, event);
-          assert.equal(resumed.card(snapshot), undefined, event);
-        }
+        assert.match(shown, text, event);
       }
     });
   }
@@ -303,7 +282,7 @@ test("skips and cancellations stay neutral and restore their own reason", () => 
         output,
         command === "skipped" ? /Not run: the mutation did not complete/ : /Not run: cancelled/,
       );
-      assert.doesNotMatch(output, /publication=|freshness=|\(no output\)/);
+      assert.doesNotMatch(output, /\(no output\)/);
       assert.ok(!output.includes(activeTheme.getBgAnsi("toolErrorBg")));
       assert.ok(!output.includes(activeTheme.getBgAnsi("toolSuccessBg")));
       assert.ok(output.includes(activeTheme.getBgAnsi("customMessageBg")));

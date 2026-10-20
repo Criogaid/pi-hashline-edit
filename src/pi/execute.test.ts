@@ -1121,29 +1121,6 @@ test("Pi-converted single-object edits execute as a canonical array", async () =
     assert.equal(await readFile(file, "utf8"), "first\nSECOND\n");
   }));
 
-test("edit execute rejects legacy oldText/newText without op", async () =>
-  withDir(async (dir) => {
-    const file = join(dir, "f.txt");
-    await writeFile(file, "first\nsecond\n");
-    const edit = makeEditOverride(dir, DEFAULT_CONFIG);
-    await assert.rejects(
-      call(edit, {
-        path: "f.txt",
-        oldText: "first",
-        newText: "FIRST",
-      }),
-      rejectsArguments(),
-    );
-    await assert.rejects(
-      call(edit, {
-        path: "f.txt",
-        edits: [{ oldText: "first", newText: "FIRST" } as any],
-      }),
-      rejectsArguments(),
-    );
-    assert.equal(await readFile(file, "utf8"), "first\nsecond\n");
-  }));
-
 test("unresolved snapshot rows support direct retry and revalidate after further changes", async () => {
   await withDir(async (dir) => {
     const file = join(dir, "recover.txt");

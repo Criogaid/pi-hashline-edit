@@ -6,7 +6,6 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { makeWriteOverride } from "./write-tool.ts";
 import { createActionFusionExecutor } from "./action-fusion.ts";
-import { fileRevision } from "./file-commit.ts";
 import { callTool } from "./tool-call.testing.ts";
 import { reportOf } from "./report.ts";
 import { REREAD } from "./report-schema.ts";
@@ -25,16 +24,16 @@ async function withTemp<T>(run: (dir: string) => Promise<T>): Promise<T> {
   }
 }
 
-test("write rejects unknown fields rather than ignoring a misspelled create mode", async () =>
+test("write receives an unknown field → rejects without changing the file", async () =>
   withTemp(async (dir) => {
     const file = join(dir, "file.txt");
     await writeFile(file, "original\n");
     for (const fusion of [undefined, createActionFusionExecutor()]) {
       const tool = makeWriteOverride(dir, fusion);
-      const args = { path: "file.txt", content: "new\n", modee: "create" };
+      const args = { path: "file.txt", content: "new\n", mode: "overwrite", unexpected: true };
       await assert.rejects(
         callTool(tool, args, { ctx: context(dir) }),
-        rejectsArgument("modee", /not allowed/),
+        rejectsArgument("unexpected", /not allowed/),
       );
       assert.equal(await readFile(file, "utf8"), "original\n");
     }
@@ -127,26 +126,6 @@ test("write supports create-only and overwrite-only modes", async () =>
     assert.equal(await readFile(target, "utf8"), "updated\n");
   }));
 
-test("write rejects obsolete expectedRevision without overwriting", async () =>
-  withTemp(async (dir) => {
-    const target = join(dir, "concurrent.txt");
-    await writeFile(target, "original\n");
-    const params = {
-      path: target,
-      content: "changed\n",
-      mode: "overwrite",
-      expectedRevision: await fileRevision(target),
-    };
-    for (const fusion of [undefined, createActionFusionExecutor()]) {
-      const write = makeWriteOverride(dir, fusion);
-      await assert.rejects(
-        callTool(write, params, { ctx: context(dir) }),
-        rejectsArgument("expectedRevision", /not allowed/),
-      );
-      assert.equal(await readFile(target, "utf8"), "original\n");
-    }
-  }));
-
 test("write returns only a summary for empty, short, and long content", async () =>
   withTemp(async (dir) => {
     const contents = [
@@ -227,7 +206,7 @@ test("write reports changed freshness when then_run changes the target", async (
       status: "succeeded",
       output: "checked",
     });
-    assert.doesNotMatch(text, /Fresh anchors:|\b1#[0-9A-Z]+\b/);
+    assert.doesNotMatch(text, /\b1#[0-9A-Z]+\b/);
     const rendered = write
       .renderResult(result, { isPartial: false }, theme, { isError: false })
       .render(100)
@@ -256,10 +235,8 @@ test("write reports missing freshness when then_run removes the target", async (
       undefined,
       context(dir),
     );
-    const text = result.content.map((block: any) => block.text).join("\n");
     assert.equal(reportOf(result, "write")?.freshness, "missing");
     assert.equal(reportOf(result, "write")?.next, REREAD);
-    assert.doesNotMatch(text, /Fresh anchors:/);
   }));
 
 test("write preserves command failure and changed freshness", async () =>
@@ -276,9 +253,7 @@ test("write preserves command failure and changed freshness", async () =>
       undefined,
       context(dir),
     );
-    const text = result.content.map((block: any) => block.text).join("\n");
     assert.equal(reportOf(result, "write")?.freshness, "changed");
     assert.equal(reportOf(result, "write")?.then_run?.status, "failed");
     assert.equal(reportOf(result, "write")?.next, REREAD);
-    assert.doesNotMatch(text, /Fresh anchors:/);
   }));

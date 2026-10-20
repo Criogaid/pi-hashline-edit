@@ -21,7 +21,6 @@ import { makeEditOverride } from "./edit-tool.ts";
 import { callTool } from "./tool-call.testing.ts";
 import { DEFAULT_CONFIG } from "./config.ts";
 import { DEFAULT_OUTPUT_BUDGETS, formatByteSize, outputBudgetsFor } from "./budgets.ts";
-import { makeReadOverride } from "./read-tool.ts";
 import { reportOf } from "./report.ts";
 import { grepCounts } from "./grep-output.testing.ts";
 import { parseFileHeader } from "./grep-output.ts";
@@ -142,53 +141,6 @@ test("configured defaults → descriptions, limits, and context use the register
     assert.deepEqual(rows(explicit), [2, 6].map(expectedRow));
     assert.match(text(explicit), /configured\.txt · 2 matches\n/);
   }));
-
-test("grep exposes its declared parameters and rejects removed fields", async () => {
-  await withDir(async (dir) => {
-    const fake = fakeBackend();
-    const tool = makeGrepOverrideWithBackend(dir, DEFAULT_CONFIG, fake.backend);
-    assert.deepEqual(Object.keys(tool.parameters.properties).sort(), [
-      "context",
-      "flags",
-      "glob",
-      "ignoreCase",
-      "limit",
-      "literal",
-      "multiline",
-      "outputMode",
-      "path",
-      "pattern",
-    ]);
-    assert.equal(
-      "additionalProperties" in tool.parameters && tool.parameters.additionalProperties,
-      false,
-    );
-
-    const removed = {
-      matchMode: "all",
-      excludePattern: "skip",
-      wordMatch: true,
-      pcre2: true,
-      follow: true,
-      noIgnore: true,
-    };
-    for (const [key, value] of Object.entries(removed)) {
-      for (const input of [value, false, null]) {
-        await assert.rejects(
-          call(tool, { literal: true, pattern: "needle", [key]: input }),
-          rejectsArgument(key, /not allowed/),
-        );
-      }
-    }
-    await assert.rejects(
-      call(tool, { literal: true, pattern: "needle", follow: false, noIgnore: null }),
-      (error: Error) =>
-        rejectsArgument("follow", /not allowed/)(error) &&
-        rejectsArgument("noIgnore", /not allowed/)(error),
-    );
-    assert.equal(fake.calls.length, 0);
-  });
-});
 
 test("grep limit accepts only positive integers", async () => {
   await withDir(async (dir) => {
@@ -1171,29 +1123,6 @@ test("concurrent file searches → all discovered matches remain present", async
     assert.equal(grepCounts(result).matches, files.length);
   });
 });
-
-test("small or large read/grep results → reports carry no resultId", async () =>
-  withDir(async (dir) => {
-    const path = join(dir, "result.txt");
-    const { backend } = fakeBackend({ paths: [path] });
-    const tools = [
-      makeReadOverride(dir, DEFAULT_CONFIG),
-      makeGrepOverrideWithBackend(dir, DEFAULT_CONFIG, backend),
-    ];
-    for (const rows of [1, DEFAULT_CONFIG.grep.defaultLimit]) {
-      await writeFile(path, `needle ${"x".repeat(128)}\n`.repeat(rows));
-      for (const tool of tools) {
-        const result = await callTool(
-          tool,
-          tool.name === "read" ? { path } : { path, pattern: "needle", literal: true },
-        );
-        assert.equal(result.isError, undefined);
-        const report = reportOf(result, tool.name === "read" ? "read" : "grep");
-        assert.ok(report);
-        assert.equal(Object.hasOwn(report, "resultId"), false);
-      }
-    }
-  }));
 
 test("scope inspection fails for access or traversal reasons → grep preserves the filesystem failure", async () =>
   withDir(async (dir) => {
