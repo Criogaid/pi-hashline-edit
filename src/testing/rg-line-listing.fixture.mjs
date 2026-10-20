@@ -1,4 +1,4 @@
-// Emit protocol bytes in separate writes so parser tests exercise chunk boundaries.
+// Emit protocol records for real-process smoke and termination checks.
 const chunks = JSON.parse(process.argv[2]);
 for (const chunk of chunks) {
   await new Promise((resolve) => process.stdout.write(Buffer.from(chunk, "base64"), resolve));

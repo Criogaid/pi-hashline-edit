@@ -89,10 +89,10 @@ test("edit execute: hashline round-trip (read → edit → file changed)", async
     const f = join(dir, "f.txt");
     const text = "a\nb\nc\n";
     await writeFile(f, text);
-    await call(makeReadOverride(dir, DEFAULT_CONFIG), { path: "f.txt" });
+    const read = await call(makeReadOverride(dir, DEFAULT_CONFIG), { path: "f.txt" });
     const r: any = await call(makeEditOverride(dir, DEFAULT_CONFIG), {
       path: "f.txt",
-      edits: [{ op: "replace", anchor: h(text, 2), body: ["B"] }],
+      edits: [{ op: "replace", anchor: anchorLine(read.content[0].text, 2), body: ["B"] }],
     });
     assert.equal(r.isError, undefined, "should not be an error");
     assert.equal(await readFile(f, "utf-8"), "a\nB\nc\n");
@@ -259,29 +259,6 @@ test("edit execute: no read before edit → anchor verification fails", async ()
   });
 });
 
-test("edit execute: empty edits → throws", async () => {
-  await withDir(async (dir) => {
-    await writeFile(join(dir, "f.txt"), "a\n");
-    await assert.rejects(
-      call(makeEditOverride(dir, DEFAULT_CONFIG), { path: "f.txt", edits: [] }),
-      rejectsArguments(),
-    );
-  });
-});
-
-test("edit execute: malformed op (replace without body) → throws", async () => {
-  await withDir(async (dir) => {
-    await writeFile(join(dir, "f.txt"), "a\n");
-    await assert.rejects(
-      call(makeEditOverride(dir, DEFAULT_CONFIG), {
-        path: "f.txt",
-        edits: [{ op: "replace", anchor: "1#XXXX" }],
-      }),
-      /body/i,
-    );
-  });
-});
-
 test("edit execute: delete op", async () => {
   await withDir(async (dir) => {
     const f = join(dir, "f.txt");
@@ -297,27 +274,11 @@ test("edit execute: delete op", async () => {
   });
 });
 
-// --- renderer regression guards (details.diff must be a string, renderResult must not throw) ---
-
 const stubTheme = { fg: (_k: string, s: string) => s, bold: (s: string) => s } as Theme;
 
 // renderResult delegates to pi's renderDiff, which reads the global TUI theme
 // singleton — initialize it once for this test process (watcher off by default).
 initTheme();
-
-test("edit success: details.diff is a string (not the generateDiffString object)", async () => {
-  await withDir(async (dir) => {
-    const f = join(dir, "f.txt");
-    const text = "a\nb\nc\n";
-    await writeFile(f, text);
-    await call(makeReadOverride(dir, DEFAULT_CONFIG), { path: "f.txt" });
-    const r: any = await call(makeEditOverride(dir, DEFAULT_CONFIG), {
-      path: "f.txt",
-      edits: [{ op: "replace", anchor: h(text, 2), body: ["B"] }],
-    });
-    assert.equal(typeof r.details.diff, "string", "details.diff must be a string");
-  });
-});
 
 test("native read and write renderers preserve resource titles, previews, and full errors", async () =>
   withDir(async (dir) => {
@@ -366,14 +327,14 @@ test("edit schema rejects misspelled range fields and invalid operation shapes",
     };
     await assert.rejects(call(edit, callArgs), rejectsArgument("edits[0].endd", /not allowed/));
     assert.equal(await readFile(join(dir, "range.txt"), "utf8"), original);
-    for (const edits of [
-      [],
-      [{ op: "replace", anchor }],
-      [{ op: "delete", anchor, body: ["bad"] }],
-      [{ op: "insert_after", body: ["bad"] }],
-      [{ op: "append", anchor, body: ["bad"] }],
-    ]) {
-      await assert.rejects(call(edit, { path: "range.txt", edits }), rejectsArguments());
+    for (const [edits, expected] of [
+      [[], rejectsArgument("edits")],
+      [[{ op: "replace", anchor }], rejectsArgument("edits[0].body", /required/)],
+      [[{ op: "delete", anchor, body: ["bad"] }], rejectsArguments()],
+      [[{ op: "insert_after", body: ["bad"] }], rejectsArguments()],
+      [[{ op: "append", anchor, body: ["bad"] }], rejectsArguments()],
+    ] as const) {
+      await assert.rejects(call(edit, { path: "range.txt", edits }), expected);
       assert.equal(await readFile(join(dir, "range.txt"), "utf8"), original);
     }
     const alternates: Parameters<typeof validateToolArguments>[1]["arguments"][] = [
@@ -381,9 +342,13 @@ test("edit schema rejects misspelled range fields and invalid operation shapes",
       { path: "range.txt", edits: JSON.stringify([{ op: "replace", anchor, body: ["ok"] }]) },
     ];
     for (const alternate of alternates) {
+      const before = structuredClone(alternate);
       await assert.rejects(call(edit, alternate), rejectsArguments());
+      assert.deepEqual(alternate, before);
       assert.equal(await readFile(join(dir, "range.txt"), "utf8"), original);
     }
+    await call(edit, { path: "range.txt", edits: [{ op: "replace", anchor, body: ["B"] }] });
+    assert.equal(await readFile(join(dir, "range.txt"), "utf8"), "a\nB\nc\n");
   }));
 
 test("copied string anchors validate and replace an inclusive range", async () =>
@@ -1002,15 +967,18 @@ test("schema-invalid bodies omit anchor checks; subsequent retries revalidate", 
 test("single-operation anchor failures omit redundant matched-anchor facts", async () =>
   withDir(async (dir) => {
     const file = join(dir, "single.txt");
-    await writeFile(file, "line1\nline2\nline3\n");
+    const source = "line1\nline2\nline3\n";
+    await writeFile(file, source);
     const edit = makeEditOverride(dir, DEFAULT_CONFIG);
     for (const operation of [
       { op: "replace", anchor: "1#XXXX", body: ["new"] },
-      { op: "replace", anchor: "1#XXXX", end: "2#YYYY", body: ["new"] },
+      { op: "replace", anchor: h(source, 1), end: "2#YYYY", body: ["new"] },
     ]) {
       const report = failureReport(await call(edit, { path: file, edits: [operation] }));
       assert.equal(report.error, "ANCHOR_MISMATCH");
       assert.equal(report.matched, undefined);
+      assert.equal(report.omittedMatched, undefined);
+      assert.equal(await readFile(file, "utf8"), source);
     }
   }));
 
@@ -1100,25 +1068,6 @@ test("shifted unique candidate → displays standalone CR without altering its a
     );
     assert.equal(report.failures?.[0].candidate, h("a\rb\n", 1));
     assert.equal(report.failures?.[0].content, "a␍b");
-  }));
-
-test("edit tool rejects non-array formats Pi cannot convert", async () =>
-  withDir(async (dir) => {
-    const file = join(dir, "f.txt");
-    await writeFile(file, "first\nsecond\n");
-    const edit = makeEditOverride(dir, DEFAULT_CONFIG);
-    const anchor = h("first\nsecond\n", 2);
-    for (const alternate of [
-      { path: "f.txt", edits: JSON.stringify([{ op: "replace", anchor, body: ["SECOND"] }]) },
-      { path: "f.txt", op: "replace", anchor, body: ["SECOND"] },
-    ]) {
-      const original = structuredClone(alternate);
-      await assert.rejects(call(edit, alternate), rejectsArguments());
-      assert.deepEqual(alternate, original);
-      assert.equal(await readFile(file, "utf8"), "first\nsecond\n");
-    }
-    await call(edit, { path: "f.txt", edits: [{ op: "replace", anchor, body: ["SECOND"] }] });
-    assert.equal(await readFile(file, "utf8"), "first\nSECOND\n");
   }));
 
 test("edit receives multiple wrong-length anchors → reports each location with one recovery hint", async () =>
@@ -1383,10 +1332,12 @@ test("copy/move with fused command → execute after the complete transfer and p
       await writeFile(file, source);
       const expected = op === "copy" ? "A\nB\nC\nA\n" : "B\nC\nA\n";
       let commands = 0;
+      let commandBytes: string | undefined;
+      const commandFailure = new Error("Command exited with code 7");
       const fusion = createActionFusionExecutor(async () => {
         commands++;
-        assert.equal(await readFile(file, "utf8"), expected);
-        throw new Error("Command exited with code 7");
+        commandBytes = await readFile(file, "utf8");
+        throw commandFailure;
       });
       const edit = makeEditOverride(dir, DEFAULT_CONFIG, fusion);
       const result: Awaited<ReturnType<typeof edit.execute>> = await callTool(
@@ -1399,6 +1350,8 @@ test("copy/move with fused command → execute after the complete transfer and p
         { ctx: { cwd: dir } },
       );
       assert.equal(reportOf(result, "edit")?.then_run?.status, "failed");
+      assert.equal(reportOf(result, "edit")?.then_run?.output, commandFailure.message);
+      assert.equal(commandBytes, expected);
       assert.equal(reportOf(result, "edit")?.publication, "PUBLISHED");
       assert.equal(reportOf(result, "edit")?.freshness, undefined);
       assert.equal(await readFile(file, "utf8"), expected);

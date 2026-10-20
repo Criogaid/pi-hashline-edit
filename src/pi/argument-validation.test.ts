@@ -6,7 +6,7 @@ import { test } from "node:test";
 import { createActionFusionExecutor } from "./action-fusion.ts";
 import { DEFAULT_CONFIG } from "./config.ts";
 import { makeEditOverride } from "./edit-tool.ts";
-import { makeGrepOverride } from "./grep-tool.ts";
+import { makeGrepOverride, makeGrepOverrideWithBackend } from "./grep-tool.ts";
 import { makeReadOverride } from "./read-tool.ts";
 import { makeReplaceTool } from "./replace-tool.ts";
 import { makeWriteOverride } from "./write-tool.ts";
@@ -352,25 +352,6 @@ test("operation shape does not permit a field → omit inapplicable semantic adv
   }
 });
 
-test("Pi coerces valid fields while another field fails → do not diagnose the original value", async () => {
-  await assert.rejects(
-    callTool(makeReadOverride(process.cwd(), DEFAULT_CONFIG), {
-      path: "unused.txt",
-      offset: "1",
-      limit: 0,
-    }),
-    (error: unknown) => {
-      const result = argumentError(error);
-      assert.deepEqual(
-        result.issues.map((issue) => issue.field),
-        ["limit"],
-      );
-      assert.equal(result.schemaLimited, undefined);
-      return true;
-    },
-  );
-});
-
 test("multiple required fields are missing → report every missing field", async () => {
   await assert.rejects(
     callTool(makeEditOverride(process.cwd(), DEFAULT_CONFIG), {
@@ -648,7 +629,15 @@ const inOrder = (fix: string, pieces: readonly string[]): void => {
 };
 
 test("missing required parameter → fix states the parameter's role from its schema description", async () => {
-  const grep = makeGrepOverride(process.cwd(), DEFAULT_CONFIG);
+  let discoveries = 0;
+  const discover = async () => {
+    discoveries++;
+    return { code: 1, stderr: "", stopped: false };
+  };
+  const grep = makeGrepOverrideWithBackend(process.cwd(), DEFAULT_CONFIG, {
+    runRgPaths: discover,
+    runRgLines: discover,
+  });
   const write = makeWriteOverride(process.cwd());
   const edit = makeEditOverride(process.cwd(), DEFAULT_CONFIG);
   const cases = [
@@ -703,6 +692,7 @@ test("missing required parameter → fix states the parameter's role from its sc
       return true;
     });
   }
+  assert.equal(discoveries, 0);
 });
 
 test("two operations miss the same required field → the shared fix appears once", async () => {

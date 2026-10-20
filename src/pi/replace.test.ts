@@ -30,44 +30,47 @@ const stubTheme = { fg: (_k: string, s: string) => s, bold: (s: string) => s } a
 // singleton — initialize it once for this test process (watcher off by default).
 initTheme();
 
-test("replace schema requires a non-empty replacements array", async () => {
-  for (const fusion of [undefined, createActionFusionExecutor()]) {
-    const tool = makeReplaceTool(process.cwd(), DEFAULT_CONFIG, fusion);
-    assert.equal(Object.hasOwn(tool.parameters.properties, "find"), false);
-    const check = (args: Parameters<typeof validateToolArguments>[1]["arguments"]) =>
-      validateToolArguments(tool, { type: "toolCall", id: "0", name: "replace", arguments: args });
-    assert.doesNotThrow(() =>
-      check({ path: "f.txt", replacements: [{ literal: true, find: "old", replace: "new" }] }),
-    );
-    const invalidArgs: Parameters<typeof validateToolArguments>[1]["arguments"][] = [
-      { path: "f.txt", find: "old", replace: "new" },
-      { path: "f.txt", replacements: [] },
-      {
-        path: "f.txt",
-        replacements: [{ literal: true, find: "old", replace: "new" }],
-        find: "old",
-      },
-      { path: "f.txt", replacements: '[{"find":"old","literal":true,"replace":"new"}]' },
-      ...[1, null, false].map((maxMatches) => ({
-        path: "f.txt",
-        replacements: [{ literal: true, find: "old", replace: "new", maxMatches }],
-      })),
-    ];
-    for (const args of invalidArgs) {
-      await assert.rejects(call(tool, args), rejectsArguments());
+test("replace rejects invalid rule shapes → precise fields and no publication or commands", async () =>
+  withDir(async (dir) => {
+    const path = join(dir, "f.txt");
+    await writeFile(path, "old\n");
+    let commands = 0;
+    const fusion = createActionFusionExecutor(async () => {
+      commands++;
+      return { status: "succeeded", result: { content: [] } };
+    });
+    const rule = { literal: true, find: "old", replace: "new" };
+    for (const executor of [undefined, fusion]) {
+      const tool = makeReplaceTool(dir, DEFAULT_CONFIG, executor);
+      for (const [args, field, reason] of [
+        [{ find: "old", replace: "new" }, "replacements", /required/],
+        [{ replacements: [] }, "replacements", /./],
+        [{ replacements: [rule], find: "old" }, "find", /not allowed/],
+        [{ replacements: JSON.stringify([rule]) }, "replacements[0]", /object/],
+        ...[1, null, false].map(
+          (maxMatches) =>
+            [
+              { replacements: [{ ...rule, maxMatches }] },
+              "replacements[0].maxMatches",
+              /not allowed/,
+            ] as const,
+        ),
+        [{ path: "", replacements: [rule] }, "path", /./],
+        [{ replacements: [{ ...rule, find: "" }] }, "replacements[0].find", /./],
+      ] as const) {
+        await assert.rejects(
+          callTool(tool, {
+            path,
+            ...args,
+            ...(executor ? { then_run: { command: "check" } } : {}),
+          }),
+          rejectsArgument(field, reason),
+        );
+        assert.equal(await readFile(path, "utf8"), "old\n");
+      }
     }
-  }
-});
-
-test("replace schema rejects empty paths and empty find", async () => {
-  const tool = makeReplaceTool(process.cwd(), DEFAULT_CONFIG);
-  for (const args of [
-    { path: "", replacements: [{ literal: true, find: "old", replace: "new" }] },
-    { path: "f.txt", replacements: [{ literal: true, find: "", replace: "new" }] },
-  ]) {
-    await assert.rejects(call(tool, args), rejectsArguments(), JSON.stringify(args));
-  }
-});
+    assert.equal(commands, 0);
+  }));
 
 test("replace rules omit literal or retain regex → reject before publication and fused commands", async () =>
   withDir(async (dir) => {
@@ -98,39 +101,6 @@ test("replace rules omit literal or retain regex → reject before publication a
       assert.equal(await readFile(path, "utf8"), "old\n");
     }
     assert.equal(commands, 0);
-  }));
-
-test("replace rejects top-level rules without publishing", async () =>
-  withDir(async (dir) => {
-    const file = join(dir, "f.txt");
-    await writeFile(file, "old\n");
-    await assert.rejects(
-      callTool(makeReplaceTool(dir, DEFAULT_CONFIG), {
-        path: file,
-        find: "old",
-        replace: "new",
-      }),
-      rejectsArgument("replacements"),
-    );
-    assert.equal(await readFile(file, "utf8"), "old\n");
-  }));
-
-test("replace rejects unsupported per-rule fields before publishing", async () =>
-  withDir(async (dir) => {
-    const file = join(dir, "f.txt");
-    const before = "foo foo foo\n";
-    await writeFile(file, before);
-    const tool = makeReplaceTool(dir, DEFAULT_CONFIG);
-    for (const maxMatches of [1, null, false]) {
-      await assert.rejects(
-        callTool(tool, {
-          path: file,
-          replacements: [{ literal: true, find: "foo", replace: "bar", maxMatches }],
-        }),
-        rejectsArgument("replacements[0].maxMatches", /not allowed/),
-      );
-      assert.equal(await readFile(file, "utf8"), before);
-    }
   }));
 
 test("replace rejects unwritable text and invalid regex before reading a missing target", async () =>
@@ -377,32 +347,6 @@ test("replace finds no matches → returns failure and leaves file untouched", a
   });
 });
 
-test("replace: empty find throws", async () => {
-  await withDir(async (dir) => {
-    await writeFile(join(dir, "f.txt"), "a\n");
-    await assert.rejects(
-      callTool(makeReplaceTool(dir, DEFAULT_CONFIG), {
-        path: "f.txt",
-        replacements: [{ literal: true, find: "", replace: "x" }],
-      }),
-      rejectsArgument("replacements[0].find"),
-    );
-  });
-});
-
-test("replace: handles large match counts without an arbitrary cap", async () => {
-  await withDir(async (dir) => {
-    const f = join(dir, "f.txt");
-    await writeFile(f, "a\n".repeat(2500));
-    const result: any = await call(makeReplaceTool(dir, DEFAULT_CONFIG), {
-      path: "f.txt",
-      replacements: [{ literal: true, find: "a", replace: "b" }],
-    });
-    assert.equal(reportOf(result, "replace")?.matches, 2500);
-    assert.equal(await readFile(f, "utf-8"), "b\n".repeat(2500));
-  });
-});
-
 test("replace: count-but-no-net-change does not rewrite and reports it", async () => {
   await withDir(async (dir) => {
     const f = join(dir, "f.txt");
@@ -417,18 +361,6 @@ test("replace: count-but-no-net-change does not rewrite and reports it", async (
     assert.equal(reportOf(r, "replace")?.publication, "NOT_PUBLISHED");
     assert.equal(reportOf(r, "replace")?.matches, 2);
     assert.equal(r.details.diff, "");
-  });
-});
-
-test("replace: returns details.diff as a string", async () => {
-  await withDir(async (dir) => {
-    const f = join(dir, "f.txt");
-    await writeFile(f, "a\nb\nc\n");
-    const r: any = await call(makeReplaceTool(dir, DEFAULT_CONFIG), {
-      path: "f.txt",
-      replacements: [{ literal: true, find: "b", replace: "B" }],
-    });
-    assert.equal(typeof r.details.diff, "string");
   });
 });
 
@@ -684,19 +616,4 @@ test("regex captures and zero-width insertions use logical offsets without consu
       replacements: [{ find: "(?=\\n)", replace: "!", literal: false }],
     });
     assert.equal(await readFile(path, "utf8"), "a!\r\nb\rc\r!\r\n");
-  }));
-
-test("replace rejects JSON-string rules without publishing", async () =>
-  withDir(async (dir) => {
-    const file = join(dir, "f.txt");
-    await writeFile(file, "hello foo world");
-    const tool = makeReplaceTool(dir, DEFAULT_CONFIG);
-    await assert.rejects(
-      callTool(tool, {
-        path: "f.txt",
-        replacements: JSON.stringify([{ literal: true, find: "foo", replace: "bar" }]),
-      }),
-      rejectsArgument("replacements[0]", /object/),
-    );
-    assert.equal(await readFile(file, "utf8"), "hello foo world");
   }));

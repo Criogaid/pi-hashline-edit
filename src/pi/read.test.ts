@@ -105,9 +105,18 @@ test("hash length stays 4 even for runs of identical lines (no explosion)", asyn
     await writeFile(f, "\n\n\n\ncode\n");
     const r: any = await call(makeReadOverride(dir, DEFAULT_CONFIG), { path: "f.txt" });
     const text: string = r.content[0].text;
-    for (const m of text.matchAll(/\d+#([0-9A-Z]+)│/g)) {
-      assert.equal(m[1].length, 4, `anchor ${m[0]} hash is not 4 chars`);
-    }
+    const rows = [...text.matchAll(/^(\d+)#([0-9A-Z]+)│(.*)$/gm)];
+    assert.deepEqual(
+      rows.map((row) => [Number(row[1]), row[3]]),
+      [
+        [1, ""],
+        [2, ""],
+        [3, ""],
+        [4, ""],
+        [5, "code"],
+      ],
+    );
+    for (const row of rows) assert.equal(row[2].length, DEFAULT_CONFIG.hashLen);
   });
 });
 

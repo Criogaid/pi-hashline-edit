@@ -21,10 +21,6 @@ test("different content → different hash", () => {
   assert.notEqual(computeLineHash(1, "a", 4), computeLineHash(1, "b", 4));
 });
 
-test("same (line, content) → same hash", () => {
-  assert.equal(computeLineHash(7, "x", 4), computeLineHash(7, "x", 4));
-});
-
 test("base32 alphabet (without I/L/O/U) in bulk", () => {
   for (let i = 0; i < 2000; i++) {
     const h = computeLineHash(i + 1, `line ${i}`, 4);

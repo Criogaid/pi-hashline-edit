@@ -67,10 +67,12 @@ test("Pi prepares a singleton operation → semantic and schema paths resolve to
   await assert.rejects(
     callTool(makeReadOverride(cwd, DEFAULT_CONFIG), { path: "unused", offset: "1", limit: 0 }),
     (error: unknown) => {
+      const result = argumentError(error);
       assert.deepEqual(
-        argumentError(error).issues.map((issue) => issue.field),
+        result.issues.map((issue) => issue.field),
         ["limit"],
       );
+      assert.equal(result.schemaLimited, undefined);
       return true;
     },
   );

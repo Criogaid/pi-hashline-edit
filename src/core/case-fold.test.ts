@@ -32,12 +32,13 @@ for (const [char, unicode, expected] of [
 }
 
 test("Cartesian non-Unicode code units → case variants agree with native RegExp", () => {
+  const allUnits = Array.from({ length: MAX_UNIT + 1 }, (_, unit) =>
+    String.fromCharCode(unit),
+  ).join("");
   for (let unit = 0; unit <= MAX_UNIT; unit++) {
     const char = String.fromCharCode(unit);
-    const source = `^\\u${unit.toString(16).padStart(4, "0")}$`;
-    const native = new RegExp(source, "i");
-    const variants = caseVariants(char, false);
-    assert.ok(variants.includes(char), source);
-    for (const variant of variants) assert.ok(native.test(variant), `${source}: ${variant}`);
+    const source = `\\u${unit.toString(16).padStart(4, "0")}`;
+    const expected = allUnits.match(new RegExp(source, "gi"));
+    assert.deepEqual(caseVariants(char, false), expected, source);
   }
 });

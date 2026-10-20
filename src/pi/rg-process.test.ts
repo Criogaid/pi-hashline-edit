@@ -1,5 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import childProcess from "node:child_process";
+import { syncBuiltinESMExports } from "node:module";
+import { Readable } from "node:stream";
 import { recordSearchDiagnostics, runRgLines } from "./rg-process.ts";
 import { fileURLToPath } from "node:url";
 import { HashlineError } from "../core/errors.ts";
@@ -42,16 +45,39 @@ async function parseListing(chunks: readonly string[], maxLines = 10, stop = fal
   return { files, result };
 }
 
-test("line listing split at every byte → newline paths, empty rows, and grouped files survive", async () => {
-  const listing =
-    "dir\nfile.txt\0" + "1:\n2:x\n10:[Omitted long matching line]\n\n" + "other.txt\0" + "3:y\n\n";
-  const { files, result } = await parseListing([...listing]);
-  assert.deepEqual(files, [
-    { path: "dir\nfile.txt", lines: [1, 2, 10] },
-    { path: "other.txt", lines: [3] },
-  ]);
-  assert.equal(result.code, 0);
-  assert.equal(result.stopped, false);
+test("line listing split at every byte → newline paths, empty rows, and grouped files survive", async (t) => {
+  const listing = Buffer.from(
+    "dir\n文件.txt\0" + "1:\n2:x\n10:[Omitted long matching line]\n\n" + "other.txt\0" + "3:y\n\n",
+  );
+  const spawn = childProcess.spawn;
+  let chunks: Buffer[] = [];
+  try {
+    t.mock.method(childProcess, "spawn", (...args: Parameters<typeof spawn>) => {
+      const child = spawn(...args);
+      assert.ok(child.stdout);
+      const stream = Readable.from(chunks);
+      t.mock.method(child.stdout, Symbol.asyncIterator, () => stream[Symbol.asyncIterator]());
+      return child;
+    });
+    syncBuiltinESMExports();
+    for (let split = 1; split < listing.length; split++) {
+      chunks = [listing.subarray(0, split), listing.subarray(split)];
+      const { files, result } = await parseListing([]);
+      assert.deepEqual(
+        files,
+        [
+          { path: "dir\n文件.txt", lines: [1, 2, 10] },
+          { path: "other.txt", lines: [3] },
+        ],
+        `split=${split}`,
+      );
+      assert.equal(result.code, 0);
+      assert.equal(result.stopped, false);
+    }
+  } finally {
+    t.mock.restoreAll();
+    syncBuiltinESMExports();
+  }
 });
 
 test("line listing exceeds maxLines → only the overflowing file requests all-line review", async () => {

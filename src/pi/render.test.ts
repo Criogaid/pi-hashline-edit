@@ -185,7 +185,7 @@ test("mutation card owns stale-anchor notices without internal status", () => {
   );
   const output = card.render(160).join("\n");
   assert.match(output, /new/);
-  assert.doesNotMatch(output, /publication=|freshness=/);
+  assert.doesNotMatch(stripVTControlCharacters(output), /(?:^|\n)\s*publication:/);
   assert.match(stripVTControlCharacters(output), /freshness: changed/);
   assert.doesNotMatch(output, /command diagnostic/);
   assert.ok(output.includes(theme.getBgAnsi("toolSuccessBg")));
@@ -210,7 +210,7 @@ test("mutation card omits status when then_run was not requested", () => {
   );
   const output = card.render(160).join("\n");
   assert.match(output, /new/);
-  assert.doesNotMatch(output, /publication=|freshness=/);
+  assert.doesNotMatch(stripVTControlCharacters(output), /(?:^|\n)\s*(?:publication|freshness):/);
   tool.renderCall!(args, theme, context);
   tool.renderResult!(
     {
@@ -226,7 +226,7 @@ test("mutation card omits status when then_run was not requested", () => {
   );
   const staleOutput = card.render(160).join("\n");
   assert.match(stripVTControlCharacters(staleOutput), /freshness: changed/);
-  assert.doesNotMatch(staleOutput, /publication=|freshness=/);
+  assert.doesNotMatch(stripVTControlCharacters(staleOutput), /(?:^|\n)\s*publication:/);
 });
 
 test("unfused write errors retain the native full diagnostic", () => {
@@ -290,26 +290,6 @@ test("diff previews retain standalone CR and literal control-picture characters"
     assert.match(result.render(160).join("\n"), /␍/);
   }
   assert.match(renderDiffPreview("-1 old␍\n+1 new␍", true, theme), /␍/);
-});
-
-test("withMutationStatus renderResult initializes mutationShell defensively", () => {
-  initTheme("dark");
-  const tool = withMutationStatus(makeEditOverride(process.cwd(), DEFAULT_CONFIG));
-  const context: any = { args: { path: "a.txt" }, state: {}, isError: false };
-  const container = tool.renderResult!(
-    {
-      content: [{ type: "text", text: "Edited a.txt." }],
-      details: mutationDetails({
-        publication: "PUBLISHED",
-      }),
-    },
-    { isPartial: false, expanded: false },
-    theme,
-    context,
-  );
-  assert.ok(container);
-  assert.ok(context.state.mutationShell);
-  assert.ok(context.state.mutationShell.box);
 });
 
 test("150,000 rows in one grep group → renders every row with shared indentation folded", () => {

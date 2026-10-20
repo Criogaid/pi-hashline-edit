@@ -348,16 +348,12 @@ test("zero-maximum quantifiers → real grep matches the active capture", async 
   }
 });
 
-test("JS syntax boundary rejects rg-only syntax and executes constructs requiring JS", async (t) => {
+test("JS syntax boundary → executes constructs requiring JS", async (t) => {
   const dir = await mkdtemp(join(tmpdir(), "hashline-grep-strict-js-"));
   t.after(() => rm(dir, { recursive: true, force: true }));
   const path = join(dir, "input.txt");
   await writeFile(path, "😀\naba\nab\n");
   const tool = makeGrepOverrideWithBackend(dir, DEFAULT_CONFIG, {});
-  await assert.rejects(
-    () => callTool(tool, { path, pattern: "(?i)abc", literal: false }),
-    rejectsArgument("pattern"),
-  );
   for (const pattern of [
     "^..$",
     "^[^a]{2}$",

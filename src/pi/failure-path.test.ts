@@ -8,7 +8,7 @@ import { createActionFusionExecutor, type ActionFusionProgress } from "./action-
 import { FileMutationError } from "./file-commit.ts";
 import { DEFAULT_OUTPUT_BUDGETS } from "./budgets.ts";
 import { REREAD } from "./report-schema.ts";
-import { CommandNotRun, describeFailure, reportOf } from "./report.ts";
+import { CommandNotRun, describeFailure, renderReport, reportOf } from "./report.ts";
 import { callTool, createToolContext } from "./tool-call.testing.ts";
 import { makeWriteOverride } from "./write-tool.ts";
 import { publishedMutation } from "./mutation-outcome.testing.ts";
@@ -68,6 +68,12 @@ test("published post-processing failure → skips command and preserves publicat
     await writeFile(target, "content\n");
     let commanded = false;
     const progress: ActionFusionProgress[] = [];
+    const mutationError = new FileMutationError(
+      "POST_PROCESS_FAILED",
+      "post_process",
+      "PUBLISHED",
+      "result generation failed",
+    );
     const fusion = createActionFusionExecutor(
       async () => {
         commanded = true;
@@ -84,22 +90,24 @@ test("published post-processing failure → skips command and preserves publicat
         absolutePath: target,
         thenRun: { command: "check" },
         mutate: async () => {
-          throw new FileMutationError(
-            "POST_PROCESS_FAILED",
-            "post_process",
-            "PUBLISHED",
-            "result generation failed",
-          );
+          throw mutationError;
         },
         signal: undefined,
         ctx: await createToolContext(dir, t),
       }),
       (error: unknown) => {
         assert.ok(error instanceof CommandNotRun);
+        assert.equal(error.status, "skipped");
+        assert.equal(error.cause, mutationError);
+        assert.equal(Object.hasOwn(error, "error"), false);
         const report = describeFailure("edit", error, { budget: DEFAULT_OUTPUT_BUDGETS });
         assert.equal(report.publication, "PUBLISHED");
+        assert.equal(report.stage, "post_process");
         assert.equal(report.then_run?.status, "skipped");
         assert.match(report.next ?? "", /change is saved; do not repeat/);
+        const diagnostic = renderReport(report);
+        assert.equal(diagnostic.split(mutationError.message).length - 1, 1);
+        assert.equal(diagnostic.split('"status": "skipped"').length - 1, 1);
         return true;
       },
     );
@@ -144,32 +152,39 @@ test("command fails and modifies the target → reports changed freshness and co
 
 test("cancellation after publication → does not rerun mutation and still inspects freshness", async (t) =>
   withTemp(async (dir) => {
-    const target = join(dir, "cancelled.txt");
-    let mutations = 0;
-    const controller = new AbortController();
-    const fusion = createActionFusionExecutor(async () => {
-      controller.abort();
-      throw new Error("timed out");
-    });
-    const outcome = await fusion({
-      budget: DEFAULT_OUTPUT_BUDGETS,
-      toolCallId: "cancelled",
-      tool: "edit",
-      displayPath: "cancelled.txt",
-      absolutePath: target,
-      thenRun: { command: "check" },
-      mutate: async () => {
-        mutations++;
-        await writeFile(target, "mutation\n");
-        return mutation("mutation\n");
-      },
-      signal: controller.signal,
-      ctx: await createToolContext(dir, t),
-    });
-    assert.equal(reportOf(outcome, "edit")?.then_run?.status, "cancelled");
-    assert.equal(reportOf(outcome, "edit")?.freshness, undefined);
-    assert.equal(mutations, 1);
-    assert.equal(await readFile(target, "utf8"), "mutation\n");
+    for (const state of ["changed", "missing"] as const) {
+      const target = join(dir, `${state}.txt`);
+      let mutations = 0;
+      const controller = new AbortController();
+      const fusion = createActionFusionExecutor(async () => {
+        if (state === "changed") await writeFile(target, "command changed\n");
+        else await rm(target);
+        controller.abort();
+        throw new Error("timed out");
+      });
+      const outcome = await fusion({
+        budget: DEFAULT_OUTPUT_BUDGETS,
+        toolCallId: "cancelled",
+        tool: "edit",
+        displayPath: `${state}.txt`,
+        absolutePath: target,
+        thenRun: { command: "check" },
+        mutate: async () => {
+          mutations++;
+          await writeFile(target, "mutation\n");
+          return mutation("mutation\n");
+        },
+        signal: controller.signal,
+        ctx: await createToolContext(dir, t),
+      });
+      const report = reportOf(outcome, "edit");
+      assert.equal(report?.publication, "PUBLISHED");
+      assert.equal(report?.then_run?.status, "cancelled");
+      assert.equal(report?.freshness, state);
+      assert.equal(mutations, 1);
+      if (state === "changed") assert.equal(await readFile(target, "utf8"), "command changed\n");
+      else await assert.rejects(readFile(target), { code: "ENOENT" });
+    }
   }));
 
 test("first command fails → releases the queue for the next mutation", async (t) =>

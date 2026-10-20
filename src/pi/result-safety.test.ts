@@ -13,6 +13,7 @@ import { makeReplaceTool } from "./replace-tool.ts";
 import { makeWriteOverride } from "./write-tool.ts";
 import { makeEditOverride } from "./edit-tool.ts";
 import { commitFreshness, FileMutationError } from "./file-commit.ts";
+import { byteRevision } from "./file-revision.ts";
 import { finalizeMutation, postProcessMutation, type MutationOutcome } from "./mutation-result.ts";
 import { CommandNotRun, decodeReport, reportOf } from "./report.ts";
 import { REREAD } from "./report-schema.ts";
@@ -51,43 +52,66 @@ function assertFailureByteBudgets(message: string): void {
   }
 }
 
-test("replace withholds anchors in progress and after commands change or remove the file", async (t) => {
+test("edit and replace commands change or remove the file → withhold anchors and report freshness", async (t) => {
   const dir = await mkdtemp(join(tmpdir(), "hashline-result-"));
   try {
-    for (const state of ["changed", "missing", "unknown"] as const) {
-      for (const fails of [false, true]) {
-        const path = join(dir, `${state}-${fails}.txt`);
-        await writeFile(path, "before\n");
-        const updates: any[] = [];
-        const fusion = createActionFusionExecutor(async (_id, _input, _signal, _ctx, onUpdate) => {
-          if (state === "changed") await writeFile(path, "command output\n");
-          else {
-            await rm(path);
-            if (state === "unknown") await mkdir(path);
-          }
-          onUpdate?.({ content: [{ type: "text", text: "progress" }], details: undefined });
-          if (fails) throw new Error("command failed");
-          return { status: "succeeded", result: { content: [{ type: "text", text: "done" }] } };
-        });
-        const result = await invoke(
-          makeReplaceTool(dir, DEFAULT_CONFIG, fusion),
-          "replace",
-          {
-            path,
-            replacements: [{ literal: true, find: "before", replace: "after" }],
-            then_run: { command: "check" },
-          },
-          undefined,
-          (update: any) => updates.push(update),
-          await ctx(dir, t),
-        );
-        assert.doesNotMatch(text(result), /Updated anchors|\d+#[0-9A-Z]+│/);
-        assert.equal(reportOf(result, "replace")?.freshness, state);
-        assert.equal(reportOf(result, "replace")?.publication, "PUBLISHED");
-        assert.equal(reportOf(result, "replace")?.next, REREAD);
-        assert.equal(result.content.length, 1);
-        for (const update of updates)
-          assert.doesNotMatch(text(update), /Updated anchors|\d+#[0-9A-Z]+│/);
+    const context = await ctx(dir, t);
+    for (const toolName of ["edit", "replace"] as const) {
+      for (const state of ["changed", "missing", "unknown"] as const) {
+        for (const fails of [false, true]) {
+          const path = join(dir, `${toolName}-${state}-${fails}.txt`);
+          await writeFile(path, "before\n");
+          const updates: AgentToolResult<unknown>[] = [];
+          const fusion = createActionFusionExecutor(
+            async (_id, _input, _signal, _ctx, onUpdate) => {
+              if (state === "changed") await writeFile(path, "command output\n");
+              else {
+                await rm(path);
+                if (state === "unknown") await mkdir(path);
+              }
+              onUpdate?.({ content: [{ type: "text", text: "progress" }], details: undefined });
+              if (fails) throw new Error("command failed");
+              return { status: "succeeded", result: { content: [{ type: "text", text: "done" }] } };
+            },
+          );
+          const tool =
+            toolName === "edit"
+              ? makeEditOverride(dir, DEFAULT_CONFIG, fusion)
+              : makeReplaceTool(dir, DEFAULT_CONFIG, fusion);
+          const args =
+            toolName === "edit"
+              ? {
+                  edits: [
+                    {
+                      op: "replace",
+                      anchor: `1#${computeLineHash(1, "before", DEFAULT_CONFIG.hashLen)}`,
+                      body: ["after"],
+                    },
+                  ],
+                }
+              : { replacements: [{ literal: true, find: "before", replace: "after" }] };
+          const result = await callTool(
+            tool,
+            { path, ...args, then_run: { command: "check" } },
+            {
+              onUpdate: (update: AgentToolResult<unknown>) => updates.push(update),
+              ctx: context,
+            },
+          );
+          assert.doesNotMatch(text(result), /Updated anchors|\d+#[0-9A-Z]+│/);
+          const report = reportOf(result, toolName);
+          assert.equal(report?.freshness, state);
+          assert.equal(report?.publication, "PUBLISHED");
+          assert.equal(report?.next, REREAD);
+          assert.equal(report?.then_run?.status, fails ? "failed" : "succeeded");
+          assert.equal(result.content.length, 1);
+          assert.ok(updates.length > 0);
+          for (const update of updates)
+            assert.doesNotMatch(text(update), /Updated anchors|\d+#[0-9A-Z]+│/);
+          if (state === "changed") assert.equal(await readFile(path, "utf8"), "command output\n");
+          else if (state === "missing") await assert.rejects(stat(path), { code: "ENOENT" });
+          else assert.equal((await stat(path)).isDirectory(), true);
+        }
       }
     }
   } finally {
@@ -163,48 +187,75 @@ test("progress callback failures preserve publication and do not prevent the com
   }
 });
 
-test("standalone and Fusion finalizers → take freshness from commit facts", async (t) => {
+test("standalone and Fusion finalizers → take publication and freshness from commit facts, independent of diff", async (t) => {
   const dir = await mkdtemp(join(tmpdir(), "hashline-finalizer-"));
   try {
+    const path = join(dir, "file");
+    const context = await ctx(dir, t);
+    const publishedRevision = byteRevision(Buffer.from("published\n"));
     for (const publication of ["PUBLISHED", "NOT_PUBLISHED"] as const) {
-      for (const observedRevision of ["published", "external"]) {
-        const mutation = {
-          details: { diff: "" },
-          facts: {},
-          commit: {
-            publication,
-            publishedRevision: "published",
-            observedRevision,
-            created: false,
-          },
-        } satisfies MutationOutcome<object>;
-        const fresh = observedRevision === "published";
-        const observation = commitFreshness(mutation.commit);
-        assert.equal(observation.freshness, fresh ? "unchanged" : "changed");
-        const standalone = finalizeMutation(
-          "edit",
-          "file",
-          mutation,
-          observation,
-          undefined,
-          DEFAULT_OUTPUT_BUDGETS,
-        );
-        const fused = await createActionFusionExecutor()({
-          budget: DEFAULT_OUTPUT_BUDGETS,
-          tool: "edit",
-          displayPath: "file",
-          toolCallId: "no-command",
-          absolutePath: join(dir, "file"),
-          thenRun: undefined,
-          mutate: async () => mutation,
-          signal: undefined,
-          ctx: await ctx(dir, t),
-        });
-        assert.deepEqual(fused.content, standalone.content);
-        assert.equal(reportOf(standalone, "edit")?.publication, publication);
-        assert.equal(reportOf(fused, "edit")?.publication, publication);
-        assert.equal(reportOf(standalone, "edit")?.freshness, fresh ? undefined : "changed");
-        assert.deepEqual(mutation.details, { diff: "" });
+      for (const content of ["published\n", "external\n"]) {
+        await writeFile(path, content);
+        for (const details of [{}, { diff: "" }]) {
+          const expectedDetails = structuredClone(details);
+          const mutation = {
+            details,
+            facts: {},
+            commit: {
+              publication,
+              publishedRevision,
+              observedRevision: byteRevision(Buffer.from(content)),
+              created: false,
+            },
+          } satisfies MutationOutcome<object>;
+          const fresh = content === "published\n";
+          const observation = commitFreshness(mutation.commit);
+          assert.equal(observation.freshness, fresh ? "unchanged" : "changed");
+          const standalone = finalizeMutation(
+            "edit",
+            path,
+            mutation,
+            observation,
+            undefined,
+            DEFAULT_OUTPUT_BUDGETS,
+          );
+          assert.equal(reportOf(standalone, "edit")?.publication, publication);
+          assert.equal(reportOf(standalone, "edit")?.freshness, fresh ? undefined : "changed");
+          for (const thenRun of [undefined, { command: "check" }]) {
+            let commands = 0;
+            const fused = await createActionFusionExecutor(async () => {
+              commands++;
+              return {
+                status: "succeeded",
+                result: { content: [{ type: "text", text: "checked" }] },
+              };
+            })({
+              budget: DEFAULT_OUTPUT_BUDGETS,
+              tool: "edit",
+              displayPath: path,
+              toolCallId: "commit-facts",
+              absolutePath: path,
+              thenRun,
+              mutate: async () => mutation,
+              signal: undefined,
+              ctx: context,
+            });
+            if (!thenRun) assert.deepEqual(fused.content, standalone.content);
+            assert.equal(fused.content.length, 1);
+            const report = reportOf(fused, "edit");
+            assert.equal(report?.publication, publication);
+            assert.equal(report?.freshness, fresh ? undefined : "changed");
+            assert.equal(
+              report?.then_run?.status,
+              thenRun ? (fresh ? "succeeded" : "skipped") : undefined,
+            );
+            assert.equal(commands, thenRun && fresh ? 1 : 0);
+            for (const [key, value] of Object.entries(expectedDetails))
+              assert.deepEqual(Reflect.get(fused.details, key), value);
+            assert.equal(await readFile(path, "utf8"), content);
+          }
+          assert.deepEqual(mutation.details, expectedDetails);
+        }
       }
     }
   } finally {

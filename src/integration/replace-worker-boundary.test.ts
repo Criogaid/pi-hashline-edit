@@ -81,28 +81,37 @@ test("worker boundary: deep structured cause reply → preserves the terminal ca
   );
 });
 
-test("worker boundary: cyclic argument facts in a reply → rejects nonserializable diagnostics", {
+test("worker boundary: cyclic structured cause → rejects a reply accepted with an acyclic cause", {
   timeout: timeoutMs,
 }, async (t) => {
-  const argumentsCopy: { self?: unknown } = {};
-  argumentsCopy.self = argumentsCopy;
-  const reply = {
-    error: {
-      code: "INVALID_ARGUMENTS",
-      message: "invalid arguments",
-      facts: { issues: [{ field: "path", reason: "missing" }], arguments: argumentsCopy },
-    },
-  };
-  const emit = Worker.prototype.emit;
-  t.mock.method(
-    Worker.prototype,
-    "emit",
-    function (this: Worker, event: string | symbol, ...args: unknown[]) {
-      return emit.call(this, event, ...(event === "message" ? [reply] : args));
-    },
-  );
-  await assert.rejects(
-    runRegexReplacements("safe", validRules, timeoutMs, undefined),
-    (error: unknown) => error instanceof HashlineError && error.errorCode === "REGEX_WORKER_FAILED",
-  );
+  for (const cyclic of [false, true]) {
+    await t.test(`cyclic=${cyclic}`, async (t) => {
+      const cause: Cause = { code: "EIO", message: "worker failure" };
+      if (cyclic) cause.cause = cause;
+      const reply = { error: { code: "NO_MATCH", message: "no match", facts: { rule: 0 }, cause } };
+      const emit = Worker.prototype.emit;
+      t.mock.method(
+        Worker.prototype,
+        "emit",
+        function (this: Worker, event: string | symbol, ...args: unknown[]) {
+          return emit.call(this, event, ...(event === "message" ? [reply] : args));
+        },
+      );
+      await assert.rejects(
+        runRegexReplacements("safe", validRules, timeoutMs, undefined),
+        (error: unknown) => {
+          assert.ok(error instanceof HashlineError);
+          if (cyclic) {
+            assert.equal(error.errorCode, "REGEX_WORKER_FAILED");
+            assert.match(error.message, /invalid result/i);
+          } else {
+            assert.equal(error.errorCode, "NO_MATCH");
+            assert.deepEqual(error.facts, { rule: 0 });
+            assert.deepEqual(causeOf(error.cause, DEFAULT_OUTPUT_BUDGETS.fieldBytes), cause);
+          }
+          return true;
+        },
+      );
+    });
+  }
 });

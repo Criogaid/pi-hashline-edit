@@ -93,18 +93,6 @@ test("multiple out-of-order ops → applied at the right positions", () => {
 
 // --- error paths ---
 
-test("anchor hash mismatch rejected (line changed)", () => {
-  const text = "a\nb\n";
-  const r = applyEdits(
-    text,
-    [{ op: "replace", anchor: { line: 1, hash: "WRONG" }, body: ["x"] }],
-    4,
-    15,
-  );
-  assert.equal(r.ok, false);
-  if (!r.ok) assert.equal(r.failure.kind, "anchor");
-});
-
 test("line out of range rejected", () => {
   const text = "a\n";
   const r = applyEdits(
@@ -358,24 +346,6 @@ test("noop is still detected when the file lacks a final newline", () => {
 
 // --- shifted-anchor recovery ---
 
-test("shifted recovery: content moved down → found with a fresh anchor", () => {
-  const readText = "a\nb\nc\nd\ne\n";
-  const currentText = "a\nX\nb\nc\nd\ne\n"; // inserted X after line 1 → "c" moved 3→4
-  const r = applyEdits(
-    currentText,
-    [{ op: "replace", anchor: at(readText, 3), body: ["C"] }],
-    4,
-    15,
-  );
-  assert.ok(!r.ok && r.failure.kind === "anchor");
-  const f = r.failure.failures[0];
-  assert.ok(f.recovery.kind === "found");
-  assert.equal(f.recovery.newLine, 4);
-  assert.equal(f.recovery.scope, "local");
-  // The recovered anchor must verify against the current file.
-  assert.equal(computeLineHash(4, splitLines(currentText)[3], 4), f.recovery.newHash);
-});
-
 test("rescued anchor lets the retry succeed without a re-read", () => {
   const readText = "a\nb\nc\nd\ne\n";
   const currentText = "a\nX\nb\nc\nd\ne\n";
@@ -389,6 +359,9 @@ test("rescued anchor lets the retry succeed without a re-read", () => {
   assert.ok(!r1.ok && r1.failure.kind === "anchor");
   const f = r1.failure.failures[0];
   assert.ok(f.recovery.kind === "found");
+  assert.equal(f.recovery.newLine, 4);
+  assert.equal(f.recovery.scope, "local");
+  assert.equal(computeLineHash(4, splitLines(currentText)[3], 4), f.recovery.newHash);
   // Retry with the recovered anchor; the rest of the file stays unchanged.
   const r2 = applyEdits(
     currentText,

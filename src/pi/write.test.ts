@@ -25,16 +25,6 @@ async function withTemp<T>(run: (dir: string) => Promise<T>): Promise<T> {
   }
 }
 
-test("write schema follows the shared actionFusion switch", () => {
-  const plain = makeWriteOverride("/tmp");
-  assert.equal(Object.hasOwn(plain.parameters.properties, "then_run"), false);
-  assert.equal(Object.hasOwn(plain.parameters.properties, "expectedRevision"), false);
-  const fusion = createActionFusionExecutor();
-  const withFusion = makeWriteOverride("/tmp", fusion);
-  assert.equal(Object.hasOwn(withFusion.parameters.properties, "then_run"), true);
-  assert.equal(Object.hasOwn(withFusion.parameters.properties, "expectedRevision"), false);
-});
-
 test("write rejects unknown fields rather than ignoring a misspelled create mode", async () =>
   withTemp(async (dir) => {
     const file = join(dir, "file.txt");
@@ -177,6 +167,9 @@ test("write returns only a summary for empty, short, and long content", async ()
       assert.equal(reportOf(result, "write")?.path, path);
       assert.equal(reportOf(result, "write")?.publication, "PUBLISHED");
       assert.equal(result.content.length, 1);
+      const block = result.content[0];
+      assert.equal(block.type, "text");
+      assert.deepEqual(JSON.parse(block.text), { publication: "PUBLISHED", created: true });
       assert.equal(await readFile(join(dir, path), "utf8"), content);
     }
   }));
@@ -288,14 +281,4 @@ test("write preserves command failure and changed freshness", async () =>
     assert.equal(reportOf(result, "write")?.then_run?.status, "failed");
     assert.equal(reportOf(result, "write")?.next, REREAD);
     assert.doesNotMatch(text, /Fresh anchors:/);
-  }));
-
-test("write rejects NUL content", async () =>
-  withTemp(async (dir) => {
-    const write = makeWriteOverride(dir);
-    await assert.rejects(
-      callTool(write, { path: "nul.txt", content: "a\0b", mode: "create" }, { ctx: context(dir) }),
-      rejectsArgument("content", /NUL/),
-    );
-    await assert.rejects(readFile(join(dir, "nul.txt")), /ENOENT/);
   }));

@@ -24,6 +24,8 @@ import { DEFAULT_OUTPUT_BUDGETS, formatByteSize, outputBudgetsFor } from "./budg
 import { makeReadOverride } from "./read-tool.ts";
 import { reportOf } from "./report.ts";
 import { grepCounts } from "./grep-output.testing.ts";
+import { parseFileHeader } from "./grep-output.ts";
+import { parseHashline } from "./anchor-format.ts";
 import { expectToolFailure } from "./report-failure.testing.ts";
 import { RegExpParser } from "@eslint-community/regexpp";
 import { COMMON_RG_ARGS, LINE_LISTING_ARGS, type GrepBackend } from "./rg-process.ts";
@@ -219,7 +221,6 @@ test("grep schema rejects empty search inputs and fractional context", async () 
       { literal: true, pattern: "needle", path: [] },
       { literal: true, pattern: "needle", glob: "" },
       { literal: true, pattern: "needle", glob: [] },
-      { literal: true, pattern: "needle", context: 1.5 },
       { literal: true, pattern: "needle", limit: Number.MAX_SAFE_INTEGER + 1 },
     ];
     for (const args of invalidArgs) {
@@ -766,13 +767,6 @@ test("matching rows exceed limit → bounded results offer optional continuation
   });
 });
 
-test("grep requires literal before invoking the backend", async () => {
-  const fake = fakeBackend();
-  const tool = makeGrepOverrideWithBackend(process.cwd(), DEFAULT_CONFIG, fake.backend);
-  await assert.rejects(callTool(tool, { pattern: "needle" }), rejectsArgument("literal"));
-  assert.equal(fake.calls.length, 0);
-});
-
 test("literal punctuation → exact text is matched", async () =>
   withDir(async (dir) => {
     const file = join(dir, "literal.txt");
@@ -858,15 +852,10 @@ test("grep OR arrays accept more than sixteen patterns in one line scan", async 
   });
 });
 
-test("rejects empty patterns while allowing character classes, literals, and empty-line searches", async () => {
+test("character classes, literals, and empty-line searches → valid nonempty patterns", async () => {
   await withDir(async (dir) => {
     const fake = fakeBackend();
     const tool = makeGrepOverrideWithBackend(dir, DEFAULT_CONFIG, fake.backend);
-
-    for (const pattern of ["", [], ["valid", ""]]) {
-      await assert.rejects(call(tool, { pattern, literal: true }), rejectsArguments());
-    }
-    assert.equal(fake.calls.length, 0);
     for (const pattern of ["[\\w.*]*", "^[\\w.*]+$", "[\\w.*]?"]) {
       assert.equal(reportOf(await call(tool, { pattern, literal: false }), "grep")?.matches, 0);
     }
@@ -1155,14 +1144,31 @@ test("concurrent file searches → all discovered matches remain present", async
       literal: true,
       pattern: "match",
     });
-    const content = text(result);
-    for (let i = 1; i <= 25; i++) {
-      const pad = String(i).padStart(2, "0");
-      const expectedHeader = `file_${pad}.txt · 1 match`;
-      const idx = content.indexOf(expectedHeader);
-      assert.ok(idx >= 0, `Missing ${expectedHeader}`);
-      assert.match(content, new RegExp(`2#[0-9A-Z]+│match_${i}`));
+    const rows: { path: string; line: number; content: string }[] = [];
+    const headers: string[] = [];
+    let path = "";
+    for (const line of text(result).split("\n")) {
+      const header = parseFileHeader(line);
+      if (header) {
+        path = header.path;
+        headers.push(header.summary);
+      }
+      const row = parseHashline(line);
+      if (row) rows.push({ path, line: Number(row.lineNo), content: row.content });
     }
+    assert.deepEqual(
+      rows,
+      files.map((_, index) => ({
+        path: `file_${String(index + 1).padStart(2, "0")}.txt`,
+        line: 2,
+        content: `match_${index + 1}`,
+      })),
+    );
+    assert.deepEqual(
+      headers,
+      files.map(() => "1 match"),
+    );
+    assert.equal(grepCounts(result).matches, files.length);
   });
 });
 

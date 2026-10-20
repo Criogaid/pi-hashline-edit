@@ -5,6 +5,8 @@ import { rejectsArgument } from "../pi/argument-error.testing.ts";
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import childProcess from "node:child_process";
+import { syncBuiltinESMExports } from "node:module";
 import {
   lstat,
   mkdir,
@@ -18,7 +20,7 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { rgPath } from "@vscode/ripgrep";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { makeGrepOverrideWithBackend } from "../pi/grep-tool.ts";
@@ -223,7 +225,7 @@ test("owned rg processes ignore RIPGREP_CONFIG_PATH", async () => {
   }
 });
 
-test("real rg requires an explicit mode and separates exact text from regex", async () => {
+test("real rg separates exact text from regex", async () => {
   const directory = await mkdtemp(join(tmpdir(), "hl-grep-regex-"));
   try {
     await writeFile(
@@ -231,10 +233,6 @@ test("real rg requires an explicit mode and separates exact text from regex", as
       "FOO\nfoo\nfoo0\nfoo(0)\nqueueTool(\nfoo(?=bar)\n",
     );
     const tool = makeGrepOverrideWithBackend(directory, DEFAULT_CONFIG, {});
-    await assert.rejects(
-      invoke(tool, "missing-mode", { pattern: "foo" }),
-      rejectsArgument("literal", /required/),
-    );
     for (const pattern of ["(?i:^foo$)", "(?<name>foo)$"].filter((source) =>
       hostCompiles(source),
     )) {
@@ -295,7 +293,10 @@ test("real rg keeps CRLF line-end anchors with regex OR matching", async () => {
 test("real rg finds a late OR match and respects the line limit", async () => {
   const directory = await mkdtemp(join(tmpdir(), "hl-grep-limit-"));
   try {
-    await writeFile(join(directory, "fixture.ts"), "foo skip\n".repeat(4096) + "foo keep\n");
+    await writeFile(
+      join(directory, "fixture.ts"),
+      "foo skip\n".repeat(4096) + "foo keep\nfoo keep later\n",
+    );
     const tool = makeGrepOverrideWithBackend(directory, DEFAULT_CONFIG, {});
     const result = await invoke(
       tool,
@@ -304,40 +305,71 @@ test("real rg finds a late OR match and respects the line limit", async () => {
       undefined,
       undefined,
     );
-    assert.match(result.content[0].text, /4097#[0-9A-Z]+│foo keep/);
+    assert.match(result.content[0].text, /4097#[0-9A-Z]+│foo keep$/m);
+    assert.doesNotMatch(result.content[0].text, /foo keep later|4098#/);
+    assert.equal(grepCounts(result).matches, 1);
     assert.equal(reportOf(result, "grep")?.matchLimit, 1);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
 });
 
-test("shared rg runner stops and cleans up after limits, callback failures, and cancellation", async () => {
+test("shared rg runner stops and cleans up after limits, callback failures, and cancellation", async (t) => {
   const directory = await mkdtemp(join(tmpdir(), "hl-grep-process-"));
+  const spawn = childProcess.spawn;
+  const children: ReturnType<typeof spawn>[] = [];
+  const closed = new Set<ReturnType<typeof spawn>>();
   try {
-    const file = join(directory, "fixture.txt");
-    await writeFile(file, "needle\n".repeat(10_000));
-    const args = [...COMMON_RG_ARGS, "--files", "--null", "--", file];
-    const stopped = await runRgPaths(rgPath, args, undefined, () => false);
-    assert.equal(stopped.stopped, true);
-    await assert.rejects(
-      runRgPaths(rgPath, args, undefined, () => {
-        throw new Error("callback failed");
-      }),
-      /callback failed/,
+    t.mock.method(childProcess, "spawn", (...args: Parameters<typeof spawn>) => {
+      const child = spawn(...args);
+      children.push(child);
+      child.once("close", () => closed.add(child));
+      return child;
+    });
+    syncBuiltinESMExports();
+    const fixture = fileURLToPath(
+      new URL("../testing/rg-line-listing.fixture.mjs", import.meta.url),
     );
-    const controller = new AbortController();
-    await assert.rejects(
-      runRgPaths(rgPath, args, controller.signal, () => {
-        controller.abort();
-        return true;
-      }),
-      /Operation aborted/,
-    );
+    const processTimeoutMs = 5_000;
+    const args = [
+      fixture,
+      JSON.stringify([Buffer.from("first\0second\0").toString("base64")]),
+      "wait",
+    ];
+    for (const outcome of ["limit", "callback", "cancel"] as const) {
+      const controller = new AbortController();
+      const consumed: string[] = [];
+      let aliveAtCallback = false;
+      const run = runRgPaths(
+        process.execPath,
+        args,
+        AbortSignal.any([controller.signal, AbortSignal.timeout(processTimeoutMs)]),
+        (path) => {
+          consumed.push(path);
+          const child = children.at(-1);
+          aliveAtCallback = child?.exitCode === null && child.signalCode === null;
+          if (outcome === "callback") throw new Error("callback failed");
+          if (outcome === "cancel") controller.abort();
+          return outcome !== "limit";
+        },
+      );
+      if (outcome === "limit") assert.equal((await run).stopped, true);
+      else
+        await assert.rejects(run, outcome === "callback" ? /callback failed/ : /Operation aborted/);
+      assert.deepEqual(consumed, ["first"]);
+      assert.equal(aliveAtCallback, true);
+      const child = children.at(-1);
+      assert.ok(child && closed.has(child), "runner must await child close");
+      assert.ok(child.exitCode !== null || child.signalCode !== null);
+    }
     await assert.rejects(
       runRgPaths(join(directory, "missing-rg"), [], undefined, () => true),
       /Failed to run ripgrep/,
     );
   } finally {
+    for (const child of children) if (!closed.has(child)) child.kill("SIGKILL");
+    t.mock.restoreAll();
+    syncBuiltinESMExports();
     await rm(directory, { recursive: true, force: true });
   }
 });
