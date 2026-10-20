@@ -1,4 +1,4 @@
-/** Serialize regex requests in one worker; timeout, cancellation, and cleanup have one owner. */
+/** Own one regex worker's timeout, cancellation, and cleanup; callers await each request. */
 import { Worker, type ResourceLimits } from "node:worker_threads";
 import { HashlineError } from "../core/errors.ts";
 import { cancellationError, throwIfCancelled } from "./error-text.ts";
@@ -57,9 +57,9 @@ export async function withRegexWorker<Input, Result, Output>(
     ),
   );
   signal?.addEventListener("abort", abort, { once: true });
-  let queue = Promise.resolve();
-  const run = (input: Input): Promise<Result> => {
-    const result = queue.then(() => {
+  // Keep dispatch asynchronous so cancellation can be observed before posting a request.
+  const run = (input: Input): Promise<Result> =>
+    Promise.resolve().then(() => {
       throwIfCancelled(signal);
       if (failure) throw failure;
       return new Promise<Result>((resolve, reject) => {
@@ -84,12 +84,6 @@ export async function withRegexWorker<Input, Result, Output>(
         }
       });
     });
-    queue = result.then(
-      () => undefined,
-      () => undefined,
-    );
-    return result;
-  };
   try {
     if (signal?.aborted) abort();
     return await execute(run);
