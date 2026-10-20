@@ -256,6 +256,7 @@ test("file-associated failure → listing position decides failure or cutoff, wh
                 assert.equal(result.isError, undefined, JSON.stringify(report));
                 assert.equal(report?.matchLimit, 1);
                 assert.equal(report?.diagnostics, undefined);
+                assert.equal(result.content[0].type, "text");
                 assert.match(result.content[0].text, /1#[0-9A-Z]+│needle a\.txt/);
               } else {
                 assert.equal(result.isError, true);

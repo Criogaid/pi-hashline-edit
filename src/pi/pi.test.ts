@@ -104,6 +104,7 @@ test("file tools share Pi-style URL and @ path resolution", async () => {
       { path: `@${url}`, pattern: "edited", literal: true },
       { toolCallId: "grep" },
     );
+    assert.equal(matches.content[0].type, "text");
     assert.match(matches.content[0].text, /edited/);
     assert.equal(await readFile(file, "utf8"), "edited\n");
     let commands = 0;

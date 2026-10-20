@@ -7,16 +7,20 @@
  * unusual arguments go through the same funnel instead of calling `execute`.
  */
 
-import { validateToolArguments } from "@earendil-works/pi-ai";
+import { validateToolArguments, type Tool, type ToolCall } from "@earendil-works/pi-ai";
 import type { TestContext } from "node:test";
 import type { ExtensionToolContext } from "@earendil-works/pi-coding-agent";
 import { openTestSession } from "../testing/session.testing.ts";
 
-interface CallableTool {
-  readonly name: string;
-  readonly parameters: unknown;
+interface CallableTool extends Tool {
   prepareArguments?(args: unknown): unknown;
-  execute(...args: any[]): Promise<any>;
+  execute(
+    toolCallId: string,
+    params: unknown,
+    signal: AbortSignal | undefined,
+    onUpdate: unknown,
+    ctx: unknown,
+  ): Promise<unknown>;
 }
 
 export interface ToolCallOptions {
@@ -27,14 +31,20 @@ export interface ToolCallOptions {
 }
 
 /** prepareArguments → schema validation → execute, failing the way Pi reports invalid calls. */
+export function callTool<T extends CallableTool>(
+  tool: T,
+  args: unknown,
+  options?: ToolCallOptions,
+): ReturnType<T["execute"]>;
 export async function callTool(tool: CallableTool, args: unknown, options: ToolCallOptions = {}) {
   const toolCallId = options.toolCallId ?? "test";
   const prepared = tool.prepareArguments ? tool.prepareArguments(args) : args;
-  const validated = validateToolArguments(tool as never, {
+  const validated: unknown = validateToolArguments(tool, {
     type: "toolCall",
     id: toolCallId,
     name: tool.name,
-    arguments: prepared as never,
+    // Pi owns shape checking and coercion at this external boundary.
+    arguments: prepared as ToolCall["arguments"],
   });
   return tool.execute(toolCallId, validated, options.signal, options.onUpdate, options.ctx);
 }

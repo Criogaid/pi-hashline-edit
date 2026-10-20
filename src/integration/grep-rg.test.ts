@@ -412,6 +412,7 @@ test("directory traversal with caller globs → excludes .git while an explicit 
         });
         assert.equal(result.isError, undefined, JSON.stringify(reportOf(result, "grep")));
         assert.equal(grepCounts(result).matches, 1);
+        assert.equal(result.content[0].type, "text");
         assert.equal(result.content[0].text.replace(/\\/g, "/"), expected);
       }
     }
@@ -445,6 +446,7 @@ test("explicit file with different case and a glob → admits the same file on a
   assert.equal(result.isError, undefined, JSON.stringify(reportOf(result, "grep")));
   assert.equal(grepCounts(result).matches, 1);
   assert.equal(grepCounts(result).files, 1);
+  assert.equal(result.content[0].type, "text");
   assert.match(result.content[0].text, /1#[0-9A-Z]+│needle/);
   assert.equal(reportOf(result, "grep")?.diagnostics, undefined);
 });

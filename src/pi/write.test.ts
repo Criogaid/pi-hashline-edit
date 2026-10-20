@@ -107,6 +107,7 @@ test("write supports create-only and overwrite-only modes", async () =>
       { path: "new.txt", content: "new\n", mode: "create" },
       options,
     );
+    assert.equal(created.content[0].type, "text");
     assert.doesNotMatch(created.content[0].text, /Revision:|[0-9a-f]{64}/);
     assert.deepEqual(await readFile(target), Buffer.from("new\n"));
     assert.equal(reportOf(created, "write")?.publication, "PUBLISHED");

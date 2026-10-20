@@ -83,6 +83,7 @@ test("registered tools retain their configuration when another tool set is regis
             },
           }[name];
           const result = await callTool(tool, params);
+          assert.equal(result.content[0].type, "text");
           const expected = name === "edit" ? "after" : "before";
           if (name === "edit") {
             assert.equal(result.isError, undefined);
@@ -123,6 +124,7 @@ test("registered tools retain their configuration when another tool set is regis
           const lines = ["first", "second", "third"];
           await writeFile(join(directory, path), `${lines.join("\n")}\n`);
           const result = await callTool(tool, { path });
+          assert.equal(result.content[0].type, "text");
           assert.deepEqual(
             result.content[0].text.split("\n").filter((line: string) => /^\d+#/.test(line)),
             lines
@@ -137,6 +139,7 @@ test("registered tools retain their configuration when another tool set is regis
           const wide = "界".repeat(500);
           await writeFile(join(directory, path), `${wide}\n`);
           const bounded = await callTool(tool, { path });
+          assert.equal(bounded.content[0].type, "text");
           if (read.maxKiB === 1) {
             const maxBytes = read.maxKiB * 1024;
             assert.deepEqual(reportOf(bounded, "read")?.lineTooLong, {
@@ -175,6 +178,7 @@ test("registered tools retain their configuration when another tool set is regis
           ];
           await writeFile(join(directory, path), `${lines.join("\n")}\n`);
           const result = await callTool(tool, { path, pattern: "needle", literal: true });
+          assert.equal(result.content[0].type, "text");
           assert.deepEqual(
             result.content[0].text.split("\n").filter((line: string) => /^\d+#/.test(line)),
             expectedGrepLines.map(

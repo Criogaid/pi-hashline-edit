@@ -69,14 +69,18 @@ test("model capacity changes → read and grep grow and shrink without re-regist
   const ctx = session.extensionRunner.createToolContext("read-budget", undefined);
   await session.setModel({ ...model, id: "small", contextWindow: 65_536 });
   const small = await callTool(tool, { path }, { ctx });
-  assert.ok(small.details.report.lineTooLong);
+  const smallReport = reportOf(small, "read");
+  assert.ok(smallReport?.lineTooLong);
   await session.setModel({ ...model, id: "large", contextWindow: 1_048_576 });
   const large = await callTool(tool, { path }, { ctx });
-  assert.equal(large.details.report.lineTooLong, undefined);
+  const largeReport = reportOf(large, "read");
+  assert.ok(largeReport);
+  assert.equal(largeReport.lineTooLong, undefined);
+  assert.equal(large.content[0].type, "text");
   assert.ok(large.content[0].text.includes(text));
   await session.setModel({ ...model, id: "small", contextWindow: 65_536 });
   const smallAgain = await callTool(tool, { path }, { ctx });
-  assert.deepEqual(smallAgain.details.report.lineTooLong, small.details.report.lineTooLong);
+  assert.deepEqual(reportOf(smallAgain, "read")?.lineTooLong, smallReport.lineTooLong);
   const grep = session.getToolDefinition("grep");
   assert.ok(grep);
   const smallSearch = await callTool(grep, { path, pattern: "中文", literal: true }, { ctx });
@@ -90,6 +94,8 @@ test("model capacity changes → read and grep grow and shrink without re-regist
     reportOf(largeSearch, "grep")?.linePreviewLimit,
     outputBudgetsFor(1_048_576).grepPreviewUnits,
   );
+  assert.equal(largeSearch.content[0].type, "text");
+  assert.equal(smallSearch.content[0].type, "text");
   assert.ok(largeSearch.content[0].text.length > smallSearch.content[0].text.length);
   assert.ok(!largeSearch.content[0].text.includes("\uFFFD"));
 });
