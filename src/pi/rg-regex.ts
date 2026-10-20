@@ -455,9 +455,9 @@ function ignoreCaseAt(node: AST.Node, ctx: Context): boolean {
 }
 
 /**
- * Whether a group has always matched when its backreference is reached: the group precedes
- * the reference in one alternative, and nothing between the group and that alternative can
- * skip it (another alternative, a quantifier that allows zero, or a lookaround).
+ * Whether a group has always matched when its backreference is reached: the group executes
+ * before the reference in one alternative, and nothing between the group and that alternative
+ * can skip it (another alternative, a quantifier that allows zero, or a lookaround).
  */
 function participates(group: AST.CapturingGroup, reference: AST.Backreference): boolean {
   const ancestors = new Set<AST.Node>();
@@ -480,7 +480,16 @@ function participates(group: AST.CapturingGroup, reference: AST.Backreference): 
     groupChild = node;
   }
   const elements: readonly AST.Node[] = common.elements;
-  return elements.indexOf(groupChild) < elements.indexOf(referenceChild);
+  let backward = false;
+  // The nearest lookaround decides direction; a nested lookahead runs forward again.
+  for (let node: AST.Node | null = common.parent; node; node = node.parent) {
+    if (node.type !== "Assertion") continue;
+    backward = node.kind === "lookbehind";
+    break;
+  }
+  const groupPosition = elements.indexOf(groupChild);
+  const referencePosition = elements.indexOf(referenceChild);
+  return backward ? groupPosition > referencePosition : groupPosition < referencePosition;
 }
 
 /**

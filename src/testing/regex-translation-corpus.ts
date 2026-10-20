@@ -121,6 +121,22 @@ export const REGEX_TRANSLATION_CORPUS: readonly RegexWitness[] = [
     source: local,
   },
   {
+    pattern: "(?<=(a)\\1)",
+    flags: "",
+    hits: ["a", "ab"],
+    misses: ["b"],
+    rejectCandidates: true,
+    source: local,
+  },
+  {
+    pattern: "(?<=\\1(a))",
+    flags: "",
+    hits: ["aa"],
+    misses: ["a", "ab"],
+    rejectCandidates: true,
+    source: local,
+  },
+  {
     pattern: "(cat|dog)\\1",
     flags: "",
     hits: ["catcat", "dogdog"],
