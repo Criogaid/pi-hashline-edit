@@ -178,10 +178,13 @@ function failureEntry(
       break;
     }
     case "none": {
+      if (shownLines.has(f.cited.line)) break;
       const row = f.current === null ? null : snapshot.anchors.row(f.cited.line, f.current.content);
       if (row === null) entry.omitted = "cited line is out of range";
-      else if (Buffer.byteLength(row, "utf8") <= budget.fieldBytes) entry.observed = row;
-      else entry.omitted = rowTooLarge;
+      else if (Buffer.byteLength(row, "utf8") <= budget.fieldBytes) {
+        entry.observed = row;
+        shownLines.add(f.cited.line);
+      } else entry.omitted = rowTooLarge;
       break;
     }
   }

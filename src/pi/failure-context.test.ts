@@ -194,6 +194,45 @@ function rejectedEdit(text: string, edits: Edit[], shiftRadius = 0) {
 }
 const oldAnchor = { line: 1, hash: computeLineHash(1, "old", DEFAULT_CONFIG.hashLen) };
 
+test("unresolved observation already shown elsewhere → reports the row once", async (t) => {
+  const cases = [
+    {
+      name: "ambiguous candidate neighborhood",
+      text: "current\nneighbor\nold\nold\n",
+      anchors: [oldAnchor, { line: 2, hash: computeLineHash(2, "gone", DEFAULT_CONFIG.hashLen) }],
+      radius: DEFAULT_CONFIG.shiftRadius,
+      line: 2,
+      content: "neighbor",
+    },
+    {
+      name: "earlier unresolved failure",
+      text: "current\n",
+      anchors: [oldAnchor, oldAnchor],
+      radius: 0,
+      line: 1,
+      content: "current",
+    },
+  ];
+  for (const fixture of cases) {
+    await t.test(fixture.name, () => {
+      const { report } = rejectedEdit(
+        fixture.text,
+        fixture.anchors.map((anchor) => ({ op: "delete", anchor })),
+        fixture.radius,
+      );
+      const observed = createAnchorFormatter(DEFAULT_CONFIG.hashLen).row(
+        fixture.line,
+        fixture.content,
+      );
+      const displayedRows = [
+        ...(report.failures?.flatMap((entry) => (entry.observed ? [entry.observed] : [])) ?? []),
+        ...(report.candidateNeighborhoods?.flatMap((group) => group.rows) ?? []),
+      ];
+      assert.equal(displayedRows.filter((row) => row === observed).length, 1);
+    });
+  }
+});
+
 test("multiple unresolved anchors and candidate context → one recovery survives omitted facts", () => {
   const cases = [
     ...[2, DEFAULT_OUTPUT_BUDGETS.blockBytes].map((count) => ({
