@@ -355,7 +355,6 @@ export async function commitFile(
   }
   const tempPath = join(tempDir, "content");
   let published = false;
-  let failure: unknown;
   try {
     await writeAndSyncTemp(tempPath, bytes, target.modeBits, options.signal);
     if (baseRevision !== undefined) {
@@ -392,7 +391,6 @@ export async function commitFile(
       );
     }
   } catch (error) {
-    failure = error;
     if (error instanceof FileMutationError) throw error;
     if (published)
       throw new FileMutationError(
@@ -413,24 +411,8 @@ export async function commitFile(
       { cause: error },
     );
   } finally {
-    try {
-      await rm(tempDir, { recursive: true, force: true });
-    } catch (error) {
-      // Before publication, preserve the classified failure already being propagated.
-      if (published)
-        throw new FileMutationError(
-          "POST_PROCESS_FAILED",
-          "post_process",
-          "PUBLISHED",
-          "Temporary cleanup failed.",
-          {
-            cause:
-              failure === undefined
-                ? error
-                : new AggregateError([failure, error], "post-publication cleanup also failed"),
-          },
-        );
-    }
+    // Best effort: a leftover temporary directory changes neither the publication nor the recovery.
+    await rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
   }
 }
 
