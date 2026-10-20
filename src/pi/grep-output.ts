@@ -119,7 +119,6 @@ async function formatMatches(options: FormatMatchesOptions) {
                   windowSet.add(n);
               }
               const rows: string[] = [];
-              const matchedRows = new Set<number>();
               // Counted only if this file passes verification and joins the output.
               let truncated = false;
               const stats = await scanTextLines(
@@ -127,7 +126,6 @@ async function formatMatches(options: FormatMatchesOptions) {
                 (number) => windowSet.has(number),
                 (line) => {
                   if (line.text === undefined) return;
-                  if (columns.has(line.number)) matchedRows.add(line.number);
                   // Rows make CR visible one unit for one, so preview columns stay source columns.
                   const { text: display, wasTruncated } = previewLine(
                     line.text,
@@ -147,9 +145,6 @@ async function formatMatches(options: FormatMatchesOptions) {
                 },
               );
               if (stats.hasNul) throw searchChangedError();
-              if (matchLines.some(({ lineNumber }) => !matchedRows.has(lineNumber))) {
-                throw searchChangedError();
-              }
               if (snapshot.revision !== stats.revision) {
                 throw searchChangedError();
               }

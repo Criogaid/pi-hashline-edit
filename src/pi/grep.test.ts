@@ -374,6 +374,7 @@ test("file changes after matching → summary modes retain the snapshot and cont
     await writeFile(unchanged, "needle\n");
     for (const [before, after] of [
       [Buffer.from("needle\nold context\n"), Buffer.from("changed\nnew context\n")],
+      [Buffer.from("needle\n"), Buffer.alloc(0)],
       [
         Buffer.from([0x6e, 0x65, 0x65, 0x64, 0x6c, 0x65, 0x0a, 0xff]),
         Buffer.from([0x6e, 0x65, 0x65, 0x64, 0x6c, 0x65, 0x0a, 0xfe]),
