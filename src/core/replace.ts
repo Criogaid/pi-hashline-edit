@@ -11,6 +11,7 @@ import { buildRegex } from "./regex.ts";
 import {
   createLfTextView,
   detectLineEnding,
+  joinTextFragments,
   normalizeLineEndings,
   restoreLineEndings,
 } from "./lines.ts";
@@ -88,5 +89,5 @@ export function applyReplacements(
     cursor = change.end;
   }
   parts.push(source.slice(cursor));
-  return { text: parts.join(""), count: changes.length };
+  return { text: joinTextFragments(parts), count: changes.length };
 }

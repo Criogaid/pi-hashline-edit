@@ -37,11 +37,33 @@ export function replacementSeparator(
   return separators[index] || separators[separators.length - 1] || fallback;
 }
 
+/** Keep a trailing CR as content when the following fragment starts with an LF separator. */
+function preserveBoundaryCarriageReturn(previous: string, next: string): string {
+  return previous.endsWith("\r") && next.startsWith("\n") ? `\r${next}` : next;
+}
+
+/** Join independent raw fragments without absorbing trailing CR content into the next LF. */
+export function joinTextFragments(parts: readonly string[]): string {
+  const joined: string[] = [];
+  let previous = "";
+  for (const part of parts) {
+    if (!part) continue;
+    joined.push(preserveBoundaryCarriageReturn(previous, part));
+    previous = part;
+  }
+  return joined.join("");
+}
+
 /** Restore a logical replacement without normalizing it a second time. */
 export function restoreLineEndings(logical: string, original: string, fallback: string): string {
   const separators = lineSeparators(original);
   let index = 0;
-  return logical.replace(/\n/g, () => replacementSeparator(separators, index++, fallback));
+  return logical.replace(/\n/g, (_match, offset: number) =>
+    preserveBoundaryCarriageReturn(
+      logical[offset - 1] ?? "",
+      replacementSeparator(separators, index++, fallback),
+    ),
+  );
 }
 
 /** Build an LF matching view with UTF-16 boundary offsets back into the original text. */

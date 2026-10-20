@@ -32,6 +32,7 @@ import { computeLineHash } from "./hash.ts";
 import {
   detectLineEnding,
   hasFinalNewline,
+  joinTextFragments,
   lineSeparators,
   replacementSeparator,
   splitLines,
@@ -372,14 +373,11 @@ export function applyEdits(
     hasFinalNewline(text) || (result.at(-1)?.content === "" && (result.length > 1 || !bom));
   const newText =
     bom +
-    result
-      .map(
-        ({ content, separator: current }, i) =>
-          content +
-          (i < result.length - 1 || finalNewline
-            ? current || (content.endsWith("\r") ? "\r\n" : separator)
-            : ""),
-      )
-      .join("");
+    joinTextFragments(
+      result.flatMap(({ content, separator: current }, i) => [
+        content,
+        i < result.length - 1 || finalNewline ? current || separator : "",
+      ]),
+    );
   return { ok: true, text: newText };
 }
