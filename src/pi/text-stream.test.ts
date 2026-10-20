@@ -47,7 +47,6 @@ test("streamed lines preserve BOM, standalone CR, and boundaries split across ch
       assert.deepEqual(lines, splitLines(text));
       assert.equal(stats.totalLines, lines.length);
       assert.equal(stats.finalNewline, text === "" || text.endsWith("\n"));
-      assert.equal(stats.hasCrLf, text.includes("\r\n"));
       assert.equal(stats.byteLength, Buffer.byteLength(text));
     }
   }));
@@ -154,7 +153,6 @@ test("lossy decoding reports invalid UTF-8 across chunk boundaries and preserves
     );
     assert.equal(stats.validUtf8, false);
     assert.equal(stats.hasNul, false);
-    assert.equal(stats.hasCrLf, true);
     assert.deepEqual(lines, splitLines(source.toString("utf8")));
     assert.equal(stats.revision, byteRevision(source));
     await assert.rejects(
@@ -216,7 +214,6 @@ test("lossy scans without a text consumer report validity and retain all raw byt
     assert.equal(stats.revision, byteRevision(source));
     assert.equal(stats.validUtf8, false);
     assert.equal(stats.hasNul, false);
-    assert.equal(stats.hasCrLf, true);
     assert.equal(stats.totalLines, 2);
     assert.equal(stats.finalNewline, false);
     assert.equal(stats.byteLength, source.length);

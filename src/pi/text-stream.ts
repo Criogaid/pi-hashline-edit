@@ -34,7 +34,6 @@ export async function scanTextFile(
     let lineFeeds = 0;
     let lastByte = -1;
     let hasNul = false;
-    let hasCrLf = false;
     let decodingError: unknown;
     const stream = createReadStream(path, {
       fd: handle,
@@ -48,7 +47,6 @@ export async function scanTextFile(
         revision.update(bytes);
         byteLength += bytes.length;
         hasNul ||= bytes.includes(0);
-        hasCrLf ||= (lastByte === 13 && bytes[0] === 10) || bytes.includes("\r\n");
         lastByte = bytes[bytes.length - 1];
         let offset = 0;
         while ((offset = bytes.indexOf(10, offset)) !== -1) {
@@ -95,7 +93,6 @@ export async function scanTextFile(
       totalLines: lineFeeds + (lastByte !== -1 && lastByte !== 10 ? 1 : 0),
       finalNewline: lastByte === -1 || lastByte === 10,
       hasNul,
-      hasCrLf,
       validUtf8: !decodingError,
     };
   });
