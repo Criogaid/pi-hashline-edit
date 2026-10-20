@@ -94,9 +94,7 @@ test("model budget grows → grep payload and diagnostics use that call's allowa
   const outputs = [small, large].map((budget) =>
     assembleGrepOutput({
       formatted: {
-        blocks: [payload],
-        linesTruncated: false,
-        invalidUtf8: [],
+        blocks: [{ lines: payload.split("\n") }],
         matches: 3_000,
         files: 1,
       },

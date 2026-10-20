@@ -83,21 +83,24 @@ interface FormatMatchesOptions {
   readonly budget: OutputBudgets;
 }
 
+interface FormattedBlock {
+  readonly lines: readonly string[];
+  readonly invalidUtf8?: string;
+  /** Zero-based index within this block, including its file header. */
+  readonly firstTruncatedLine?: number;
+}
+
 async function formatMatches(options: FormatMatchesOptions) {
   const { cwd, files, outputMode, context, anchors, signal, warnings, budget } = options;
   const formatPath = (filePath: string): string => serializePath(cwd, filePath);
-  const blocks: string[] = [];
-  const invalidUtf8: string[] = [];
-  let linesTruncated = false;
+  const blocks: FormattedBlock[] = [];
   // Paths and counts state the searched snapshot as is. Content rows come from a second read,
   // which must match the revision the search matched; a file that changed is left out.
   let fileCount = files.length;
   let matches = files.reduce((sum, file) => sum + file.rows.length, 0);
   if (outputMode === "content" && files.length) {
     const fileResults = new Array<{
-      block?: string;
-      invalidUtf8?: boolean;
-      linesTruncated?: boolean;
+      block?: FormattedBlock;
       warning?: string;
     }>(files.length);
     let nextIndex = 0;
@@ -118,9 +121,9 @@ async function formatMatches(options: FormatMatchesOptions) {
                 for (let n = Math.max(1, lineNumber - context); n <= lineNumber + context; n++)
                   windowSet.add(n);
               }
-              const rows: string[] = [];
-              // Counted only if this file passes verification and joins the output.
-              let truncated = false;
+              const displayPath = formatPath(filePath);
+              const lines = [formatFileHeader(displayPath, matchLines.length)];
+              let firstTruncatedLine: number | undefined;
               const stats = await scanTextLines(
                 filePath,
                 (number) => windowSet.has(number),
@@ -132,8 +135,8 @@ async function formatMatches(options: FormatMatchesOptions) {
                     columns.get(line.number),
                     budget.grepPreviewUnits,
                   );
-                  if (wasTruncated) truncated = true;
-                  rows.push(
+                  if (wasTruncated) firstTruncatedLine ??= lines.length;
+                  lines.push(
                     snapshot.validUtf8
                       ? anchors.row(line.number, line.text, display)
                       : plainRow(line.number, display),
@@ -148,11 +151,12 @@ async function formatMatches(options: FormatMatchesOptions) {
               if (snapshot.revision !== stats.revision) {
                 throw searchChangedError();
               }
-              const header = `${formatFileHeader(formatPath(filePath), matchLines.length)}\n`;
               fileResults[current] = {
-                block: header + rows.join("\n"),
-                invalidUtf8: !snapshot.validUtf8,
-                linesTruncated: truncated,
+                block: {
+                  lines,
+                  invalidUtf8: snapshot.validUtf8 ? undefined : displayPath,
+                  firstTruncatedLine,
+                },
               };
             } catch (error) {
               const warning = fileReadWarning(filePath, error, scanSignal);
@@ -175,17 +179,16 @@ async function formatMatches(options: FormatMatchesOptions) {
         matches -= files[index].rows.length;
       } else if (result.block) {
         blocks.push(result.block);
-        if (result.linesTruncated) linesTruncated = true;
-        if (result.invalidUtf8) invalidUtf8.push(formatPath(files[index].filePath));
       }
     }
   }
   if (outputMode === "files") {
-    for (const { filePath } of files) blocks.push(formatPath(filePath));
+    for (const { filePath } of files) blocks.push({ lines: [formatPath(filePath)] });
   } else if (outputMode === "count") {
-    for (const { filePath, rows } of files) blocks.push(`${formatPath(filePath)}: ${rows.length}`);
+    for (const { filePath, rows } of files)
+      blocks.push({ lines: [`${formatPath(filePath)}: ${rows.length}`] });
   }
-  return { blocks, linesTruncated, invalidUtf8, matches, files: fileCount };
+  return { blocks, matches, files: fileCount };
 }
 
 /** What grep states about its outcome beside the payload rows. */
@@ -227,15 +230,25 @@ export function assembleGrepOutput(options: AssembleGrepOutputOptions): {
     searchFacts = {},
     budget,
   } = options;
-  const { blocks, linesTruncated, invalidUtf8, matches, files } = formatted;
+  const { blocks, matches, files } = formatted;
 
   if (!blocks.length && warnings.length) {
     throw searchIncompleteError("No matches could be displayed.", warnings, budget, searchFacts);
   }
-  const truncation = truncateHead(blocks.join(outputMode === "content" ? "\n\n" : "\n"), {
-    maxBytes: budget.grepBytes,
-    maxLines: Number.MAX_SAFE_INTEGER,
-  });
+  const truncation = truncateHead(
+    blocks.map((block) => block.lines.join("\n")).join(outputMode === "content" ? "\n\n" : "\n"),
+    { maxBytes: budget.grepBytes, maxLines: Number.MAX_SAFE_INTEGER },
+  );
+  const invalidUtf8: string[] = [];
+  let linesTruncated = false;
+  let remainingLines = truncation.outputLines;
+  for (const block of blocks) {
+    if (remainingLines <= 0) break;
+    if (block.invalidUtf8 && remainingLines > 1) invalidUtf8.push(block.invalidUtf8);
+    if (block.firstTruncatedLine !== undefined && remainingLines > block.firstTruncatedLine)
+      linesTruncated = true;
+    remainingLines -= block.lines.length + (outputMode === "content" ? 1 : 0);
+  }
   // One complete content or count block already states its path and match count.
   const countsShown = outputMode !== "files" && blocks.length === 1 && !truncation.truncated;
   return {

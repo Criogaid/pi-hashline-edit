@@ -20,7 +20,7 @@ import { Worker } from "node:worker_threads";
 import { makeEditOverride } from "./edit-tool.ts";
 import { callTool } from "./tool-call.testing.ts";
 import { DEFAULT_CONFIG } from "./config.ts";
-import { DEFAULT_OUTPUT_BUDGETS, formatByteSize } from "./budgets.ts";
+import { DEFAULT_OUTPUT_BUDGETS, formatByteSize, outputBudgetsFor } from "./budgets.ts";
 import { makeReadOverride } from "./read-tool.ts";
 import { reportOf } from "./report.ts";
 import { grepCounts } from "./grep-output.testing.ts";
@@ -342,6 +342,49 @@ test("grep payload blocks → only a single complete content or count block omit
         context,
       );
       assert.deepEqual(grepCounts(result), { matches: fileCount * 2, files: fileCount }, context);
+    }
+  }));
+
+test("grep output truncates preview rows → reports only displayed preview facts", async () =>
+  withDir(async (dir) => {
+    const paths = [join(dir, "a.txt"), join(dir, "z.txt")];
+    const budget = outputBudgetsFor(512);
+    await writeFile(paths[0], "needle\n".repeat(3));
+    await writeFile(
+      paths[1],
+      Buffer.concat([
+        Buffer.from("needle\nneedle "),
+        Buffer.from([0xff]),
+        Buffer.from("z".repeat(budget.grepPreviewUnits + 1)),
+      ]),
+    );
+    const { backend } = fakeBackend({ paths });
+    const args = { path: dir, pattern: "needle", literal: true };
+    const full = await callTool(
+      makeGrepOverrideWithBackend(dir, DEFAULT_CONFIG, backend, () => budget),
+      args,
+    );
+    const rows = text(full).split("\n");
+    const headerIndex = rows.findIndex((row) => row.startsWith("z.txt ·"));
+    assert.ok(headerIndex > 0);
+    for (const keptLines of [headerIndex - 1, headerIndex + 1, headerIndex + 2, rows.length]) {
+      const expected = rows.slice(0, keptLines).join("\n");
+      const result = await callTool(
+        makeGrepOverrideWithBackend(dir, DEFAULT_CONFIG, backend, () => ({
+          ...budget,
+          grepBytes: Buffer.byteLength(expected),
+        })),
+        args,
+      );
+      assert.equal(text(result), expected);
+      const report = reportOf(result, "grep");
+      assert.ok(report);
+      assert.deepEqual(report.invalidUtf8, keptLines > headerIndex + 1 ? ["z.txt"] : undefined);
+      assert.equal(
+        report.linePreviewLimit,
+        keptLines === rows.length ? budget.grepPreviewUnits : undefined,
+      );
+      assert.deepEqual(grepCounts(result), { matches: 5, files: 2 });
     }
   }));
 
