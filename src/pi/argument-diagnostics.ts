@@ -23,7 +23,7 @@ interface ArgumentDiagnostics {
 
 /** State shared by one failure projection. */
 interface Projection {
-  /** Fields a tool check already explained; their schema constraints are dropped. */
+  /** Fields a tool check already explained; their schema constraints are dropped, except an object's fields'. */
   readonly explained: ReadonlySet<string>;
   /** Fields that belong to the projected shapes; a declared field belongs even when absent. */
   readonly applicable: Set<string>;
@@ -78,7 +78,8 @@ function projectValueSchema(
   }
   if ("type" in schema && !Value.Check(Type.Unknown({ type: schema.type }), value)) return schema;
   projection.applicable.add(path);
-  if (projection.explained.has(path)) return Type.Unknown();
+  // An issue on a whole object, such as a choice between its fields, explains
+  // none of the object's own constraints; its fields keep their diagnostics.
   if (IsObject(schema) && typeof value === "object" && value !== null) {
     projection.selected.set(path, schema);
     const properties = Object.fromEntries(
@@ -91,6 +92,7 @@ function projectValueSchema(
     );
     return Type.Object(properties, ObjectOptions(schema));
   }
+  if (projection.explained.has(path)) return Type.Unknown();
   if (IsArray(schema) && Array.isArray(value)) {
     const items = value.map((item, index) =>
       projectSchema(schema.items, item, `${path}[${index}]`, projection),
