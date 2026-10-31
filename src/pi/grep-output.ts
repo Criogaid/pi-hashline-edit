@@ -79,7 +79,6 @@ interface FormatMatchesOptions {
   readonly context: number;
   readonly anchors: ReturnType<typeof createAnchorFormatter>;
   readonly signal?: AbortSignal;
-  readonly warnings: string[];
   readonly budget: OutputBudgets;
 }
 
@@ -91,9 +90,11 @@ interface FormattedBlock {
 }
 
 async function formatMatches(options: FormatMatchesOptions) {
-  const { cwd, files, outputMode, context, anchors, signal, warnings, budget } = options;
+  const { cwd, files, outputMode, context, anchors, signal, budget } = options;
   const formatPath = (filePath: string): string => serializePath(cwd, filePath);
   const blocks: FormattedBlock[] = [];
+  /** Files left out after their second read, in result order. */
+  const warnings: string[] = [];
   // Paths and counts state the searched snapshot as is. Content rows come from a second read,
   // which must match the revision the search matched; a file that changed is left out.
   let fileCount = files.length;
@@ -188,11 +189,11 @@ async function formatMatches(options: FormatMatchesOptions) {
     for (const { filePath, rows } of files)
       blocks.push({ lines: [`${formatPath(filePath)}: ${rows.length}`] });
   }
-  return { blocks, matches, files: fileCount };
+  return { blocks, matches, files: fileCount, warnings };
 }
 
 interface AssembleGrepOutputOptions {
-  readonly formatted: Awaited<ReturnType<typeof formatMatches>>;
+  readonly formatted: Omit<Awaited<ReturnType<typeof formatMatches>>, "warnings">;
   readonly warnings: readonly string[];
   readonly outputMode: GrepOutputMode;
   readonly matchLimitReached: boolean;
@@ -256,7 +257,9 @@ export function assembleGrepOutput(options: AssembleGrepOutputOptions): {
  */
 export async function grepOutput(
   options: Omit<FormatMatchesOptions, "files"> & {
-    readonly search: Awaited<ReturnType<typeof searchFiles>>;
+    readonly search: Omit<Awaited<ReturnType<typeof searchFiles>>, "warnings">;
+    /** Scope and search warnings, in the order those stages produced them. */
+    readonly warnings: readonly string[];
     readonly effectiveLimit: number;
     /** A literal pattern contains `|`, which matches only that character. */
     readonly literalPipe: boolean;
@@ -275,10 +278,14 @@ export async function grepOutput(
       facts: { matches: 0, files: 0, ...searchFacts, literalPipe: literalPipe || undefined },
     };
   }
-  const formatted = await formatMatches({ ...options, files: search.files, budget });
+  const { warnings: rereadWarnings, ...formatted } = await formatMatches({
+    ...options,
+    files: search.files,
+    budget,
+  });
   return assembleGrepOutput({
     formatted,
-    warnings,
+    warnings: [...warnings, ...rereadWarnings],
     outputMode,
     matchLimitReached: search.matchLimitReached,
     effectiveLimit,

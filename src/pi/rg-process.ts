@@ -71,14 +71,14 @@ export interface GrepBackend {
   runRgLines: typeof runRgLines;
 }
 
-/** Surface incomplete search diagnostics without discarding confirmed matches. */
-export function recordSearchDiagnostics(result: RgRunResult, warnings: string[]): void {
-  const message =
+/** An incomplete run's diagnostic, surfaced without discarding confirmed matches. */
+export function searchDiagnostic(result: RgRunResult): string | undefined {
+  return (
     result.stderr.trim() ||
     (!result.stopped && result.code !== 0 && result.code !== 1
       ? `ripgrep exited with code ${result.code}.`
-      : "");
-  if (message) warnings.push(message);
+      : undefined)
+  );
 }
 
 function startRg(rgPath: string, args: readonly string[], signal?: AbortSignal): RunningProcess {

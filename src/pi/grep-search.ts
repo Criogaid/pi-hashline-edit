@@ -11,7 +11,7 @@ import { countLines } from "../core/lines.ts";
 import type { GrepQuery, LineSearchInput, SearchInput } from "../core/search.ts";
 import { SEARCH_RESULT_SCHEMA, type SearchResult } from "../core/search-schema.ts";
 import { scanTextFile } from "./text-stream.ts";
-import { recordSearchDiagnostics, type GrepBackend } from "./rg-process.ts";
+import { searchDiagnostic, type GrepBackend } from "./rg-process.ts";
 import type { SearchScope } from "./grep-scope.ts";
 import { listCandidates, type Candidate } from "./grep-candidates.ts";
 import { withRegexWorker } from "./regex-worker.ts";
@@ -218,10 +218,11 @@ export async function searchFiles(options: {
   readonly limit: number;
   readonly timeoutMs: number;
   readonly signal?: AbortSignal;
-  readonly warnings: string[];
 }) {
-  const { backend, rgPath, scope, query, limit, timeoutMs, signal, warnings } = options;
+  const { backend, rgPath, scope, query, limit, timeoutMs, signal } = options;
   const files: GrepFileMatch[] = [];
+  /** File warnings in listing order, then the listing's own diagnostic. */
+  const warnings: string[] = [];
   /** Committed matches; a file still searching gets at most the remaining room. */
   let matches = 0;
   let matchLimitReached = false;
@@ -343,9 +344,11 @@ export async function searchFiles(options: {
     if (failure) throw failure.error;
   }
   // After every file's warning, so their order does not depend on when the listing ends.
-  if (selection.listing) recordSearchDiagnostics(selection.listing, warnings);
+  const diagnostic = selection.listing && searchDiagnostic(selection.listing);
+  if (diagnostic) warnings.push(diagnostic);
   return {
     files,
+    warnings,
     matchLimitReached,
     candidates: selection.candidates,
     scanLimitReached: selection.scanLimitReached,

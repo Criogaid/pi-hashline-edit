@@ -210,7 +210,6 @@ export function makeGrepOverrideWithBackend(
       const budget = budgets();
       return runTool("grep", { path: params.path, signal, budget }, async () => {
         throwIfCancelled(signal);
-        const warnings: string[] = [];
         const patterns = toArray(params.pattern);
         const effectiveLimit = params.limit ?? config.grep.defaultLimit;
         const outputMode = params.outputMode ?? "content";
@@ -234,18 +233,15 @@ export function makeGrepOverrideWithBackend(
           follow: false,
           searchPaths,
         };
-        const scope: SearchScope = {
-          ...unfiltered,
-          searchPaths: await filterExplicitFilesByGlob(
-            backend,
-            bundledRgPath,
-            unfiltered,
-            pathInfo,
-            signal,
-            warnings,
-          ),
-        };
-        const search = await searchFiles({
+        const admitted = await filterExplicitFilesByGlob(
+          backend,
+          bundledRgPath,
+          unfiltered,
+          pathInfo,
+          signal,
+        );
+        const scope: SearchScope = { ...unfiltered, searchPaths: admitted.searchPaths };
+        const { warnings: searchWarnings, ...search } = await searchFiles({
           backend,
           rgPath: bundledRgPath,
           scope,
@@ -253,7 +249,6 @@ export function makeGrepOverrideWithBackend(
           limit: effectiveLimit,
           timeoutMs: config.grep.regexTimeoutMs,
           signal,
-          warnings,
         });
         const { payload, facts } = await grepOutput({
           cwd,
@@ -262,7 +257,8 @@ export function makeGrepOverrideWithBackend(
           context: params.context ?? config.grep.defaultContext,
           anchors: createAnchorFormatter(hashLen),
           signal,
-          warnings,
+          // Each stage returns its warnings in order; the report states them in stage order.
+          warnings: [...admitted.warnings, ...searchWarnings],
           effectiveLimit,
           literalPipe: literal && patterns.some((pattern) => pattern.includes("|")),
           budget,

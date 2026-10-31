@@ -7,7 +7,7 @@
 import { stat } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { canonicalPath } from "./path.ts";
-import { COMMON_RG_ARGS, recordSearchDiagnostics, type GrepBackend } from "./rg-process.ts";
+import { COMMON_RG_ARGS, searchDiagnostic, type GrepBackend } from "./rg-process.ts";
 import { errnoCode, HashlineError } from "../core/errors.ts";
 
 export interface SearchScope {
@@ -85,17 +85,20 @@ async function isListed(path: string, listed: ReadonlyMap<string, readonly strin
   return false;
 }
 
-/** Keep directories and the explicitly named files that the ordered globs admit. */
+/**
+ * Keep directories and the explicitly named files that the ordered globs admit, with the
+ * listing's diagnostic when it may explain an exclusion.
+ */
 export async function filterExplicitFilesByGlob(
   backend: GrepBackend,
   rgPath: string,
   scope: SearchScope,
   paths: readonly SearchPathInfo[],
   signal: AbortSignal | undefined,
-  warnings: string[],
-): Promise<string[]> {
+): Promise<{ readonly searchPaths: string[]; readonly warnings: readonly string[] }> {
   const explicitFiles = paths.filter(({ isFile }) => isFile);
-  if (scope.globs.length === 0 || explicitFiles.length === 0) return paths.map(({ path }) => path);
+  if (scope.globs.length === 0 || explicitFiles.length === 0)
+    return { searchPaths: paths.map(({ path }) => path), warnings: [] };
 
   const parents = [...new Set(explicitFiles.map(({ path }) => dirname(path)))];
   const allowed = new Map<string, string[]>();
@@ -117,6 +120,11 @@ export async function filterExplicitFilesByGlob(
   const admitted = new Set<string>();
   for (const { path } of explicitFiles) if (await isListed(path, allowed)) admitted.add(path);
   // Listing diagnostics about sibling entries matter only when they may explain an exclusion.
-  if (admitted.size < explicitFiles.length) recordSearchDiagnostics(listed, warnings);
-  return paths.filter(({ path, isFile }) => !isFile || admitted.has(path)).map(({ path }) => path);
+  const diagnostic = admitted.size < explicitFiles.length ? searchDiagnostic(listed) : undefined;
+  return {
+    searchPaths: paths
+      .filter(({ path, isFile }) => !isFile || admitted.has(path))
+      .map(({ path }) => path),
+    warnings: diagnostic ? [diagnostic] : [],
+  };
 }
