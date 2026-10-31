@@ -71,6 +71,8 @@ Edit operations:
 | `prepend` / `append` | Insert lines at the start or end of the file. |
 | `copy` / `move` | Copy or move a line range to before or after another anchor. |
 
+Ranges in one call must not overlap, and each gap between lines takes at most one insertion, copy and move destinations included. An insertion at the start of a replaced or deleted range goes before it.
+
 The model sees each tool's full parameter schema; the definitions live in the tool files under [`src/pi/`](src/pi/).
 
 Range operations verify the cited `anchor` and `end`, plus the destination for copy/move. Interior lines have no individual anchor check. Changes elsewhere before the call do not invalidate unchanged anchors; publication rechecks the bytes read while applying the call and rejects a detected change.

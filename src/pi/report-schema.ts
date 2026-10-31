@@ -301,7 +301,10 @@ export const ERROR_DEFINITIONS = {
   },
   OVERLAPPING_EDITS: {
     facts: facts([], MATCHED),
-    next: { default: "Merge overlapping edits into one edit per range." },
+    next: {
+      default:
+        "Merge overlapping edits into one edit per range, and insertions at one position into one insertion.",
+    },
   },
   NO_MATCH: {
     facts: facts(["rule"]),

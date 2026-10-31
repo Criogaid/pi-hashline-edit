@@ -21,8 +21,9 @@
  * deferred until anchors are corrected.
  *
  * Other strict semantics:
- * - Operation ranges must not overlap. Insertions at one position, or at the start of a
- *   replaced or deleted range, apply in batch order before that range.
+ * - Operation ranges must not overlap, and each position takes at most one insertion,
+ *   copy/move destinations included. An insertion at the start of a replaced or deleted
+ *   range applies before that range.
  * - Byte-identical output is a success; the commit layer reports it as a no-op.
  *
  * @module pi-hashline-edit/core
@@ -302,19 +303,23 @@ export function applyEdits(
     return { ok: false, failure: { kind: "range", ...rangeError, checks: anchorChecks } };
   }
 
-  // A stable sort keeps batch order among insertions at one position.
   const sorted = [...ops].sort((a, b) => a.lo - b.lo || a.hi - b.hi);
   const conflict = findSortedRangeConflict(
     sorted.map((op) => [op.lo, op.hi]),
     true,
   );
   if (conflict !== undefined) {
+    const { lo, hi } = sorted[conflict];
+    const previous = sorted[conflict - 1];
+    const repeatedInsertion = lo === hi && previous.lo === lo && previous.hi === hi;
     return {
       ok: false,
       failure: {
         kind: "range",
         code: "OVERLAPPING_EDITS",
-        message: `Edits overlap near line ${sorted[conflict].lo + 1}.`,
+        message: repeatedInsertion
+          ? `Edits insert more than once at one position near line ${lo + 1}.`
+          : `Edits overlap near line ${lo + 1}.`,
         checks: anchorChecks,
       },
     };
