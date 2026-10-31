@@ -25,24 +25,17 @@
  */
 
 import {
-  type ExtensionToolContext,
   type Theme,
   type ToolDefinition,
   type ToolRenderResultOptions,
 } from "@earendil-works/pi-coding-agent";
-import type { AgentToolUpdateCallback } from "@earendil-works/pi-agent-core";
 import { Type, type Static } from "typebox";
 import { applyReplacements } from "../core/replace.ts";
 import { checkRegexArguments } from "../core/regex.ts";
 import { REPLACEMENTS_SCHEMA } from "../core/replace-schema.ts";
 import { runRegexReplacements } from "./replace-regex.ts";
 import { unwritableTextError } from "../core/text.ts";
-import {
-  ACTION_FUSION_GUIDELINES,
-  withThenRunDescription,
-  withThenRunSchema,
-  type ThenRunInput,
-} from "./action-fusion.ts";
+import type { ThenRunInput } from "./action-fusion.ts";
 import type { HashlineEditConfig } from "./config.ts";
 import {
   formatDiffCounts,
@@ -52,20 +45,13 @@ import {
   type DiffCounts,
 } from "./render.ts";
 import {
-  executeMutation,
+  mutationToolBase,
   runTextMutation,
   type ActionFusionExecutor,
   type MutationTarget,
-  type TextMutationDetails,
 } from "./mutation-runner.ts";
-import type { MutationResultDetails } from "./mutation-result.ts";
 import { defaultOutputBudgets, type OutputBudgetProvider } from "./budgets.ts";
-import {
-  argumentItems,
-  createArgumentPreparer,
-  type ReportArgumentIssue,
-} from "./argument-validation.ts";
-type ReplaceDetails = MutationResultDetails<TextMutationDetails>;
+import { argumentItems, type ReportArgumentIssue } from "./argument-validation.ts";
 type ReplaceRenderContext = Parameters<
   NonNullable<ToolDefinition<typeof replaceSchema>["renderCall"]>
 >[2];
@@ -118,19 +104,19 @@ export function makeReplaceTool(
   fusion?: ActionFusionExecutor,
   budgets: OutputBudgetProvider = defaultOutputBudgets,
 ) {
-  const parameters = withThenRunSchema(replaceSchema, "replace", fusion !== undefined);
   return {
-    name: "replace" as const,
-    label: "replace",
-    description: withThenRunDescription(
-      "Replace every match of one or more literal or JavaScript-regex rules in a file. Rules swap only their matched fragments in one call, without line anchors. Use edit instead for inserting, deleting, or rewriting whole lines. Overlapping matches or a rule with no match reject the whole call.",
-      fusion !== undefined,
-    ),
-    promptSnippet: "Replace matching text across a file",
-    promptGuidelines: [...(fusion ? ACTION_FUSION_GUIDELINES : [])],
-    parameters,
-    prepareArguments: createArgumentPreparer("replace", parameters, checkReplaceArguments, budgets),
-    renderShell: "default" as const,
+    ...mutationToolBase({
+      tool: "replace",
+      cwd,
+      fusion,
+      budgets,
+      schema: replaceSchema,
+      description:
+        "Replace every match of one or more literal or JavaScript-regex rules in a file. Rules swap only their matched fragments in one call, without line anchors. Use edit instead for inserting, deleting, or rewriting whole lines. Overlapping matches or a rule with no match reject the whole call.",
+      promptSnippet: "Replace matching text across a file",
+      check: checkReplaceArguments,
+      run: (params, target) => runReplace(target, params.replacements, config),
+    }),
 
     renderCall(args: ReplaceParams, theme: Theme, context: ReplaceRenderContext) {
       return renderMutationCall(args, theme, context, replaceHeader);
@@ -150,25 +136,6 @@ export function makeReplaceTool(
         "Replacing…",
         replaceHeader,
         "replace",
-      );
-    },
-
-    async execute(
-      toolCallId: string,
-      params: ReplaceParams,
-      signal: AbortSignal | undefined,
-      onUpdate: AgentToolUpdateCallback<ReplaceDetails> | undefined,
-      ctx: ExtensionToolContext,
-    ) {
-      return executeMutation<ReplaceParams, TextMutationDetails, "replace">(
-        {
-          tool: "replace",
-          cwd,
-          fusion,
-          budgets,
-          run: (mutationParams, target) => runReplace(target, mutationParams.replacements, config),
-        },
-        { toolCallId, params, signal, onUpdate, ctx },
       );
     },
   };

@@ -1,6 +1,11 @@
 /**
  * Shared execution pipeline for the file mutation tools (edit, replace, write).
  *
+ * `mutationToolBase` assembles the definition every mutation tool shares:
+ * then_run's field, description, and guideline when Action Fusion is on,
+ * argument preparation, and execution. Each tool supplies its schema, text,
+ * semantic checks, and `run`, and adds its own renderers.
+ *
  * Owns the sequencing every mutation tool must keep identical once Pi has
  * prepared and validated the arguments: separating then_run, path resolution,
  * the shared file mutation queue, and the hand-off to Action Fusion or plain
@@ -20,7 +25,15 @@
 
 import { withFileMutationQueue, type ExtensionToolContext } from "@earendil-works/pi-coding-agent";
 import type { AgentToolResult, AgentToolUpdateCallback } from "@earendil-works/pi-agent-core";
-import type { createActionFusionExecutor, ThenRunInput } from "./action-fusion.ts";
+import type { Static, TObject, TProperties } from "typebox";
+import {
+  ACTION_FUSION_GUIDELINES,
+  withThenRunDescription,
+  withThenRunSchema,
+  type createActionFusionExecutor,
+  type ThenRunInput,
+} from "./action-fusion.ts";
+import { createArgumentPreparer, type CheckArguments } from "./argument-validation.ts";
 import type { MutationToolName } from "./report-schema.ts";
 import { commitFreshness, commitReplacement, readEditableSnapshot } from "./file-commit.ts";
 import {
@@ -40,7 +53,7 @@ import type { OutputBudgetProvider, OutputBudgets } from "./budgets.ts";
 export type ActionFusionExecutor = ReturnType<typeof createActionFusionExecutor>;
 
 /** Result details shared by the read-modify-write tools. */
-export type TextMutationDetails = ReturnType<typeof generateMutationDetails>;
+type TextMutationDetails = ReturnType<typeof generateMutationDetails>;
 
 /** The file a mutation targets, resolved once per call. */
 export interface MutationTarget {
@@ -75,7 +88,7 @@ interface MutationCall<TParams, TDetails> {
 }
 
 /** Queue and publish one validated mutation call, then run its then_run command when fused. */
-export async function executeMutation<
+async function executeMutation<
   TParams extends { path: string },
   TDetails extends object,
   TTool extends MutationToolName,
@@ -117,6 +130,58 @@ export async function executeMutation<
       onUpdate,
     });
   });
+}
+
+/** A mutation tool's own parameters; executeMutation separates then_run. */
+type MutationParams<P extends TProperties> = Static<TObject<P>> & { readonly path: string };
+
+/** What a mutation tool supplies to the shared definition; renderers stay with the tool. */
+interface MutationToolBaseSpec<P extends TProperties, TDetails, TTool extends MutationToolName>
+  extends MutationToolSpec<MutationParams<P>, TDetails, TTool> {
+  /** Parameters without then_run, which Action Fusion adds. */
+  readonly schema: TObject<P>;
+  readonly description: string;
+  readonly promptSnippet: string;
+  readonly promptGuidelines?: readonly string[];
+  /** Semantic argument checks the schema cannot express. */
+  readonly check?: CheckArguments;
+}
+
+/**
+ * The definition every mutation tool shares. Action Fusion adds then_run to the
+ * schema, description, and guidelines only when it is on; arguments are prepared
+ * against the parameters Pi registers; execution runs through executeMutation.
+ */
+export function mutationToolBase<
+  P extends TProperties,
+  TDetails extends object,
+  TTool extends MutationToolName,
+>(spec: MutationToolBaseSpec<P, TDetails, TTool>) {
+  const { tool, schema, fusion, budgets } = spec;
+  const actionFusion = fusion !== undefined;
+  const parameters = withThenRunSchema(schema, tool, actionFusion);
+  return {
+    name: tool,
+    label: tool,
+    description: withThenRunDescription(spec.description, actionFusion),
+    promptSnippet: spec.promptSnippet,
+    promptGuidelines: [
+      ...(spec.promptGuidelines ?? []),
+      ...(actionFusion ? ACTION_FUSION_GUIDELINES : []),
+    ],
+    parameters,
+    prepareArguments: createArgumentPreparer(tool, parameters, spec.check, budgets),
+    renderShell: "default" as const,
+    execute(
+      toolCallId: string,
+      params: MutationParams<P> & { then_run?: ThenRunInput },
+      signal: AbortSignal | undefined,
+      onUpdate: AgentToolUpdateCallback<MutationResultDetails<TDetails>> | undefined,
+      ctx: ExtensionToolContext,
+    ) {
+      return executeMutation(spec, { toolCallId, params, signal, onUpdate, ctx });
+    },
+  };
 }
 
 /** A whole-file text transformation produced from one snapshot. */

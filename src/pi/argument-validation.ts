@@ -15,7 +15,7 @@ import type { ArgumentIssue, ReportTool } from "./report-schema.ts";
 
 /** Report one semantic issue: what is wrong (a fact), and how to correct it when the fact alone does not say. */
 export type ReportArgumentIssue = (field: string, reason: string, fix?: string) => void;
-type CheckArguments = (args: unknown, report: ReportArgumentIssue) => void;
+export type CheckArguments = (args: unknown, report: ReportArgumentIssue) => void;
 
 /** Inspect arrays and the singleton objects Pi may coerce, without changing input. */
 export function argumentItems(value: unknown): readonly unknown[] {

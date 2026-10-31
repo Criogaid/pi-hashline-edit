@@ -16,19 +16,12 @@
  */
 
 import {
-  type ExtensionToolContext,
   type Theme,
   type ToolDefinition,
   type ToolRenderResultOptions,
 } from "@earendil-works/pi-coding-agent";
-import type { AgentToolUpdateCallback } from "@earendil-works/pi-agent-core";
 import { Type, type Static, type TLiteral } from "typebox";
-import {
-  ACTION_FUSION_GUIDELINES,
-  withThenRunDescription,
-  withThenRunSchema,
-  type ThenRunInput,
-} from "./action-fusion.ts";
+import type { ThenRunInput } from "./action-fusion.ts";
 import { applyEdits } from "../core/apply.ts";
 import { unwritableTextError } from "../core/text.ts";
 import { EDIT_ANCHOR_FIELDS, type Anchor, type Edit } from "../core/types.ts";
@@ -44,19 +37,12 @@ import {
 import { describeEditFailure } from "./failure-context.ts";
 import { defaultOutputBudgets, type OutputBudgetProvider } from "./budgets.ts";
 import {
-  executeMutation,
+  mutationToolBase,
   runTextMutation,
   type ActionFusionExecutor,
   type MutationTarget,
-  type TextMutationDetails,
 } from "./mutation-runner.ts";
-import type { MutationResultDetails } from "./mutation-result.ts";
-import {
-  argumentItems,
-  createArgumentPreparer,
-  type ReportArgumentIssue,
-} from "./argument-validation.ts";
-type EditDetails = MutationResultDetails<TextMutationDetails>;
+import { argumentItems, type ReportArgumentIssue } from "./argument-validation.ts";
 type EditRenderContext = Parameters<NonNullable<ToolDefinition<EditSchema>["renderCall"]>>[2];
 
 /** Split a validated anchor token; prepareArguments and the schema already checked it. */
@@ -347,31 +333,27 @@ export function makeEditOverride(
   // Schema, verification, and recovery use the registered configuration.
   const { hashLen, shiftRadius } = config;
   const schema = buildEditSchema(hashLen);
-  const parameters = withThenRunSchema(schema, "edit", fusion !== undefined);
 
   return {
-    name: "edit" as const,
-    label: "edit",
-    description: withThenRunDescription(
-      "Edit whole lines using LINE#HASH anchors checked against the current file. Use replace instead when the same change repeats in several places, or when only a fragment of a long line changes.",
-      fusion !== undefined,
-    ),
-    promptSnippet: "Edit file lines using verified anchors",
-    promptGuidelines: [
-      "Batch all edits to one file into a single edit call.",
-      "After edit or replace, get fresh anchors with read or grep before citing any line it changed. If it added or removed lines, also refresh anchors below the earliest affected line; anchors above it remain valid. If the affected positions are unknown, read or grep the lines you intend to cite.",
-      ...(fusion ? ACTION_FUSION_GUIDELINES : []),
-    ],
-    parameters,
+    ...mutationToolBase({
+      tool: "edit",
+      cwd,
+      fusion,
+      budgets,
+      schema,
+      description:
+        "Edit whole lines using LINE#HASH anchors checked against the current file. Use replace instead when the same change repeats in several places, or when only a fragment of a long line changes.",
+      promptSnippet: "Edit file lines using verified anchors",
+      promptGuidelines: [
+        "Batch all edits to one file into a single edit call.",
+        "After edit or replace, get fresh anchors with read or grep before citing any line it changed. If it added or removed lines, also refresh anchors below the earliest affected line; anchors above it remain valid. If the affected positions are unknown, read or grep the lines you intend to cite.",
+      ],
+      check: (args, report) =>
+        checkEditArguments(args, hashLen, schema.properties.edits.items, report),
+      run: (params, target) => runEdit(target, params.edits, hashLen, shiftRadius),
+    }),
     // Providers that support it bound the batch by the schema while sampling.
     constrainedSampling: { type: "json_schema", strict: "prefer" } as const,
-    prepareArguments: createArgumentPreparer(
-      "edit",
-      parameters,
-      (args, report) => checkEditArguments(args, hashLen, schema.properties.edits.items, report),
-      budgets,
-    ),
-    renderShell: "default" as const,
 
     renderCall(args: EditParams, theme: Theme, context: EditRenderContext) {
       return renderMutationCall(args, theme, context, editHeader);
@@ -384,26 +366,6 @@ export function makeEditOverride(
       context: EditRenderContext,
     ) {
       return renderMutationResult(result, options, theme, context, "Editing…", editHeader, "edit");
-    },
-
-    async execute(
-      toolCallId: string,
-      params: EditParams,
-      signal: AbortSignal | undefined,
-      onUpdate: AgentToolUpdateCallback<EditDetails> | undefined,
-      ctx: ExtensionToolContext,
-    ) {
-      return executeMutation<EditParams, TextMutationDetails, "edit">(
-        {
-          tool: "edit",
-          cwd,
-          fusion,
-          budgets,
-          run: (mutationParams, target) =>
-            runEdit(target, mutationParams.edits, hashLen, shiftRadius),
-        },
-        { toolCallId, params, signal, onUpdate, ctx },
-      );
     },
   };
 }
