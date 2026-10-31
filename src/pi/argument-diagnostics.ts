@@ -28,7 +28,7 @@ interface Projection {
   /** Fields that belong to the projected shapes; a declared field belongs even when absent. */
   readonly applicable: Set<string>;
   /** Each object path's declared shape. */
-  readonly selected: Map<string, TObject>;
+  readonly objects: Map<string, TObject>;
 }
 
 function literalValues(schema: TSchema): readonly TLiteralValue[] | undefined {
@@ -81,7 +81,7 @@ function projectValueSchema(
   // An issue on a whole object, such as a choice between its fields, explains
   // none of the object's own constraints; its fields keep their diagnostics.
   if (IsObject(schema) && typeof value === "object" && value !== null) {
-    projection.selected.set(path, schema);
+    projection.objects.set(path, schema);
     const properties = Object.fromEntries(
       Object.entries(schema.properties).map(([key, child]) => {
         const field = propertyPath(path, key);
@@ -221,14 +221,14 @@ function combineIssues(issues: readonly ArgumentIssue[]): readonly ArgumentIssue
 /**
  * One issue per native error. Reasons that do not say how to correct the value
  * carry a fix derived from the declared schema: a missing field and a pattern
- * mismatch explain the field, and a field that is not allowed explains its
- * selected shape.
+ * mismatch explain the field, and a field that is not allowed lists its
+ * object's declared fields.
  */
 function aggregateErrors(
   errors: readonly TLocalizedValidationError[],
   parameters: TObject,
   prepared: unknown,
-  selected: ReadonlyMap<string, TObject>,
+  objects: ReadonlyMap<string, TObject>,
 ): readonly ArgumentIssue[] {
   const issues: ArgumentIssue[] = [];
   const add = (field: string, reason: string, fix?: string) =>
@@ -257,7 +257,7 @@ function aggregateErrors(
         break;
       }
       case "additionalProperties": {
-        const shape = selected.get(valuePath(error.instancePath, prepared));
+        const shape = objects.get(valuePath(error.instancePath, prepared));
         const fix = shape && shapeExplanation(shape);
         for (const key of error.params.additionalProperties)
           add(fieldPath(error.instancePath, prepared, key), "is not allowed", fix);
@@ -311,7 +311,7 @@ export function diagnoseArguments(
   const projection: Projection = {
     explained: new Set(semanticIssues.map((issue) => issue.field)),
     applicable: new Set<string>(),
-    selected: new Map(),
+    objects: new Map(),
   };
   const projected = projectSchema(parameters, prepared, "", projection);
   const retained = combineIssues(
@@ -347,7 +347,7 @@ export function diagnoseArguments(
     issues: combineIssues([
       ...retained,
       ...batches.flatMap((batch) =>
-        aggregateErrors(batch.errors, parameters, prepared, projection.selected),
+        aggregateErrors(batch.errors, parameters, prepared, projection.objects),
       ),
     ]),
     limited: batches.some((batch) => batch.limited),
