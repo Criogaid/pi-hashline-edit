@@ -580,6 +580,59 @@ test("edit fields contain semantic errors → checks only fields accepted by the
   }
 });
 
+test("copy/move destination count and field errors coexist → retains object and field diagnostics", async (t) => {
+  const cwd = await mkdtemp(join(tmpdir(), "hashline-object-diagnostics-"));
+  t.after(() => rm(cwd, { recursive: true, force: true }));
+  const tool = makeEditOverride(cwd, DEFAULT_CONFIG);
+  for (const scenario of [
+    {
+      edit: { action: "copy", anchor: "abc" },
+      field: "anchor",
+      reason: /must match pattern/,
+      fix: /LINE#HASH/,
+    },
+    {
+      edit: { action: "copy", anchor: `1#${anchorHash}`, extra: 1 },
+      field: "extra",
+      reason: /^is not allowed$/,
+      fix: /^Accepted fields:/,
+    },
+    {
+      edit: {
+        action: "move",
+        anchor: `1#${anchorHash}`,
+        end: "x",
+        before: `3#${anchorHash}`,
+        after: `4#${anchorHash}`,
+      },
+      field: "end",
+      reason: /must match pattern/,
+      fix: /LINE#HASH/,
+    },
+  ]) {
+    await t.test(`${scenario.edit.action}/${scenario.field} → retains both issues`, async () => {
+      await assert.rejects(
+        callTool(tool, { path: "missing.txt", edits: [scenario.edit] }),
+        (error: unknown) => {
+          const { issues } = argumentError(error);
+          assert.deepEqual(
+            issues.map((issue) => issue.field).sort(),
+            ["edits[0]", `edits[0].${scenario.field}`].sort(),
+          );
+          const item = issues.find((issue) => issue.field === "edits[0]");
+          assert.equal(item?.reason, "expected exactly one of: before, after");
+          assert.equal(item?.fix, undefined);
+          const field = issues.find((issue) => issue.field === `edits[0].${scenario.field}`);
+          assert.ok(field);
+          assert.match(field.reason, scenario.reason);
+          assert.match(field.fix ?? "", scenario.fix);
+          return true;
+        },
+      );
+    });
+  }
+});
+
 test("copy/move has zero or two destinations → reports one exactly-one issue without a fix", async (t) => {
   const tool = makeEditOverride(process.cwd(), DEFAULT_CONFIG);
   for (const action of ["copy", "move"]) {
