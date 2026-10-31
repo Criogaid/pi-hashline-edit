@@ -71,7 +71,6 @@ test("upstream regex witnesses × LF/CRLF/malformed bytes → sound candidates, 
           inputs.push({ bytes, filePath });
         }
         const candidates = new Map<string, readonly number[] | undefined>();
-        const warnings: string[] = [];
         const result = await searchFiles({
           backend: {
             runRgPaths: async () => assert.fail("unexpected file fallback"),
@@ -92,7 +91,6 @@ test("upstream regex witnesses × LF/CRLF/malformed bytes → sound candidates, 
           limit: 1000,
           timeoutMs,
           signal: AbortSignal.timeout(timeoutMs),
-          warnings,
         });
         const expected = inputs.map(({ bytes, filePath }) => {
           const native = searchText({ source: bytes.toString("utf8"), query, limit: 1000 });
@@ -112,7 +110,7 @@ test("upstream regex witnesses × LF/CRLF/malformed bytes → sound candidates, 
             }
           return { filePath, rows: native.lines };
         });
-        assert.deepEqual(warnings, []);
+        assert.deepEqual(result.warnings, []);
         assert.deepEqual(sorted(result.files), sorted(expected));
       },
     );
@@ -150,7 +148,6 @@ test("real rg AND/OR file prefilter → excludes incomplete branches before JS v
   assert.equal(listing.code, 0);
   assert.equal(listing.stderr, "");
   assert.deepEqual(candidates.sort(), paths.slice(0, 2).sort());
-  const warnings: string[] = [];
   const result = await searchFiles({
     backend: { runRgPaths, runRgLines },
     rgPath,
@@ -158,9 +155,8 @@ test("real rg AND/OR file prefilter → excludes incomplete branches before JS v
     query,
     limit: 100,
     timeoutMs,
-    warnings,
   });
-  assert.deepEqual(warnings, []);
+  assert.deepEqual(result.warnings, []);
   assert.deepEqual(
     sorted(result.files),
     sorted(
@@ -181,7 +177,6 @@ test("oversized line translation → file prefilter fallback preserves JS result
   const path = join(directory, "long.txt");
   await writeFile(path, pattern);
   let filePasses = 0;
-  const warnings: string[] = [];
   const result = await searchFiles({
     backend: {
       runRgPaths: (...args) => {
@@ -195,10 +190,9 @@ test("oversized line translation → file prefilter fallback preserves JS result
     query,
     limit: 10,
     timeoutMs,
-    warnings,
   });
   assert.ok(filePasses > 0);
-  assert.deepEqual(warnings, []);
+  assert.deepEqual(result.warnings, []);
   assert.deepEqual(
     sorted(result.files),
     sorted([{ filePath: path, rows: searchText({ source: pattern, query, limit: 10 }).lines }]),

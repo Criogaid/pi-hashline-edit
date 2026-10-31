@@ -183,7 +183,6 @@ test("Cartesian adversarial bytes × syntax × flags × assertion positions → 
         const translated = lineCandidatePatterns(query);
         assert.ok(translated, JSON.stringify(query));
         const candidates = new Map<string, readonly number[] | undefined>();
-        const warnings: string[] = [];
         const actual = await searchFiles({
           backend: {
             async runRgPaths() {
@@ -206,7 +205,6 @@ test("Cartesian adversarial bytes × syntax × flags × assertion positions → 
           limit,
           timeoutMs: processTimeoutMs,
           signal: AbortSignal.timeout(processTimeoutMs),
-          warnings,
         });
         const expected = inputs.map(({ filePath, bytes }) => {
           const result = searchText({ source: bytes.toString("utf8"), query, limit });
@@ -218,7 +216,7 @@ test("Cartesian adversarial bytes × syntax × flags × assertion positions → 
           }
           return { filePath, rows: result.lines };
         });
-        assert.deepEqual(warnings, [], JSON.stringify(query));
+        assert.deepEqual(actual.warnings, [], JSON.stringify(query));
         assert.deepEqual(sortedRows(actual.files), sortedRows(expected), JSON.stringify(query));
         assert.equal(actual.matchLimitReached, false);
         nativeRows += expected.reduce((sum, file) => sum + file.rows.length, 0);

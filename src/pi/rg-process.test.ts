@@ -3,22 +3,26 @@ import assert from "node:assert/strict";
 import childProcess from "node:child_process";
 import { syncBuiltinESMExports } from "node:module";
 import { Readable } from "node:stream";
-import { recordSearchDiagnostics, runRgLines } from "./rg-process.ts";
+import { searchDiagnostic, runRgLines } from "./rg-process.ts";
 import { fileURLToPath } from "node:url";
 import { HashlineError } from "../core/errors.ts";
 
 test("grep search exit status → accepts no matches and preserves failure diagnostics", () => {
-  for (const code of [0, 1]) {
-    const warnings: string[] = [];
-    recordSearchDiagnostics({ code, stderr: "", stopped: false }, warnings);
-    assert.deepEqual(warnings, []);
+  for (const [code, stopped, stderr, expected] of [
+    [0, false, "", undefined],
+    [1, false, "", undefined],
+    [2, false, " \n", "ripgrep exited with code 2."],
+    [null, false, "", "ripgrep exited with code null."],
+    [null, true, "", undefined],
+    [2, false, "  regex parse error\n", "regex parse error"],
+    [null, true, "  regex parse error\n", "regex parse error"],
+  ] as const) {
+    assert.equal(
+      searchDiagnostic({ code, stderr, stopped }),
+      expected,
+      JSON.stringify({ code, stderr, stopped }),
+    );
   }
-  const warnings: string[] = [];
-  recordSearchDiagnostics({ code: 2, stderr: "  regex parse error\n", stopped: false }, warnings);
-  recordSearchDiagnostics({ code: null, stderr: "", stopped: false }, warnings);
-  assert.equal(warnings.length, 2);
-  assert.equal(warnings[0], "regex parse error");
-  assert.match(warnings[1], /null/);
 });
 
 const listingFixture = fileURLToPath(
