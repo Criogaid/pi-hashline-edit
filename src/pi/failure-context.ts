@@ -144,7 +144,7 @@ function failureEntry(
   const rowTooLarge = `row exceeds ${formatByteSize(budget.fieldBytes)}`;
   const entry: { -readonly [K in keyof AnchorFailureFact]: AnchorFailureFact[K] } = {
     field: `edits[${f.opIndex}].${f.which}`,
-    op: f.op,
+    action: f.op,
     cited: snapshot.anchors.reference(f.cited.line, f.cited.hash),
     result: RESULT[f.recovery.kind],
   };

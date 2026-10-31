@@ -22,7 +22,7 @@ import {
   type ToolRenderResultOptions,
 } from "@earendil-works/pi-coding-agent";
 import type { AgentToolUpdateCallback } from "@earendil-works/pi-agent-core";
-import { Type, type Static } from "typebox";
+import { Type, type Static, type TLiteral } from "typebox";
 import {
   ACTION_FUSION_GUIDELINES,
   withThenRunDescription,
@@ -36,6 +36,7 @@ import type { HashlineEditConfig } from "./config.ts";
 import { anchorPattern, createAnchorFormatter, parseAnchorToken } from "./anchor-format.ts";
 import {
   formatDiffCounts,
+  formatHeaderPath,
   renderMutationCall,
   renderMutationResult,
   type DiffCounts,
@@ -65,90 +66,103 @@ function parseAnchor(value: string | undefined) {
   return value === undefined ? undefined : parseAnchorToken(value)!;
 }
 
-/** Edit parameters; anchors must carry exactly `hashLen` hash characters. */
+/** Operation item fields besides `action`. */
+type EditItemField = (typeof EDIT_ANCHOR_FIELDS)[number] | "body";
+
+/** What one op does and which item fields it takes; it takes no others. */
+interface EditOpSpec {
+  readonly meaning: string;
+  readonly required: readonly EditItemField[];
+  readonly optional?: readonly EditItemField[];
+  /** Destinations, of which exactly one is required. */
+  readonly destination?: readonly EditItemField[];
+}
+
+const TRANSFER_DESTINATION = ["before", "after"] as const;
+
+/** Every op and its fields; the schema states them, and argument checks enforce them. */
+const EDIT_OPS = {
+  replace: {
+    meaning: "Replace the cited line(s) with body.",
+    required: ["anchor", "body"],
+    optional: ["end"],
+  },
+  delete: { meaning: "Delete the cited line(s).", required: ["anchor"], optional: ["end"] },
+  insert_after: {
+    meaning: "Insert body after the anchor line, which is kept; do not repeat it in body.",
+    required: ["anchor", "body"],
+  },
+  insert_before: {
+    meaning: "Insert body before the anchor line, which is kept; do not repeat it in body.",
+    required: ["anchor", "body"],
+  },
+  copy: {
+    meaning:
+      "Copy the cited line(s), text and indentation unchanged, before or after another original line; use a body edit when either changes.",
+    required: ["anchor"],
+    optional: ["end"],
+    destination: TRANSFER_DESTINATION,
+  },
+  move: {
+    meaning:
+      "Move the cited line(s), text and indentation unchanged, before or after another original line, removing the source; use a body edit when either changes.",
+    required: ["anchor"],
+    optional: ["end"],
+    destination: TRANSFER_DESTINATION,
+  },
+  append: { meaning: "Add body at the end of the file.", required: ["body"] },
+  prepend: { meaning: "Add body at the start of the file.", required: ["body"] },
+} as const satisfies Record<string, EditOpSpec>;
+type EditOpName = keyof typeof EDIT_OPS;
+const EDIT_OP_NAMES = Object.keys(EDIT_OPS) as EditOpName[];
+
+/** Operations in one call; constrained sampling ends a runaway batch at this bound. */
+const MAX_EDIT_OPS = 64;
+
+/** An op's meaning followed by the fields it takes. */
+function describeEditOp({ meaning, required, optional = [], destination }: EditOpSpec): string {
+  const takes = [
+    ...required,
+    ...(destination ? [`exactly one of ${destination.join(" or ")}`] : []),
+  ].join(" and ");
+  return `${meaning} Takes ${takes}${optional.length ? `; ${optional.join(", ")} is optional` : ""}.`;
+}
+
+/**
+ * Edit parameters; anchors must carry exactly `hashLen` hash characters. Each
+ * operation is one flat object, so providers can constrain sampling to the
+ * schema; argument checks enforce which fields each op takes.
+ */
 function buildEditSchema(hashLen: number) {
   const pattern = anchorPattern(hashLen);
-  const requiredAnchor = Type.String({
-    pattern,
-    description: "LINE#HASH of the target line.",
-  });
-  const optionalEnd = Type.Optional(
-    Type.String({
-      pattern,
-      description: "Inclusive last LINE#HASH of the range; omit for one line.",
-    }),
-  );
-  const bodyLines = Type.Array(Type.String({ pattern: "^[^\\r\\n]*$" }), {
-    minItems: 1,
-    description: 'New lines, one per element, without CR/LF. At least one; [""] is one blank line.',
-  });
-  const transferFields = {
-    op: Type.Union([Type.Literal("copy"), Type.Literal("move")], {
-      description:
-        "Copy, or move (also removes the source), whole lines whose text and indentation stay unchanged; use a body edit when either changes.",
-    }),
-    anchor: requiredAnchor,
-    end: optionalEnd,
-  };
-  const editOpSchema = Type.Union([
-    Type.Object(
-      {
-        op: Type.Literal("replace", { description: "Replace the cited line(s) with `body`." }),
-        anchor: requiredAnchor,
-        end: optionalEnd,
-        body: bodyLines,
-      },
-      { additionalProperties: false },
-    ),
-    Type.Object(
-      {
-        op: Type.Literal("delete", { description: "Delete the cited line(s)." }),
-        anchor: requiredAnchor,
-        end: optionalEnd,
-      },
-      { additionalProperties: false },
-    ),
-    Type.Object(
-      {
-        op: Type.Union([Type.Literal("insert_after"), Type.Literal("insert_before")], {
+  const anchorField = (description: string) => Type.Optional(Type.String({ pattern, description }));
+  const editOpSchema = Type.Object(
+    {
+      // Constrained sampling and some gateways emit keys alphabetically; `action`
+      // sorts first, so the operation is chosen before the fields it governs.
+      // TypeBox infers a union's static type only from a tuple.
+      action: Type.Union(
+        EDIT_OP_NAMES.map((op) =>
+          Type.Literal(op, { description: describeEditOp(EDIT_OPS[op]) }),
+        ) as [TLiteral<EditOpName>, ...TLiteral<EditOpName>[]],
+      ),
+      anchor: anchorField("LINE#HASH of the target line."),
+      end: anchorField("Inclusive last LINE#HASH of the range; omit for one line."),
+      body: Type.Optional(
+        Type.Array(Type.String({ pattern: "^[^\\r\\n]*$" }), {
+          minItems: 1,
           description:
-            "Insert body beside the anchor line, which is kept; do not repeat it in body.",
+            'New lines, one per element, without CR/LF. At least one; [""] is one blank line.',
         }),
-        anchor: requiredAnchor,
-        body: bodyLines,
-      },
-      { additionalProperties: false },
-    ),
-    Type.Object(
-      {
-        ...transferFields,
-        before: Type.String({
-          pattern,
-          description: "Insert captured lines before this original line.",
-        }),
-      },
-      { additionalProperties: false },
-    ),
-    Type.Object(
-      {
-        ...transferFields,
-        after: Type.String({
-          pattern,
-          description: "Insert captured lines after this original line.",
-        }),
-      },
-      { additionalProperties: false },
-    ),
-    Type.Object(
-      {
-        op: Type.Union([Type.Literal("append"), Type.Literal("prepend")], {
-          description: "Add body at the end or start of the file.",
-        }),
-        body: bodyLines,
-      },
-      { additionalProperties: false },
-    ),
-  ]);
+      ),
+      before: anchorField("Insert captured lines before this original line."),
+      after: anchorField("Insert captured lines after this original line."),
+    },
+    {
+      additionalProperties: false,
+      description: "One operation. Omit, or set to null, each field its action does not take.",
+    },
+  );
   return Type.Object(
     {
       path: Type.String({
@@ -157,6 +171,7 @@ function buildEditSchema(hashLen: number) {
       }),
       edits: Type.Array(editOpSchema, {
         minItems: 1,
+        maxItems: MAX_EDIT_OPS,
         description: `Operations on one snapshot; ranges must not overlap. Each gap between lines takes at most one insertion, copy/move destinations included; insert_after N and insert_before N+1 target the same gap, so put all new lines for a gap in one body. An insertion at the start of a replaced or deleted range goes before it. Anchors are LINE#HASH with exactly ${hashLen} hash characters. Copy each anchor from read, grep, or edit failure diagnostics; never write a hash you have not seen there. Shell output such as sed, head, or cat has no anchors, so read or grep those lines first.`,
       }),
     },
@@ -168,50 +183,86 @@ type EditSchema = ReturnType<typeof buildEditSchema>;
 type EditParams = Static<EditSchema> & { then_run?: ThenRunInput };
 
 type EditOpInput = Static<EditSchema>["edits"][number];
+type EditOpSchema = EditSchema["properties"]["edits"]["items"];
 
 /** How to correct edit argument issues; each reason states only what is wrong. */
 const EDIT_ISSUE_FIX = {
-  emptyReplace: 'Use {"op":"delete"} to remove lines, or supply the replacement lines.',
+  emptyReplace: 'Use {"action":"delete"} to remove lines, or supply the replacement lines.',
   emptyBody: 'Remove this edit or supply at least one line ([""] for a blank line).',
   unsafeLine: 'Copy a complete "LINE#HASH" token from the latest tool result.',
   hashLength: "Read or grep the file for current anchors.",
 } as const;
 
-/** Report semantic argument issues; malformed shapes remain Pi's schema responsibility. */
-function checkEditArguments(args: unknown, hashLen: number, report: ReportArgumentIssue): void {
-  const raw = (args as { edits?: unknown } | null)?.edits;
-  const edits = argumentItems(raw);
-  edits.forEach((op, index) => {
-    const body = (op as Record<string, unknown> | null)?.body;
-    if (Array.isArray(body)) {
+/**
+ * Report semantic argument issues: the fields each op takes, and field values
+ * the schema cannot judge. Malformed shapes remain Pi's schema responsibility;
+ * Pi has already removed null optional fields.
+ */
+function checkEditArguments(
+  args: unknown,
+  hashLen: number,
+  item: EditOpSchema,
+  report: ReportArgumentIssue,
+): void {
+  argumentItems((args as { edits?: unknown } | null)?.edits).forEach((value, index) => {
+    if (value === null || typeof value !== "object") return;
+    const edit = value as Record<string, unknown>;
+    // The schema reports an unknown action; which fields it takes is then unknown.
+    if (typeof edit.action !== "string" || !Object.hasOwn(EDIT_OPS, edit.action)) return;
+    const name = edit.action as EditOpName;
+    const spec: EditOpSpec = EDIT_OPS[name];
+    const path = `edits[${index}]`;
+    const accepted = new Set([
+      ...spec.required,
+      ...(spec.optional ?? []),
+      ...(spec.destination ?? []),
+    ]);
+    for (const [field, declaration] of Object.entries(item.properties)) {
+      if (field === "action") continue;
+      const given = edit[field] !== undefined;
+      if (given && !accepted.has(field as EditItemField))
+        report(`${path}.${field}`, "is not allowed", `"${name}": ${describeEditOp(spec)}`);
+      else if (!given && spec.required.includes(field as EditItemField))
+        report(
+          `${path}.${field}`,
+          `is required for "${name}"`,
+          Reflect.get(declaration, "description"),
+        );
+    }
+    if (
+      spec.destination &&
+      spec.destination.filter((field) => edit[field] !== undefined).length !== 1
+    )
+      report(path, `expected exactly one of: ${spec.destination.join(", ")}`);
+
+    const body = edit.body;
+    if (accepted.has("body") && Array.isArray(body)) {
       if (body.length === 0) {
         report(
-          `edits[${index}].body`,
+          `${path}.body`,
           "is empty",
-          (op as Record<string, unknown>).op === "replace"
-            ? EDIT_ISSUE_FIX.emptyReplace
-            : EDIT_ISSUE_FIX.emptyBody,
+          name === "replace" ? EDIT_ISSUE_FIX.emptyReplace : EDIT_ISSUE_FIX.emptyBody,
         );
       }
       body.forEach((line, lineIndex) => {
         const unwritable = typeof line === "string" ? unwritableTextError(line) : undefined;
-        if (unwritable) report(`edits[${index}].body[${lineIndex}]`, unwritable.message);
+        if (unwritable) report(`${path}.body[${lineIndex}]`, unwritable.message);
       });
     }
     for (const field of EDIT_ANCHOR_FIELDS) {
-      const value = (op as Record<string, unknown> | null)?.[field];
-      if (typeof value !== "string") continue;
-      const token = parseAnchorToken(value);
+      const anchor = edit[field];
+      if (!accepted.has(field) || typeof anchor !== "string") continue;
+      const token = parseAnchorToken(anchor);
       if (token && !Number.isSafeInteger(token.line)) {
         report(
-          `edits[${index}].${field}`,
+          `${path}.${field}`,
           "line number exceeds the safe integer range",
           EDIT_ISSUE_FIX.unsafeLine,
         );
       }
       if (token && token.hash.length !== hashLen) {
         report(
-          `edits[${index}].${field}`,
+          `${path}.${field}`,
           `has ${token.hash.length} hash characters; hashLen is ${hashLen}`,
           EDIT_ISSUE_FIX.hashLength,
         );
@@ -220,32 +271,35 @@ function checkEditArguments(args: unknown, hashLen: number, report: ReportArgume
   });
 }
 
-/** Translate validated public operations into core edits, parsing numeric anchor positions. */
+/**
+ * Translate validated public operations into core edits, parsing numeric anchor
+ * positions. Argument checks guarantee each op carries exactly the fields it takes.
+ */
 function toCoreEdits(ops: readonly EditOpInput[]): Edit[] {
   return ops.map((op) => {
-    switch (op.op) {
+    switch (op.action) {
       case "replace":
         return {
           op: "replace",
-          anchor: parseAnchor(op.anchor),
+          anchor: parseAnchor(op.anchor!),
           end: parseAnchor(op.end),
-          body: op.body,
+          body: op.body!,
         };
       case "delete":
-        return { op: "delete", anchor: parseAnchor(op.anchor), end: parseAnchor(op.end) };
+        return { op: "delete", anchor: parseAnchor(op.anchor!), end: parseAnchor(op.end) };
       case "copy":
       case "move": {
-        const source = { op: op.op, anchor: parseAnchor(op.anchor), end: parseAnchor(op.end) };
-        return "before" in op
+        const source = { op: op.action, anchor: parseAnchor(op.anchor!), end: parseAnchor(op.end) };
+        return op.before !== undefined
           ? { ...source, before: parseAnchor(op.before) }
-          : { ...source, after: parseAnchor(op.after) };
+          : { ...source, after: parseAnchor(op.after!) };
       }
       case "insert_after":
       case "insert_before":
-        return { op: op.op, anchor: parseAnchor(op.anchor), body: op.body };
+        return { op: op.action, anchor: parseAnchor(op.anchor!), body: op.body! };
       case "append":
       case "prepend":
-        return { op: op.op, body: op.body };
+        return { op: op.action, body: op.body! };
     }
   });
 }
@@ -253,11 +307,11 @@ function toCoreEdits(ops: readonly EditOpInput[]): Edit[] {
 /** Call header with total/per-kind operation counts and the result's diff counts. */
 function editHeader(args: EditParams, theme: Theme, counts?: DiffCounts): string {
   let t = theme.fg("toolTitle", theme.bold("edit "));
-  t += theme.fg("accent", args.path);
+  t += formatHeaderPath(args.path, theme);
   const edits = Array.isArray(args.edits) ? args.edits : [];
   const n = edits.length;
   if (n) {
-    const opCounts: Record<EditOpInput["op"] | "unknown", number> = {
+    const opCounts: Record<EditOpName | "unknown", number> = {
       replace: 0,
       delete: 0,
       copy: 0,
@@ -270,7 +324,7 @@ function editHeader(args: EditParams, theme: Theme, counts?: DiffCounts): string
     };
     // Renderers receive partial arguments; fixed buckets keep one-pass counting O(1) in space.
     for (const edit of edits) {
-      const kind = edit?.op;
+      const kind = edit?.action;
       if (typeof kind === "string" && Object.hasOwn(opCounts, kind)) opCounts[kind]++;
       else opCounts.unknown++;
     }
@@ -292,7 +346,8 @@ export function makeEditOverride(
 ) {
   // Schema, verification, and recovery use the registered configuration.
   const { hashLen, shiftRadius } = config;
-  const parameters = withThenRunSchema(buildEditSchema(hashLen), "edit", fusion !== undefined);
+  const schema = buildEditSchema(hashLen);
+  const parameters = withThenRunSchema(schema, "edit", fusion !== undefined);
 
   return {
     name: "edit" as const,
@@ -308,10 +363,12 @@ export function makeEditOverride(
       ...(fusion ? ACTION_FUSION_GUIDELINES : []),
     ],
     parameters,
+    // Providers that support it bound the batch by the schema while sampling.
+    constrainedSampling: { type: "json_schema", strict: "prefer" } as const,
     prepareArguments: createArgumentPreparer(
       "edit",
       parameters,
-      (args, report) => checkEditArguments(args, hashLen, report),
+      (args, report) => checkEditArguments(args, hashLen, schema.properties.edits.items, report),
       budgets,
     ),
     renderShell: "default" as const,

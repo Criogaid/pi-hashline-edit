@@ -40,7 +40,7 @@ The model copies an anchor into `edit`:
 ```json
 {
   "path": "greet.ts",
-  "edits": [{ "op": "replace", "anchor": "2#GFYR", "body": ["  return \"hello, hashline\";"] }]
+  "edits": [{ "action": "replace", "anchor": "2#GFYR", "body": ["  return \"hello, hashline\";"] }]
 }
 ```
 
@@ -64,14 +64,16 @@ Grep matches the LF view with native JavaScript regexes. Without `multiline`, ea
 
 Edit operations:
 
-| `op` | Effect |
+| `action` | Effect |
 | --- | --- |
 | `replace` / `delete` | Replace or remove a line, or an inclusive range with `end`. |
 | `insert_before` / `insert_after` | Insert lines next to an anchor. |
 | `prepend` / `append` | Insert lines at the start or end of the file. |
 | `copy` / `move` | Copy or move a line range to before or after another anchor. |
 
-Ranges in one call must not overlap, and each gap between lines takes at most one insertion, copy and move destinations included. An insertion at the start of a replaced or deleted range goes before it.
+One call takes at most [64 operations](src/pi/edit-tool.ts). Ranges in one call must not overlap, and each gap between lines takes at most one insertion, copy and move destinations included. An insertion at the start of a replaced or deleted range goes before it.
+
+`edit` asks for constrained sampling (Pi's `constrainedSampling`, a strict JSON schema) where the provider supports it, so the model cannot exceed the operation limit or emit fields the schema does not declare. Each operation is then written with every field, `null` for those its `action` does not take.
 
 The model sees each tool's full parameter schema; the definitions live in the tool files under [`src/pi/`](src/pi/).
 

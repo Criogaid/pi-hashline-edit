@@ -121,7 +121,7 @@ export type ActionFusionProgress = Static<typeof ACTION_FUSION_PROGRESS_SCHEMA>;
 const ANCHOR_FAILURE_SCHEMA = Type.Object(
   {
     field: Type.String(),
-    op: Type.String(),
+    action: Type.String(),
     cited: Type.String(),
     result: Type.Union([
       Type.Literal("shifted"),

@@ -46,6 +46,7 @@ import {
 import type { HashlineEditConfig } from "./config.ts";
 import {
   formatDiffCounts,
+  formatHeaderPath,
   renderMutationCall,
   renderMutationResult,
   type DiffCounts,
@@ -85,7 +86,7 @@ type ReplaceParams = Static<typeof replaceSchema> & { then_run?: ThenRunInput };
 /** Call-header line: `replace path — N rules`, plus `+N -N` once diff counts are known. */
 function replaceHeader(args: ReplaceParams, theme: Theme, counts?: DiffCounts): string {
   let t = theme.fg("toolTitle", theme.bold("replace "));
-  t += theme.fg("accent", args.path);
+  t += formatHeaderPath(args.path, theme);
   const count = args.replacements?.length ?? 0;
   t += theme.fg("dim", ` — ${count} rule${count === 1 ? "" : "s"}`);
   if (counts && (counts.added || counts.removed)) t += formatDiffCounts(counts, theme);

@@ -11,7 +11,6 @@ import {
   type TLiteralValue,
   type TObject,
   type TSchema,
-  type TUnion,
 } from "typebox";
 import type { TLocalizedValidationError } from "typebox/error";
 import { Value } from "typebox/value";
@@ -22,22 +21,14 @@ interface ArgumentDiagnostics {
   readonly limited: boolean;
 }
 
-/** The declared object a value was projected with, and the tag field that selected it among branches. */
-interface SelectedShape {
-  readonly object: TObject;
-  readonly tag?: string;
-}
-
 /** State shared by one failure projection. */
 interface Projection {
   /** Fields a tool check already explained; their schema constraints are dropped. */
   readonly explained: ReadonlySet<string>;
-  /** Fields that belong to the selected shapes. */
+  /** Fields that belong to the projected shapes; a declared field belongs even when absent. */
   readonly applicable: Set<string>;
-  /** Branch constraints that native diagnostics would split across branches. */
-  readonly derived: ArgumentIssue[];
-  /** Each object path's selected shape; paths left to several branches are absent. */
-  readonly selected: Map<string, SelectedShape>;
+  /** Each object path's declared shape. */
+  readonly selected: Map<string, TObject>;
 }
 
 function literalValues(schema: TSchema): readonly TLiteralValue[] | undefined {
@@ -46,48 +37,6 @@ function literalValues(schema: TSchema): readonly TLiteralValue[] | undefined {
   const values = schema.anyOf.map(literalValues);
   const choices = values.filter((value) => value !== undefined);
   return choices.length === values.length ? choices.flat() : undefined;
-}
-
-function objectTag(schema: TUnion):
-  | {
-      readonly field: string;
-      readonly branches: readonly TObject[];
-      readonly choices: readonly TLiteralValue[];
-    }
-  | undefined {
-  const branches = schema.anyOf.filter(IsObject);
-  const first = branches[0];
-  if (!first || branches.length !== schema.anyOf.length) return undefined;
-  for (const field of Object.keys(first.properties)) {
-    if (!branches.every((branch) => branch.required?.includes(field))) continue;
-    const values = branches.map((branch) => literalValues(branch.properties[field]));
-    const choices = values.filter((value) => value !== undefined);
-    if (choices.length === branches.length) return { field, branches, choices: choices.flat() };
-  }
-  return undefined;
-}
-
-/**
- * Fields that alone tell tag-sharing branches apart: each branch requires one
- * field that every other branch forbids, and shares all others unchanged.
- * Shared fields are compared by schema identity, so branches must reuse one
- * instance per field; otherwise the general union projection applies.
- */
-function exclusiveFields(branches: readonly TObject[]): readonly string[] | undefined {
-  const fields = branches.map((branch) => {
-    const own = Object.keys(branch.properties).filter((field) =>
-      branches.some((other) => other.properties[field] !== branch.properties[field]),
-    );
-    return own.length === 1 &&
-      branch.required?.includes(own[0]) &&
-      ObjectOptions(branch).additionalProperties === false
-      ? own[0]
-      : undefined;
-  });
-  return fields.every((field): field is string => field !== undefined) &&
-    new Set(fields).size === fields.length
-    ? fields
-    : undefined;
 }
 
 function projectSchema(
@@ -112,78 +61,6 @@ function projectValueSchema(
       projection.applicable.add(path);
       return Type.Unknown({ enum: [...new Set(choices)] });
     }
-    const tag = objectTag(schema);
-    if (tag) {
-      if (typeof value !== "object" || value === null || Array.isArray(value))
-        return Type.Unknown({ type: "object" });
-      const select = (branch: TObject): TSchema => {
-        const projected = projectSchema(branch, value, path, projection);
-        projection.selected.set(path, { object: branch, tag: tag.field });
-        return projected;
-      };
-      const matches = tag.branches.filter((branch) =>
-        Value.Check(branch.properties[tag.field], Reflect.get(value, tag.field)),
-      );
-      if (matches.length === 1) return select(matches[0]);
-      if (matches.length === 0)
-        return Type.Object({ [tag.field]: Type.Unknown({ enum: [...new Set(tag.choices)] }) });
-      // Distinct property presence can disambiguate branches sharing a tag even
-      // when common fields are missing or field values are invalid. Only choose
-      // a branch here; its original constraints still supply the diagnostics.
-      const knownFields = new Set(matches.flatMap((branch) => Object.keys(branch.properties)));
-      const shapeValue = Object.fromEntries(
-        Object.entries(value).filter(([field]) => knownFields.has(field)),
-      );
-      const shapes = matches.filter((branch) =>
-        Value.Check(
-          Type.Object(
-            Object.fromEntries(
-              Object.entries(branch.properties).map(([field, child]) => [
-                field,
-                IsOptional(child) ||
-                matches.every((other) => Object.hasOwn(other.properties, field))
-                  ? Type.Optional(Type.Unknown())
-                  : Type.Unknown(),
-              ]),
-            ),
-            ObjectOptions(branch),
-          ),
-          shapeValue,
-        ),
-      );
-      if (shapes.length === 1) return select(shapes[0]);
-      // Branches set apart only by exclusive fields (for example before/after
-      // destinations) fail together when none or several are given. Validate their
-      // merged shape once and state the choice as one issue, instead of each branch
-      // requiring its own field and forbidding the others.
-      const alternatives = exclusiveFields(matches);
-      if (alternatives) {
-        const given = alternatives.filter((field) => Object.hasOwn(value, field));
-        if (given.length !== 1)
-          projection.derived.push({
-            field: path || "$",
-            reason: `expected exactly one of: ${alternatives.join(", ")}`,
-          });
-        const merged = Type.Object(
-          Object.fromEntries(
-            matches
-              .flatMap((branch) => Object.entries(branch.properties))
-              .map(([field, child]) => [
-                field,
-                alternatives.includes(field) ? Type.Optional(child) : child,
-              ]),
-          ),
-          ObjectOptions(matches[0]),
-        );
-        return select(merged);
-      }
-      // Otherwise project every applicable branch so semantic checks are retained, then
-      // let the native engine select a shape after already-explained constraints are removed.
-      const projected = matches.map((branch) => projectSchema(branch, value, path, projection));
-      projection.selected.delete(path);
-      const accepted = projected.filter((branch) => Value.Check(branch, value));
-      return accepted.length === 1 ? accepted[0] : Type.Union(projected);
-    }
     const typed = schema.anyOf.filter((branch) => "type" in branch);
     if (typed.length === schema.anyOf.length) {
       const matches = typed.filter(
@@ -203,12 +80,14 @@ function projectValueSchema(
   projection.applicable.add(path);
   if (projection.explained.has(path)) return Type.Unknown();
   if (IsObject(schema) && typeof value === "object" && value !== null) {
-    projection.selected.set(path, { object: schema });
+    projection.selected.set(path, schema);
     const properties = Object.fromEntries(
-      Object.entries(schema.properties).map(([key, child]) => [
-        key,
-        projectSchema(child, Reflect.get(value, key), propertyPath(path, key), projection),
-      ]),
+      Object.entries(schema.properties).map(([key, child]) => {
+        const field = propertyPath(path, key);
+        // A tool check may require a field the schema leaves optional.
+        if (!Object.hasOwn(value, key)) projection.applicable.add(field);
+        return [key, projectSchema(child, Reflect.get(value, key), field, projection)];
+      }),
     );
     return Type.Object(properties, ObjectOptions(schema));
   }
@@ -316,11 +195,9 @@ function fieldExplanation(schema: TSchema, parts: readonly string[]): string | u
   return choices || explanations.size === 1 ? [...explanations].join(" ") : undefined;
 }
 
-/** Why a field is not allowed: the fields the selected shape declares, after the meaning of the tag that chose it. */
-function shapeExplanation({ object, tag }: SelectedShape): string {
-  const fields = `Accepted fields: ${Object.keys(object.properties).join(", ")}.`;
-  const choice = tag === undefined ? undefined : explainDeclaration(object.properties[tag]);
-  return choice === undefined ? fields : `${choice} ${fields}`;
+/** Why a field is not allowed: the fields its object declares. */
+function shapeExplanation(object: TObject): string {
+  return `Accepted fields: ${Object.keys(object.properties).join(", ")}.`;
 }
 
 /** One issue per field: distinct reasons joined, and distinct fixes joined, each in report order. */
@@ -349,7 +226,7 @@ function aggregateErrors(
   errors: readonly TLocalizedValidationError[],
   parameters: TObject,
   prepared: unknown,
-  selected: ReadonlyMap<string, SelectedShape>,
+  selected: ReadonlyMap<string, TObject>,
 ): readonly ArgumentIssue[] {
   const issues: ArgumentIssue[] = [];
   const add = (field: string, reason: string, fix?: string) =>
@@ -432,7 +309,6 @@ export function diagnoseArguments(
   const projection: Projection = {
     explained: new Set(semanticIssues.map((issue) => issue.field)),
     applicable: new Set<string>(),
-    derived: [],
     selected: new Map(),
   };
   const projected = projectSchema(parameters, prepared, "", projection);
@@ -468,7 +344,6 @@ export function diagnoseArguments(
   return {
     issues: combineIssues([
       ...retained,
-      ...projection.derived,
       ...batches.flatMap((batch) =>
         aggregateErrors(batch.errors, parameters, prepared, projection.selected),
       ),

@@ -67,6 +67,16 @@ function countDiffLines(diff: string): DiffCounts {
   return { added, removed };
 }
 
+/**
+ * The call header's path. Arguments stream in the provider's key order, so the
+ * path may arrive after the operations; until then it shows Pi's `...` placeholder.
+ */
+export function formatHeaderPath(path: unknown, theme: Theme): string {
+  return typeof path === "string" && path
+    ? theme.fg("accent", path)
+    : theme.fg("toolOutput", "...");
+}
+
 /** Format `+N -N` with the theme's diff colors for the tool call header. */
 export function formatDiffCounts(counts: DiffCounts, theme: Theme): string {
   return ` ${theme.fg("toolDiffAdded", `+${counts.added}`)} ${theme.fg("toolDiffRemoved", `-${counts.removed}`)}`;

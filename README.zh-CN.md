@@ -40,7 +40,7 @@ greet.ts · 3 lines
 ```json
 {
   "path": "greet.ts",
-  "edits": [{ "op": "replace", "anchor": "2#GFYR", "body": ["  return \"hello, hashline\";"] }]
+  "edits": [{ "action": "replace", "anchor": "2#GFYR", "body": ["  return \"hello, hashline\";"] }]
 }
 ```
 
@@ -64,14 +64,16 @@ Grep 用原生 JavaScript 正则匹配 LF 视图。不设 `multiline` 时逐物�
 
 `edit` 的操作：
 
-| `op` | 效果 |
+| `action` | 效果 |
 | --- | --- |
 | `replace` / `delete` | 替换或删除一行；配合 `end` 处理闭区间范围。 |
 | `insert_before` / `insert_after` | 在锚点前或后插入行。 |
 | `prepend` / `append` | 在文件开头或末尾插入行。 |
 | `copy` / `move` | 把一段行复制或移动到另一个锚点之前或之后。 |
 
-一次调用中的范围不能重叠，相邻两行之间的每个位置最多一次插入，复制或移动的目标位置也算在内。位于替换或删除区间起点的插入放在该区间之前。
+一次调用最多 [64 个操作](src/pi/edit-tool.ts)。一次调用中的范围不能重叠，相邻两行之间的每个位置最多一次插入，复制或移动的目标位置也算在内。位于替换或删除区间起点的插入放在该区间之前。
+
+在提供方支持时，`edit` 请求约束采样（Pi 的 `constrainedSampling`，即 strict JSON schema），模型因此无法超出操作数上限，也无法写出 schema 未声明的字段。这时每个操作都会写出全部字段，其 `action` 用不到的字段写 `null`。
 
 模型能看到每个工具完整的参数 schema，定义位于 [`src/pi/`](src/pi/) 下的各工具文件。
 
