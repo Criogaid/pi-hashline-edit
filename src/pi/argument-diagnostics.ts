@@ -165,36 +165,19 @@ function explainDeclaration(schema: TSchema): string | undefined {
 }
 
 /**
- * What the field at `parts` does, from its declarations in every branch.
- * Choices label each value, so every branch's choices are listed together;
- * other declarations must agree, so one branch's description is never
- * attributed to another. An array item without its own description is
- * explained by its array.
+ * What the field at `parts` does, from its declaration. An array item without
+ * its own description is explained by its array.
  */
 function fieldExplanation(schema: TSchema, parts: readonly string[]): string | undefined {
-  const declarations = new Set<TSchema>();
-  const visit = (node: TSchema, depth: number): void => {
-    if (depth === parts.length) declarations.add(node);
-    else if (IsUnion(node)) for (const branch of node.anyOf) visit(branch, depth);
-    else if (IsObject(node)) {
-      if (Object.hasOwn(node.properties, parts[depth]))
-        visit(node.properties[parts[depth]], depth + 1);
-    } else if (IsArray(node))
-      visit(
-        depth + 1 === parts.length && explainDeclaration(node.items) === undefined
-          ? node
-          : node.items,
-        depth + 1,
-      );
-  };
-  visit(schema, 0);
-  if (declarations.size === 0) return undefined;
-  const explanations = new Set([...declarations].map(explainDeclaration));
-  if (explanations.has(undefined)) return undefined;
-  const choices = [...declarations].every(
-    (declaration) => literalValues(declaration) !== undefined,
-  );
-  return choices || explanations.size === 1 ? [...explanations].join(" ") : undefined;
+  if (parts.length === 0) return explainDeclaration(schema);
+  const [part, ...rest] = parts;
+  if (IsObject(schema))
+    return Object.hasOwn(schema.properties, part)
+      ? fieldExplanation(schema.properties[part], rest)
+      : undefined;
+  if (!IsArray(schema)) return undefined;
+  const item = fieldExplanation(schema.items, rest);
+  return item ?? (rest.length === 0 ? explainDeclaration(schema) : undefined);
 }
 
 /** Why a field is not allowed: the fields its object declares. */
@@ -234,17 +217,6 @@ function aggregateErrors(
   const add = (field: string, reason: string, fix?: string) =>
     issues.push(fix === undefined ? { field, reason } : { field, reason, fix });
   for (const error of errors) {
-    if (
-      error.keyword === "anyOf" &&
-      errors.some(
-        (child) =>
-          child !== error &&
-          child.keyword !== "anyOf" &&
-          (child.instancePath === error.instancePath ||
-            child.instancePath.startsWith(`${error.instancePath}/`)),
-      )
-    )
-      continue;
     switch (error.keyword) {
       case "required": {
         const parts = pointerParts(error.instancePath);
