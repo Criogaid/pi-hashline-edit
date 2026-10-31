@@ -22,7 +22,10 @@ const scenarios: readonly {
     tool: makeEditOverride(cwd, DEFAULT_CONFIG),
     args: {
       path: "file.txt",
-      edits: Array.from({ length: editOperations }, () => ({ op: "append", body: ["new line"] })),
+      edits: Array.from({ length: editOperations }, () => ({
+        action: "append",
+        body: ["new line"],
+      })),
     },
   },
   {
