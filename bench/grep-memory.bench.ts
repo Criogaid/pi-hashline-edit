@@ -34,7 +34,7 @@ try {
   const start = performance.now();
   const result = await makeGrepOverrideWithBackend(directory, DEFAULT_CONFIG, {}).execute(
     "bench",
-    { path: directory, pattern: "needle", literal: true },
+    { path: [directory], pattern: ["needle"], literal: true },
     undefined,
     undefined,
   );

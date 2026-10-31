@@ -396,7 +396,7 @@ export const OUTCOME_NEXT = [
   ["matchLimit", "If you need more matches, raise limit to include rows after the last one shown."],
   [
     "literalPipe",
-    "If you meant alternatives, pass them as a pattern array. Otherwise, keep literal matching.",
+    "If you meant alternatives, give each as its own pattern item. Otherwise, keep literal matching.",
   ],
   [
     "scanLimit",

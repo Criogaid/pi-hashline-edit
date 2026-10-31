@@ -27,7 +27,7 @@ import { scanTextLines } from "./text-stream.ts";
 import { createAnchorFormatter, displayCarriageReturns, parseHashline } from "./anchor-format.ts";
 import { canonicalPath, serializePath } from "./path.ts";
 import { renderToolError, reportLines, splitReport } from "./render.ts";
-import { POSITIVE_SAFE_INTEGER } from "./schema.ts";
+import { POSITIVE_SAFE_INTEGER, STRICT_SAMPLING } from "./schema.ts";
 import { errnoCode } from "../core/errors.ts";
 import { throwIfCancelled } from "./error-text.ts";
 import { reportResult, runTool, type ReportDetails } from "./report.ts";
@@ -147,6 +147,7 @@ export function makeReadOverride(
     promptSnippet: "Read files with editable line anchors",
     parameters: parameters as typeof builtin.parameters,
     prepareArguments: createArgumentPreparer("read", parameters, undefined, budgets),
+    constrainedSampling: STRICT_SAMPLING,
     renderShell: "default" as const,
 
     renderCall: builtin.renderCall,

@@ -73,7 +73,7 @@ Edit operations:
 
 One call takes at most [64 operations](src/pi/edit-tool.ts). Ranges in one call must not overlap, and each gap between lines takes at most one insertion, copy and move destinations included. An insertion at the start of a replaced or deleted range goes before it.
 
-`edit` asks for constrained sampling (Pi's `constrainedSampling`, a strict JSON schema) where the provider supports it, so the model cannot exceed the operation limit or emit fields the schema does not declare. Each operation is then written with every field, `null` for those its `action` does not take.
+Every tool asks for constrained sampling (Pi's `constrainedSampling`, a strict JSON schema) where the provider supports it, so the model cannot emit fields or values the schema does not declare, or exceed edit's operation limit. Optional fields the call does not use are then written as `null`, including each edit operation's fields that its `action` does not take. For the same reason, grep's `pattern`, `path`, and `glob` take arrays only; on other providers Pi wraps a single string into an array.
 
 The model sees each tool's full parameter schema; the definitions live in the tool files under [`src/pi/`](src/pi/).
 

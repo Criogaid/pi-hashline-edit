@@ -352,8 +352,6 @@ export function makeEditOverride(
         checkEditArguments(args, hashLen, schema.properties.edits.items, report),
       run: (params, target) => runEdit(target, params.edits, hashLen, shiftRadius),
     }),
-    // Providers that support it bound the batch by the schema while sampling.
-    constrainedSampling: { type: "json_schema", strict: "prefer" } as const,
 
     renderCall(args: EditParams, theme: Theme, context: EditRenderContext) {
       return renderMutationCall(args, theme, context, editHeader);

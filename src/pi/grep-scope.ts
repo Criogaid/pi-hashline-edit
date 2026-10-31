@@ -32,23 +32,14 @@ export function scopeArgs(scope: SearchScope): string[] {
   ];
 }
 
-/** Normalize a `string | string[]` param to an array (`undefined` → `[]`). */
-export function toArray(v: string | string[] | undefined): string[] {
-  if (v === undefined) return [];
-  return Array.isArray(v) ? v : [v];
-}
-
 interface SearchPathInfo {
   readonly path: string;
   readonly isFile: boolean;
 }
 
 /** Canonical search paths, the working directory when none is given; a missing one fails. */
-export async function resolveSearchPaths(cwd: string, path: string | string[] | undefined) {
-  const searchPaths = (() => {
-    const values = toArray(path);
-    return (values.length ? values : ["."]).map((value) => canonicalPath(cwd, value));
-  })();
+export async function resolveSearchPaths(cwd: string, path: readonly string[] | undefined) {
+  const searchPaths = (path ?? ["."]).map((value) => canonicalPath(cwd, value));
   const pathInfo: SearchPathInfo[] = [];
   for (const searchPath of searchPaths) {
     try {

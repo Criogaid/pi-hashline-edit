@@ -3,7 +3,7 @@
  *
  * `mutationToolBase` assembles the definition every mutation tool shares:
  * then_run's field, description, and guideline when Action Fusion is on,
- * argument preparation, and execution. Each tool supplies its schema, text,
+ * argument preparation, strict sampling, and execution. Each tool supplies its schema, text,
  * semantic checks, and `run`, and adds its own renderers.
  *
  * Owns the sequencing every mutation tool must keep identical once Pi has
@@ -49,6 +49,7 @@ import { canonicalPath } from "./path.ts";
 import { throwIfCancelled } from "./error-text.ts";
 import { runTool } from "./report.ts";
 import type { OutputBudgetProvider, OutputBudgets } from "./budgets.ts";
+import { STRICT_SAMPLING } from "./schema.ts";
 
 export type ActionFusionExecutor = ReturnType<typeof createActionFusionExecutor>;
 
@@ -171,6 +172,7 @@ export function mutationToolBase<
     ],
     parameters,
     prepareArguments: createArgumentPreparer(tool, parameters, spec.check, budgets),
+    constrainedSampling: STRICT_SAMPLING,
     renderShell: "default" as const,
     execute(
       toolCallId: string,

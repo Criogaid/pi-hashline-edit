@@ -73,7 +73,7 @@ Grep 用原生 JavaScript 正则匹配 LF 视图。不设 `multiline` 时逐物�
 
 一次调用最多 [64 个操作](src/pi/edit-tool.ts)。一次调用中的范围不能重叠，相邻两行之间的每个位置最多一次插入，复制或移动的目标位置也算在内。位于替换或删除区间起点的插入放在该区间之前。
 
-在提供方支持时，`edit` 请求约束采样（Pi 的 `constrainedSampling`，即 strict JSON schema），模型因此无法超出操作数上限，也无法写出 schema 未声明的字段。这时每个操作都会写出全部字段，其 `action` 用不到的字段写 `null`。
+在提供方支持时，所有工具都请求约束采样（Pi 的 `constrainedSampling`，即 strict JSON schema），模型因此无法写出 schema 未声明的字段或取值，也无法超出 edit 的操作数上限。这时调用中没用到的可选字段都写 `null`，edit 每个操作里其 `action` 用不到的字段也一样。出于同一原因，grep 的 `pattern`、`path` 和 `glob` 只接受数组；在其他提供方上，Pi 会把单个字符串包成数组。
 
 模型能看到每个工具完整的参数 schema，定义位于 [`src/pi/`](src/pi/) 下的各工具文件。
 

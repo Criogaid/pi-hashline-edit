@@ -14,58 +14,39 @@ import { Text } from "@earendil-works/pi-tui";
 import { renderOutputPreview, renderToolError, reportLines, splitReport } from "./render.ts";
 import { createAnchorFormatter } from "./anchor-format.ts";
 import { grepOutput } from "./grep-output.ts";
-import {
-  filterExplicitFilesByGlob,
-  toArray,
-  resolveSearchPaths,
-  type SearchScope,
-} from "./grep-scope.ts";
+import { filterExplicitFilesByGlob, resolveSearchPaths, type SearchScope } from "./grep-scope.ts";
 import { searchFiles } from "./grep-search.ts";
 import { toDisplayLines } from "./grep-render.ts";
 import { runRgLines, runRgPaths, type GrepBackend } from "./rg-process.ts";
 import { smartIgnoreCase } from "../core/search-analysis.ts";
 import { checkRegexArguments } from "../core/regex.ts";
 import { DEFAULT_GREP_FLAGS } from "../core/search.ts";
-import { GREP_CONTEXT_RANGE, POSITIVE_SAFE_INTEGER } from "./schema.ts";
+import { GREP_CONTEXT_RANGE, POSITIVE_SAFE_INTEGER, STRICT_SAMPLING } from "./schema.ts";
 import { throwIfCancelled } from "./error-text.ts";
 import { reportResult, runTool, type ReportDetails } from "./report.ts";
 import type { HashlineEditConfig } from "./config.ts";
 import { createArgumentPreparer, type ReportArgumentIssue } from "./argument-validation.ts";
 import { defaultOutputBudgets, type OutputBudgetProvider } from "./budgets.ts";
 
+/** A list field: arrays only, because strict sampling cannot take a string-or-array union. */
+const nonEmptyStrings = (description: string) =>
+  Type.Array(Type.String({ minLength: 1 }), { minItems: 1, description });
+
 /** Grep parameters; descriptions state the configured defaults. */
 function createGrepSchema({ defaultLimit, defaultContext }: HashlineEditConfig["grep"]) {
   return Type.Object(
     {
-      pattern: Type.Union(
-        [Type.String({ minLength: 1 }), Type.Array(Type.String({ minLength: 1 }), { minItems: 1 })],
-        {
-          description:
-            "String or array of strings; an array matches any of them, so use it for alternatives instead of joining them with |. Regex syntax is JavaScript, as in replace.",
-        },
+      pattern: nonEmptyStrings(
+        "Patterns; a line matches if any of them matches, so give alternatives as separate items instead of joining them with |. Regex syntax is JavaScript, as in replace.",
       ),
       path: Type.Optional(
-        Type.Union(
-          [
-            Type.String({ minLength: 1 }),
-            Type.Array(Type.String({ minLength: 1 }), { minItems: 1 }),
-          ],
-          {
-            description:
-              "Existing file or directory, or an array of them; omit to search the working directory. Wildcards are not expanded.",
-          },
+        nonEmptyStrings(
+          "Existing files or directories; omit to search the working directory. Wildcards are not expanded.",
         ),
       ),
       glob: Type.Optional(
-        Type.Union(
-          [
-            Type.String({ minLength: 1 }),
-            Type.Array(Type.String({ minLength: 1 }), { minItems: 1 }),
-          ],
-          {
-            description:
-              "Filename wildcards go here, not in path: a glob or an ordered array of them; prefix exclusions with !, e.g. ['*.ts', '!**/*.test.ts'].",
-          },
+        nonEmptyStrings(
+          "Filename wildcards go here, not in path: ordered globs; prefix exclusions with !, e.g. ['*.ts', '!**/*.test.ts'].",
         ),
       ),
       literal: Type.Boolean({
@@ -115,13 +96,21 @@ type GrepSchema = ReturnType<typeof createGrepSchema>;
 /** How grep presents matches; grep-output formats each mode. */
 export type GrepOutputMode = NonNullable<Static<GrepSchema>["outputMode"]>;
 type GrepTool = ToolDefinition<GrepSchema, Partial<ReportDetails> | undefined>;
+/** A list field as the call header sees it: streamed before Pi wraps a lone string. */
+function streamedList(value: string | readonly string[] | null | undefined): readonly string[] {
+  return value == null ? [] : typeof value === "string" ? [value] : value;
+}
+
 /** Validate JavaScript syntax once; the search never rejects a pattern V8 accepts. */
 function checkGrepArguments(args: unknown, report: ReportArgumentIssue): void {
   const { pattern, literal, flags } = (args ?? {}) as Record<string, unknown>;
-  if (typeof literal !== "boolean" || (flags !== undefined && typeof flags !== "string")) return;
-  const fields = Array.isArray(pattern)
-    ? pattern.map((value, index) => [`pattern[${index}]`, value] as const)
-    : [["pattern", pattern] as const];
+  if (
+    !Array.isArray(pattern) ||
+    typeof literal !== "boolean" ||
+    (flags !== undefined && typeof flags !== "string")
+  )
+    return;
+  const fields = pattern.map((value, index) => [`pattern[${index}]`, value] as const);
   checkRegexArguments("flags", flags ?? DEFAULT_GREP_FLAGS, literal, fields, report);
 }
 
@@ -157,6 +146,7 @@ export function makeGrepOverrideWithBackend(
     ],
     parameters: grepSchema,
     prepareArguments: createArgumentPreparer("grep", grepSchema, checkGrepArguments, budgets),
+    constrainedSampling: STRICT_SAMPLING,
 
     renderShell: "default" as const,
 
@@ -164,20 +154,17 @@ export function makeGrepOverrideWithBackend(
       args: Static<GrepSchema>,
       theme: Parameters<NonNullable<GrepTool["renderCall"]>>[1],
     ) {
-      const rawPattern = args?.pattern;
-      const patternText = Array.isArray(rawPattern)
-        ? rawPattern.join(" | ")
-        : String(rawPattern ?? "");
-      const rawPath = args?.path;
-      const pathText = Array.isArray(rawPath) ? rawPath.join(" ") : String(rawPath ?? ".");
+      const paths = streamedList(args?.path);
+      const globs = streamedList(args?.glob);
       let text =
         theme.fg("toolTitle", theme.bold("grep ")) +
-        theme.fg("accent", `/${patternText}/${args?.flags ?? ""}`) +
-        theme.fg("toolOutput", ` in ${pathText}`);
-      if (args?.glob) text += theme.fg("toolOutput", ` (${toArray(args.glob).join(", ")})`);
+        theme.fg("accent", `/${streamedList(args?.pattern).join(" | ")}/${args?.flags ?? ""}`) +
+        theme.fg("toolOutput", ` in ${paths.length ? paths.join(" ") : "."}`);
+      if (globs.length) text += theme.fg("toolOutput", ` (${globs.join(", ")})`);
       if (args?.outputMode && args.outputMode !== "content")
         text += theme.fg("success", ` → ${args.outputMode}`);
-      if (args?.limit !== undefined) text += theme.fg("toolOutput", ` limit ${args.limit}`);
+      // Strict sampling streams unused optional fields as null.
+      if (args?.limit != null) text += theme.fg("toolOutput", ` limit ${args.limit}`);
       return new Text(text, 0, 0);
     },
 
@@ -210,7 +197,7 @@ export function makeGrepOverrideWithBackend(
       const budget = budgets();
       return runTool("grep", { path: params.path, signal, budget }, async () => {
         throwIfCancelled(signal);
-        const patterns = toArray(params.pattern);
+        const patterns = params.pattern;
         const effectiveLimit = params.limit ?? config.grep.defaultLimit;
         const outputMode = params.outputMode ?? "content";
         const { literal } = params;
@@ -228,7 +215,7 @@ export function makeGrepOverrideWithBackend(
         };
         const { searchPaths, pathInfo } = await resolveSearchPaths(cwd, params.path);
         const unfiltered: SearchScope = {
-          globs: toArray(params.glob),
+          globs: params.glob ?? [],
           noIgnore: false,
           follow: false,
           searchPaths,
