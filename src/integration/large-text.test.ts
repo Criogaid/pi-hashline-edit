@@ -103,7 +103,7 @@ test("copy/move a 150,000-line block → publish every captured line", async (t)
     ]);
     const result: Awaited<ReturnType<typeof edit.execute>> = await callTool(edit, {
       path,
-      edits: [{ op, anchor, end, after }],
+      edits: [{ action: op, anchor, end, after }],
     });
     const expected = Buffer.from(
       (op === "copy" ? source : "\uFEFFSTART\nEND") + "\r\n" + block.slice(0, -2),

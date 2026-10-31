@@ -75,7 +75,7 @@ test("registered tools retain their configuration when another tool set is regis
               path,
               edits: [
                 {
-                  op: "replace",
+                  action: "replace",
                   anchor: `1#${computeLineHash(1, "before", hashLen)}`,
                   body: ["after"],
                 },
@@ -104,7 +104,7 @@ test("registered tools retain their configuration when another tool set is regis
         await expectToolFailure(
           callTool(tool, {
             path,
-            edits: [{ op: "delete", anchor: `1#${computeLineHash(1, "target", hashLen)}` }],
+            edits: [{ action: "delete", anchor: `1#${computeLineHash(1, "target", hashLen)}` }],
           }),
           "ANCHOR_MISMATCH",
           (report) => {

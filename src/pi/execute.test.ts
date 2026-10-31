@@ -77,7 +77,7 @@ test("edit execute: a file without a final newline stays byte-exact", async () =
     await call(makeReadOverride(dir, DEFAULT_CONFIG), { path: "f.txt" });
     const r: any = await call(makeEditOverride(dir, DEFAULT_CONFIG), {
       path: "f.txt",
-      edits: [{ op: "replace", anchor: h(text, 2), body: ["new value\u2060"] }],
+      edits: [{ action: "replace", anchor: h(text, 2), body: ["new value\u2060"] }],
     });
     assert.equal(r.isError, undefined, "should not be an error");
     assert.equal(await readFile(f, "utf-8"), "guard\nnew value\u2060");
@@ -92,7 +92,7 @@ test("edit execute: hashline round-trip (read → edit → file changed)", async
     const read = await call(makeReadOverride(dir, DEFAULT_CONFIG), { path: "f.txt" });
     const r: any = await call(makeEditOverride(dir, DEFAULT_CONFIG), {
       path: "f.txt",
-      edits: [{ op: "replace", anchor: anchorLine(read.content[0].text, 2), body: ["B"] }],
+      edits: [{ action: "replace", anchor: anchorLine(read.content[0].text, 2), body: ["B"] }],
     });
     assert.equal(r.isError, undefined, "should not be an error");
     assert.equal(await readFile(f, "utf-8"), "a\nB\nc\n");
@@ -108,8 +108,8 @@ test("edit execute: multiple ops in one call", async () => {
     const r: any = await call(makeEditOverride(dir, DEFAULT_CONFIG), {
       path: "f.txt",
       edits: [
-        { op: "insert_after", anchor: h(text, 3), body: ["z"] },
-        { op: "replace", anchor: h(text, 1), body: ["A"] },
+        { action: "insert_after", anchor: h(text, 3), body: ["z"] },
+        { action: "replace", anchor: h(text, 1), body: ["A"] },
       ],
     });
     assert.equal(r.isError, undefined);
@@ -140,7 +140,7 @@ test("successful mutation → returns one report without anchor payload", async 
                     path,
                     edits: [
                       {
-                        op: "replace",
+                        action: "replace",
                         anchor: anchorLine(rows, 1),
                         end: anchorLine(rows, count),
                         body: Array.from({ length: count }, () => "new"),
@@ -188,7 +188,7 @@ test("unrelated external change does NOT block an edit on a stable line", async 
     await writeFile(f, "a\nb\nCHANGED\n");
     const r: any = await call(makeEditOverride(dir, DEFAULT_CONFIG), {
       path: "f.txt",
-      edits: [{ op: "replace", anchor: h(text, 1), body: ["A"] }],
+      edits: [{ action: "replace", anchor: h(text, 1), body: ["A"] }],
     });
     assert.equal(r.isError, undefined);
     assert.equal(await readFile(f, "utf-8"), "A\nb\nCHANGED\n");
@@ -204,7 +204,7 @@ test("edit on a line that changed externally → anchor mismatch", async () => {
     const report = failureReport(
       await call(makeEditOverride(dir, DEFAULT_CONFIG), {
         path: "f.txt",
-        edits: [{ op: "replace", anchor: h(text, 2), body: ["x"] }],
+        edits: [{ action: "replace", anchor: h(text, 2), body: ["x"] }],
       }),
     );
     assert.equal(report.error, "ANCHOR_MISMATCH");
@@ -225,7 +225,7 @@ test("unresolved observations require target confirmation before retrying a move
     const report = failureReport(
       await call(edit, {
         path: "recover.txt",
-        edits: [{ op: "replace", anchor: h(observed, 5), body: ["updated"] }],
+        edits: [{ action: "replace", anchor: h(observed, 5), body: ["updated"] }],
       }),
     );
     assert.equal(report.error, "ANCHOR_MISMATCH");
@@ -236,7 +236,7 @@ test("unresolved observations require target confirmation before retrying a move
     const retryAnchor = anchorLine(read.content[0].text, 7);
     await call(edit, {
       path: "recover.txt",
-      edits: [{ op: "replace", anchor: retryAnchor, body: ["updated"] }],
+      edits: [{ action: "replace", anchor: retryAnchor, body: ["updated"] }],
     });
     assert.equal(
       await readFile(file, "utf8"),
@@ -251,7 +251,7 @@ test("edit execute: no read before edit → anchor verification fails", async ()
     const report = failureReport(
       await call(makeEditOverride(dir, DEFAULT_CONFIG), {
         path: "f.txt",
-        edits: [{ op: "replace", anchor: "1#XXXX", body: ["A"] }],
+        edits: [{ action: "replace", anchor: "1#XXXX", body: ["A"] }],
       }),
     );
     assert.equal(report.error, "ANCHOR_MISMATCH");
@@ -267,7 +267,7 @@ test("edit execute: delete op", async () => {
     await call(makeReadOverride(dir, DEFAULT_CONFIG), { path: "f.txt" });
     const r: any = await call(makeEditOverride(dir, DEFAULT_CONFIG), {
       path: "f.txt",
-      edits: [{ op: "delete", anchor: h(text, 2) }],
+      edits: [{ action: "delete", anchor: h(text, 2) }],
     });
     assert.equal(r.isError, undefined);
     assert.equal(await readFile(f, "utf-8"), "a\nc\n");
@@ -323,23 +323,23 @@ test("edit schema rejects misspelled range fields and invalid operation shapes",
     const anchor = h(original, 2);
     const callArgs = {
       path: "range.txt",
-      edits: [{ op: "replace", anchor, endd: h(original, 3), body: ["merged"] }],
+      edits: [{ action: "replace", anchor, endd: h(original, 3), body: ["merged"] }],
     };
     await assert.rejects(call(edit, callArgs), rejectsArgument("edits[0].endd", /not allowed/));
     assert.equal(await readFile(join(dir, "range.txt"), "utf8"), original);
     for (const [edits, expected] of [
       [[], rejectsArgument("edits")],
-      [[{ op: "replace", anchor }], rejectsArgument("edits[0].body", /required/)],
-      [[{ op: "delete", anchor, body: ["bad"] }], rejectsArguments()],
-      [[{ op: "insert_after", body: ["bad"] }], rejectsArguments()],
-      [[{ op: "append", anchor, body: ["bad"] }], rejectsArguments()],
+      [[{ action: "replace", anchor }], rejectsArgument("edits[0].body", /required/)],
+      [[{ action: "delete", anchor, body: ["bad"] }], rejectsArguments()],
+      [[{ action: "insert_after", body: ["bad"] }], rejectsArguments()],
+      [[{ action: "append", anchor, body: ["bad"] }], rejectsArguments()],
     ] as const) {
       await assert.rejects(call(edit, { path: "range.txt", edits }), expected);
       assert.equal(await readFile(join(dir, "range.txt"), "utf8"), original);
     }
     const alternates: Parameters<typeof validateToolArguments>[1]["arguments"][] = [
-      { path: "range.txt", op: "replace", anchor, body: ["ok"] },
-      { path: "range.txt", edits: JSON.stringify([{ op: "replace", anchor, body: ["ok"] }]) },
+      { path: "range.txt", action: "replace", anchor, body: ["ok"] },
+      { path: "range.txt", edits: JSON.stringify([{ action: "replace", anchor, body: ["ok"] }]) },
     ];
     for (const alternate of alternates) {
       const before = structuredClone(alternate);
@@ -347,7 +347,7 @@ test("edit schema rejects misspelled range fields and invalid operation shapes",
       assert.deepEqual(alternate, before);
       assert.equal(await readFile(join(dir, "range.txt"), "utf8"), original);
     }
-    await call(edit, { path: "range.txt", edits: [{ op: "replace", anchor, body: ["B"] }] });
+    await call(edit, { path: "range.txt", edits: [{ action: "replace", anchor, body: ["B"] }] });
     assert.equal(await readFile(join(dir, "range.txt"), "utf8"), "a\nB\nc\n");
   }));
 
@@ -365,7 +365,7 @@ test("copied string anchors validate and replace an inclusive range", async () =
         path: "range.txt",
         edits: [
           {
-            op: "replace",
+            action: "replace",
             anchor: anchorLine(read.content[0].text, 2),
             end: anchorLine(read.content[0].text, 3),
             body: ["merged"],
@@ -384,13 +384,13 @@ test("invalid anchors and conflicting fields fail before changing the file", asy
     const edit = makeEditOverride(dir, DEFAULT_CONFIG);
     const anchor = h(original, 1);
     const invalid = [
-      { op: "replace", anchor: { line: 1, hash: anchor.split("#")[1] }, body: ["changed"] },
+      { action: "replace", anchor: { line: 1, hash: anchor.split("#")[1] }, body: ["changed"] },
       ...["0#ABCD", "-1#ABCD", "1.5#ABCD", "1#", "1#abcd", "1#ABCD│a", "9007199254740993#ABCD"].map(
-        (anchor) => ({ op: "replace", anchor, body: ["changed"] }),
+        (anchor) => ({ action: "replace", anchor, body: ["changed"] }),
       ),
-      { op: "insert_after", anchor, end: anchor, body: ["changed"] },
-      { op: "append", anchor, body: ["changed"] },
-      { op: "delete", anchor, body: ["changed"] },
+      { action: "insert_after", anchor, end: anchor, body: ["changed"] },
+      { action: "append", anchor, body: ["changed"] },
+      { action: "delete", anchor, body: ["changed"] },
     ];
     for (const operation of invalid) {
       await assert.rejects(
@@ -409,11 +409,11 @@ test("edit rejects empty bodies before file access for arrays and Pi-converted o
     const edit = makeEditOverride(dir, DEFAULT_CONFIG);
     const anchor = h(original, 1);
     for (const operation of [
-      { op: "insert_after", anchor, body: [] },
-      { op: "insert_before", anchor, body: [] },
-      { op: "append", body: [] },
-      { op: "prepend", body: [] },
-      { op: "replace", anchor, end: h(original, 2), body: [] },
+      { action: "insert_after", anchor, body: [] },
+      { action: "insert_before", anchor, body: [] },
+      { action: "append", body: [] },
+      { action: "prepend", body: [] },
+      { action: "replace", anchor, end: h(original, 2), body: [] },
     ]) {
       for (const path of [file, join(dir, "missing.txt")]) {
         for (const edits of [[operation], operation]) {
@@ -444,10 +444,10 @@ test("mixed empty-body batches name every rejected edit without publishing or ru
         {
           path: file,
           edits: [
-            { op: "replace", anchor: h(original, 1), body: ["must not be written"] },
-            { op: "insert_before", anchor: h(original, 3), body: [] },
-            { op: "append", body: ["must not be written"] },
-            { op: "replace", anchor: h(original, 4), body: [] },
+            { action: "replace", anchor: h(original, 1), body: ["must not be written"] },
+            { action: "insert_before", anchor: h(original, 3), body: [] },
+            { action: "append", body: ["must not be written"] },
+            { action: "replace", anchor: h(original, 4), body: [] },
           ],
           then_run: { command: "must-not-run" },
         },
@@ -471,11 +471,11 @@ test("blank edit bodies preserve a real blank line for every body-bearing operat
     const anchor = h(original, 1);
     const edit = makeEditOverride(dir, DEFAULT_CONFIG);
     for (const [operation, expected] of [
-      [{ op: "replace", anchor, body: [""] }, "\nb\nc\n"],
-      [{ op: "insert_before", anchor, body: [""] }, "\na\nb\nc\n"],
-      [{ op: "insert_after", anchor, body: [""] }, "a\n\nb\nc\n"],
-      [{ op: "append", body: [""] }, "a\nb\nc\n\n"],
-      [{ op: "prepend", body: [""] }, "\na\nb\nc\n"],
+      [{ action: "replace", anchor, body: [""] }, "\nb\nc\n"],
+      [{ action: "insert_before", anchor, body: [""] }, "\na\nb\nc\n"],
+      [{ action: "insert_after", anchor, body: [""] }, "a\n\nb\nc\n"],
+      [{ action: "append", body: [""] }, "a\nb\nc\n\n"],
+      [{ action: "prepend", body: [""] }, "\na\nb\nc\n"],
     ] as const) {
       await writeFile(file, original);
       await call(edit, { path: file, edits: [operation] });
@@ -490,7 +490,7 @@ test("explicit delete → removes an inclusive range", async () =>
     await writeFile(file, original);
     await call(makeEditOverride(dir, DEFAULT_CONFIG), {
       path: file,
-      edits: [{ op: "delete", anchor: h(original, 1), end: h(original, 2) }],
+      edits: [{ action: "delete", anchor: h(original, 1), end: h(original, 2) }],
     });
     assert.equal(await readFile(file, "utf8"), "c\n");
   }));
@@ -506,7 +506,7 @@ test("local and full-file recovery return copyable anchors without changing the 
       const report = failureReport(
         await call(edit, {
           path: "shift.txt",
-          edits: [{ op: "replace", anchor: h(original, 2), body: ["B"] }],
+          edits: [{ action: "replace", anchor: h(original, 2), body: ["B"] }],
         }),
       );
       const failure = report.failures?.[0];
@@ -520,7 +520,7 @@ test("local and full-file recovery return copyable anchors without changing the 
       assert.equal(await readFile(join(dir, "shift.txt"), "utf8"), prefix + original);
       await call(edit, {
         path: "shift.txt",
-        edits: [{ op: "replace", anchor: replacement, body: ["B"] }],
+        edits: [{ action: "replace", anchor: replacement, body: ["B"] }],
       });
       assert.equal(await readFile(join(dir, "shift.txt"), "utf8"), prefix + "a\nB\n");
     }
@@ -535,7 +535,7 @@ test("shifted-anchor recovery keeps the read fallback for oversized candidates",
     const report = failureReport(
       await call(edit, {
         path: "shift-large.txt",
-        edits: [{ op: "replace", anchor: h(original, 2), body: ["B"] }],
+        edits: [{ action: "replace", anchor: h(original, 2), body: ["B"] }],
       }),
     );
     assert.match(
@@ -560,7 +560,10 @@ test("failed commands preserve mutation results and stay out of all main card re
         path: "edit.txt",
         run: async () => {
           const tool = makeEditOverride(dir, DEFAULT_CONFIG, fusion);
-          const args = { path: "edit.txt", edits: [{ op: "append" as const, body: ["after"] }] };
+          const args = {
+            path: "edit.txt",
+            edits: [{ action: "append" as const, body: ["after"] }],
+          };
           const result = await callTool(
             tool,
             { ...args, then_run: { command: "check" } },
@@ -686,7 +689,7 @@ test("text tools reject malformed UTF-8 and NUL bytes without rewriting source b
       [makeReadOverride(dir, DEFAULT_CONFIG), { path: "invalid-utf8.txt" }],
       [
         makeEditOverride(dir, DEFAULT_CONFIG),
-        { path: "invalid-utf8.txt", edits: [{ op: "append", body: ["x"] }] },
+        { path: "invalid-utf8.txt", edits: [{ action: "append", body: ["x"] }] },
       ],
       [
         makeReplaceTool(dir, DEFAULT_CONFIG),
@@ -703,7 +706,7 @@ test("text tools reject malformed UTF-8 and NUL bytes without rewriting source b
     for (const [tool, args] of [
       [
         makeEditOverride(dir, DEFAULT_CONFIG),
-        { path: "nul.txt", edits: [{ op: "append", body: ["x"] }] },
+        { path: "nul.txt", edits: [{ action: "append", body: ["x"] }] },
       ],
       [
         makeReplaceTool(dir, DEFAULT_CONFIG),
@@ -733,7 +736,7 @@ test("edit rejects embedded line terminators at its schema boundary", async () =
       await assert.rejects(
         call(makeEditOverride(dir, DEFAULT_CONFIG), {
           path: "body.txt",
-          edits: [{ op: "append", body: [line] }],
+          edits: [{ action: "append", body: [line] }],
         }),
         rejectsArguments(),
       );
@@ -745,14 +748,14 @@ test("edit rejects unwritable body lines before reading a missing target", async
   withDir(async (dir) => {
     const target = join(dir, "missing.txt");
     const edit = makeEditOverride(dir, DEFAULT_CONFIG);
-    const valid = { path: target, edits: [{ op: "append" as const, body: ["ok"] }] };
+    const valid = { path: target, edits: [{ action: "append" as const, body: ["ok"] }] };
     assert.equal(edit.prepareArguments(valid), valid);
     for (const [line, expected] of [
       ["bad\0", rejectsArgument("edits[0].body[1]", /NUL/)],
       ["\ud800", rejectsArgument("edits[0].body[1]", /losslessly.*UTF-8/)],
     ] as const) {
       await assert.rejects(
-        call(edit, { path: target, edits: [{ op: "append", body: ["ok", line] }] }),
+        call(edit, { path: target, edits: [{ action: "append", body: ["ok", line] }] }),
         expected,
       );
       await assert.rejects(readFile(target, "utf8"), { code: "ENOENT" });
@@ -768,7 +771,7 @@ test("editing a BOM-prefixed file → publishes the changed bytes with the BOM i
       await writeFile(target, original);
       const result = await call(makeEditOverride(dir, DEFAULT_CONFIG), {
         path: "bom.txt",
-        edits: [{ op: "replace", anchor: h(source, line), body: ["new"] }],
+        edits: [{ action: "replace", anchor: h(source, line), body: ["new"] }],
       });
       const expected = Buffer.from(line === 1 ? "\ufeffnew\nold\n" : "\ufeffguard\nnew\n", "utf8");
       assert.deepEqual(await readFile(target), expected);
@@ -785,7 +788,7 @@ test("edit and replace reject NUL arguments without rewriting source bytes", asy
     await assert.rejects(
       call(makeEditOverride(dir, DEFAULT_CONFIG), {
         path: "output.txt",
-        edits: [{ op: "append", body: ["bad\0text"] }],
+        edits: [{ action: "append", body: ["bad\0text"] }],
       }),
       rejectsArgument("edits[0].body[0]", /NUL/),
     );
@@ -823,8 +826,8 @@ test("failed edits expose input status and candidate code for a verified fused r
         {
           path: file,
           edits: [
-            { op: "insert_after", anchor: stale, body: ["const hashLen = 4;"] },
-            { op: "replace", anchor: stable, body: ["changed"] },
+            { action: "insert_after", anchor: stale, body: ["const hashLen = 4;"] },
+            { action: "replace", anchor: stable, body: ["changed"] },
           ],
           then_run: { command: "check" },
         },
@@ -847,11 +850,11 @@ test("failed edits expose input status and candidate code for a verified fused r
         path: file,
         edits: [
           {
-            op: "insert_after",
+            action: "insert_after",
             anchor: report.failures![0].candidate!,
             body: ["const hashLen = 4;"],
           },
-          { op: "replace", anchor: stable, body: ["changed"] },
+          { action: "replace", anchor: stable, body: ["changed"] },
         ],
         then_run: { command: "check" },
       },
@@ -879,7 +882,11 @@ test("ambiguous candidates include distinguishing neighborhoods for a verified r
       await call(edit, {
         path: file,
         edits: [
-          { op: "replace", anchor: h("header\n  return value;\n", 2), body: ["  return updated;"] },
+          {
+            action: "replace",
+            anchor: h("header\n  return value;\n", 2),
+            body: ["  return updated;"],
+          },
         ],
       }),
     );
@@ -897,7 +904,7 @@ test("ambiguous candidates include distinguishing neighborhoods for a verified r
     assert.equal(await readFile(file, "utf8"), before);
     await call(edit, {
       path: file,
-      edits: [{ op: "replace", anchor: anchorLine(context, 15), body: ["  return updated;"] }],
+      edits: [{ action: "replace", anchor: anchorLine(context, 15), body: ["  return updated;"] }],
     });
     lines[14] = "  return updated;";
     assert.equal(await readFile(file, "utf8"), lines.join("\n") + "\n");
@@ -911,14 +918,14 @@ test("schema-invalid bodies omit anchor checks; subsequent retries revalidate", 
     const edit = makeEditOverride(dir, DEFAULT_CONFIG);
     const stable = h(before, 1);
     for (const operation of [
-      { op: "replace", anchor: stable, body: ["bad\nline"] },
-      { op: "append", body: ["bad\nline"] },
+      { action: "replace", anchor: stable, body: ["bad\nline"] },
+      { action: "append", body: ["bad\nline"] },
     ]) {
       for (const laterAnchor of [h(before, 2), "2#XXXX"]) {
         await assert.rejects(
           call(edit, {
             path: file,
-            edits: [operation, { op: "replace", anchor: laterAnchor, body: ["B"] }],
+            edits: [operation, { action: "replace", anchor: laterAnchor, body: ["B"] }],
           }),
           (error: Error) => {
             rejectsArguments()(error);
@@ -935,8 +942,8 @@ test("schema-invalid bodies omit anchor checks; subsequent retries revalidate", 
       await call(edit, {
         path: file,
         edits: [
-          { op: "replace", anchor: stable, body: ["A"] },
-          { op: "delete", anchor: h(before, 2), end: "3#ZZZZ" },
+          { action: "replace", anchor: stable, body: ["A"] },
+          { action: "delete", anchor: h(before, 2), end: "3#ZZZZ" },
         ],
       }),
     );
@@ -950,8 +957,8 @@ test("schema-invalid bodies omit anchor checks; subsequent retries revalidate", 
       await call(edit, {
         path: file,
         edits: [
-          { op: "replace", anchor: stable, body: ["A"] },
-          { op: "replace", anchor: "3#ZZZZ", body: ["B"] },
+          { action: "replace", anchor: stable, body: ["A"] },
+          { action: "replace", anchor: "3#ZZZZ", body: ["B"] },
         ],
       }),
     );
@@ -971,8 +978,8 @@ test("single-operation anchor failures omit redundant matched-anchor facts", asy
     await writeFile(file, source);
     const edit = makeEditOverride(dir, DEFAULT_CONFIG);
     for (const operation of [
-      { op: "replace", anchor: "1#XXXX", body: ["new"] },
-      { op: "replace", anchor: h(source, 1), end: "2#YYYY", body: ["new"] },
+      { action: "replace", anchor: "1#XXXX", body: ["new"] },
+      { action: "replace", anchor: h(source, 1), end: "2#YYYY", body: ["new"] },
     ]) {
       const report = failureReport(await call(edit, { path: file, edits: [operation] }));
       assert.equal(report.error, "ANCHOR_MISMATCH");
@@ -989,7 +996,7 @@ test("failed batches return more than forty checks and mappings when byte budget
     const file = join(dir, "many-checks.txt");
     await writeFile(file, before);
     const edits = Array.from({ length: 45 }, () => ({
-      op: "replace",
+      action: "replace",
       anchor: h(original, 2),
       body: ["changed"],
     }));
@@ -1014,7 +1021,7 @@ test("unique candidate content is independent of oversized neighboring rows", as
     const report = failureReport(
       await call(makeEditOverride(dir, DEFAULT_CONFIG), {
         path: file,
-        edits: [{ op: "replace", anchor: h(original, 2), body: ["updated"] }],
+        edits: [{ action: "replace", anchor: h(original, 2), body: ["updated"] }],
       }),
     );
     const candidate = report.failures?.[0].candidate;
@@ -1026,7 +1033,7 @@ test("unique candidate content is independent of oversized neighboring rows", as
     assert.equal(await readFile(file, "utf8"), before);
     await call(makeEditOverride(dir, DEFAULT_CONFIG), {
       path: file,
-      edits: [{ op: "replace", anchor: candidate, body: ["updated"] }],
+      edits: [{ action: "replace", anchor: candidate, body: ["updated"] }],
     });
     assert.equal(await readFile(file, "utf8"), before.replace("target", "updated"));
   }));
@@ -1057,13 +1064,13 @@ test("shifted unique candidate → displays standalone CR without altering its a
     await writeFile(file, before);
     await call(makeEditOverride(dir, DEFAULT_CONFIG), {
       path: file,
-      edits: [{ op: "delete", anchor: h(before, 1) }],
+      edits: [{ action: "delete", anchor: h(before, 1) }],
     });
     assert.equal(await readFile(file, "utf8"), "a\rb\n");
     const report = failureReport(
       await call(makeEditOverride(dir, DEFAULT_CONFIG), {
         path: file,
-        edits: [{ op: "delete", anchor: h(before, 2) }],
+        edits: [{ action: "delete", anchor: h(before, 2) }],
       }),
     );
     assert.equal(report.failures?.[0].candidate, h("a\rb\n", 1));
@@ -1082,8 +1089,8 @@ test("edit receives multiple wrong-length anchors → reports each location with
     const args = {
       path: "f.txt",
       edits: [
-        { op: "replace", anchor, end: short, body: ["x"] },
-        { op: "delete", anchor: short },
+        { action: "replace", anchor, end: short, body: ["x"] },
+        { action: "delete", anchor: short },
       ],
     };
 
@@ -1109,7 +1116,7 @@ test("Pi-converted single-object edits execute as a canonical array", async () =
     const original = "first\nsecond\n";
     await writeFile(file, original);
     const edit = makeEditOverride(dir, DEFAULT_CONFIG);
-    const operation = { op: "replace", anchor: h(original, 2), body: ["SECOND"] };
+    const operation = { action: "replace", anchor: h(original, 2), body: ["SECOND"] };
     const args = validateToolArguments(edit as any, {
       type: "toolCall",
       id: "converted",
@@ -1131,7 +1138,7 @@ test("unresolved snapshot rows support direct retry and revalidate after further
     const report = failureReport(
       await call(edit, {
         path: "recover.txt",
-        edits: [{ op: "replace", anchor: h(observed, 2), body: ["target = new"] }],
+        edits: [{ action: "replace", anchor: h(observed, 2), body: ["target = new"] }],
       }),
     );
     const diagnostic = report.failures?.[0].observed ?? "";
@@ -1143,7 +1150,7 @@ test("unresolved snapshot rows support direct retry and revalidate after further
     const retry = failureReport(
       await call(edit, {
         path: "recover.txt",
-        edits: [{ op: "replace", anchor: retryAnchor, body: ["target = new"] }],
+        edits: [{ action: "replace", anchor: retryAnchor, body: ["target = new"] }],
       }),
     );
     assert.equal(retry.error, "ANCHOR_MISMATCH");
@@ -1151,7 +1158,7 @@ test("unresolved snapshot rows support direct retry and revalidate after further
     await writeFile(file, current);
     await call(edit, {
       path: "recover.txt",
-      edits: [{ op: "replace", anchor: retryAnchor, body: ["target = new"] }],
+      edits: [{ action: "replace", anchor: retryAnchor, body: ["target = new"] }],
     });
     assert.deepEqual(await readFile(file), Buffer.from(observed.replace("old", "new")));
   });
@@ -1167,7 +1174,7 @@ test("unresolved oversized and out-of-range rows require more context without pa
       const report = failureReport(
         await call(edit, {
           path: "recover.txt",
-          edits: [{ op: "replace", anchor, body: ["new"] }],
+          edits: [{ action: "replace", anchor, body: ["new"] }],
         }),
       );
       assert.match(report.next ?? "", /read or grep/);
@@ -1190,7 +1197,7 @@ test("edit rejects impossible checksum characters before accessing the file", as
       await assert.rejects(
         call(tool, {
           path: "missing.txt",
-          edits: [{ op: "delete", anchor: `1#${char.repeat(DEFAULT_CONFIG.hashLen)}` }],
+          edits: [{ action: "delete", anchor: `1#${char.repeat(DEFAULT_CONFIG.hashLen)}` }],
         }),
         rejectsArguments(),
       );
@@ -1208,7 +1215,7 @@ test("ambiguous failure lists and neighborhoods select the same first eight cand
     const report = failureReport(
       await call(tool, {
         path: "candidates.txt",
-        edits: [{ op: "delete", anchor: `200#${computeLineHash(200, "target", 4)}` }],
+        edits: [{ action: "delete", anchor: `200#${computeLineHash(200, "target", 4)}` }],
       }),
     );
     assert.equal(report.failures?.[0].omittedCandidates, 1);
@@ -1231,7 +1238,7 @@ test("edit verification → uses the supplied hash length", async () =>
       path: "registered.txt",
       edits: [
         {
-          op: "replace",
+          action: "replace",
           anchor: `1#${computeLineHash(1, "before", 6)}`,
           body: ["after"],
         },
@@ -1258,7 +1265,12 @@ test("copy/move through read anchors → publishes captured bytes with BOM and m
       const result: Awaited<ReturnType<typeof edit.execute>> = await callTool(edit, {
         path,
         edits: [
-          { op, anchor: anchorLine(rows, 1), end: anchorLine(rows, 2), after: anchorLine(rows, 4) },
+          {
+            action: op,
+            anchor: anchorLine(rows, 1),
+            end: anchorLine(rows, 2),
+            after: anchorLine(rows, 4),
+          },
         ],
       });
       const expected = op === "copy" ? source + "A\r\nB\n" : "\uFEFFC\r\nD\nA\r\nB\n";
@@ -1286,8 +1298,8 @@ test("copy/move stale destination → report its field and skip publication and 
         await callTool(edit, {
           path: file,
           edits: [
-            { op, anchor: h(current, 1), after: h(original, 3) },
-            { op: "replace", anchor: h(current, 2), body: ["changed"] },
+            { action: op, anchor: h(current, 1), after: h(original, 3) },
+            { action: "replace", anchor: h(current, 2), body: ["changed"] },
           ],
           then_run: { command: "check" },
         }),
@@ -1321,7 +1333,7 @@ test("copy/move with fused command → execute after the complete transfer and p
         edit,
         {
           path: file,
-          edits: [{ op, anchor: h(source, 1), after: h(source, 3) }],
+          edits: [{ action: op, anchor: h(source, 1), after: h(source, 3) }],
           then_run: { command: "check" },
         },
         { ctx: { cwd: dir } },

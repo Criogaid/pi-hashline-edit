@@ -11,7 +11,7 @@ import { makeEditOverride } from "../pi/edit-tool.ts";
 import { reportOf } from "../pi/report.ts";
 import { openTestSession, responseStream } from "../testing/session.testing.ts";
 
-const args = { path: "target.txt", edits: [{ op: "append", body: [] }] };
+const args = { path: "target.txt", edits: [{ action: "append", body: [] }] };
 
 test("live preparation failure → replays diagnostic after fresh registration", async (t) => {
   initTheme("dark");

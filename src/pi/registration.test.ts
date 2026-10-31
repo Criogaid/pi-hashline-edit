@@ -1,6 +1,10 @@
 import { rejectsArgument } from "./argument-error.testing.ts";
 import { createEditTool } from "@earendil-works/pi-coding-agent";
 import { validateToolArguments } from "@earendil-works/pi-ai";
+import {
+  makeStrictJsonSchema,
+  resolveJsonSchemaStrictSampling,
+} from "@earendil-works/pi-ai/api/constrained-sampling";
 import { makeEditOverride } from "./edit-tool.ts";
 import { makeReadOverride } from "./read-tool.ts";
 import { loadConfig } from "./config.ts";
@@ -19,10 +23,42 @@ import { theme } from "../../node_modules/@earendil-works/pi-coding-agent/dist/m
 import { computeLineHash } from "../core/hash.ts";
 import { callTool } from "./tool-call.testing.ts";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
-import type { ActionFusionProgress } from "./action-fusion.ts";
+import { createActionFusionExecutor, type ActionFusionProgress } from "./action-fusion.ts";
 import { reportOf } from "./report.ts";
 import { formatByteSize } from "./budgets.ts";
 import { expectToolFailure } from "./report-failure.testing.ts";
+
+test("edit with or without Fusion → expose parameters usable by Pi strict sampling", () => {
+  for (const fusion of [undefined, createActionFusionExecutor()]) {
+    const tool = makeEditOverride(process.cwd(), DEFAULT_CONFIG, fusion);
+    assert.deepEqual(tool.constrainedSampling, { type: "json_schema", strict: "prefer" });
+    assert.equal(resolveJsonSchemaStrictSampling(tool, true), true);
+    const strict = makeStrictJsonSchema(tool.parameters);
+    assert.partialDeepStrictEqual(strict, {
+      type: "object",
+      additionalProperties: false,
+      required: fusion ? ["path", "edits", "then_run"] : ["path", "edits"],
+      properties: {
+        edits: {
+          type: "array",
+          items: {
+            type: "object",
+            additionalProperties: false,
+            required: ["action", "anchor", "end", "body", "before", "after"],
+            properties: {
+              anchor: { anyOf: [{ type: "string" }, { type: "null" }] },
+              end: { anyOf: [{ type: "string" }, { type: "null" }] },
+              body: { anyOf: [{ type: "array" }, { type: "null" }] },
+              before: { anyOf: [{ type: "string" }, { type: "null" }] },
+              after: { anyOf: [{ type: "string" }, { type: "null" }] },
+            },
+          },
+        },
+        ...(fusion ? { then_run: { anyOf: [{ type: "object" }, { type: "null" }] } } : {}),
+      },
+    });
+  }
+});
 
 test("mutation cards use Fusion by default and explicit false removes command support", async () => {
   const dir = await mkdtemp(join(tmpdir(), "hashline-registration-"));
@@ -107,7 +143,7 @@ test("mutation cards use Fusion by default and explicit false removes command su
     );
     const cases = [
       { name: "write", args: { content: "published\n", mode: "create" } },
-      { name: "edit", args: { edits: [{ op: "append", body: ["appended"] }] } },
+      { name: "edit", args: { edits: [{ action: "append", body: ["appended"] }] } },
       {
         name: "replace",
         args: { replacements: [{ literal: true, find: "published", replace: "published" }] },
@@ -199,14 +235,12 @@ test("mutation cards use Fusion by default and explicit false removes command su
         tui,
         dir,
       );
-      const failed = await tool.execute(
-        `${name}-bad`,
-        invalid,
-        undefined,
-        (update: AgentToolResult<unknown>) =>
+      const failed = await callTool(tool, invalid, {
+        toolCallId: `${name}-bad`,
+        onUpdate: (update: AgentToolResult<unknown>) =>
           failedCard.updateResult({ ...update, isError: false }, true),
-        { cwd: dir },
-      );
+        ctx: { cwd: dir },
+      });
       assert.equal(failed.isError, true);
       const report = reportOf(failed, name);
       assert.equal(report?.error, "PATH_NOT_FOUND");
@@ -250,18 +284,18 @@ test("mutation cards use Fusion by default and explicit false removes command su
     const edit = tools.find((tool) => tool.name === "edit");
     const stale = {
       path: "stale.txt",
-      edits: [{ op: "replace", anchor: `1#${computeLineHash(1, "target", 4)}`, body: ["changed"] }],
+      edits: [
+        { action: "replace", anchor: `1#${computeLineHash(1, "target", 4)}`, body: ["changed"] },
+      ],
       then_run: { command: "exit 99" },
     };
     const staleCard = new ToolExecutionComponent("edit", "stale", stale, {}, edit, tui, dir);
-    const failed = await edit.execute(
-      "stale",
-      stale,
-      undefined,
-      (update: AgentToolResult<unknown>) =>
+    const failed = await callTool(edit, stale, {
+      toolCallId: "stale",
+      onUpdate: (update: AgentToolResult<unknown>) =>
         staleCard.updateResult({ ...update, isError: false }, true),
-      { cwd: dir },
-    );
+      ctx: { cwd: dir },
+    });
     assert.equal(failed.isError, true);
     assert.equal(reportOf(failed, "edit")?.failures?.[0].result, "shifted");
     staleCard.updateResult(failed);
@@ -385,7 +419,7 @@ test("loaded configuration controls hash length and recovery radius", async () =
       await expectToolFailure(
         call(makeEditOverride(dir, config), {
           path: "configured.txt",
-          edits: [{ op: "delete", anchor: `1#${computeLineHash(1, "target", hashLen)}` }],
+          edits: [{ action: "delete", anchor: `1#${computeLineHash(1, "target", hashLen)}` }],
         }),
         "ANCHOR_MISMATCH",
         (report) => {

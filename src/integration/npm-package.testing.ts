@@ -64,7 +64,7 @@ test("packed extension completes file, worker, and command operations", {
       assert.equal(anchor("grep"), anchor("read"));
       return call("edit", "edit", {
         path: "fixture.txt",
-        edits: [{ op: "replace", anchor: anchor("grep"), body: ["edited"] }],
+        edits: [{ action: "replace", anchor: anchor("grep"), body: ["edited"] }],
       });
     },
     () =>

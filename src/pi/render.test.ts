@@ -77,7 +77,7 @@ test("mutation headers refresh in place and retain isolated per-call counts", ()
   ]) {
     const args = {
       path: "a.txt",
-      edits: [{ op: "append" as const, body: ["new"] }],
+      edits: [{ action: "append" as const, body: ["new"] }],
       replacements: [{ literal: true, find: "old", replace: "new" }],
     };
     const context: any = {
@@ -108,19 +108,19 @@ test("mutation headers refresh in place and retain isolated per-call counts", ()
   }
 });
 
-test("edit call titles count each operation type and refresh with partial input", () => {
+test("partial edit actions → refresh per-action counts", () => {
   initTheme("dark");
   const tool = makeEditOverride(process.cwd(), DEFAULT_CONFIG);
   const edits = [
-    { op: "replace", anchor: "1#AB", body: ["new"] },
-    { op: "append", body: ["more"] },
-    { op: "replace", anchor: "3#CD", body: ["changed"] },
-    { op: "delete", anchor: "5#EF" },
-    { op: "insert_before", anchor: "7#GH", body: ["before"] },
-    { op: "insert_after", anchor: "9#JK", body: ["after"] },
-    { op: "prepend", body: ["first"] },
-    { op: "copy", anchor: "1#AB", before: "3#CD" },
-    { op: "move", anchor: "3#CD", after: "5#EF" },
+    { action: "replace", anchor: "1#AB", body: ["new"] },
+    { action: "append", body: ["more"] },
+    { action: "replace", anchor: "3#CD", body: ["changed"] },
+    { action: "delete", anchor: "5#EF" },
+    { action: "insert_before", anchor: "7#GH", body: ["before"] },
+    { action: "insert_after", anchor: "9#JK", body: ["after"] },
+    { action: "prepend", body: ["first"] },
+    { action: "copy", anchor: "1#AB", before: "3#CD" },
+    { action: "move", anchor: "3#CD", after: "5#EF" },
   ];
   let header: ReturnType<typeof tool.renderCall> | undefined;
   const context = { state: {} } as Parameters<typeof tool.renderCall>[2];
@@ -153,7 +153,7 @@ test("edit call titles count each operation type and refresh with partial input"
   assert.match(single, /1 op: replace ×1/);
   assert.doesNotMatch(single, /append|copy|delete|insert_before|insert_after|move|prepend/);
   assert.match(
-    render([null, { op: "rep" }, { op: "__proto__" }, { op: { toString: null } }]),
+    render([null, { action: "rep" }, { action: "__proto__" }, { action: { toString: null } }]),
     /4 ops: unknown ×4/,
   );
   for (const invalid of [[], undefined, JSON.stringify(edits), "[{bad"]) {
@@ -161,10 +161,37 @@ test("edit call titles count each operation type and refresh with partial input"
   }
 });
 
+test("missing or empty mutation path → show a themed placeholder until the path arrives", () => {
+  initTheme("dark");
+  for (const tool of [
+    makeEditOverride(process.cwd(), DEFAULT_CONFIG),
+    makeReplaceTool(process.cwd(), DEFAULT_CONFIG),
+  ]) {
+    const context = { state: {} } as Parameters<
+      ReturnType<typeof makeEditOverride>["renderCall"]
+    >[2] &
+      Parameters<ReturnType<typeof makeReplaceTool>["renderCall"]>[2];
+    let header: ReturnType<typeof tool.renderCall> | undefined;
+    for (const path of [undefined, "", "f.txt"]) {
+      // Streaming arguments may contain operations before the path arrives.
+      const args = { path, edits: [], replacements: [] } as Parameters<
+        ReturnType<typeof makeEditOverride>["renderCall"]
+      >[0] &
+        Parameters<ReturnType<typeof makeReplaceTool>["renderCall"]>[0];
+      const previous = header;
+      header = tool.renderCall(args, theme, { ...context, lastComponent: header });
+      if (previous) assert.equal(header, previous);
+      const output = header.render(100).join("\n");
+      assert.ok(output.includes(theme.fg(path ? "accent" : "toolOutput", path || "...")));
+      assert.ok(stripVTControlCharacters(output).startsWith(`${tool.name} ${path || "..."}`));
+    }
+  }
+});
+
 test("mutation card owns stale-anchor notices without internal status", () => {
   initTheme("dark");
   const tool = withMutationStatus(makeEditOverride(process.cwd(), DEFAULT_CONFIG));
-  const args = { path: "a.txt", edits: [{ op: "append" as const, body: ["new"] }] };
+  const args = { path: "a.txt", edits: [{ action: "append" as const, body: ["new"] }] };
   const context: any = { args, state: {}, isPartial: false, isError: false, invalidate() {} };
   const card = tool.renderCall!(args, theme, context);
   tool.renderResult!(
@@ -194,7 +221,7 @@ test("mutation card owns stale-anchor notices without internal status", () => {
 test("mutation card omits status when then_run was not requested", () => {
   initTheme("dark");
   const tool = withMutationStatus(makeEditOverride(process.cwd(), DEFAULT_CONFIG));
-  const args = { path: "a.txt", edits: [{ op: "append" as const, body: ["new"] }] };
+  const args = { path: "a.txt", edits: [{ action: "append" as const, body: ["new"] }] };
   const context: any = { args, state: {}, isPartial: false, isError: false, invalidate() {} };
   const card = tool.renderCall!(args, theme, context);
   tool.renderResult!(
@@ -282,7 +309,7 @@ test("diff previews retain standalone CR and literal control-picture characters"
       { expanded: true, isPartial: false },
       theme,
       {
-        args: { path: "a.txt", edits: [{ op: "append", body: ["new"] }] },
+        args: { path: "a.txt", edits: [{ action: "append", body: ["new"] }] },
         state: {},
         isError: false,
       } as Parameters<typeof tool.renderResult>[3],
@@ -369,7 +396,7 @@ test("all tools render argument issues as field diagnostics while preserving mod
         path: "unused.txt",
         content: "unused",
         mode: "create" as const,
-        edits: [{ op: "append" as const, body: ["unused"] }],
+        edits: [{ action: "append" as const, body: ["unused"] }],
         replacements: [{ literal: true, find: "unused", replace: "unused" }],
         pattern: "unused",
         literal: true,

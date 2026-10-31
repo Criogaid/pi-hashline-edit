@@ -149,7 +149,7 @@ test("model switches while a mutation waits → failure uses its starting budget
   try {
     const running = callTool(makeEditOverride(dir, DEFAULT_CONFIG, undefined, budgets), {
       path,
-      edits: [{ op: "delete", anchor: `1#${wrongHash(text)}` }],
+      edits: [{ action: "delete", anchor: `1#${wrongHash(text)}` }],
     });
     model = { ...model, id: "large", contextWindow: 1_048_576 };
     assert.equal(budgets().readBytes, large.readBytes);
@@ -160,7 +160,7 @@ test("model switches while a mutation waits → failure uses its starting budget
     const next = reportOf(
       await callTool(makeEditOverride(dir, DEFAULT_CONFIG, undefined, budgets), {
         path,
-        edits: [{ op: "delete", anchor: `1#${wrongHash(text)}` }],
+        edits: [{ action: "delete", anchor: `1#${wrongHash(text)}` }],
       }),
       "edit",
     );

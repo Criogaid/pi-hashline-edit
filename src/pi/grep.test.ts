@@ -541,7 +541,7 @@ test("grep in a subdirectory returns a path that edits the matching file", async
       path: displayPath,
       edits: [
         {
-          op: "replace",
+          action: "replace",
           anchor: contextAnchor,
           body: ["export const context = 2;"],
         },

@@ -61,7 +61,7 @@ test("then_run schemas reject invalid commands, unknown keys, and excessive time
       await writeFile(join(dir, path), "old\n");
       const mutation =
         tool.name === "edit"
-          ? { edits: [{ op: "append", body: ["new"] }] }
+          ? { edits: [{ action: "append", body: ["new"] }] }
           : tool.name === "replace"
             ? { replacements: [{ literal: true, find: "old", replace: "new" }] }
             : { content: "new\n", mode: "overwrite" };
@@ -101,7 +101,7 @@ test("edit and replace share one embedded executor and preserve mutation results
       "edit-1",
       {
         path: "edit.txt",
-        edits: [{ op: "append", body: ["after"] }],
+        edits: [{ action: "append", body: ["after"] }],
         then_run: { command: "check edit" },
       },
       undefined,
@@ -300,7 +300,7 @@ test("all mutation tools forward command progress before completion in RPC mode"
           "edit",
           {
             path: "progress.txt",
-            edits: [{ op: "append", body: ["after"] }],
+            edits: [{ action: "append", body: ["after"] }],
             then_run: { command: "check" },
           },
           undefined,
@@ -376,7 +376,7 @@ test("progress reports skipped mutations and failed commands without rolling bac
       "skip",
       {
         path: "missing.txt",
-        edits: [{ op: "append", body: ["after"] }],
+        edits: [{ action: "append", body: ["after"] }],
         then_run: { command: "check" },
       },
       undefined,

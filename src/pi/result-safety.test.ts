@@ -7,7 +7,7 @@ import { writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { DEFAULT_OUTPUT_BUDGETS } from "./budgets.ts";
+import { DEFAULT_OUTPUT_BUDGETS, outputBudgetsFor } from "./budgets.ts";
 import { createActionFusionExecutor } from "./action-fusion.ts";
 import { makeReplaceTool } from "./replace-tool.ts";
 import { makeWriteOverride } from "./write-tool.ts";
@@ -32,15 +32,20 @@ const invoke = (
   context?: unknown,
 ) => callTool(tool, args, { toolCallId, signal, onUpdate, ctx: context });
 
+const anchorBudget = outputBudgetsFor(4096);
+const anchorBatchSize: unknown = Reflect.get(
+  makeEditOverride(process.cwd(), DEFAULT_CONFIG).parameters.properties.edits,
+  "maxItems",
+);
+assert.ok(typeof anchorBatchSize === "number");
+
 function assertFailureByteBudgets(message: string): void {
   const report = decodeReport(message, "edit");
   assert.ok(report);
   assert.equal(report.error, "ANCHOR_MISMATCH");
   assert.ok(report.failures && report.failures.length > 0);
-  assert.ok(
-    Buffer.byteLength(JSON.stringify(report.failures)) <= DEFAULT_OUTPUT_BUDGETS.blockBytes,
-  );
-  assert.equal(report.failures.length + (report.omittedFailures ?? 0), 1000);
+  assert.ok(Buffer.byteLength(JSON.stringify(report.failures)) <= anchorBudget.blockBytes);
+  assert.equal(report.failures.length + (report.omittedFailures ?? 0), anchorBatchSize);
   assert.ok(report.omittedFailures);
   assert.equal(report.matched, undefined);
   assert.equal(report.omittedMatched, undefined);
@@ -48,7 +53,7 @@ function assertFailureByteBudgets(message: string): void {
   if (report.candidateNeighborhoods) {
     const rows = report.candidateNeighborhoods.flatMap((group) => group.rows);
     assert.ok(rows.length > 0);
-    assert.ok(Buffer.byteLength(rows.join("\n")) + 1 <= DEFAULT_OUTPUT_BUDGETS.blockBytes);
+    assert.ok(Buffer.byteLength(rows.join("\n")) + 1 <= anchorBudget.blockBytes);
   }
 }
 
@@ -83,7 +88,7 @@ test("edit and replace commands change or remove the file → withhold anchors a
               ? {
                   edits: [
                     {
-                      op: "replace",
+                      action: "replace",
                       anchor: `1#${computeLineHash(1, "before", DEFAULT_CONFIG.hashLen)}`,
                       body: ["after"],
                     },
@@ -269,9 +274,15 @@ test("aggregate anchor diagnostics → respect their byte budgets", async (t) =>
     const path = join(dir, "long.txt");
     await writeFile(path, "current\n");
     const failure = await invoke(
-      makeEditOverride(dir, DEFAULT_CONFIG),
+      makeEditOverride(dir, DEFAULT_CONFIG, undefined, () => anchorBudget),
       "errors",
-      { path, edits: Array.from({ length: 1000 }, () => ({ op: "delete", anchor: "1#XXXX" })) },
+      {
+        path,
+        edits: Array.from({ length: anchorBatchSize }, () => ({
+          action: "delete",
+          anchor: "1#XXXX",
+        })),
+      },
       undefined,
       undefined,
       await ctx(dir, t),
@@ -300,7 +311,11 @@ test("unpaired surrogate arguments are rejected before Fusion", async (t) => {
     const cases = [
       {
         tool: makeEditOverride(dir, DEFAULT_CONFIG, fusion),
-        args: { path, edits: [{ op: "append", body: ["\ud800"] }], then_run: { command: "check" } },
+        args: {
+          path,
+          edits: [{ action: "append", body: ["\ud800"] }],
+          then_run: { command: "check" },
+        },
         field: "edits[0].body[0]",
       },
       {
@@ -343,12 +358,12 @@ test("ambiguous recovery bounds candidate lists and never claims content identit
     lines[49] = "different";
     await writeFile(path, lines.join("\n"));
     const failure = await invoke(
-      makeEditOverride(dir, DEFAULT_CONFIG),
+      makeEditOverride(dir, DEFAULT_CONFIG, undefined, () => anchorBudget),
       "ambiguous",
       {
         path,
-        edits: Array.from({ length: 1000 }, () => ({
-          op: "delete",
+        edits: Array.from({ length: anchorBatchSize }, () => ({
+          action: "delete",
           anchor: `50#${computeLineHash(50, "same", 4)}`,
         })),
       },
@@ -385,7 +400,7 @@ test("NUL arguments are rejected before Fusion for all mutation tools", async (t
     const cases = [
       {
         tool: makeEditOverride(dir, DEFAULT_CONFIG, fusion),
-        args: { path, edits: [{ op: "append", body: ["\0"] }], then_run: { command: "check" } },
+        args: { path, edits: [{ action: "append", body: ["\0"] }], then_run: { command: "check" } },
         field: "edits[0].body[0]",
       },
       {
@@ -480,7 +495,7 @@ const noOpCases = [
     params: {
       edits: [
         {
-          op: "replace",
+          action: "replace",
           anchor: `1#${computeLineHash(1, "same", DEFAULT_CONFIG.hashLen)}`,
           body: ["same"],
         },

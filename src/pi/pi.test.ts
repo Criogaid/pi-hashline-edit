@@ -95,7 +95,9 @@ test("file tools share Pi-style URL and @ path resolution", async () => {
       makeEditOverride(dir, DEFAULT_CONFIG),
       {
         path: `@${url}`,
-        edits: [{ op: "replace", anchor: `1#${computeLineHash(1, "after", 4)}`, body: ["edited"] }],
+        edits: [
+          { action: "replace", anchor: `1#${computeLineHash(1, "after", 4)}`, body: ["edited"] },
+        ],
       },
       { toolCallId: "edit", ctx },
     );

@@ -6,7 +6,7 @@ import { makeGrepOverride } from "./grep-tool.ts";
 import { makeWriteOverride } from "./write-tool.ts";
 import { makeReplaceTool } from "./replace-tool.ts";
 import { DEFAULT_CONFIG } from "./config.ts";
-import { DEFAULT_OUTPUT_BUDGETS } from "./budgets.ts";
+import { DEFAULT_OUTPUT_BUDGETS, outputBudgetsFor } from "./budgets.ts";
 import { callTool } from "./tool-call.testing.ts";
 import { argumentError } from "./argument-error.testing.ts";
 
@@ -16,7 +16,7 @@ test("all tools receive invalid arguments → return field diagnostics without a
   const cases = [
     {
       tool: makeEditOverride(cwd, DEFAULT_CONFIG),
-      args: { path: "unused", edits: [{ op: "append", body: [] }] },
+      args: { path: "unused", edits: [{ action: "append", body: [] }] },
     },
     { tool: makeReadOverride(cwd, DEFAULT_CONFIG), args: { path: "unused", limit: 0 } },
     { tool: makeGrepOverride(cwd, DEFAULT_CONFIG), args: { pattern: "", literal: true } },
@@ -53,12 +53,12 @@ test("all tools receive invalid arguments → return field diagnostics without a
 test("Pi prepares a singleton operation → semantic and schema paths resolve to the prepared array", async () => {
   const tool = makeEditOverride(cwd, DEFAULT_CONFIG);
   await assert.rejects(
-    callTool(tool, { path: "unused", edits: { op: "insert_after", body: [] } }),
+    callTool(tool, { path: "unused", edits: { action: "insert_after", body: [] } }),
     (error: unknown) => {
       const result = argumentError(error);
       assert.deepEqual(
         result.issues.map((issue) => issue.field),
-        ["edits[0].body", "edits[0].anchor"],
+        ["edits[0].anchor", "edits[0].body"],
       );
       return true;
     },
@@ -78,25 +78,23 @@ test("Pi prepares a singleton operation → semantic and schema paths resolve to
 });
 
 test("JSON diagnostics exceed the budget → retain whole opening and closing issues and label omissions", async () => {
-  const edits = Array.from({ length: DEFAULT_OUTPUT_BUDGETS.blockBytes }, () => ({
-    op: "append",
+  const budget = outputBudgetsFor(4096);
+  const tool = makeEditOverride(cwd, DEFAULT_CONFIG, undefined, () => budget);
+  const maxItems: unknown = Reflect.get(tool.parameters.properties.edits, "maxItems");
+  assert.ok(typeof maxItems === "number");
+  const edits = Array.from({ length: maxItems }, () => ({
+    action: "append",
     body: [],
   }));
-  await assert.rejects(
-    callTool(makeEditOverride(cwd, DEFAULT_CONFIG), { path: "", edits }),
-    (error: unknown) => {
-      const result = argumentError(error);
-      assert.ok(
-        error instanceof Error &&
-          Buffer.byteLength(error.message) <= DEFAULT_OUTPUT_BUDGETS.blockBytes,
-      );
-      assert.equal(result.issues[0].field, "edits[0].body");
-      assert.equal(result.issues.at(-1)?.field, "path");
-      assert.ok((result.omittedIssues ?? 0) > 0);
-      assert.equal(result.issues.length + (result.omittedIssues ?? 0), edits.length + 1);
-      return true;
-    },
-  );
+  await assert.rejects(callTool(tool, { path: "", edits }), (error: unknown) => {
+    const result = argumentError(error);
+    assert.ok(error instanceof Error && Buffer.byteLength(error.message) <= budget.blockBytes);
+    assert.equal(result.issues[0].field, "edits[0].body");
+    assert.equal(result.issues.at(-1)?.field, "path");
+    assert.ok((result.omittedIssues ?? 0) > 0);
+    assert.equal(result.issues.length + (result.omittedIssues ?? 0), edits.length + 1);
+    return true;
+  });
 });
 
 test("a reason contains an oversized anchor → keep its cause and recovery instruction inside valid JSON", async () => {
@@ -104,7 +102,7 @@ test("a reason contains an oversized anchor → keep its cause and recovery inst
   await assert.rejects(
     callTool(makeEditOverride(cwd, DEFAULT_CONFIG), {
       path: "unused",
-      edits: [{ op: "delete", anchor }],
+      edits: [{ action: "delete", anchor }],
     }),
     (error: unknown) => {
       const result = argumentError(error);

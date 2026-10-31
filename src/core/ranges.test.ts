@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { findSortedRangeConflict, mergeRanges, type HalfOpenRange } from "./ranges.ts";
 
-test("sorted ranges → ordered starts allow only empty ranges before a shared start", () => {
+test("sorted ranges sharing or crossing boundaries → report conflicts according to insertion policy", () => {
   const cases: [HalfOpenRange[], number | undefined, number | undefined][] = [
     [[], undefined, undefined],
     [
@@ -27,7 +27,7 @@ test("sorted ranges → ordered starts allow only empty ranges before a shared s
         [0, 0],
       ],
       1,
-      undefined,
+      1,
     ],
     [
       [
@@ -44,7 +44,7 @@ test("sorted ranges → ordered starts allow only empty ranges before a shared s
         [0, 2],
       ],
       1,
-      undefined,
+      1,
     ],
     [
       [
@@ -72,6 +72,14 @@ test("sorted ranges → ordered starts allow only empty ranges before a shared s
     ],
     [
       [
+        [0, 2],
+        [0, 2],
+      ],
+      1,
+      1,
+    ],
+    [
+      [
         [0, 1],
         [1, 2],
         [1, 3],
@@ -80,17 +88,17 @@ test("sorted ranges → ordered starts allow only empty ranges before a shared s
       2,
     ],
   ];
-  for (const [ranges, strictConflict, orderedConflict] of cases) {
-    for (const orderedStarts of [false, true]) {
-      const expected = orderedStarts ? orderedConflict : strictConflict;
+  for (const [ranges, strictConflict, insertionBeforeRangeConflict] of cases) {
+    for (const insertBeforeRange of [false, true]) {
+      const expected = insertBeforeRange ? insertionBeforeRangeConflict : strictConflict;
       for (const shift of [0, 10]) {
         assert.equal(
           findSortedRangeConflict(
             ranges.map(([start, end]) => [start + shift, end + shift]),
-            orderedStarts,
+            insertBeforeRange,
           ),
           expected,
-          JSON.stringify({ ranges, orderedStarts, shift }),
+          JSON.stringify({ ranges, insertBeforeRange, shift }),
         );
       }
     }
