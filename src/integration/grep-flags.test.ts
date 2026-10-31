@@ -248,7 +248,7 @@ test("grep flags: invalid Unicode syntax rejects the pattern argument", async ()
       literal: false,
       flags: "u",
     }),
-    rejectsArgument("pattern"),
+    rejectsArgument("pattern[0]"),
   );
 });
 

@@ -1,10 +1,7 @@
 import { rejectsArgument } from "./argument-error.testing.ts";
 import { createEditTool } from "@earendil-works/pi-coding-agent";
-import { validateToolArguments } from "@earendil-works/pi-ai";
-import {
-  makeStrictJsonSchema,
-  resolveJsonSchemaStrictSampling,
-} from "@earendil-works/pi-ai/api/constrained-sampling";
+import { validateToolArguments, type Tool } from "@earendil-works/pi-ai";
+import { makeStrictJsonSchema } from "@earendil-works/pi-ai/api/constrained-sampling";
 import { makeEditOverride } from "./edit-tool.ts";
 import { makeReadOverride } from "./read-tool.ts";
 import { loadConfig } from "./config.ts";
@@ -16,7 +13,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import registerHashline from "../index.ts";
 import { initTheme } from "@earendil-works/pi-coding-agent";
-import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { ProcessTerminal, TuiMainScreen } from "@earendil-works/pi-tui";
 import { ToolExecutionComponent } from "../../node_modules/@earendil-works/pi-coding-agent/dist/modes/interactive/components/tool-execution.js";
 import { theme } from "../../node_modules/@earendil-works/pi-coding-agent/dist/modes/interactive/theme/theme.js";
@@ -27,37 +24,70 @@ import { createActionFusionExecutor, type ActionFusionProgress } from "./action-
 import { reportOf } from "./report.ts";
 import { formatByteSize } from "./budgets.ts";
 import { expectToolFailure } from "./report-failure.testing.ts";
+import { STRICT_SAMPLING } from "./schema.ts";
 
-test("edit with or without Fusion → expose parameters usable by Pi strict sampling", () => {
-  for (const fusion of [undefined, createActionFusionExecutor()]) {
-    const tool = makeEditOverride(process.cwd(), DEFAULT_CONFIG, fusion);
-    assert.deepEqual(tool.constrainedSampling, { type: "json_schema", strict: "prefer" });
-    assert.equal(resolveJsonSchemaStrictSampling(tool, true), true);
-    const strict = makeStrictJsonSchema(tool.parameters);
-    assert.partialDeepStrictEqual(strict, {
-      type: "object",
-      additionalProperties: false,
-      required: fusion ? ["path", "edits", "then_run"] : ["path", "edits"],
-      properties: {
-        edits: {
-          type: "array",
-          items: {
-            type: "object",
-            additionalProperties: false,
-            required: ["action", "anchor", "end", "body", "before", "after"],
-            properties: {
-              anchor: { anyOf: [{ type: "string" }, { type: "null" }] },
-              end: { anyOf: [{ type: "string" }, { type: "null" }] },
-              body: { anyOf: [{ type: "array" }, { type: "null" }] },
-              before: { anyOf: [{ type: "string" }, { type: "null" }] },
-              after: { anyOf: [{ type: "string" }, { type: "null" }] },
-            },
+test("registered tools with or without Fusion → request strict sampling with convertible parameters", async (t) => {
+  await withDir(async (dir) => {
+    const previousCwd = process.cwd();
+    try {
+      await mkdir(join(dir, ".pi"));
+      process.chdir(dir);
+      for (const actionFusion of [false, true]) {
+        await writeFile(
+          join(dir, ".pi", "settings.json"),
+          JSON.stringify({ hashlineEdit: { enabled: true, actionFusion } }),
+        );
+        const tools: Tool[] = [];
+        const api: Pick<ExtensionAPI, "on" | "registerEntryRenderer" | "registerTool"> = {
+          on() {
+            return () => {};
           },
-        },
-        ...(fusion ? { then_run: { anyOf: [{ type: "object" }, { type: "null" }] } } : {}),
-      },
-    });
-  }
+          registerEntryRenderer() {},
+          registerTool(tool) {
+            tools.push(tool);
+          },
+        };
+        // This fixture only registers tools; the three hooks cover every API call at registration.
+        registerHashline(api as ExtensionAPI);
+        assert.equal(tools.length, 5);
+        for (const tool of tools) {
+          await t.test(`${tool.name}/Fusion ${actionFusion} → supports strict sampling`, () => {
+            assert.deepEqual(tool.constrainedSampling, STRICT_SAMPLING);
+            const strict = makeStrictJsonSchema(tool.parameters);
+            if (tool.name === "edit") {
+              assert.partialDeepStrictEqual(strict, {
+                type: "object",
+                additionalProperties: false,
+                required: actionFusion ? ["path", "edits", "then_run"] : ["path", "edits"],
+                properties: {
+                  edits: {
+                    type: "array",
+                    items: {
+                      type: "object",
+                      additionalProperties: false,
+                      required: ["action", "anchor", "end", "body", "before", "after"],
+                      properties: {
+                        anchor: { anyOf: [{ type: "string" }, { type: "null" }] },
+                        end: { anyOf: [{ type: "string" }, { type: "null" }] },
+                        body: { anyOf: [{ type: "array" }, { type: "null" }] },
+                        before: { anyOf: [{ type: "string" }, { type: "null" }] },
+                        after: { anyOf: [{ type: "string" }, { type: "null" }] },
+                      },
+                    },
+                  },
+                  ...(actionFusion
+                    ? { then_run: { anyOf: [{ type: "object" }, { type: "null" }] } }
+                    : {}),
+                },
+              });
+            }
+          });
+        }
+      }
+    } finally {
+      process.chdir(previousCwd);
+    }
+  });
 });
 
 test("mutation cards use Fusion by default and explicit false removes command support", async () => {

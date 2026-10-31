@@ -86,13 +86,33 @@ test("explicit JavaScript flags → call rendering shows them", () => {
   initTheme("dark");
   const { backend } = fakeBackend();
   const tool = makeGrepOverrideWithBackend(process.cwd(), DEFAULT_CONFIG, backend);
-  const rendered = tool.renderCall!({ pattern: "\\p{Letter}+", literal: false, flags: "u" }, theme)
+  const rendered = tool.renderCall!(
+    { pattern: ["\\p{Letter}+"], literal: false, flags: "u" },
+    theme,
+  )
     .render(120)
     .join("\n");
   assert.ok(rendered.includes("/\\p{Letter}+/u"));
 });
 
-test("configured defaults → descriptions, limits, and context use the registered values", async () =>
+test("streamed grep strings and null fields → render the pattern and default path without a limit", () => {
+  initTheme("dark");
+  const { backend } = fakeBackend();
+  const tool = makeGrepOverrideWithBackend(process.cwd(), DEFAULT_CONFIG, backend);
+  for (const pattern of ["needle", null]) {
+    const args: unknown = { pattern, literal: true, path: null, limit: null };
+    const rendered = tool
+      // Streaming arguments reach the renderer before Pi validates and coerces them.
+      .renderCall(args as Parameters<typeof tool.renderCall>[0], theme)
+      .render(120)
+      .join("\n");
+    assert.ok(rendered.includes(`/${pattern ?? ""}/`));
+    assert.ok(rendered.includes("in ."));
+    assert.doesNotMatch(rendered, /limit/);
+  }
+});
+
+test("configured defaults and coerced input → descriptions, limits, and context use registered values", async () =>
   withDir(async (dir) => {
     const file = join(dir, "configured.txt");
     const lines = [
@@ -126,10 +146,17 @@ test("configured defaults → descriptions, limits, and context use the register
         .split("\n")
         .filter((line) => /^\d+#/.test(line));
 
-    const defaults = await call(tool, { path: file, pattern: "needle", literal: true });
-    assert.deepEqual(rows(defaults), [1, 2, 3, 4].map(expectedRow));
-    assert.match(text(defaults), /configured\.txt · 1 match\n/);
-    assert.equal(reportOf(defaults, "grep")?.matchLimit, config.grep.defaultLimit);
+    for (const optional of [{}, { glob: null, limit: null }]) {
+      const defaults = await callTool(tool, {
+        path: file,
+        pattern: "needle",
+        literal: true,
+        ...optional,
+      });
+      assert.deepEqual(rows(defaults), [1, 2, 3, 4].map(expectedRow));
+      assert.match(text(defaults), /configured\.txt · 1 match\n/);
+      assert.equal(reportOf(defaults, "grep")?.matchLimit, config.grep.defaultLimit);
+    }
 
     const explicit = await call(tool, {
       path: file,
@@ -192,7 +219,7 @@ test("grep points wildcard paths to glob without changing ordinary missing-path 
       call(tool, { literal: true, pattern: "value", path: "src/fusion-card*" }),
       "PATH_NOT_FOUND",
       (report) => {
-        assert.equal(report.path, "src/fusion-card*");
+        assert.deepEqual(report.path, ["src/fusion-card*"]);
         assert.match(report.next ?? "", /directory.*path.*wildcard.*glob/);
       },
     );
@@ -200,7 +227,7 @@ test("grep points wildcard paths to glob without changing ordinary missing-path 
       call(tool, { literal: true, pattern: "value", path: "src/missing" }),
       "PATH_NOT_FOUND",
       (report) => {
-        assert.equal(report.path, "src/missing");
+        assert.deepEqual(report.path, ["src/missing"]);
         assert.equal(report.next, "Check the path.");
       },
     );
@@ -625,7 +652,7 @@ for (const diagnosticLineCount of [0, 80]) {
     ].join("\n");
     const fake = fakeBackend({ code: 2, stderr: diagnostic });
     const tool = makeGrepOverrideWithBackend(process.cwd(), DEFAULT_CONFIG, fake.backend);
-    const args = { pattern: "(?<=a+)b", literal: false };
+    const args = { pattern: ["(?<=a+)b"], literal: false };
     const failure: Awaited<ReturnType<typeof tool.execute>> = await callTool(tool, args);
     assert.equal(failure.isError, true);
     const errorText = failure.content
@@ -766,7 +793,7 @@ test("literal pipe patterns find no match → alternatives recovery preserves li
       if (literalPipe) {
         assert.match(
           report.next ?? "",
-          /if you meant alternatives.*pattern array.*otherwise.*literal matching/i,
+          /if you meant alternatives.*each as its own pattern item.*otherwise.*literal matching/i,
           context,
         );
       } else {
@@ -781,7 +808,7 @@ test("invalid JavaScript → its field rejects before file discovery", async () 
       for (const pattern of [value, ["plain", value]]) {
         const fake = fakeBackend();
         const tool = makeGrepOverrideWithBackend(dir, DEFAULT_CONFIG, fake.backend);
-        const field = typeof pattern === "string" ? "pattern" : "pattern[1]";
+        const field = typeof pattern === "string" ? "pattern[0]" : "pattern[1]";
         await assert.rejects(
           call(tool, { pattern, literal: false }),
           rejectsArgument(field, /Invalid regular expression/),

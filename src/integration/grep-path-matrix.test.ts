@@ -68,7 +68,7 @@ test("Cartesian literal mode × flags × case override × line mode × bytes →
             const context = JSON.stringify(params);
             candidates.clear();
             if (!literal && !acceptsNative(query)) {
-              await assert.rejects(callTool(tool, params), rejectsArgument("pattern"), context);
+              await assert.rejects(callTool(tool, params), rejectsArgument("pattern[0]"), context);
               assert.equal(candidates.size, 0, context);
               rejected++;
               continue;

@@ -251,7 +251,7 @@ test("real rg separates exact text from regex", async () => {
     assert.equal(missing.isError, undefined);
     await assert.rejects(
       invoke(tool, "invalid-regex", { pattern: "queueTool(", literal: false }),
-      rejectsArgument("pattern", /Invalid regular expression/),
+      rejectsArgument("pattern[0]", /Invalid regular expression/),
     );
     await assert.rejects(
       invoke(tool, "invalid-array", { pattern: ["queueTool(", "\\bfoo\\b"], literal: false }),
@@ -935,7 +935,7 @@ test("real rg accepts wildcard-only regexes and preserves limits and literal mod
     assert.match(literal.content[0].text, /3#[0-9A-Z]+│\.\*/);
     await assert.rejects(
       invoke(tool, "invalid", { pattern: "*", literal: false }),
-      rejectsArgument("pattern", /Invalid regular expression/),
+      rejectsArgument("pattern[0]", /Invalid regular expression/),
     );
   } finally {
     await rm(directory, { recursive: true, force: true });

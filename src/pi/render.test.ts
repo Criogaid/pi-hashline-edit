@@ -393,12 +393,12 @@ test("all tools render argument issues as field diagnostics while preserving mod
   for (const tool of tools) {
     for (const fused of [false, true]) {
       const args = {
-        path: "unused.txt",
+        path: tool.name === "grep" ? ["unused.txt"] : "unused.txt",
         content: "unused",
         mode: "create" as const,
         edits: [{ action: "append" as const, body: ["unused"] }],
         replacements: [{ literal: true, find: "unused", replace: "unused" }],
-        pattern: "unused",
+        pattern: ["unused"],
         literal: true,
         unexpected: true,
         ...(fused ? { then_run: { command: "must-not-run" } } : {}),
@@ -426,7 +426,9 @@ test("all tools render argument issues as field diagnostics while preserving mod
           showImages: false,
           isError: true,
         };
-        const call = tool.renderCall?.(args, theme, context);
+        // Pi passes unvalidated arguments to renderers after erasing their tool-specific types.
+        const renderCall = tool.renderCall as ToolDefinition<TSchema>["renderCall"];
+        const call = renderCall?.(args, theme, context);
         // Pi supplies no tool-specific details when argument validation fails.
         const renderError = tool.renderResult as NonNullable<
           ToolDefinition<TSchema, undefined>["renderResult"]
