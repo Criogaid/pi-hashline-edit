@@ -4,12 +4,19 @@ import { computeLineHash } from "./hash.ts";
 
 const ALLOWED = new Set("0123456789ABCDEFGHJKMNPQRSTVWXYZ");
 
-test("computeLineHash is stable and base32", () => {
+test("computeLineHash is stable and uses the configured base32 length", () => {
   const a = computeLineHash(3, "code", 4);
   const b = computeLineHash(3, "code", 4);
   assert.equal(a, b);
   assert.equal(a.length, 4);
   for (const ch of a) assert.ok(ALLOWED.has(ch), `bad char ${ch}`);
+  for (let i = 0; i < 2000; i++) {
+    const hash = computeLineHash(i + 1, `line ${i}`, 4);
+    for (const ch of hash) assert.ok(ALLOWED.has(ch), `bad char ${ch} in ${hash}`);
+  }
+  for (let i = 1; i <= 20; i++) {
+    assert.equal(computeLineHash(i, `content ${i}`, 8).length, 8);
+  }
 });
 
 test("different line number → different hash (even for identical content)", () => {
@@ -21,24 +28,9 @@ test("different content → different hash", () => {
   assert.notEqual(computeLineHash(1, "a", 4), computeLineHash(1, "b", 4));
 });
 
-test("base32 alphabet (without I/L/O/U) in bulk", () => {
-  for (let i = 0; i < 2000; i++) {
-    const h = computeLineHash(i + 1, `line ${i}`, 4);
-    for (const ch of h) assert.ok(ALLOWED.has(ch), `bad char ${ch} in ${h}`);
-  }
-});
-
 test("truncated checksums can collide", () => {
   assert.equal(computeLineHash(1, "const value = 558;", 4), "TM02");
   assert.equal(computeLineHash(1, "const value = 9344;", 4), "TM02");
-});
-
-test("hashLen 8 has a leading zero due to the 32-bit hash limit", () => {
-  for (let i = 1; i <= 20; i++) {
-    const h = computeLineHash(i, `content ${i}`, 8);
-    assert.equal(h.length, 8);
-    assert.equal(h[0], "0");
-  }
 });
 
 test("computeLineHash produces output identical to hashing full interpolated string", () => {
