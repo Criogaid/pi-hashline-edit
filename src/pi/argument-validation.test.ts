@@ -15,6 +15,7 @@ import { argumentError, rejectsArgument } from "./argument-error.testing.ts";
 import { POSITIVE_SAFE_INTEGER } from "./schema.ts";
 import { reportOf } from "./report.ts";
 import { createAnchorFormatter } from "./anchor-format.ts";
+import { grepCounts } from "./grep-output.testing.ts";
 
 const invalidCommand = { command: "", timeout: 0 };
 const anchorHash = "A".repeat(DEFAULT_CONFIG.hashLen);
@@ -362,6 +363,44 @@ test("optional edit fields and then_run are null with Fusion → publishes bytes
     }
   }
   assert.equal(commandRuns, 0);
+});
+
+test("null optional fields → grep applies defaults without filename filters", async (t) => {
+  const cwd = await mkdtemp(join(tmpdir(), "hashline-grep-null-"));
+  t.after(() => rm(cwd, { recursive: true, force: true }));
+  const path = join(cwd, "target.txt");
+  const config = DEFAULT_CONFIG;
+  await writeFile(path, "x\n".repeat(config.grep.defaultLimit + 1));
+  const rgCalls: (readonly string[])[] = [];
+  const discover = async (
+    args: readonly string[],
+    onPath: (path: string) => boolean | Promise<boolean>,
+  ) => {
+    rgCalls.push(args);
+    await onPath(path);
+    return { code: 0, stderr: "", stopped: false };
+  };
+  const tool = makeGrepOverrideWithBackend(cwd, config, {
+    runRgPaths: (_rg, args, _signal, onPath) => discover(args, onPath),
+    runRgLines: (_rg, args, _signal, _maxLines, onFile) =>
+      discover(args, (file) => onFile(file, undefined)),
+  });
+  const result = await callTool(tool, {
+    pattern: "x",
+    literal: true,
+    glob: null,
+    limit: null,
+    context: null,
+  });
+  assert.equal(result.isError, undefined);
+  assert.equal(grepCounts(result).matches, config.grep.defaultLimit);
+  assert.equal(reportOf(result, "grep")?.matchLimit, config.grep.defaultLimit);
+  assert.ok(rgCalls.length > 0);
+  for (const args of rgCalls) {
+    const globs = args.flatMap((arg, index) => (arg === "--glob" ? [args[index + 1]] : []));
+    // The built-in .git exclusion remains; null adds no filename filter.
+    assert.deepEqual(globs, ["!.git"]);
+  }
 });
 
 test("edit batch has 64 or 65 operations → publishes the maximum or rejects the oversized batch unchanged", async (t) => {

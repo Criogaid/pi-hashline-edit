@@ -112,7 +112,7 @@ test("streamed grep strings and null fields → render the pattern and default p
   }
 });
 
-test("configured defaults and coerced input → descriptions, limits, and context use registered values", async () =>
+test("configured defaults → descriptions, limits, and context use registered values", async () =>
   withDir(async (dir) => {
     const file = join(dir, "configured.txt");
     const lines = [
@@ -146,17 +146,10 @@ test("configured defaults and coerced input → descriptions, limits, and contex
         .split("\n")
         .filter((line) => /^\d+#/.test(line));
 
-    for (const optional of [{}, { glob: null, limit: null }]) {
-      const defaults = await callTool(tool, {
-        path: file,
-        pattern: "needle",
-        literal: true,
-        ...optional,
-      });
-      assert.deepEqual(rows(defaults), [1, 2, 3, 4].map(expectedRow));
-      assert.match(text(defaults), /configured\.txt · 1 match\n/);
-      assert.equal(reportOf(defaults, "grep")?.matchLimit, config.grep.defaultLimit);
-    }
+    const defaults = await call(tool, { path: file, pattern: "needle", literal: true });
+    assert.deepEqual(rows(defaults), [1, 2, 3, 4].map(expectedRow));
+    assert.match(text(defaults), /configured\.txt · 1 match\n/);
+    assert.equal(reportOf(defaults, "grep")?.matchLimit, config.grep.defaultLimit);
 
     const explicit = await call(tool, {
       path: file,
