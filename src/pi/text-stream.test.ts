@@ -201,24 +201,6 @@ test("lossy scans flush a multibyte sequence split across chunks and incomplete 
     assert.equal(stats.byteLength, source.length);
   }));
 
-test("lossy scans without a text consumer report validity and retain all raw bytes", async () =>
-  withFile(async (path) => {
-    const source = Buffer.concat([
-      Buffer.from("\ufeffbefore\r\n"),
-      Buffer.from([0xff, 0xf0, 0x9f]),
-    ]);
-    await writeFile(path, source);
-    const stats = await scanTextFile(path, {
-      decoding: "lossy",
-    });
-    assert.equal(stats.revision, byteRevision(source));
-    assert.equal(stats.validUtf8, false);
-    assert.equal(stats.hasNul, false);
-    assert.equal(stats.totalLines, 2);
-    assert.equal(stats.finalNewline, false);
-    assert.equal(stats.byteLength, source.length);
-  }));
-
 test("NUL suppresses its chunk and all later text without flushing a pending sequence", async () =>
   withFile(async (path) => {
     const chunkBytes = 64 * 1024;

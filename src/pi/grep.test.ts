@@ -797,17 +797,25 @@ test("literal pipe patterns find no match → alternatives recovery preserves li
 
 test("invalid JavaScript → its field rejects before file discovery", async () =>
   withDir(async (dir) => {
-    for (const value of ["(", "(?m)^foo", "(?i)abc"]) {
-      for (const pattern of [value, ["plain", value]]) {
-        const fake = fakeBackend();
-        const tool = makeGrepOverrideWithBackend(dir, DEFAULT_CONFIG, fake.backend);
-        const field = typeof pattern === "string" ? "pattern[0]" : "pattern[1]";
-        await assert.rejects(
-          call(tool, { pattern, literal: false }),
-          rejectsArgument(field, /Invalid regular expression/),
-        );
-        assert.equal(fake.calls.length, 0);
-      }
+    for (const [pattern, flags, field] of [
+      ["(", undefined, "pattern[0]"],
+      [["plain", "("], undefined, "pattern[1]"],
+      ["(?m)^foo", undefined, "pattern[0]"],
+      [["plain", "(?m)^foo"], undefined, "pattern[1]"],
+      ["(?i)abc", undefined, "pattern[0]"],
+      [["plain", "(?i)abc"], undefined, "pattern[1]"],
+      ["\\p{NotAProperty}", "u", "pattern[0]"],
+      ["queueTool(", undefined, "pattern[0]"],
+      [["queueTool(", "\\bfoo\\b"], undefined, "pattern[0]"],
+      ["*", undefined, "pattern[0]"],
+    ] as const) {
+      const fake = fakeBackend();
+      const tool = makeGrepOverrideWithBackend(dir, DEFAULT_CONFIG, fake.backend);
+      await assert.rejects(
+        call(tool, { path: "missing.txt", pattern, literal: false, flags }),
+        rejectsArgument(field, /Invalid regular expression/),
+      );
+      assert.equal(fake.calls.length, 0);
     }
   }));
 

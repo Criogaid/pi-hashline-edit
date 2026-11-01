@@ -8,7 +8,6 @@ import { makeGrepOverrideWithBackend } from "../pi/grep-tool.ts";
 import { reportOf } from "../pi/report.ts";
 import { grepCounts } from "../pi/grep-output.testing.ts";
 import { callTool } from "../pi/tool-call.testing.ts";
-import { rejectsArgument } from "../pi/argument-error.testing.ts";
 
 const cases = [
   {
@@ -237,19 +236,6 @@ test("grep flags: JavaScript modes preserve native matching through the real sea
       assert.deepEqual(lines, scenario.lines);
     });
   }
-});
-
-test("grep flags: invalid Unicode syntax rejects the pattern argument", async () => {
-  const tool = makeGrepOverrideWithBackend(process.cwd(), DEFAULT_CONFIG, {});
-  await assert.rejects(
-    callTool(tool, {
-      path: "missing.txt",
-      pattern: "\\p{NotAProperty}",
-      literal: false,
-      flags: "u",
-    }),
-    rejectsArgument("pattern[0]"),
-  );
 });
 
 test("grep flags: valid V8 patterns exceeding translator parser depth still execute", async (t) => {
