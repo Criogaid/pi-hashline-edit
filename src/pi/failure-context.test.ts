@@ -3,7 +3,7 @@ import { test } from "node:test";
 import { computeLineHash } from "../core/hash.ts";
 import { applyEdits } from "../core/apply.ts";
 import type { AnchorFailure, Edit } from "../core/types.ts";
-import { formatByteSize, DEFAULT_OUTPUT_BUDGETS } from "./budgets.ts";
+import { formatByteSize, DEFAULT_OUTPUT_BUDGETS, outputBudgetsFor } from "./budgets.ts";
 import { DEFAULT_CONFIG } from "./config.ts";
 import { createAnchorFormatter } from "./anchor-format.ts";
 import { ambiguousCandidateNeighborhoods, describeEditFailure } from "./failure-context.ts";
@@ -178,18 +178,23 @@ test("remaining context budget cannot fit an intermediate row → retain shorter
   assert.ok(Buffer.byteLength(rows(result).join("\n") + "\n") <= DEFAULT_OUTPUT_BUDGETS.blockBytes);
 });
 
-function rejectedEdit(text: string, edits: Edit[], shiftRadius = 0) {
+function rejectedEdit(
+  text: string,
+  edits: Edit[],
+  shiftRadius = 0,
+  budget = DEFAULT_OUTPUT_BUDGETS,
+) {
   const result = applyEdits(text, edits, DEFAULT_CONFIG.hashLen, shiftRadius);
   assert.ok(!result.ok, "the fixture must reach failure reporting");
   const error = describeEditFailure(
     result.failure,
     { currentText: text, anchors: createAnchorFormatter(DEFAULT_CONFIG.hashLen) },
     edits.length > 1,
-    DEFAULT_OUTPUT_BUDGETS,
+    budget,
   );
   return {
     failure: result.failure,
-    report: describeFailure("edit", error, { path: "file.txt", budget: DEFAULT_OUTPUT_BUDGETS }),
+    report: describeFailure("edit", error, { path: "file.txt", budget }),
   };
 }
 const oldAnchor = { line: 1, hash: computeLineHash(1, "old", DEFAULT_CONFIG.hashLen) };
@@ -234,12 +239,14 @@ test("unresolved observation already shown elsewhere → reports the row once", 
 });
 
 test("multiple unresolved anchors and candidate context → one recovery survives omitted facts", () => {
+  const budget = outputBudgetsFor(DEFAULT_OUTPUT_BUDGETS.fieldBytes);
+  const omittedFailureCount = 16;
   const cases = [
-    ...[2, DEFAULT_OUTPUT_BUDGETS.blockBytes].map((count) => ({
+    ...[2, omittedFailureCount].map((count) => ({
       text: "current\n",
       edits: Array.from({ length: count }, (): Edit => ({ op: "delete", anchor: oldAnchor })),
       radius: 0,
-      omitted: count === DEFAULT_OUTPUT_BUDGETS.blockBytes,
+      omitted: count === omittedFailureCount,
     })),
     {
       text: "current\nold\n",
@@ -255,35 +262,22 @@ test("multiple unresolved anchors and candidate context → one recovery survive
     },
   ];
   for (const fixture of cases) {
-    const { report } = rejectedEdit(fixture.text, fixture.edits, fixture.radius);
+    const { report } = rejectedEdit(fixture.text, fixture.edits, fixture.radius, budget);
     assert.equal(report.error, "ANCHOR_MISMATCH");
     assert.match(report.next ?? "", /confirm.*intended target/);
     assert.match(report.next ?? "", /read or grep.*omitted rows.*out-of-range lines.*context/);
     const { next, ...facts } = report;
     assert.equal(renderReport(report).split(next!).length - 1, 1);
     assert.doesNotMatch(JSON.stringify(facts), /\b(?:confirm|read|grep|retries)\b/i);
-    if (fixture.radius === 0)
+    if (fixture.radius === 0) {
       assert.match(report.failures?.[0].observed ?? "", /1#[0-9A-Z]+│current/);
+      assert.ok(report.failures && report.failures.length > 0);
+      assert.equal(report.failures.length + (report.omittedFailures ?? 0), fixture.edits.length);
+      assert.equal(report.matched, undefined);
+      assert.ok(report.failures.every((entry) => entry.result === "unresolved"));
+    }
     assert.equal(Boolean(report.omittedFailures), fixture.omitted);
   }
-});
-
-test("failure list exceeds budget → omitted anchors are never reported as matched", () => {
-  const { report } = rejectedEdit(
-    "current\n",
-    Array.from({ length: DEFAULT_OUTPUT_BUDGETS.blockBytes }, () => ({
-      op: "delete",
-      anchor: oldAnchor,
-    })),
-  );
-  assert.equal(report.error, "ANCHOR_MISMATCH");
-  assert.ok(report.failures && report.failures.length > 0);
-  assert.equal(
-    report.failures.length + (report.omittedFailures ?? 0),
-    DEFAULT_OUTPUT_BUDGETS.blockBytes,
-  );
-  assert.equal(report.matched, undefined);
-  assert.ok(report.failures.every((entry) => entry.result === "unresolved"));
 });
 
 test("reversed ranges and overlapping edits → original reason and unpublished status without anchor recovery", () => {

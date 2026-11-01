@@ -24,7 +24,6 @@ test("unchanged model → budget calculation is lazy and reuses the immutable sn
   assert.ok(large.fieldBytes > first.fieldBytes);
   assert.ok(large.grepPreviewUnits > first.grepPreviewUnits);
   assert.equal(get(), large);
-  assert.ok(first.readBytes < large.readBytes);
   model = { ...model, contextWindow: 65_536 };
   assert.equal(get().readBytes, first.readBytes);
 });

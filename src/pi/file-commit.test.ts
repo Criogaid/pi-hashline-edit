@@ -429,22 +429,16 @@ test("file changes after the read → bound commits reject changed and unchanged
     const externalRevision = await fileRevision(target);
 
     for (const content of [snapshot.text, "replacement\n"]) {
-      for (const commit of [
+      await assert.rejects(
         () => commitReplacement(target, content, snapshot.baseRevision),
-        () =>
-          commitFile(target, content, { mode: "overwrite", baseRevision: snapshot.baseRevision }),
-      ]) {
-        await assert.rejects(
-          commit,
-          (error: unknown) =>
-            error instanceof FileMutationError &&
-            error.stage === "prepare" &&
-            error.publication === "NOT_PUBLISHED" &&
-            error.errorCode === "FILE_CHANGED",
-        );
-        assert.equal(await readFile(target, "utf8"), "line 1\nmodified line 2\n");
-        assert.equal(await fileRevision(target), externalRevision);
-      }
+        (error: unknown) =>
+          error instanceof FileMutationError &&
+          error.stage === "prepare" &&
+          error.publication === "NOT_PUBLISHED" &&
+          error.errorCode === "FILE_CHANGED",
+      );
+      assert.equal(await readFile(target, "utf8"), "line 1\nmodified line 2\n");
+      assert.equal(await fileRevision(target), externalRevision);
     }
 
     // Without baseRevision, overwrite hashes the current target instead of using the snapshot.

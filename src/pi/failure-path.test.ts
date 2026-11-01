@@ -116,40 +116,6 @@ test("published post-processing failure → skips command and preserves publicat
     assert.equal(await readFile(target, "utf8"), "content\n");
   }));
 
-test("command fails and modifies the target → reports changed freshness and command failure", async (t) =>
-  withTemp(async (dir) => {
-    const target = join(dir, "failed.txt");
-    const fusion = createActionFusionExecutor(async () => {
-      await writeFile(target, "command changed\n");
-      throw new Error("command failed");
-    });
-    const outcome = await fusion({
-      budget: DEFAULT_OUTPUT_BUDGETS,
-      toolCallId: "failed",
-      tool: "edit",
-      displayPath: "failed.txt",
-      absolutePath: target,
-      thenRun: { command: "check" },
-      mutate: async () => {
-        await writeFile(target, "mutation\n");
-        return mutation("mutation\n");
-      },
-      signal: undefined,
-      ctx: await createToolContext(dir, t),
-    });
-    const report = reportOf(outcome, "edit");
-    assert.equal(report?.publication, "PUBLISHED");
-    assert.equal(report?.then_run?.status, "failed");
-    assert.equal(report?.freshness, "changed");
-    assert.equal(report?.next, REREAD);
-    assert.equal(report?.then_run?.output, "command failed");
-    assert.doesNotMatch(
-      outcome.content.map((block) => (block.type === "text" ? block.text : "")).join("\n"),
-      /Updated anchors|1#AB/,
-    );
-    assert.equal(await readFile(target, "utf8"), "command changed\n");
-  }));
-
 test("cancellation after publication → does not rerun mutation and still inspects freshness", async (t) =>
   withTemp(async (dir) => {
     for (const state of ["changed", "missing"] as const) {

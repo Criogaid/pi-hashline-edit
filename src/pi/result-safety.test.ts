@@ -109,6 +109,7 @@ test("edit and replace commands change or remove the file → withhold anchors a
           assert.equal(report?.publication, "PUBLISHED");
           assert.equal(report?.next, REREAD);
           assert.equal(report?.then_run?.status, fails ? "failed" : "succeeded");
+          if (fails) assert.equal(report?.then_run?.output, "command failed");
           assert.equal(result.content.length, 1);
           assert.ok(updates.length > 0);
           for (const update of updates)

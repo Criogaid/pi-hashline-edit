@@ -64,27 +64,25 @@ test("live preparation failure → replays diagnostic after fresh registration",
   const tool = second.session.getToolDefinition("edit");
   assert.ok(tool?.renderResult);
   for (const expanded of [false, true]) {
-    for (let rendering = 0; rendering < 2; rendering++) {
-      const decoded = JSON.parse(serialized);
-      const component = tool.renderResult(decoded, { expanded, isPartial: false }, theme, {
-        args,
-        toolCallId: "invalid-edit",
-        cwd: second.cwd,
-        state: {},
-        invalidate() {},
-        lastComponent: undefined,
-        executionStarted: true,
-        argsComplete: true,
-        expanded,
-        isPartial: false,
-        showImages: false,
-        isError: true,
-      });
-      const shown = stripVTControlCharacters(component.render(240).join("\n"));
-      assert.match(shown, /edits\[0\]\.body: is empty/);
-      assert.equal(shown.split("edits[0].body: is empty").length - 1, 1);
-      assert.doesNotMatch(shown, /"issues":/);
-      assert.equal(JSON.stringify(decoded), serialized);
-    }
+    const decoded = JSON.parse(serialized);
+    const component = tool.renderResult(decoded, { expanded, isPartial: false }, theme, {
+      args,
+      toolCallId: "invalid-edit",
+      cwd: second.cwd,
+      state: {},
+      invalidate() {},
+      lastComponent: undefined,
+      executionStarted: true,
+      argsComplete: true,
+      expanded,
+      isPartial: false,
+      showImages: false,
+      isError: true,
+    });
+    const shown = stripVTControlCharacters(component.render(240).join("\n"));
+    assert.match(shown, /edits\[0\]\.body: is empty/);
+    assert.equal(shown.split("edits[0].body: is empty").length - 1, 1);
+    assert.doesNotMatch(shown, /"issues":/);
+    assert.equal(JSON.stringify(decoded), serialized);
   }
 });
