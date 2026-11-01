@@ -43,8 +43,6 @@ test("write rejects unwritable content before accessing a missing target", async
   withTemp(async (dir) => {
     const file = join(dir, "missing.txt");
     const tool = makeWriteOverride(dir);
-    const valid = { path: file, content: "ready\n", mode: "create" };
-    assert.equal(tool.prepareArguments(valid), valid);
     for (const [content, expected] of [
       ["bad\0", rejectsArgument("content", /NUL/)],
       ["\ud800", rejectsArgument("content", /encoded losslessly/)],

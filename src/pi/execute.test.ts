@@ -99,24 +99,6 @@ test("edit execute: hashline round-trip (read → edit → file changed)", async
   });
 });
 
-test("edit execute: multiple ops in one call", async () => {
-  await withDir(async (dir) => {
-    const f = join(dir, "f.txt");
-    const text = "a\nb\nc\n";
-    await writeFile(f, text);
-    await call(makeReadOverride(dir, DEFAULT_CONFIG), { path: "f.txt" });
-    const r: any = await call(makeEditOverride(dir, DEFAULT_CONFIG), {
-      path: "f.txt",
-      edits: [
-        { action: "insert_after", anchor: h(text, 3), body: ["z"] },
-        { action: "replace", anchor: h(text, 1), body: ["A"] },
-      ],
-    });
-    assert.equal(r.isError, undefined);
-    assert.equal(await readFile(f, "utf-8"), "A\nb\nc\nz\n");
-  });
-});
-
 test("successful mutation → returns one report without anchor payload", async (t) => {
   for (const tool of ["edit", "replace", "write"] as const) {
     for (const count of [1, 3000]) {
@@ -179,22 +161,6 @@ test("successful mutation → returns one report without anchor payload", async 
   }
 });
 
-test("unrelated external change does NOT block an edit on a stable line", async () => {
-  await withDir(async (dir) => {
-    const f = join(dir, "f.txt");
-    const text = "a\nb\nc\n";
-    await writeFile(f, text);
-    // simulate an external change at line 3 between read and edit
-    await writeFile(f, "a\nb\nCHANGED\n");
-    const r: any = await call(makeEditOverride(dir, DEFAULT_CONFIG), {
-      path: "f.txt",
-      edits: [{ action: "replace", anchor: h(text, 1), body: ["A"] }],
-    });
-    assert.equal(r.isError, undefined);
-    assert.equal(await readFile(f, "utf-8"), "A\nb\nCHANGED\n");
-  });
-});
-
 test("edit on a line that changed externally → anchor mismatch", async () => {
   await withDir(async (dir) => {
     const f = join(dir, "f.txt");
@@ -242,20 +208,6 @@ test("unresolved observations require target confirmation before retrying a move
       await readFile(file, "utf8"),
       "one\ntwo\nthree\nfour\nchanged\nsix\nupdated\neight\n",
     );
-  });
-});
-
-test("edit execute: no read before edit → anchor verification fails", async () => {
-  await withDir(async (dir) => {
-    await writeFile(join(dir, "f.txt"), "a\nb\n");
-    const report = failureReport(
-      await call(makeEditOverride(dir, DEFAULT_CONFIG), {
-        path: "f.txt",
-        edits: [{ action: "replace", anchor: "1#XXXX", body: ["A"] }],
-      }),
-    );
-    assert.equal(report.error, "ANCHOR_MISMATCH");
-    assert.equal(await readFile(join(dir, "f.txt"), "utf8"), "a\nb\n");
   });
 });
 

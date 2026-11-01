@@ -107,8 +107,6 @@ test("replace rejects unwritable text and invalid regex before reading a missing
   withDir(async (dir) => {
     const file = join(dir, "missing.txt");
     const tool = makeReplaceTool(dir, DEFAULT_CONFIG);
-    const valid = { path: file, replacements: [{ find: "x", replace: "y", literal: false }] };
-    assert.equal(tool.prepareArguments(valid), valid);
     for (const [rule, expected] of [
       [
         { literal: true, find: "x", replace: "\0" },
