@@ -142,10 +142,7 @@ function failureEntry(
       entry.candidate = snapshot.anchors.reference(newLine, newHash);
       const content = currentLines[newLine - 1];
       // The row budget matches the neighborhoods'; the anchor itself is already `candidate`.
-      if (
-        content !== undefined &&
-        Buffer.byteLength(snapshot.anchors.row(newLine, content), "utf8") <= budget.fieldBytes
-      ) {
+      if (Buffer.byteLength(snapshot.anchors.row(newLine, content), "utf8") <= budget.fieldBytes) {
         entry.content = displayCarriageReturns(content);
       } else {
         entry.notShown = rowTooLarge;
@@ -162,9 +159,13 @@ function failureEntry(
       break;
     }
     case "none": {
-      const row = f.current === null ? null : snapshot.anchors.row(f.cited.line, f.current.content);
-      if (row === null) entry.notShown = "cited line is out of range";
-      else if (Buffer.byteLength(row, "utf8") <= budget.fieldBytes) entry.observed = row;
+      const content = currentLines[f.cited.line - 1];
+      if (content === undefined) {
+        entry.notShown = "cited line is out of range";
+        break;
+      }
+      const row = snapshot.anchors.row(f.cited.line, content);
+      if (Buffer.byteLength(row, "utf8") <= budget.fieldBytes) entry.observed = row;
       else entry.notShown = rowTooLarge;
       break;
     }

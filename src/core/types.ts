@@ -69,8 +69,6 @@ export type AnchorRecovery =
  *
  * `opIndex` is the 0-based position in the input `edits[]`; `which` names the
  * op's source/insertion anchor, range end, or before/after destination; `op` is the op kind.
- * `current` is the cited line's live content (null if the line number is
- * out of range) — surfaced when recovery is `none` so the model can self-diagnose.
  */
 export interface AnchorFailure {
   readonly opIndex: number;
@@ -78,7 +76,6 @@ export interface AnchorFailure {
   readonly op: Edit["op"];
   readonly cited: Anchor;
   readonly recovery: AnchorRecovery;
-  readonly current: { readonly content: string } | null;
 }
 
 /** Batch-level failure. */

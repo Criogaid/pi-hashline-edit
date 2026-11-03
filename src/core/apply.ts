@@ -58,8 +58,7 @@ type SpanOp = { readonly lo: number; readonly hi: number } & (
 /**
  * Verify an anchor against the live content; on mismatch, attempt shifted
  * recovery. Returns null when the anchor matches, otherwise an
- * {@link AnchorFailure} carrying the recovery outcome and the cited line's
- * current snapshot.
+ * {@link AnchorFailure} carrying the recovery outcome.
  *
  * Recovery holds the ORIGINAL line number fixed and re-hashes each candidate's
  * content. A matching checksum identifies a candidate, not proof of the
@@ -114,9 +113,7 @@ function verifyAnchor(
     recovery = { kind: "none" };
   }
 
-  const current = line >= 1 && line <= lines.length ? { content: lines[line - 1] } : null;
-
-  return { opIndex, which, op, cited, recovery, current };
+  return { opIndex, which, op, cited, recovery };
 }
 
 type TranslateResult =
