@@ -78,10 +78,10 @@ test("model row allowance grows → anchor failures return complete observations
     assert.equal(report.error, "ANCHOR_MISMATCH");
     return report;
   });
-  assert.ok(reports[0].failures?.[0].omitted);
+  assert.ok(reports[0].failures?.[0].notShown);
   assert.equal(reports[0].failures?.[0].observed, undefined);
   assert.equal(reports[1].failures?.[0].observed, snapshot.anchors.row(1, text));
-  assert.equal(reports[1].failures?.[0].omitted, undefined);
+  assert.equal(reports[1].failures?.[0].notShown, undefined);
   for (const report of reports) {
     assert.equal(report.publication, "NOT_PUBLISHED");
     assert.ok(report.next?.includes("intended target"));
@@ -155,7 +155,7 @@ test("model switches while a mutation waits → failure uses its starting budget
     assert.equal(budgets().readBytes, large.readBytes);
     release.resolve();
     const report = reportOf(await running, "edit");
-    assert.ok(report?.failures?.[0].omitted);
+    assert.ok(report?.failures?.[0].notShown);
     assert.equal(report.failures[0].observed, undefined);
     const next = reportOf(
       await callTool(makeEditOverride(dir, DEFAULT_CONFIG, undefined, budgets), {

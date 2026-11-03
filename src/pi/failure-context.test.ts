@@ -262,7 +262,7 @@ test("failed anchor row is already shown → reports it once and names its locat
       ];
       assert.equal(displayedRows.filter((displayed) => displayed === row).length, 1);
       assert.equal(report.failures?.[1].result, fixture.result);
-      assert.equal(report.failures?.[1].omitted, fixture.omitted);
+      assert.equal(report.failures?.[1].notShown, fixture.omitted);
       assert.equal(report.failures?.[1].observed, undefined);
       assert.equal(report.failures?.[1].content, undefined);
     });
@@ -365,7 +365,7 @@ test("unresolved row out of range or oversized → omission facts contain no rec
   for (const { anchor, reason } of cases) {
     const { report } = rejectedEdit(text, [{ op: "delete", anchor }]);
     assert.equal(report.error, "ANCHOR_MISMATCH");
-    assert.match(report.failures?.[0].omitted ?? "", reason);
+    assert.match(report.failures?.[0].notShown ?? "", reason);
     assert.equal(report.failures?.[0].observed, undefined);
     assert.doesNotMatch(
       JSON.stringify(report.failures),

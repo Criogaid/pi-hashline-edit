@@ -227,26 +227,36 @@ test("grep points wildcard paths to glob without changing ordinary missing-path 
   });
 });
 
-test("one of multiple grep paths is missing → text identifies it without repeating call fields", async () =>
+test("multiple grep paths are missing → reports all resolved paths and selects wildcard recovery", async () =>
   withDir(async (dir) => {
     await writeFile(join(dir, "present.txt"), "value\n");
-    const path = ["present.txt", "missing.txt"];
-    const fake = fakeBackend();
-    const tool = makeGrepOverrideWithBackend(dir, DEFAULT_CONFIG, fake.backend);
-    const result = await call(tool, { literal: true, pattern: "value", path });
-    assert.equal(result.isError, true);
-    const block = result.content[0];
-    assert.ok(block.type === "text");
-    const facts = JSON.parse(block.text);
-    assert.equal(facts.error, "PATH_NOT_FOUND");
-    assert.equal(facts.missing, join(dir, "missing.txt"));
-    assert.equal(Object.hasOwn(facts, "tool"), false);
-    assert.equal(Object.hasOwn(facts, "path"), false);
-    const report = reportOf(result, "grep");
-    assert.equal(report?.tool, "grep");
-    assert.deepEqual(report?.path, path);
-    assert.equal(report?.missing, facts.missing);
-    assert.equal(fake.calls.length, 0);
+    for (const [path, missing, wildcard] of [
+      [["missing.txt", "present.txt", "other.txt"], ["missing.txt", "other.txt"], false],
+      [["missing.txt", "present.txt", "other*.txt"], ["missing.txt", "other*.txt"], true],
+      [["missing?.txt", "present.txt", "other.txt"], ["missing?.txt", "other.txt"], true],
+    ] as const) {
+      const fake = fakeBackend();
+      const tool = makeGrepOverrideWithBackend(dir, DEFAULT_CONFIG, fake.backend);
+      const result = await call(tool, { literal: true, pattern: "value", path });
+      assert.equal(result.isError, true);
+      const block = result.content[0];
+      assert.ok(block.type === "text");
+      const facts = JSON.parse(block.text);
+      assert.equal(facts.error, "PATH_NOT_FOUND");
+      assert.deepEqual(
+        facts.missing,
+        missing.map((item) => join(dir, item)),
+      );
+      if (wildcard) assert.match(facts.next, /directory.*path.*wildcard.*glob/);
+      else assert.equal(facts.next, "Check the path.");
+      assert.equal(Object.hasOwn(facts, "tool"), false);
+      assert.equal(Object.hasOwn(facts, "path"), false);
+      const report = reportOf(result, "grep");
+      assert.equal(report?.tool, "grep");
+      assert.deepEqual(report?.path, path);
+      assert.deepEqual(report?.missing, facts.missing);
+      assert.equal(fake.calls.length, 0);
+    }
   }));
 
 test("matched files → full-line hash anchors", async () => {
@@ -514,7 +524,7 @@ test("candidate selection → reports only whole-file candidate facts", async ()
   withDir(async (dir) => {
     const file = join(dir, "input.txt");
     await writeFile(file, "abc \nneedle");
-    for (const [pattern, multiline, candidates] of [
+    for (const [pattern, multiline, scanned] of [
       ["needle", false, undefined],
       ["needle", true, "files"],
       ["[^x\\s]{3}\\s", true, "all"],
@@ -531,7 +541,7 @@ test("candidate selection → reports only whole-file candidate facts", async ()
       );
       assert.equal(result.isError, undefined);
       assert.equal(grepCounts(result).matches, 1);
-      assert.equal(reportOf(result, "grep")?.candidates, candidates);
+      assert.equal(reportOf(result, "grep")?.scanned, scanned);
       assert.equal(reportOf(result, "grep")?.scanLimit, undefined);
       assert.equal(fake.calls[0].kind, multiline ? "paths" : "lines");
     }

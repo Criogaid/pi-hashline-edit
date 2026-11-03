@@ -3,6 +3,8 @@ import { test } from "node:test";
 import { stripVTControlCharacters } from "node:util";
 import { initTheme } from "@earendil-works/pi-coding-agent";
 import { theme } from "../../node_modules/@earendil-works/pi-coding-agent/dist/modes/interactive/theme/theme.js";
+import { PATH_ERROR_MESSAGES } from "../core/errors.ts";
+import { FileMutationError } from "./file-commit.ts";
 import { formatArgumentError } from "./argument-error.ts";
 import { renderToolError, splitReport } from "./render.ts";
 import {
@@ -22,9 +24,11 @@ import { OUTCOME_NEXT, type Report, type ReportTool, type SuccessReport } from "
 function invalidReportConstruction(report: NonNullable<ReturnType<typeof decodeReport>>) {
   // @ts-expect-error Grep successes cannot contain write-only facts.
   reportResult({ tool: "grep", created: true });
-  // @ts-expect-error NO_MATCH requires its rule fact.
+  // @ts-expect-error NO_MATCH requires its unmatched facts.
   failureResult({ tool: "replace", error: "NO_MATCH", message: "No replacement matched." });
   if (report.error === "NO_MATCH") {
+    const unmatched: string[] = report.unmatched;
+    // @ts-expect-error NO_MATCH no longer carries a single rule.
     const rule: number = report.rule;
     // @ts-expect-error NO_MATCH cannot carry a search-total fact.
     const matches: number = report.matches;
@@ -186,6 +190,42 @@ test("native filesystem failure → reports its diagnostic once without a synthe
   }
 });
 
+test("native path errors → classify fixed messages and retain the missing path", () => {
+  for (const [code, expected, missing] of [
+    ["ENOENT", "PATH_NOT_FOUND", ["resolved/source"]],
+    ["EISDIR", "NOT_REGULAR_FILE", undefined],
+  ] as const) {
+    const native = Object.assign(new Error(`${code}: native diagnostic`), {
+      code,
+      path: "resolved/source",
+    });
+    const report = describeFailure("read", native, {
+      path: "source",
+      budget: DEFAULT_OUTPUT_BUDGETS,
+    });
+    assert.equal(report.error, expected);
+    assert.equal(report.message, PATH_ERROR_MESSAGES[expected]);
+    assert.deepEqual(report.missing, missing);
+    assert.equal(report.cause, undefined);
+  }
+});
+
+test("mutation publication → recovery reflects whether the change was saved", () => {
+  for (const [publication, expected] of [
+    ["PUBLISHED", "The change is saved; do not repeat it. Read the file before further edits."],
+    [
+      "UNKNOWN",
+      "The change may or may not be saved. Read the file, and repeat the change only if it is missing.",
+    ],
+  ] as const) {
+    const error = new FileMutationError("FILESYSTEM_ERROR", "commit", publication, "failed");
+    const report = describeFailure("edit", error, { budget: DEFAULT_OUTPUT_BUDGETS });
+    assert.equal(report.publication, publication);
+    assert.equal(report.next, expected);
+    assert.equal(decodeReport(renderReport(report), "edit")?.next, expected);
+  }
+});
+
 test("success reports → omit repeated call fields while retaining details and payload", () => {
   const report: SuccessReport = {
     tool: "write",
@@ -246,14 +286,34 @@ test("report-contract: native failure with an independent cause → retains the 
   assert.equal(report.cause?.code, "EIO");
 });
 
+test("replacement failure facts → survive report serialization", () => {
+  for (const report of [
+    {
+      tool: "replace",
+      error: "NO_MATCH",
+      message: "No match",
+      unmatched: ["replacements[0]", "replacements[2]"],
+    },
+    {
+      tool: "replace",
+      error: "OVERLAPPING_MATCHES",
+      message: "Overlap",
+      conflict: ["replacements[0]", "replacements[1]"],
+      line: 2,
+    },
+  ] satisfies Report[]) {
+    assert.deepEqual(decodeReport(renderReport(report), "replace"), report);
+  }
+});
+
 test("grep success and incomplete candidate facts → survive report serialization", () => {
   for (const report of [
     { tool: "grep", matches: 1 },
-    { tool: "grep", matches: 1, candidates: "files" },
+    { tool: "grep", matches: 1, scanned: "files" },
     {
       tool: "grep",
       matches: 0,
-      candidates: "all",
+      scanned: "all",
       scanLimit: formatByteSize(MAX_UNNARROWED_SCAN_BYTES),
     },
     {
@@ -261,7 +321,7 @@ test("grep success and incomplete candidate facts → survive report serializati
       error: "SEARCH_INCOMPLETE",
       message: "Search incomplete.",
       diagnostics: "unreadable file",
-      candidates: "all",
+      scanned: "all",
       scanLimit: formatByteSize(MAX_UNNARROWED_SCAN_BYTES),
     },
   ] satisfies Report[]) {
@@ -278,7 +338,7 @@ test("match and scan limits → recovery prioritizes the match limit", () => {
     tool: "grep",
     matches: 1,
     matchLimit: 1,
-    candidates: "all",
+    scanned: "all",
     scanLimit: formatByteSize(MAX_UNNARROWED_SCAN_BYTES),
   });
   assert.equal(reportOf(result, "grep")?.next, next);
@@ -305,13 +365,13 @@ test("invalid details report → falls back to valid text and leaves content int
 
 test("output byte limit → follows the scan limit and precedes the line preview limit", () => {
   const serialized = renderReport({
-    candidates: "all",
+    scanned: "all",
     scanLimit: formatByteSize(MAX_UNNARROWED_SCAN_BYTES),
     outputLimit: formatByteSize(DEFAULT_OUTPUT_BUDGETS.grepBytes),
     linePreviewLimit: DEFAULT_OUTPUT_BUDGETS.grepPreviewUnits,
   });
   assert.deepEqual(Object.keys(JSON.parse(serialized)), [
-    "candidates",
+    "scanned",
     "scanLimit",
     "outputLimit",
     "linePreviewLimit",

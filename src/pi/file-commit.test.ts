@@ -1,3 +1,5 @@
+import fsPromises from "node:fs/promises";
+import { syncBuiltinESMExports } from "node:module";
 import {
   chmod,
   lstat,
@@ -27,6 +29,7 @@ import {
   type FreshnessObservation,
 } from "./file-commit.ts";
 import { byteRevision } from "./file-revision.ts";
+import { PATH_ERROR_MESSAGES } from "../core/errors.ts";
 import { createActionFusionExecutor } from "./action-fusion.ts";
 import { makeWriteOverride } from "./write-tool.ts";
 import { callTool } from "./tool-call.testing.ts";
@@ -234,7 +237,11 @@ test("directories are rejected instead of entering regular-file publication", as
   withTemp(async (dir) => {
     const target = join(dir, "directory");
     await mkdir(target);
-    await assert.rejects(commitFile(target, "bad\n", { mode: "overwrite" }), /not a regular file/);
+    await assert.rejects(commitFile(target, "bad\n", { mode: "overwrite" }), {
+      errorCode: "NOT_REGULAR_FILE",
+      message: PATH_ERROR_MESSAGES.NOT_REGULAR_FILE,
+      publication: "NOT_PUBLISHED",
+    });
   }));
 
 test("Windows shared access failure preserves the target, skips then_run, and releases the queue", async (t) =>
@@ -407,10 +414,14 @@ test("identical commits preserve the file and still enforce mode, revision, and 
       (error: unknown) =>
         error instanceof FileMutationError && error.publication === "NOT_PUBLISHED",
     );
-    await assert.rejects(
-      commitFile(join(dir, "missing"), "", { mode: "overwrite" }),
-      /does not exist/,
-    );
+    const missing = join(dir, "missing");
+    await assert.rejects(commitFile(missing, "", { mode: "overwrite" }), {
+      errorCode: "PATH_NOT_FOUND",
+      message: PATH_ERROR_MESSAGES.PATH_NOT_FOUND,
+      facts: { missing: [missing] },
+      next: "useCreate",
+      publication: "NOT_PUBLISHED",
+    });
     const created = await commitFile(join(dir, "empty"), "", { mode: "create" });
     assert.equal(created.created, true);
     assert.equal(created.publication, "PUBLISHED");
@@ -477,4 +488,51 @@ test("no-op commit with baseRevision rejects if target was deleted externally", 
         error.stage === "prepare" &&
         error.publication === "NOT_PUBLISHED",
     );
+  }));
+
+test("commitFile temporary publication → handles existing and missing parents and preserves other failures", async (t) =>
+  withTemp(async (dir) => {
+    const originalMkdir = fsPromises.mkdir;
+    const originalMkdtemp = fsPromises.mkdtemp;
+    for (const scenario of ["existing", "nested", "denied"] as const) {
+      const parent = scenario === "nested" ? join(dir, "new", "nested") : dir;
+      const target = join(parent, `${scenario}.txt`);
+      let mkdirCalls = 0;
+      const denied = Object.assign(new Error("denied"), { code: "EPERM" });
+      try {
+        t.mock.method(fsPromises, "mkdir", async (...args: Parameters<typeof originalMkdir>) => {
+          mkdirCalls++;
+          if (scenario !== "nested") throw denied;
+          return originalMkdir(...args);
+        });
+        t.mock.method(
+          fsPromises,
+          "mkdtemp",
+          async (...args: Parameters<typeof originalMkdtemp>) => {
+            if (scenario === "denied") throw denied;
+            return originalMkdtemp(...args);
+          },
+        );
+        syncBuiltinESMExports();
+        if (scenario === "denied") {
+          await assert.rejects(
+            commitFile(target, "data", { mode: "create" }),
+            (error: unknown) =>
+              error instanceof FileMutationError &&
+              error.errorCode === "PUBLISH_FAILED" &&
+              error.publication === "NOT_PUBLISHED" &&
+              error.cause === denied,
+          );
+          await assert.rejects(readFile(target), { code: "ENOENT" });
+        } else {
+          const result = await commitFile(target, "data", { mode: "create" });
+          assert.equal(result.publication, "PUBLISHED");
+          assert.equal(await readFile(target, "utf8"), "data");
+        }
+        assert.equal(mkdirCalls, scenario === "nested" ? 1 : 0);
+      } finally {
+        t.mock.restoreAll();
+        syncBuiltinESMExports();
+      }
+    }
   }));

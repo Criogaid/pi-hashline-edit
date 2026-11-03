@@ -222,6 +222,9 @@ test("mixed literal and regex batches share raw offsets after CRLF normalization
     });
     assert.equal(failed.isError, true);
     assert.equal(reportOf(failed, "replace")?.error, "OVERLAPPING_MATCHES");
+    assert.deepEqual(reportOf(failed, "replace")?.conflict, ["replacements[0]", "replacements[1]"]);
+    assert.equal(reportOf(failed, "replace")?.line, 2);
+    assert.ok(reportOf(failed, "replace")?.next);
     assert.equal(await readFile(file, "utf8"), before);
   }));
 
@@ -340,7 +343,8 @@ test("replace finds no matches → returns failure and leaves file untouched", a
     });
     assert.equal(failed.isError, true);
     assert.equal(reportOf(failed, "replace")?.error, "NO_MATCH");
-    assert.equal(reportOf(failed, "replace")?.rule, 0);
+    assert.deepEqual(reportOf(failed, "replace")?.unmatched, ["replacements[0]"]);
+    assert.equal(reportOf(failed, "replace")?.publication, "NOT_PUBLISHED");
     assert.equal(await readFile(f, "utf-8"), "a\nb\n", "file untouched on 0-match failure");
   });
 });

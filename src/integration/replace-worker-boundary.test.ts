@@ -16,11 +16,17 @@ test("worker boundary: malformed external reply → rejects its result and facts
     { result: { text: "changed", count: 0 } },
     {
       result: { text: "changed", count: 1 },
-      error: { code: "NO_MATCH", message: "failure", facts: { rule: 0 } },
+      error: { code: "NO_MATCH", message: "failure", facts: { unmatched: ["replacements[0]"] } },
     },
     { error: { code: "NO_MATCH", message: "failure" } },
     { error: { code: "foreign", message: "failure" } },
-    { error: { code: "NO_MATCH", message: "failure", facts: { rule: 0, foreign: true } } },
+    {
+      error: {
+        code: "NO_MATCH",
+        message: "failure",
+        facts: { unmatched: ["replacements[0]"], foreign: true },
+      },
+    },
   ]) {
     await t.test(JSON.stringify(reply), { timeout: timeoutMs }, async (t) => {
       const emit = Worker.prototype.emit;
@@ -88,7 +94,14 @@ test("worker boundary: cyclic structured cause → rejects a reply accepted with
     await t.test(`cyclic=${cyclic}`, async (t) => {
       const cause: Cause = { code: "EIO", message: "worker failure" };
       if (cyclic) cause.cause = cause;
-      const reply = { error: { code: "NO_MATCH", message: "no match", facts: { rule: 0 }, cause } };
+      const reply = {
+        error: {
+          code: "NO_MATCH",
+          message: "no match",
+          facts: { unmatched: ["replacements[0]"] },
+          cause,
+        },
+      };
       const emit = Worker.prototype.emit;
       t.mock.method(
         Worker.prototype,
@@ -106,7 +119,8 @@ test("worker boundary: cyclic structured cause → rejects a reply accepted with
             assert.match(error.message, /invalid result/i);
           } else {
             assert.equal(error.errorCode, "NO_MATCH");
-            assert.deepEqual(error.facts, { rule: 0 });
+            assert.equal(error.message, reply.error.message);
+            assert.deepEqual(error.facts, reply.error.facts);
             assert.deepEqual(causeOf(error.cause, DEFAULT_OUTPUT_BUDGETS.fieldBytes), cause);
           }
           return true;

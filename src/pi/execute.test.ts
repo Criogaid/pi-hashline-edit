@@ -2,7 +2,7 @@ import { argumentError, rejectsArgument, rejectsArguments } from "./argument-err
 /** Tool-level edit and shared mutation workflow tests. */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, rm, readFile, writeFile } from "node:fs/promises";
+import { mkdtemp, readdir, rm, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { initTheme } from "@earendil-works/pi-coding-agent";
@@ -12,6 +12,7 @@ import { makeEditOverride } from "./edit-tool.ts";
 import { makeReadOverride } from "./read-tool.ts";
 import { makeWriteOverride } from "./write-tool.ts";
 import { makeReplaceTool } from "./replace-tool.ts";
+import { makeGrepOverride } from "./grep-tool.ts";
 import { createActionFusionExecutor } from "./action-fusion.ts";
 import { computeLineHash } from "../core/hash.ts";
 import { splitLines } from "../core/lines.ts";
@@ -21,6 +22,8 @@ import { formatByteSize, DEFAULT_OUTPUT_BUDGETS } from "./budgets.ts";
 import { detailsReport, reportOf } from "./report.ts";
 import type { Report } from "./report-schema.ts";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
+import { PATH_ERROR_MESSAGES } from "../core/errors.ts";
+import { ERROR_DEFINITIONS } from "./report-schema.ts";
 
 async function withDir<T>(fn: (dir: string) => Promise<T>): Promise<T> {
   const dir = await mkdtemp(join(tmpdir(), "hl-"));
@@ -491,7 +494,7 @@ test("shifted-anchor recovery keeps the read fallback for oversized candidates",
       }),
     );
     assert.match(
-      report.failures?.[0].omitted ?? "",
+      report.failures?.[0].notShown ?? "",
       new RegExp(`exceeds ${formatByteSize(DEFAULT_OUTPUT_BUDGETS.fieldBytes)}`),
     );
     assert.match(report.next ?? "", /use read or grep/);
@@ -631,6 +634,58 @@ test("failed commands preserve mutation results and stay out of all main card re
       cases.flatMap(() => ["waiting", "waiting", "running", "failed"]),
     );
   }));
+
+test("missing or directory targets → tools share path diagnostics without filesystem changes", async (t) => {
+  await withDir(async (dir) => {
+    const before = await readdir(dir);
+    for (const target of [
+      { name: "missing", path: "./missing.txt", code: "PATH_NOT_FOUND" },
+      { name: "directory", path: ".", code: "NOT_REGULAR_FILE" },
+    ] as const) {
+      const path = target.path;
+      const cases = [
+        { tool: makeReadOverride(dir, DEFAULT_CONFIG), args: { path } },
+        {
+          tool: makeEditOverride(dir, DEFAULT_CONFIG),
+          args: { path, edits: [{ action: "append", body: ["changed"] }] },
+        },
+        {
+          tool: makeReplaceTool(dir, DEFAULT_CONFIG),
+          args: { path, replacements: [{ literal: true, find: "old", replace: "changed" }] },
+        },
+        { tool: makeWriteOverride(dir), args: { path, content: "changed", mode: "overwrite" } },
+        ...(target.code === "PATH_NOT_FOUND"
+          ? [
+              {
+                tool: makeGrepOverride(dir, DEFAULT_CONFIG),
+                args: { path: [path], pattern: ["old"], literal: true },
+              },
+            ]
+          : []),
+      ];
+      for (const { tool, args } of cases) {
+        await t.test(`${tool.name}/${target.name}`, async () => {
+          const report = failureReport(await callTool(tool, args));
+          assert.equal(report.error, target.code);
+          assert.equal(report.message, PATH_ERROR_MESSAGES[target.code]);
+          if (target.code === "PATH_NOT_FOUND") {
+            assert.deepEqual(report.missing, [join(dir, "missing.txt")]);
+            assert.equal(
+              report.next,
+              ERROR_DEFINITIONS.PATH_NOT_FOUND.next[
+                tool.name === "write" ? "useCreate" : "default"
+              ],
+            );
+          } else {
+            assert.equal(report.missing, undefined);
+            assert.equal(report.next, ERROR_DEFINITIONS.NOT_REGULAR_FILE.next.default);
+          }
+          assert.deepEqual(await readdir(dir), before);
+        });
+      }
+    }
+  });
+});
 
 test("text tools reject malformed UTF-8 and NUL bytes without rewriting source bytes", async () =>
   withDir(async (dir) => {
@@ -1132,7 +1187,7 @@ test("unresolved oversized and out-of-range rows require more context without pa
       assert.match(report.next ?? "", /read or grep/);
       assert.equal(report.failures?.[0].observed, undefined);
       assert.equal(
-        report.failures?.[0].omitted,
+        report.failures?.[0].notShown,
         anchor.startsWith("99#")
           ? "cited line is out of range"
           : `row exceeds ${formatByteSize(DEFAULT_OUTPUT_BUDGETS.fieldBytes)}`,

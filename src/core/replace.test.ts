@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { applyReplacements, type Replacement } from "./replace.ts";
+import { HashlineError } from "./errors.ts";
 
 test("replacement joins beside LF → preserve standalone CR content", async (t) => {
   const literal = (find: string, replace: string): Replacement => ({
@@ -85,6 +86,50 @@ test("replacement joins beside LF → preserve standalone CR content", async (t)
   for (const { name, source, rules, expected } of cases) {
     await t.test(name, () => {
       assert.equal(applyReplacements(source, rules).text, expected);
+    });
+  }
+});
+
+test("replacement rejection → reports all unmatched rules or the conflicting rule pair and line", async (t) => {
+  const literal = (find: string): Replacement => ({ find, replace: "x", literal: true });
+  const cases = [
+    {
+      name: "multiple unmatched rules",
+      source: "present",
+      rules: [literal("missing"), literal("present"), literal("absent")],
+      code: "NO_MATCH",
+      message: "Rules match nothing in the file.",
+      facts: { unmatched: ["replacements[0]", "replacements[2]"] },
+    },
+    ...["\n", "\r\n"].map((eol) => ({
+      name: `overlap in reversed input order with ${JSON.stringify(eol)}`,
+      source: `head${eol}abcd${eol}tail`,
+      rules: [literal("cd"), literal("bc")],
+      code: "OVERLAPPING_MATCHES",
+      message: "Matches of two rules overlap.",
+      facts: { conflict: ["replacements[0]", "replacements[1]"], line: 2 },
+    })),
+    {
+      name: "overlap on first line",
+      source: "abcd",
+      rules: [literal("ab"), literal("bc")],
+      code: "OVERLAPPING_MATCHES",
+      message: "Matches of two rules overlap.",
+      facts: { conflict: ["replacements[0]", "replacements[1]"], line: 1 },
+    },
+  ];
+  for (const { name, source, rules, code, message, facts } of cases) {
+    await t.test(name, () => {
+      assert.throws(
+        () => applyReplacements(source, rules),
+        (error: unknown) => {
+          assert.ok(error instanceof HashlineError);
+          assert.equal(error.errorCode, code);
+          assert.equal(error.message, message);
+          assert.deepEqual(error.facts, facts);
+          return true;
+        },
+      );
     });
   }
 });
