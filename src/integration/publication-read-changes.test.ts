@@ -261,7 +261,6 @@ test("other I/O failure during post-publication read → retains the published p
     async () => {
       await assert.rejects(commitFile(path, PUBLISHED, { mode: "overwrite" }), (error: unknown) => {
         assert.ok(error instanceof FileMutationError);
-        assert.equal(error.stage, "post_process");
         assert.equal(error.publication, "PUBLISHED");
         assert.equal(error.cause, READ_FAILURE);
         return true;

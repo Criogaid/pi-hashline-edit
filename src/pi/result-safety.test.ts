@@ -47,8 +47,6 @@ function assertFailureByteBudgets(message: string): void {
   assert.ok(Buffer.byteLength(JSON.stringify(report.failures)) <= anchorBudget.blockBytes);
   assert.equal(report.failures.length + (report.omittedFailures ?? 0), anchorBatchSize);
   assert.ok(report.omittedFailures);
-  assert.equal(report.matched, undefined);
-  assert.equal(report.omittedMatched, undefined);
   assert.ok(report.next?.includes("intended target"));
   if (report.candidateNeighborhoods) {
     const rows = report.candidateNeighborhoods.flatMap((group) => group.rows);
@@ -172,12 +170,7 @@ test("progress callback failures preserve publication and do not prevent the com
         displayPath: "failed",
         thenRun: { command: "check" },
         mutate: async () => {
-          throw new FileMutationError(
-            "POST_PROCESS_FAILED",
-            "post_process",
-            "PUBLISHED",
-            "original failure",
-          );
+          throw new FileMutationError("POST_PROCESS_FAILED", "PUBLISHED", "original failure");
         },
         signal: undefined,
         ctx: await ctx(dir, t),
@@ -482,7 +475,6 @@ test("result generation failure → preserves publication and cause", () => {
         }),
       (error: any) =>
         error instanceof FileMutationError &&
-        error.stage === "post_process" &&
         error.publication === publication &&
         error.cause === cause,
     );

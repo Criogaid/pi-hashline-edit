@@ -14,7 +14,7 @@ import { ACTION_FUSION_GUIDELINES, createActionFusionExecutor } from "./action-f
 import { FileMutationError } from "./file-commit.ts";
 import { DEFAULT_OUTPUT_BUDGETS } from "./budgets.ts";
 import { DEFAULT_CONFIG } from "./config.ts";
-import { ACTION_FUSION_PROGRESS_SCHEMA, REREAD } from "./report-schema.ts";
+import { ACTION_FUSION_PROGRESS_SCHEMA, PUBLICATION_NEXT, REREAD } from "./report-schema.ts";
 import { Value } from "typebox/value";
 import { CommandNotRun, describeFailure, renderReport, reportOf } from "./report.ts";
 import { publishedMutation } from "./mutation-outcome.testing.ts";
@@ -622,9 +622,9 @@ test("Fusion fails at a mutation or command boundary → reports each command ou
     for (const scenario of [
       "not started",
       "failed",
-      "prepare",
-      "commit",
-      "post_process",
+      "NOT_PUBLISHED",
+      "PUBLISHED",
+      "UNKNOWN",
       "target changed",
       "revision unreadable",
       "command failed",
@@ -651,9 +651,9 @@ test("Fusion fails at a mutation or command boundary → reports each command ou
         const stoppedDuringMutation = [
           "not started",
           "failed",
-          "prepare",
-          "commit",
-          "post_process",
+          "NOT_PUBLISHED",
+          "PUBLISHED",
+          "UNKNOWN",
         ].includes(scenario);
         const expectedCommand =
           scenario === "not started" || scenario === "command cancelled"
@@ -674,15 +674,10 @@ test("Fusion fails at a mutation or command boundary → reports each command ou
           ctx: context,
           mutate: async () => {
             if (scenario === "failed") throw new Error("mutation diagnostic");
-            if (scenario === "prepare" || scenario === "commit" || scenario === "post_process")
+            if (scenario === "NOT_PUBLISHED" || scenario === "PUBLISHED" || scenario === "UNKNOWN")
               throw new FileMutationError(
-                scenario === "post_process"
-                  ? "POST_PROCESS_FAILED"
-                  : scenario === "commit"
-                    ? "PUBLISH_FAILED"
-                    : "FILE_CHANGED",
+                scenario === "PUBLISHED" ? "POST_PROCESS_FAILED" : "PUBLISH_FAILED",
                 scenario,
-                scenario === "post_process" ? "PUBLISHED" : "NOT_PUBLISHED",
                 "mutation diagnostic",
               );
             await writeFile(target, "published\n");
@@ -699,6 +694,17 @@ test("Fusion fails at a mutation or command boundary → reports each command ou
             const report = describeFailure("edit", error, { budget: DEFAULT_OUTPUT_BUDGETS });
             diagnostic = renderReport(report);
             assert.equal(report.then_run?.status, expectedCommand);
+            if (
+              scenario === "NOT_PUBLISHED" ||
+              scenario === "PUBLISHED" ||
+              scenario === "UNKNOWN"
+            ) {
+              assert.equal(report.publication, scenario);
+              assert.equal(
+                report.next,
+                scenario === "NOT_PUBLISHED" ? undefined : PUBLICATION_NEXT[scenario],
+              );
+            }
             return true;
           });
         } else {

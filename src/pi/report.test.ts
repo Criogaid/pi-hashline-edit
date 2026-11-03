@@ -218,7 +218,7 @@ test("mutation publication → recovery reflects whether the change was saved", 
       "The change may or may not be saved. Read the file, and repeat the change only if it is missing.",
     ],
   ] as const) {
-    const error = new FileMutationError("FILESYSTEM_ERROR", "commit", publication, "failed");
+    const error = new FileMutationError("FILESYSTEM_ERROR", publication, "failed");
     const report = describeFailure("edit", error, { budget: DEFAULT_OUTPUT_BUDGETS });
     assert.equal(report.publication, publication);
     assert.equal(report.next, expected);
@@ -392,12 +392,11 @@ test("hooked details contain a cyclic report cause → preserves payload and dec
   assert.deepEqual(splitReport(result), { content, report: undefined });
 });
 
-test("native mutation failure before commit → retains publication and stage", () => {
+test("native mutation failure before commit → retains publication", () => {
   for (const tool of ["edit", "replace", "write"] as const) {
     const report = describeFailure(tool, new Error("native failure"), {
       budget: DEFAULT_OUTPUT_BUDGETS,
     });
     assert.equal(report.publication, "NOT_PUBLISHED", tool);
-    assert.equal(report.stage, "prepare", tool);
   }
 });

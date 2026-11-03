@@ -138,10 +138,7 @@ test("overlapping edit spans → report conflicting operations in input order", 
       assert(!result.ok && result.failure.kind === "overlap");
       assert.match(result.failure.message, /overlap/);
       assert.deepEqual(Object.keys(result.failure).sort(), ["conflict", "kind", "message"]);
-      assert.deepEqual(result.failure.conflict, [
-        { opIndex: 1, op: pair[0].op },
-        { opIndex: 2, op: pair[1].op },
-      ]);
+      assert.deepEqual(result.failure.conflict, [1, 2]);
     }
   }
 });
@@ -198,10 +195,7 @@ test("insertions sharing a gap → reject the batch", () => {
       assert(!result.ok && result.failure.kind === "overlap");
       assert.match(result.failure.message, /insert.*one position/);
       assert.deepEqual(Object.keys(result.failure).sort(), ["conflict", "kind", "message"]);
-      assert.deepEqual(result.failure.conflict, [
-        { opIndex: 0, op: batch[0].op },
-        { opIndex: 1, op: batch[1].op },
-      ]);
+      assert.deepEqual(result.failure.conflict, [0, 1]);
     }
   }
 });
@@ -384,7 +378,6 @@ test("rescued anchor lets the retry succeed without a re-read", () => {
   const f = r1.failure.failures[0];
   assert.ok(f.recovery.kind === "found");
   assert.equal(f.recovery.newLine, 4);
-  assert.equal(f.recovery.scope, "local");
   assert.equal(computeLineHash(4, splitLines(currentText)[3], 4), f.recovery.newHash);
   // Retry with the recovered anchor; the rest of the file stays unchanged.
   const r2 = applyEdits(
@@ -415,7 +408,6 @@ test("shifted recovery: duplicate content → ambiguous candidates", () => {
   assert.ok(!r.ok && r.failure.kind === "anchor");
   const f = r.failure.failures[0];
   assert.ok(f.recovery.kind === "ambiguous");
-  assert.equal(f.recovery.scope, "local");
   assert.deepEqual(
     f.recovery.candidates.map((c) => c.line),
     [3, 5],
@@ -454,7 +446,6 @@ test("full-file recovery finds distant content and anchors beyond the current EO
     assert.ok(!result.ok && result.failure.kind === "anchor");
     assert.deepEqual(result.failure.failures[0].recovery, {
       kind: "found",
-      scope: "full-file",
       newLine,
       newHash: computeLineHash(newLine, "target", 4),
     });
@@ -462,10 +453,10 @@ test("full-file recovery finds distant content and anchors beyond the current EO
 });
 
 test("full-file recovery collects both sides while preserving local candidate priority", () => {
-  for (const { positions, selected, scope } of [
-    { positions: [3, 95], selected: [3, 95], scope: "full-file" },
-    { positions: [3, 49, 95], selected: [49], scope: "local" },
-    { positions: [3, 49, 51, 95], selected: [49, 51], scope: "local" },
+  for (const { positions, selected } of [
+    { positions: [3, 95], selected: [3, 95] },
+    { positions: [3, 49, 95], selected: [49] },
+    { positions: [3, 49, 51, 95], selected: [49, 51] },
   ]) {
     const lines = Array.from({ length: 100 }, () => "filler");
     for (const line of positions) lines[line - 1] = "target";
@@ -481,13 +472,11 @@ test("full-file recovery collects both sides while preserving local candidate pr
       selected.length === 1
         ? {
             kind: "found",
-            scope,
             newLine: selected[0],
             newHash: computeLineHash(selected[0], "target", 4),
           }
         : {
             kind: "ambiguous",
-            scope,
             candidates: selected.map((line) => ({
               line,
               hash: computeLineHash(line, "target", 4),
@@ -578,29 +567,6 @@ test("BOM stays at byte zero through first-line edits while anchors retain their
   );
   assert.ok(result.ok);
   assert.equal(result.text, "\uFEFFchanged\ninside\uFEFFcontent\n");
-});
-
-test("failed batches report every supplied anchor in input order from one snapshot", () => {
-  const text = "a\nb\nc\nd\ne\nf\n";
-  const stale = { line: 2, hash: "ZZ" };
-  const edits: Edit[] = [
-    { op: "replace", anchor: at(text, 1), end: stale, body: ["A"] },
-    { op: "delete", anchor: stale, end: at(text, 4) },
-    { op: "insert_after", anchor: at(text, 5), body: ["E"] },
-    { op: "insert_before", anchor: stale, body: ["B"] },
-    { op: "append", body: ["last"] },
-    { op: "prepend", body: ["first"] },
-  ];
-  const result = applyEdits(text, edits, 4, 15);
-  assert.ok(!result.ok && result.failure.kind === "anchor");
-  assert.deepEqual(result.failure.checks, [
-    { opIndex: 0, which: "anchor", status: "matched" },
-    { opIndex: 0, which: "end", status: "mismatched" },
-    { opIndex: 1, which: "anchor", status: "mismatched" },
-    { opIndex: 1, which: "end", status: "matched" },
-    { opIndex: 2, which: "anchor", status: "matched" },
-    { opIndex: 3, which: "anchor", status: "mismatched" },
-  ]);
 });
 
 test("copy/move original ranges → retain captured text and order", () => {
@@ -728,28 +694,28 @@ test("move to either adjacent gap → byte-identical no-op", () => {
 
 test("copy/move bad source and destination anchors → aggregate every supplied field", () => {
   const text = "A\nB\nC\nD\n";
-  for (const destination of [
-    { before: { line: 4, hash: "XXXX" } },
-    { after: { line: 4, hash: "XXXX" } },
-  ]) {
-    const result = applyEdits(
-      text,
-      [
-        {
-          op: "copy",
-          anchor: { line: 1, hash: "XXXX" },
-          end: { line: 2, hash: "XXXX" },
-          ...destination,
-        },
-      ],
-      4,
-      0,
-    );
-    assert(!result.ok && result.failure.kind === "anchor");
-    assert.deepEqual(
-      result.failure.failures.map((failure) => failure.which),
-      ["anchor", "end", Object.keys(destination)[0]],
-    );
-    assert(result.failure.checks.every((check) => check.status === "mismatched"));
-  }
+  for (const op of ["copy", "move"] as const)
+    for (const destination of [
+      { before: { line: 4, hash: "XXXX" } },
+      { after: { line: 4, hash: "XXXX" } },
+    ]) {
+      const result = applyEdits(
+        text,
+        [
+          {
+            op,
+            anchor: { line: 1, hash: "XXXX" },
+            end: { line: 2, hash: "XXXX" },
+            ...destination,
+          },
+        ],
+        4,
+        0,
+      );
+      assert(!result.ok && result.failure.kind === "anchor");
+      assert.deepEqual(
+        result.failure.failures.map((failure) => failure.which),
+        ["anchor", "end", Object.keys(destination)[0]],
+      );
+    }
 });

@@ -37,7 +37,6 @@ test("macOS attempts directory sync, tolerates unsupported operations, and prese
           (error: unknown) =>
             error instanceof FileMutationError &&
             error.publication === "PUBLISHED" &&
-            error.stage === "post_process" &&
             error.cause instanceof Error &&
             "code" in error.cause &&
             error.cause.code === "EIO",

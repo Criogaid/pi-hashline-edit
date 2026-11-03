@@ -22,7 +22,6 @@ function failure(recovery: AnchorFailure["recovery"]): AnchorFailure {
 function ambiguous(lines: readonly string[], positions: number[], hashLen = 4): AnchorFailure {
   return failure({
     kind: "ambiguous",
-    scope: "local",
     candidates: positions.map((line) => ({
       line,
       hash: computeLineHash(line, lines[line - 1], hashLen),
@@ -38,25 +37,24 @@ function neighborhoods(text: string, failures: readonly AnchorFailure[], hashLen
   );
 }
 function rows(result: ReturnType<typeof neighborhoods>) {
-  return result.facts.candidateNeighborhoods?.flatMap((group) => group.rows) ?? [];
+  return result.candidateNeighborhoods?.flatMap((group) => group.rows) ?? [];
 }
 
 test("unique and unresolved failures → no ambiguous neighborhoods", () => {
   const failures = [
-    failure({ kind: "found", scope: "local", newLine: 2, newHash: "NEW" }),
+    failure({ kind: "found", newLine: 2, newHash: "NEW" }),
     failure({ kind: "none" }),
   ];
   for (const text of ["a\nb\nc\n", ""]) {
-    assert.deepEqual(neighborhoods(text, failures), { facts: {}, shownLines: new Set() });
+    assert.deepEqual(neighborhoods(text, failures), {});
   }
 });
 
 test("ambiguous CRLF and BOM context → merges sorted windows with copyable anchors", () => {
   const lines = ["\uFEFFfirst", "a", "", "c", "d", "e", "f", "last"];
   const result = neighborhoods(lines.join("\r\n"), [ambiguous(lines, [6, 2], 6)], 6);
-  assert.deepEqual([...result.shownLines], [1, 2, 3, 4, 5, 6, 7, 8]);
   assert.deepEqual(
-    result.facts.candidateNeighborhoods?.map((group) => group.lines),
+    result.candidateNeighborhoods?.map((group) => group.lines),
     ["1-8"],
   );
   assert.deepEqual(
@@ -66,25 +64,25 @@ test("ambiguous CRLF and BOM context → merges sorted windows with copyable anc
     ),
   );
   assert.doesNotMatch(rows(result).join("\n"), /\r/);
-  assert.equal(result.facts.omittedNeighborhoodRows, undefined);
+  assert.equal(result.omittedNeighborhoodRows, undefined);
 });
 
 test("ambiguous candidates at BOF and EOF → clipped windows without padding", () => {
   const lines = Array.from({ length: 10 }, (_, index) => `${index + 1}`);
   const result = neighborhoods(lines.join("\n"), [ambiguous(lines, [1, 10])]);
   assert.deepEqual(
-    result.facts.candidateNeighborhoods?.map((group) => group.lines),
+    result.candidateNeighborhoods?.map((group) => group.lines),
     ["1-4", "7-10"],
   );
   assert.equal(rows(result).length, 8);
-  assert.equal(result.facts.omittedNeighborhoodRows, undefined);
+  assert.equal(result.omittedNeighborhoodRows, undefined);
 });
 
 test("more than forty context rows and repeated windows → no row cap or duplication", () => {
   const lines = Array.from({ length: 60 }, (_, index) => `line-${index + 1}`);
   const result = neighborhoods(lines.join("\n"), [ambiguous(lines, [4, 14, 24, 34, 44, 54])]);
   assert.equal(rows(result).length, 42);
-  assert.equal(result.facts.omittedNeighborhoodRows, undefined);
+  assert.equal(result.omittedNeighborhoodRows, undefined);
   const repeated = neighborhoods(
     lines.join("\n"),
     Array.from({ length: 50 }, (_, opIndex) => ({ ...ambiguous(lines, [4, 5]), opIndex })),
@@ -122,18 +120,18 @@ test("neighborhood exceeds byte budget → whole rows and explicit omission coun
     const result = neighborhoods(lines.join("\n"), [
       ambiguous(lines, [lines.length - 1, lines.length]),
     ]);
-    assert.deepEqual([...result.shownLines], shown);
-    assert.equal(result.facts.omittedNeighborhoodRows, omitted);
+    assert.deepEqual(
+      rows(result),
+      shown.map(
+        (position) =>
+          `${position}#${computeLineHash(position, lines[position - 1], 4)}│${lines[position - 1]}`,
+      ),
+    );
+    assert.equal(result.omittedNeighborhoodRows, omitted);
     assert.ok(
       Buffer.byteLength(rows(result).join("\n") + (rows(result).length ? "\n" : "")) <=
         DEFAULT_OUTPUT_BUDGETS.blockBytes,
     );
-    for (const position of shown)
-      assert.ok(
-        rows(result).includes(
-          `${position}#${computeLineHash(position, lines[position - 1], 4)}│${lines[position - 1]}`,
-        ),
-      );
   }
 });
 
@@ -144,9 +142,12 @@ test("candidate complete row at its byte limit → kept exactly or omitted whole
     );
     const lines = ["prefix", candidate, "tail", "other"];
     const result = neighborhoods(lines.join("\n"), [ambiguous(lines, [2, 4], 6)], 6);
-    assert.equal(result.shownLines.has(2), extra === 0);
-    assert.equal(result.facts.omittedNeighborhoodRows, extra === 0 ? undefined : 1);
-    assert.ok(result.shownLines.has(4));
+    assert.equal(
+      rows(result).some((row) => row.startsWith("2#")),
+      extra === 0,
+    );
+    assert.equal(result.omittedNeighborhoodRows, extra === 0 ? undefined : 1);
+    assert.ok(rows(result).some((row) => row.startsWith("4#")));
   }
 });
 
@@ -156,13 +157,15 @@ test("unique candidate inside ambiguous context exceeds limit → context cannot
     ambiguous(lines, [3, 4]),
     failure({
       kind: "found",
-      scope: "local",
       newLine: 2,
       newHash: computeLineHash(2, lines[1], 4),
     }),
   ]);
-  assert.equal(result.shownLines.has(2), false);
-  assert.equal(result.facts.omittedNeighborhoodRows, 1);
+  assert.equal(
+    rows(result).some((row) => row.startsWith("2#")),
+    false,
+  );
+  assert.equal(result.omittedNeighborhoodRows, 1);
 });
 
 test("remaining context budget cannot fit an intermediate row → retain shorter later rows", () => {
@@ -173,8 +176,11 @@ test("remaining context budget cannot fit an intermediate row → retain shorter
     "other",
   ];
   const result = neighborhoods(lines.join("\n"), [ambiguous(lines, [3, 4])]);
-  assert.deepEqual([...result.shownLines], [1, 3, 4]);
-  assert.equal(result.facts.omittedNeighborhoodRows, 1);
+  assert.deepEqual(
+    rows(result).map((row) => Number(row.split("#")[0])),
+    [1, 3, 4],
+  );
+  assert.equal(result.omittedNeighborhoodRows, 1);
   assert.ok(Buffer.byteLength(rows(result).join("\n") + "\n") <= DEFAULT_OUTPUT_BUDGETS.blockBytes);
 });
 
@@ -189,7 +195,6 @@ function rejectedEdit(
   const error = describeEditFailure(
     result.failure,
     { currentText: text, anchors: createAnchorFormatter(DEFAULT_CONFIG.hashLen) },
-    edits.length > 1,
     budget,
   );
   return {
@@ -198,76 +203,6 @@ function rejectedEdit(
   };
 }
 const oldAnchor = { line: 1, hash: computeLineHash(1, "old", DEFAULT_CONFIG.hashLen) };
-
-test("failed anchor row is already shown → reports it once and names its location", async (t) => {
-  const cases = [
-    {
-      name: "unresolved observation in candidate neighborhood",
-      text: "current\nneighbor\nold\nold\n",
-      anchors: [oldAnchor, { line: 2, hash: computeLineHash(2, "gone", DEFAULT_CONFIG.hashLen) }],
-      radius: DEFAULT_CONFIG.shiftRadius,
-      line: 2,
-      content: "neighbor",
-      result: "unresolved",
-      omitted: "shown in candidateNeighborhoods",
-    },
-    {
-      name: "unresolved observation in earlier failure",
-      text: "current\n",
-      anchors: [oldAnchor, oldAnchor],
-      radius: 0,
-      line: 1,
-      content: "current",
-      result: "unresolved",
-      omitted: "shown in edits[0].anchor",
-    },
-    {
-      name: "shifted content in earlier failure",
-      text: "current\nold\n",
-      anchors: [oldAnchor, oldAnchor],
-      radius: DEFAULT_CONFIG.shiftRadius,
-      line: 2,
-      content: "old",
-      result: "shifted",
-      omitted: "shown in edits[0].anchor",
-    },
-    {
-      name: "shifted content in candidate neighborhood",
-      text: "current\nneighbor\nold\nold\n",
-      anchors: [
-        oldAnchor,
-        { line: 1, hash: computeLineHash(1, "neighbor", DEFAULT_CONFIG.hashLen) },
-      ],
-      radius: DEFAULT_CONFIG.shiftRadius,
-      line: 2,
-      content: "neighbor",
-      result: "shifted",
-      omitted: "shown in candidateNeighborhoods",
-    },
-  ];
-  for (const fixture of cases) {
-    await t.test(fixture.name, () => {
-      const { report } = rejectedEdit(
-        fixture.text,
-        fixture.anchors.map((anchor) => ({ op: "delete", anchor })),
-        fixture.radius,
-      );
-      const row = createAnchorFormatter(DEFAULT_CONFIG.hashLen).row(fixture.line, fixture.content);
-      const displayedRows = [
-        ...(report.failures?.flatMap((entry) => [
-          ...(entry.observed ? [entry.observed] : []),
-          ...(entry.content !== undefined ? [`${entry.candidate}│${entry.content}`] : []),
-        ]) ?? []),
-        ...(report.candidateNeighborhoods?.flatMap((group) => group.rows) ?? []),
-      ];
-      assert.equal(displayedRows.filter((displayed) => displayed === row).length, 1);
-      assert.equal(report.failures?.[1].result, fixture.result);
-      assert.equal(report.failures?.[1].notShown, fixture.omitted);
-      assert.equal(report.failures?.[1].observed, undefined);
-      assert.equal(report.failures?.[1].content, undefined);
-    });
-  }
-});
 
 test("multiple unresolved anchors and candidate context → one recovery survives omitted facts", () => {
   const budget = outputBudgetsFor(DEFAULT_OUTPUT_BUDGETS.fieldBytes);
@@ -281,50 +216,86 @@ test("multiple unresolved anchors and candidate context → one recovery survive
     })),
     {
       text: "current\nold\n",
-      edits: [{ op: "delete", anchor: oldAnchor } as Edit],
+      edits: [{ op: "delete", anchor: oldAnchor }] satisfies Edit[],
       radius: 2,
       omitted: false,
     },
     {
       text: "current\nold\nold\n",
-      edits: [{ op: "delete", anchor: oldAnchor } as Edit],
+      edits: [{ op: "delete", anchor: oldAnchor }] satisfies Edit[],
       radius: 2,
       omitted: false,
     },
+    ...["gone", "neighbor"].map((content) => ({
+      text: "current\nneighbor\nold\nold\n",
+      edits: [
+        { op: "delete", anchor: oldAnchor },
+        {
+          op: "delete",
+          anchor: {
+            line: content === "gone" ? 2 : 1,
+            hash: computeLineHash(content === "gone" ? 2 : 1, content, DEFAULT_CONFIG.hashLen),
+          },
+        },
+      ] satisfies Edit[],
+      radius: DEFAULT_CONFIG.shiftRadius,
+      omitted: false,
+    })),
   ];
   for (const fixture of cases) {
     const { report } = rejectedEdit(fixture.text, fixture.edits, fixture.radius, budget);
     assert.equal(report.error, "ANCHOR_MISMATCH");
-    assert.match(report.next ?? "", /confirm.*intended target/);
-    assert.match(report.next ?? "", /read or grep.*rows not shown.*out-of-range lines.*context/);
+    assert.equal(
+      report.next,
+      "Confirm a candidate or observed anchor is the intended target before reusing it; otherwise use read or grep.",
+    );
     const { next, ...facts } = report;
     assert.equal(renderReport(report).split(next!).length - 1, 1);
     assert.doesNotMatch(JSON.stringify(facts), /\b(?:confirm|read|grep|retries)\b/i);
     if (fixture.radius === 0) {
-      assert.match(report.failures?.[0].observed ?? "", /1#[0-9A-Z]+│current/);
+      assert.ok(
+        report.failures?.every((entry) => /1#[0-9A-Z]+│current/.test(entry.observed ?? "")),
+      );
       assert.ok(report.failures && report.failures.length > 0);
       assert.equal(report.failures.length + (report.omittedFailures ?? 0), fixture.edits.length);
-      assert.equal(report.matched, undefined);
       assert.ok(report.failures.every((entry) => entry.result === "unresolved"));
+    }
+    if (fixture.text === "current\nneighbor\nold\nold\n") {
+      const row = createAnchorFormatter(DEFAULT_CONFIG.hashLen).row(2, "neighbor");
+      assert.ok(report.candidateNeighborhoods?.some((group) => group.rows.includes(row)));
+      const entry = report.failures?.[1];
+      assert.ok(entry);
+      assert.equal(entry.notShown, undefined);
+      if (entry.result === "unresolved") assert.equal(entry.observed, row);
+      else {
+        assert.equal(entry.result, "shifted");
+        assert.equal(entry.content, "neighbor");
+      }
     }
     assert.equal(Boolean(report.omittedFailures), fixture.omitted);
   }
 });
 
-test("overlapping edits → ordered conflict and recovery based on the conflicting pair", () => {
+test("overlapping edits → ordered conflict and shared recovery", () => {
   const text = "a\nb\nc\nd\ne\n";
   const anchor = (line: number, content: string) => ({
     line,
     hash: computeLineHash(line, content, DEFAULT_CONFIG.hashLen),
   });
-  const cases: { edits: Edit[]; transfer: boolean }[] = [
+  const cases: { edits: Edit[] }[] = [
+    {
+      edits: [
+        { op: "replace", anchor: anchor(2, "b"), body: ["changed"] },
+        { op: "delete", anchor: anchor(4, "d") },
+        { op: "delete", anchor: anchor(1, "a"), end: anchor(2, "b") },
+      ],
+    },
     ...(["copy", "move"] as const).map((op) => ({
       edits: [
         { op: "replace", anchor: anchor(2, "b"), body: ["changed"] },
         { op, anchor: anchor(4, "d"), after: anchor(5, "e") },
         { op: "delete", anchor: anchor(1, "a"), end: anchor(2, "b") },
       ] satisfies Edit[],
-      transfer: false,
     })),
     ...(["copy", "move"] as const).map((op) => ({
       edits: [
@@ -332,24 +303,20 @@ test("overlapping edits → ordered conflict and recovery based on the conflicti
         { op: "delete", anchor: anchor(4, "d") },
         { op: "insert_before", anchor: anchor(3, "c"), body: ["changed"] },
       ] satisfies Edit[],
-      transfer: true,
     })),
   ];
-  for (const { edits, transfer } of cases) {
+  for (const { edits } of cases) {
     const { failure, report } = rejectedEdit(text, edits);
     assert.ok(failure.kind === "overlap");
-    assert.deepEqual(failure.conflict, [
-      { opIndex: 0, op: edits[0].op },
-      { opIndex: 2, op: edits[2].op },
-    ]);
+    assert.deepEqual(failure.conflict, [0, 2]);
     assert.equal(report.error, "OVERLAPPING_EDITS");
     assert.deepEqual(report.conflict, ["edits[0]", "edits[2]"]);
-    assert.equal(report.matched, undefined);
-    assert.equal(report.omittedMatched, undefined);
     assert.equal(report.message, failure.message);
     assert.equal(report.publication, "NOT_PUBLISHED");
-    if (transfer) assert.match(report.next ?? "", /copy or move.*body edits/i);
-    else assert.match(report.next ?? "", /merge overlapping edits/i);
+    assert.equal(
+      report.next,
+      "Merge them into one edit per range or position; rewrite a copy or move as body edits first.",
+    );
   }
 });
 

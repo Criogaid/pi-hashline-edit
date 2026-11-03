@@ -405,7 +405,6 @@ test("identical commits preserve the file and still enforce mode, revision, and 
       (error: unknown) =>
         error instanceof FileMutationError &&
         error.errorCode === "FILE_CHANGED" &&
-        error.stage === "prepare" &&
         error.publication === "NOT_PUBLISHED" &&
         /before publication/.test(error.message),
     );
@@ -444,7 +443,6 @@ test("file changes after the read → bound commits reject changed and unchanged
         () => commitReplacement(target, content, snapshot.baseRevision),
         (error: unknown) =>
           error instanceof FileMutationError &&
-          error.stage === "prepare" &&
           error.publication === "NOT_PUBLISHED" &&
           error.errorCode === "FILE_CHANGED",
       );
@@ -484,9 +482,7 @@ test("no-op commit with baseRevision rejects if target was deleted externally", 
     await assert.rejects(
       commitReplacement(target, snapshot.text, snapshot.baseRevision),
       (error: unknown) =>
-        error instanceof FileMutationError &&
-        error.stage === "prepare" &&
-        error.publication === "NOT_PUBLISHED",
+        error instanceof FileMutationError && error.publication === "NOT_PUBLISHED",
     );
   }));
 

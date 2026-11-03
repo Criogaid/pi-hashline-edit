@@ -51,7 +51,6 @@ test("temporary preparation and cleanup failures → preserve the commit failure
         const report = reportOf(result, "write");
         assert.equal(result.isError, true);
         assert.equal(report?.error, "PUBLISH_FAILED");
-        assert.equal(report.stage, "commit");
         assert.equal(report.publication, "NOT_PUBLISHED");
         assert.deepEqual(report.cause, { code: original.code, message: original.message });
         assert.equal(await readFile(target, "utf8"), "before\n");
@@ -70,7 +69,6 @@ test("published post-processing failure → skips command and preserves publicat
     const progress: ActionFusionProgress[] = [];
     const mutationError = new FileMutationError(
       "POST_PROCESS_FAILED",
-      "post_process",
       "PUBLISHED",
       "result generation failed",
     );
@@ -102,7 +100,6 @@ test("published post-processing failure → skips command and preserves publicat
         assert.equal(Object.hasOwn(error, "error"), false);
         const report = describeFailure("edit", error, { budget: DEFAULT_OUTPUT_BUDGETS });
         assert.equal(report.publication, "PUBLISHED");
-        assert.equal(report.stage, "post_process");
         assert.equal(report.then_run?.status, "skipped");
         assert.match(report.next ?? "", /change is saved; do not repeat/);
         const diagnostic = renderReport(report);
