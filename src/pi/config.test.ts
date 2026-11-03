@@ -114,7 +114,9 @@ test("project settings replace global groups while absent project settings use g
       join(agentDir, "settings.json"),
       JSON.stringify({ hashlineEdit: globalConfig }),
     );
-    assert.deepEqual(loadConfig(), globalConfig);
+    const withoutSettings = join(root, "without-settings");
+    await mkdir(withoutSettings);
+    assert.deepEqual(loadConfig(withoutSettings), globalConfig);
     assert.deepEqual(loadConfig(root), globalConfig);
     for (const settings of [{}, null, [], 42, "settings"]) {
       await write(settings);

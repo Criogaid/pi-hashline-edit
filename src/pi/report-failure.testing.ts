@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
-import type { ErrorCode } from "../core/errors.ts";
-import type { Report } from "./report-schema.ts";
+import type { ErrorCode, Report } from "./report-schema.ts";
 import { detailsReport } from "./report.ts";
 
 /** Assert execution failures through the returned model/TUI report, without changing tool semantics. */

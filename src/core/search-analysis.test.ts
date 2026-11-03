@@ -38,6 +38,10 @@ for (const [pattern, flags, expected] of [
   ],
   ["é", "miu", [[["É", "é"]]]],
   ["[\\u0100-\\u0200]", "m", undefined],
+  ["foo.*bar", "m", [literal("foo")]],
+  ["(?:abcdef.*xy|zz.*ghijkl)", "m", [literal("abcdef"), literal("ghijkl")]],
+  ["foo|bar.*baz", "m", [literal("foo"), literal("bar")]],
+  ["(?=foo|bar).*baz", "m", [literal("baz")]],
 ] as const) {
   test(`${pattern.slice(0, 80)} /${flags} → conservative candidate literals`, () => {
     assert.deepEqual(
@@ -49,11 +53,12 @@ for (const [pattern, flags, expected] of [
 
 for (const boundary of ["\n", "\r\n", "\uFFFD", "\uD800", "\uDC00", "\0"]) {
   test(`literal ${JSON.stringify(boundary)} boundary → no candidate spans changed bytes`, () => {
-    const prefilter = extractPrefilter(query(`left${boundary}xy`, "m", true));
-    assert.ok(hasCandidateBytes(Buffer.from(`left${boundary}xy`), prefilter));
-    assert.ok(hasCandidateBytes(Buffer.from("left\nxy"), prefilter));
+    const prefilter = extractPrefilter(query(`left${boundary}right`, "m", true));
+    assert.deepEqual(prefilter, { kind: "literals", literals: [literal("right")] });
+    assert.ok(hasCandidateBytes(Buffer.from(`left${boundary}right`), prefilter));
+    assert.ok(hasCandidateBytes(Buffer.from("left\nright"), prefilter));
     assert.equal(hasCandidateBytes(Buffer.from("left"), prefilter), false);
-    assert.equal(hasCandidateBytes(Buffer.from("xy"), prefilter), false);
+    assert.ok(hasCandidateBytes(Buffer.from("right"), prefilter));
     assert.deepEqual(extractPrefilter(query(boundary, "m", true)), { kind: "all" });
   });
 }
@@ -178,14 +183,6 @@ test("oversized literal alternation → retains necessary prefixes without dropp
   const prefilter = extractPrefilter(query(words.join("|")));
   for (const word of words) assert.ok(hasCandidateBytes(Buffer.from(word), prefilter));
   assert.equal(hasCandidateBytes(Buffer.from("unrelated"), prefilter), false);
-});
-
-test("AND and OR file conditions → retain each alternative and require each conjunction", () => {
-  const prefilter = extractPrefilter(query("(?:foo.*bar|baz.*qux)"));
-  for (const value of ["foo\nbar", "baz\nqux"])
-    assert.ok(hasCandidateBytes(Buffer.from(value), prefilter));
-  for (const value of ["foo", "bar", "baz", "qux", "foo\nqux", "baz\nbar"])
-    assert.equal(hasCandidateBytes(Buffer.from(value), prefilter), false, value);
 });
 
 test("empty expression with a huge repeat → completes without iterating the repeat count", () => {

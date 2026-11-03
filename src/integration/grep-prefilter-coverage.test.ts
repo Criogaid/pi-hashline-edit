@@ -13,7 +13,7 @@ import {
 } from "../core/search-matrix.testing.ts";
 import { searchText, type GrepQuery } from "../core/search.ts";
 import { runRgPaths } from "../pi/rg-process.ts";
-import { runCandidatePaths } from "../pi/grep-candidates.ts";
+import { candidateArgs } from "../pi/grep-candidates.ts";
 
 const syntaxCases = [
   ...MATRIX_SYNTAX,
@@ -140,11 +140,9 @@ test("Cartesian prefilter coverage × composition × flags × bytes → real rg 
       while (next < cases.length) {
         const group = cases[next++];
         const actual = new Set<string>();
-        const result = await runCandidatePaths(
-          runRgPaths,
+        const result = await runRgPaths(
           rgPath,
-          group.prefilter,
-          ["--null", "--", directory],
+          [...candidateArgs(group.prefilter), "--null", "--", directory],
           AbortSignal.timeout(processTimeoutMs),
           (path) => {
             actual.add(basename(path));

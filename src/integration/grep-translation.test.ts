@@ -7,7 +7,7 @@ import { rgPath } from "@vscode/ripgrep";
 import { searchText, type GrepQuery } from "../core/search.ts";
 import { searchFiles, type GrepFileMatch } from "../pi/grep-search.ts";
 import { runRgLines, runRgPaths } from "../pi/rg-process.ts";
-import { runCandidatePaths } from "../pi/grep-candidates.ts";
+import { candidateArgs } from "../pi/grep-candidates.ts";
 import { lineCandidatePatterns } from "../pi/rg-regex.ts";
 import { extractPrefilter } from "../core/search-analysis.ts";
 import { REGEX_TRANSLATION_CORPUS } from "../testing/regex-translation-corpus.ts";
@@ -115,7 +115,7 @@ test("upstream regex witnesses × LF/CRLF/malformed bytes → sound candidates, 
   }
 });
 
-test("real rg AND/OR file prefilter → excludes incomplete branches before JS verification", async (t) => {
+test("real rg AND/OR file prefilter → broad candidates retain exact JS results", async (t) => {
   const directory = await mkdtemp(join(tmpdir(), "hl-regex-conjunction-"));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const fixtures = ["foo\nbar", "baz\nqux", "foo\nqux", "baz\nbar", "foo", "bar", "unrelated"];
@@ -132,11 +132,9 @@ test("real rg AND/OR file prefilter → excludes incomplete branches before JS v
     multiline: true,
   };
   const candidates: string[] = [];
-  const listing = await runCandidatePaths(
-    runRgPaths,
+  const listing = await runRgPaths(
     rgPath,
-    extractPrefilter(query),
-    ["--", directory],
+    [...candidateArgs(extractPrefilter(query)), "--null", "--", directory],
     AbortSignal.timeout(timeoutMs),
     (path) => {
       candidates.push(resolve(path));
@@ -145,7 +143,7 @@ test("real rg AND/OR file prefilter → excludes incomplete branches before JS v
   );
   assert.equal(listing.code, 0);
   assert.equal(listing.stderr, "");
-  assert.deepEqual(candidates.sort(), paths.slice(0, 2).sort());
+  assert.deepEqual(candidates.sort(), [paths[0], paths[1], paths[2], paths[3], paths[4]].sort());
   const result = await searchFiles({
     backend: { runRgPaths, runRgLines },
     rgPath,

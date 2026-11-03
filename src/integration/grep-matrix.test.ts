@@ -13,7 +13,7 @@ import {
   MATRIX_INPUTS,
 } from "../core/search-matrix.testing.ts";
 import { runRgPaths } from "../pi/rg-process.ts";
-import { runCandidatePaths } from "../pi/grep-candidates.ts";
+import { candidateArgs } from "../pi/grep-candidates.ts";
 
 interface CandidateCase {
   readonly prefilter: Prefilter;
@@ -66,11 +66,9 @@ async function checkCandidates(t: TestContext, queries: Iterable<{ readonly quer
       while (next < cases.length) {
         const { prefilter, required } = cases[next++];
         const actual = new Set<string>();
-        const result = await runCandidatePaths(
-          runRgPaths,
+        const result = await runRgPaths(
           rgPath,
-          prefilter,
-          ["--null", "--", directory],
+          [...candidateArgs(prefilter), "--null", "--", directory],
           AbortSignal.timeout(processTimeoutMs),
           (path) => {
             actual.add(basename(path));
