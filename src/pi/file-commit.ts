@@ -24,6 +24,7 @@ import { decodeEditableText, unwritableTextError } from "../core/text.ts";
 import {
   errnoCode,
   filesystemErrorCode,
+  PATH_ERROR_MESSAGES,
   HashlineError,
   type ErrorCode,
   type HashlineErrorArguments,
@@ -82,7 +83,8 @@ export class FileMutationError<C extends ErrorCode = ErrorCode> extends Hashline
 }
 
 function requireRegularFile(target: Stats | BigIntStats): void {
-  if (!target.isFile()) throw prepareError("NOT_REGULAR_FILE", "Target is not a regular file.");
+  if (!target.isFile())
+    throw prepareError("NOT_REGULAR_FILE", PATH_ERROR_MESSAGES.NOT_REGULAR_FILE);
 }
 
 /** Check the opened object before reading; a FIFO must not block even if the path changed. */
@@ -326,7 +328,10 @@ export async function commitFile(
   if (mode === "create" && target.existed)
     throw prepareError("TARGET_EXISTS", "Target already exists.");
   if (mode === "overwrite" && !target.existed)
-    throw prepareError("PATH_NOT_FOUND", "Target does not exist.", { next: "useCreate" });
+    throw prepareError("PATH_NOT_FOUND", PATH_ERROR_MESSAGES.PATH_NOT_FOUND, {
+      facts: { missing: [path] },
+      next: "useCreate",
+    });
   throwIfCancelledBeforePublication(options.signal);
   const publishedRevision = byteRevision(bytes);
   // Mode, revision, target safety, and cancellation checks still apply to no-ops.

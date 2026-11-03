@@ -170,8 +170,9 @@ const FACT_FIELDS = {
   schemaLimited: Type.Literal(true, {
     description: "A native diagnostic allowance was reached; more issues may exist.",
   }),
-  // A missing path among several (grep).
-  missing: Type.String(),
+  missing: Type.Array(Type.String(), {
+    description: "Resolved paths that do not exist; shows where a relative path led.",
+  }),
   // Anchor verification (failure-context.ts).
   failures: Type.Array(ANCHOR_FAILURE_SCHEMA),
   omittedFailures: count("Failures omitted from the byte budget."),
@@ -340,7 +341,10 @@ export const ERROR_DEFINITIONS = {
         'Check the path and read the existing file. Use mode "overwrite" only if replacing that file is intended.',
     },
   },
-  NOT_REGULAR_FILE: { facts: NONE },
+  NOT_REGULAR_FILE: {
+    facts: NONE,
+    next: { default: "Use the path of a regular file." },
+  },
   MULTIPLE_HARD_LINKS: { facts: NONE },
   SYMLINK_UNRESOLVED: { facts: NONE },
   PUBLISH_FAILED: {

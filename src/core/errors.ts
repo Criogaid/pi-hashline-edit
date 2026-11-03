@@ -50,6 +50,12 @@ export const TEXT_ERROR_MESSAGES = {
   INVALID_UNICODE: "Content cannot be encoded losslessly as UTF-8.",
 } as const satisfies Partial<Record<ErrorCode, string>>;
 
+/** Messages for an unusable path, which every tool reports alike whichever step found it. */
+export const PATH_ERROR_MESSAGES = {
+  PATH_NOT_FOUND: "Path not found.",
+  NOT_REGULAR_FILE: "Path is not a regular file.",
+} as const satisfies Partial<Record<ErrorCode, string>>;
+
 /** Message text for a caught value; non-Error throws are stringified. */
 export function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -65,11 +71,15 @@ export function errnoCode(error: unknown): string | undefined {
     : undefined;
 }
 
-/** Classify a filesystem error: only ENOENT means a missing path; other errno failures keep their cause. */
+/**
+ * Classify a filesystem error: only ENOENT means a missing path and only EISDIR a directory
+ * target; other errno failures keep their cause.
+ */
 export function filesystemErrorCode(
   error: unknown,
-): "PATH_NOT_FOUND" | "FILESYSTEM_ERROR" | undefined {
+): "PATH_NOT_FOUND" | "NOT_REGULAR_FILE" | "FILESYSTEM_ERROR" | undefined {
   const code = errnoCode(error);
   if (code === undefined) return undefined;
-  return code === "ENOENT" ? "PATH_NOT_FOUND" : "FILESYSTEM_ERROR";
+  if (code === "ENOENT") return "PATH_NOT_FOUND";
+  return code === "EISDIR" ? "NOT_REGULAR_FILE" : "FILESYSTEM_ERROR";
 }

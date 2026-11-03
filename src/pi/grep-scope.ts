@@ -8,7 +8,7 @@ import { stat } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { canonicalPath } from "./path.ts";
 import { COMMON_RG_ARGS, searchDiagnostic, type GrepBackend } from "./rg-process.ts";
-import { errnoCode, HashlineError } from "../core/errors.ts";
+import { errnoCode, HashlineError, PATH_ERROR_MESSAGES } from "../core/errors.ts";
 
 export interface SearchScope {
   readonly globs: readonly string[];
@@ -37,22 +37,25 @@ interface SearchPathInfo {
   readonly isFile: boolean;
 }
 
-/** Canonical search paths, the working directory when none is given; a missing one fails. */
+/** Canonical search paths, the working directory when none is given; any missing one fails, all reported. */
 export async function resolveSearchPaths(cwd: string, path: readonly string[] | undefined) {
   const searchPaths = (path ?? ["."]).map((value) => canonicalPath(cwd, value));
   const pathInfo: SearchPathInfo[] = [];
+  const missing: string[] = [];
   for (const searchPath of searchPaths) {
     try {
       pathInfo.push({ path: searchPath, isFile: (await stat(searchPath)).isFile() });
     } catch (error) {
       // Only a missing path is PATH_NOT_FOUND; other filesystem errors keep their cause.
       if (errnoCode(error) !== "ENOENT") throw error;
-      throw new HashlineError("PATH_NOT_FOUND", "Search path not found.", {
-        facts: { missing: searchPath },
-        ...(/[*?]/.test(searchPath) ? { next: "useGlob" as const } : {}),
-      });
+      missing.push(searchPath);
     }
   }
+  if (missing.length)
+    throw new HashlineError("PATH_NOT_FOUND", PATH_ERROR_MESSAGES.PATH_NOT_FOUND, {
+      facts: { missing },
+      ...(missing.some((path) => /[*?]/.test(path)) ? { next: "useGlob" as const } : {}),
+    });
   return { searchPaths, pathInfo };
 }
 
