@@ -40,7 +40,7 @@ test("Cartesian JS syntax × all flag combinations → tool entry agrees with V8
   for (const pattern of patterns) {
     for (const flags of flagsCases) {
       const normalizedFlags = [...new Set(flags)].join("");
-      let field: "flags" | "pattern" | undefined;
+      let field: "flags" | "pattern[0]" | undefined;
       try {
         new RegExp("", normalizedFlags);
       } catch (error) {
@@ -52,7 +52,7 @@ test("Cartesian JS syntax × all flag combinations → tool entry agrees with V8
           new RegExp(pattern, normalizedFlags);
         } catch (error) {
           if (!(error instanceof SyntaxError)) throw error;
-          field = "pattern";
+          field = "pattern[0]";
         }
       }
       const before = discoveries;
