@@ -227,12 +227,27 @@ export function createActionFusionExecutor(
     ctx: ExtensionToolContext;
     onUpdate?: AgentToolUpdateCallback<MutationResultDetails<TDetails>>;
   }): Promise<AgentToolResult<TDetails & ReportDetails<SuccessReport>>> {
+    // Without a command, the mutation still waits for a fused call on the same file.
+    if (thenRun === undefined) {
+      return withQueue(absolutePath, async () => {
+        throwIfCancelled(signal);
+        const outcome = await mutate();
+        return finalizeMutation(
+          tool,
+          displayPath,
+          outcome,
+          commitFreshness(outcome.commit),
+          undefined,
+          budget,
+        );
+      });
+    }
+
     let completedMutation: MutationOutcome<TDetails, TTool> | undefined;
     let progressFailure: unknown;
     let commandResult: CommandResult | undefined;
     let commandTiming: { readonly timeoutSeconds: number; readonly deadlineMs: number } | undefined;
     const report = (command: ActionFusionProgress["command"], freshness: Freshness) => {
-      if (!thenRun) return;
       const progress: ActionFusionProgress = {
         toolCallId,
         commandText: thenRun.command,
@@ -279,33 +294,30 @@ export function createActionFusionExecutor(
       try {
         throwIfCancelled(signal);
       } catch (error) {
-        if (thenRun !== undefined) throw notRun(error, "cancelled");
-        throw error;
+        throw notRun(error, "cancelled");
       }
       let outcome: MutationOutcome<TDetails, TTool>;
       try {
         outcome = await mutate();
         completedMutation = outcome;
       } catch (error) {
-        if (thenRun !== undefined) throw notRun(error, "skipped");
-        throw error;
+        throw notRun(error, "skipped");
       }
 
       const { publishedRevision } = outcome.commit;
       report("waiting", "unknown");
-      const settle = (observation: FreshnessObservation, command?: CommandFacts) => {
-        if (command) report(command.status, observation.freshness);
+      const settle = (observation: FreshnessObservation, command: CommandFacts) => {
+        report(command.status, observation.freshness);
         // The report states publication, freshness, and the command status once.
         return finalizeMutation(
           tool,
           displayPath,
           outcome,
           observation,
-          command && { ...command, progressError: progressFailure },
+          { ...command, progressError: progressFailure },
           budget,
         );
       };
-      if (thenRun === undefined) return settle(commitFreshness(outcome.commit));
 
       // A completed mutation remains successful; the command is only started on a fresh target.
       const before = await observeFreshness(absolutePath, publishedRevision, true);
@@ -349,7 +361,7 @@ export function createActionFusionExecutor(
       });
     }).catch((error: unknown) => {
       // Failures before the mutation started (such as resolving the queue key) also skip the command.
-      if (thenRun === undefined || error instanceof CommandNotRun) throw error;
+      if (error instanceof CommandNotRun) throw error;
       throw notRun(error, "skipped");
     });
     return terminate === undefined ? result : { ...result, terminate };
