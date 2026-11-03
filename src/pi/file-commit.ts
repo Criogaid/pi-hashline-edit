@@ -294,6 +294,21 @@ async function syncDirectory(path: string): Promise<void> {
   }
 }
 
+/**
+ * A temporary directory beside the target. Recursive mkdir fails with EPERM on a Windows
+ * drive root even though it exists, so it runs only when the directory is missing.
+ */
+async function makeTempDirectory(directory: string): Promise<string> {
+  const prefix = join(directory, ".hashline-commit-");
+  try {
+    return await mkdtemp(prefix);
+  } catch (error) {
+    if (errnoCode(error) !== "ENOENT") throw error;
+  }
+  await mkdir(directory, { recursive: true });
+  return mkdtemp(prefix);
+}
+
 /** Validate the target, skip identical content, otherwise sync and publish. Callers own the file queue. */
 export async function commitFile(
   path: string,
@@ -342,8 +357,7 @@ export async function commitFile(
   const publishDirectory = dirname(publishPath);
   let tempDir: string;
   try {
-    await mkdir(publishDirectory, { recursive: true });
-    tempDir = await mkdtemp(join(publishDirectory, ".hashline-commit-"));
+    tempDir = await makeTempDirectory(publishDirectory);
   } catch (error) {
     throw new FileMutationError(
       "PUBLISH_FAILED",

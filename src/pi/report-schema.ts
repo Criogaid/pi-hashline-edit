@@ -390,7 +390,8 @@ export const REREAD = "Read the file before further edits.";
 /** Once a mutation reached or may have reached the file, a retry could apply it twice. */
 export const PUBLICATION_NEXT = {
   PUBLISHED: `The change is saved; do not repeat it. ${REREAD}`,
-  UNKNOWN: `The change may already be applied; do not repeat it. ${REREAD}`,
+  UNKNOWN:
+    "The change may or may not be saved. Read the file, and repeat the change only if it is missing.",
 } as const satisfies Record<Exclude<PublicationStatus, "NOT_PUBLISHED">, string>;
 
 /**
