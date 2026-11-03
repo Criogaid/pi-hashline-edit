@@ -121,17 +121,13 @@ const ANCHOR_FAILURE_SCHEMA = Type.Object(
       Type.Literal("ambiguous"),
       Type.Literal("unresolved"),
     ]),
-    search: opt(Type.Union([Type.Literal("local window"), Type.Literal("full file")])),
     candidate: opt(Type.String()),
     content: opt(Type.String()),
     candidates: opt(Type.Array(Type.String())),
     omittedCandidates: opt(Type.Integer({ minimum: 1 })),
     observed: opt(Type.String()),
     notShown: opt(
-      Type.String({
-        description:
-          "Why content (shifted) or observed (unresolved) is absent, or where it is shown.",
-      }),
+      Type.String({ description: "Why content (shifted) or observed (unresolved) is absent." }),
     ),
   },
   { additionalProperties: false },
@@ -169,8 +165,6 @@ const FACT_FIELDS = {
   // Anchor verification (failure-context.ts).
   failures: Type.Array(ANCHOR_FAILURE_SCHEMA),
   omittedFailures: count("Failures omitted from the byte budget."),
-  matched: Type.Array(Type.String()),
-  omittedMatched: count("Matched anchors omitted from the byte budget."),
   candidateNeighborhoods: Type.Array(
     Type.Object(
       { lines: Type.String(), rows: Type.Array(Type.String()) },
@@ -288,26 +282,18 @@ export const ERROR_DEFINITIONS = {
   ANCHOR_MISMATCH: {
     facts: facts(
       ["failures"],
-      [
-        "omittedFailures",
-        "matched",
-        "omittedMatched",
-        "candidateNeighborhoods",
-        "omittedNeighborhoodRows",
-      ],
+      ["omittedFailures", "candidateNeighborhoods", "omittedNeighborhoodRows"],
     ),
     next: {
       default:
-        "Before reusing a candidate or observed anchor, confirm it is the intended target; use read or grep for rows not shown, out-of-range lines, or more context. Retries verify every anchor again.",
+        "Confirm a candidate or observed anchor is the intended target before reusing it; otherwise use read or grep.",
     },
   },
   OVERLAPPING_EDITS: {
     facts: facts(["conflict"]),
     next: {
       default:
-        "Merge overlapping edits into one edit per range, and insertions at one position into one insertion.",
-      transfer:
-        "A copy or move cannot merge with another edit. Rewrite it as body edits that include its lines, then merge those with the other edit.",
+        "Merge them into one edit per range or position; rewrite a copy or move as body edits first.",
     },
   },
   NO_MATCH: {

@@ -408,7 +408,6 @@ function runEdit(
       throw describeEditFailure(
         result.failure,
         { currentText, anchors: anchorFormatter },
-        translated.length > 1,
         target.budget,
       );
     }

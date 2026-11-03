@@ -44,11 +44,9 @@ export type LineEnding = "lf" | "crlf";
  * Candidate checksums hold the ORIGINAL line number fixed. Because checksums
  * can collide, a match is a candidate rather than proof of identity. Returned
  * anchors use each candidate's actual line number and freshly computed hash.
- * Candidate `scope` records the completed search: local results leave matches
- * outside the window unchecked; full-file results cover the entire snapshot.
  *
- * - `found` — exactly one line matches in the selected search scope; the caller
- *   checks its content before resending with the provided anchor.
+ * - `found` — exactly one line matches; the caller checks its content before
+ *   resending with the provided anchor.
  * - `ambiguous` — several lines match; the caller inspects the candidates
  *   and chooses the intended target.
  * - `none` — no candidate found, or recovery disabled; the caller checks the
@@ -57,13 +55,11 @@ export type LineEnding = "lf" | "crlf";
 export type AnchorRecovery =
   | {
       readonly kind: "found";
-      readonly scope: "local" | "full-file";
       readonly newLine: number;
       readonly newHash: string;
     }
   | {
       readonly kind: "ambiguous";
-      readonly scope: "local" | "full-file";
       readonly candidates: ReadonlyArray<{ readonly line: number; readonly hash: string }>;
     }
   | { readonly kind: "none" };
@@ -85,38 +81,24 @@ export interface AnchorFailure {
   readonly current: { readonly content: string } | null;
 }
 
-/** Record for one supplied anchor in the immutable apply snapshot. */
-export interface AnchorCheck {
-  readonly opIndex: number;
-  readonly which: AnchorField;
-  readonly status: "matched" | "mismatched";
-}
-
-/** One operation of the input `edits[]`. */
-export interface EditRef {
-  readonly opIndex: number;
-  readonly op: Edit["op"];
-}
-
-/** Batch-level failure. Anchor checks describe only checksum validation in this snapshot. */
+/** Batch-level failure. */
 export type ApplyFailure =
   | {
       readonly kind: "anchor";
       readonly failures: readonly AnchorFailure[];
-      readonly checks: readonly AnchorCheck[];
     }
   | {
       /** Two ranges overlap, or two insertions share a position. */
       readonly kind: "overlap";
       readonly message: string;
-      /** The first conflicting pair found, in input order. */
-      readonly conflict: readonly [EditRef, EditRef];
+      /** Indexes in the input `edits[]` of the first conflicting pair found, ascending. */
+      readonly conflict: readonly number[];
     };
 
 /**
  * Apply result. Byte-identical output is a success; the commit layer detects the no-op.
  * On failure, `failure` is either the collected set of anchor failures
- * (each with recovery and per-input anchor checks) or an overlap.
+ * (each with recovery) or an overlap.
  * Nothing is written on failure.
  */
 export type ApplyResult =

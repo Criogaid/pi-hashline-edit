@@ -41,7 +41,6 @@ import {
 } from "./lines.ts";
 import type {
   Anchor,
-  AnchorCheck,
   AnchorFailure,
   AnchorRecovery,
   ApplyFailure,
@@ -71,7 +70,7 @@ type SpanOp = { readonly lo: number; readonly hi: number } & (
 function verifyAnchor(
   lines: readonly string[],
   cited: Anchor,
-  which: AnchorCheck["which"],
+  which: AnchorFailure["which"],
   opIndex: number,
   op: Edit["op"],
   hashLen: number,
@@ -87,7 +86,6 @@ function verifyAnchor(
   }
 
   const candidates: { line: number; hash: string }[] = [];
-  let scope: "local" | "full-file" = "local";
   const scan = (start: number, end: number) => {
     for (let c = start; c <= end; c++) {
       if (c === line) continue;
@@ -102,7 +100,6 @@ function verifyAnchor(
     scan(lo, hi);
     // Preserve local candidates; scan both remaining regions before deciding uniqueness.
     if (candidates.length === 0) {
-      scope = "full-file";
       scan(1, Math.min(lines.length, lo - 1));
       scan(Math.max(1, hi + 1), lines.length);
     }
@@ -110,9 +107,9 @@ function verifyAnchor(
 
   let recovery: AnchorRecovery;
   if (candidates.length === 1) {
-    recovery = { kind: "found", scope, newLine: candidates[0].line, newHash: candidates[0].hash };
+    recovery = { kind: "found", newLine: candidates[0].line, newHash: candidates[0].hash };
   } else if (candidates.length > 1) {
-    recovery = { kind: "ambiguous", scope, candidates };
+    recovery = { kind: "ambiguous", candidates };
   } else {
     recovery = { kind: "none" };
   }
@@ -123,20 +120,8 @@ function verifyAnchor(
 }
 
 type TranslateResult =
-  | { readonly ok: true; readonly ops: readonly SpanOp[]; readonly checks: AnchorCheck[] }
-  | {
-      readonly ok: false;
-      readonly anchorFailures: AnchorFailure[];
-      readonly checks: AnchorCheck[];
-    };
-
-function checkedAnchor(
-  opIndex: number,
-  which: AnchorCheck["which"],
-  failure: AnchorFailure | null,
-): AnchorCheck {
-  return { opIndex, which, status: failure ? "mismatched" : "matched" };
-}
+  | { readonly ok: true; readonly ops: readonly SpanOp[] }
+  | { readonly ok: false; readonly anchorFailures: AnchorFailure[] };
 
 /** Verify an Edit against the snapshot and plan its mutation spans and captured source. */
 function translateEdit(
@@ -152,14 +137,11 @@ function translateEdit(
     case "copy":
     case "move": {
       const failures: AnchorFailure[] = [];
-      const checks: AnchorCheck[] = [];
       const anchorF = verifyAnchor(lines, edit.anchor, "anchor", opIndex, edit.op, hashLen, radius);
-      checks.push(checkedAnchor(opIndex, "anchor", anchorF));
       if (anchorF) failures.push(anchorF);
       let endLine = edit.anchor.line;
       if (edit.end) {
         const endF = verifyAnchor(lines, edit.end, "end", opIndex, edit.op, hashLen, radius);
-        checks.push(checkedAnchor(opIndex, "end", endF));
         if (endF) failures.push(endF);
         endLine = edit.end.line;
       }
@@ -179,15 +161,14 @@ function translateEdit(
           hashLen,
           radius,
         );
-        checks.push(checkedAnchor(opIndex, destination.which, failure));
         if (failure) failures.push(failure);
       }
-      if (failures.length > 0) return { ok: false, anchorFailures: failures, checks };
+      if (failures.length > 0) return { ok: false, anchorFailures: failures };
       if (destination) {
         const sourceLo = edit.anchor.line - 1;
         const gap = destination.cited.line - (destination.which === "before" ? 1 : 0);
         if (edit.op === "move" && (gap === sourceLo || gap === endLine)) {
-          return { ok: true, ops: [], checks };
+          return { ok: true, ops: [] };
         }
         const insertion: SpanOp = {
           lo: gap,
@@ -198,7 +179,6 @@ function translateEdit(
         };
         return {
           ok: true,
-          checks,
           ops:
             edit.op === "move"
               ? [insertion, { lo: sourceLo, hi: endLine, kind: "body", newLines: [] }]
@@ -207,7 +187,6 @@ function translateEdit(
       }
       return {
         ok: true,
-        checks,
         ops: [
           {
             lo: edit.anchor.line - 1,
@@ -221,26 +200,24 @@ function translateEdit(
     case "insert_after":
     case "insert_before": {
       const failure = verifyAnchor(lines, edit.anchor, "anchor", opIndex, edit.op, hashLen, radius);
-      const checks = [checkedAnchor(opIndex, "anchor", failure)];
-      if (failure) return { ok: false, anchorFailures: [failure], checks };
+      if (failure) return { ok: false, anchorFailures: [failure] };
       const line = edit.anchor.line - (edit.op === "insert_before" ? 1 : 0);
-      return { ok: true, checks, ops: [{ lo: line, hi: line, kind: "body", newLines: edit.body }] };
+      return { ok: true, ops: [{ lo: line, hi: line, kind: "body", newLines: edit.body }] };
     }
     case "append":
       return {
         ok: true,
-        checks: [],
         ops: [{ lo: lines.length, hi: lines.length, kind: "body", newLines: edit.body }],
       };
     case "prepend":
-      return { ok: true, checks: [], ops: [{ lo: 0, hi: 0, kind: "body", newLines: edit.body }] };
+      return { ok: true, ops: [{ lo: 0, hi: 0, kind: "body", newLines: edit.body }] };
   }
 }
 
 /**
  * Apply edits to `text`. Anchors are verified against the current content.
  * On any anchor mismatch, all failures (with shifted recovery) are collected
- * and returned together, with per-input anchor checks.
+ * and returned together.
  *
  * @param text        current full file text
  * @param edits       validated edit operations; each body element is one logical line
@@ -259,11 +236,9 @@ export function applyEdits(
 
   const ops: (SpanOp & { readonly opIndex: number })[] = [];
   const anchorFailures: AnchorFailure[] = [];
-  const anchorChecks: AnchorCheck[] = [];
 
   for (let i = 0; i < edits.length; i++) {
     const t = translateEdit(edits[i], i, lines, hashLen, shiftRadius);
-    anchorChecks.push(...t.checks);
     if (t.ok) {
       for (const op of t.ops) ops.push({ ...op, opIndex: i });
     } else {
@@ -274,10 +249,7 @@ export function applyEdits(
   // Anchor failures take priority: the model must fix anchors first; overlaps
   // among surviving ops are premature until anchors are corrected.
   if (anchorFailures.length > 0) {
-    return {
-      ok: false,
-      failure: { kind: "anchor", failures: anchorFailures, checks: anchorChecks },
-    };
+    return { ok: false, failure: { kind: "anchor", failures: anchorFailures } };
   }
 
   const sorted = [...ops].sort((a, b) => a.lo - b.lo || a.hi - b.hi);
@@ -290,15 +262,12 @@ export function applyEdits(
     const previous = sorted[conflict - 1];
     const repeatedInsertion =
       current.lo === current.hi && previous.lo === current.lo && previous.hi === current.hi;
-    const [first, second] = [previous.opIndex, current.opIndex]
-      .sort((a, b) => a - b)
-      .map((opIndex) => ({ opIndex, op: edits[opIndex].op }));
     return {
       ok: false,
       failure: {
         kind: "overlap",
         message: repeatedInsertion ? "Two edits insert at one position." : "Two edits overlap.",
-        conflict: [first, second],
+        conflict: [previous.opIndex, current.opIndex].sort((a, b) => a - b),
       },
     };
   }

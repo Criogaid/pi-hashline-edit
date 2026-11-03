@@ -1,16 +1,12 @@
 /**
  * Bounded edit failure facts for the error record: anchor failures with their
- * recovery candidates or observed rows, the batch's matched anchors, and
- * ambiguous-candidate neighborhoods.
+ * recovery candidates or observed rows, and ambiguous-candidate neighborhoods.
  *
- * Each fact has one owner. A failure entry states what was cited and what the
- * search found; a shifted candidate's anchor is stated once, beside its
- * `content`; `matched` lists only the anchors that passed, so a mismatch
- * appears once, in `failures`; a row shown in a neighborhood or an earlier entry
- * is not repeated in a failure entry, whose `notShown` names where it is. The `observed` and neighborhood rows are observations,
- * not verified targets. Every list has its own byte budget and an explicit
- * omission count. The recovery instruction is the report's `next`, derived
- * from the code in report-schema.ts.
+ * A failure entry states what was cited and what the search found; a shifted
+ * candidate's anchor is stated once, beside its `content`. The `observed` and
+ * neighborhood rows are observations, not verified targets. Every list has its
+ * own byte budget and an explicit omission count. The recovery instruction is
+ * the report's `next`, derived from the code in report-schema.ts.
  *
  * @module pi-hashline-edit/pi
  */
@@ -91,8 +87,7 @@ function groupContextRows(rows: readonly ContextRow[]) {
 }
 
 /**
- * Observation rows (±3) around listed ambiguous candidates, lowest lines first,
- * and the lines actually shown so failure entries do not repeat them.
+ * Observation rows (±3) around listed ambiguous candidates, lowest lines first.
  * @internal Performs no I/O.
  */
 export function ambiguousCandidateNeighborhoods(
@@ -100,16 +95,13 @@ export function ambiguousCandidateNeighborhoods(
   failures: readonly AnchorFailure[],
   anchors: AnchorFormatter,
   budget: OutputBudgets,
-): {
-  facts: Pick<MismatchFacts, "candidateNeighborhoods" | "omittedNeighborhoodRows">;
-  shownLines: ReadonlySet<number>;
-} {
+): Pick<MismatchFacts, "candidateNeighborhoods" | "omittedNeighborhoodRows"> {
   const centers = failures.flatMap((failure) =>
     failure.recovery.kind === "ambiguous"
       ? selectAmbiguousCandidates(failure.recovery.candidates).map((candidate) => candidate.line)
       : [],
   );
-  if (centers.length === 0) return { facts: {}, shownLines: new Set() };
+  if (centers.length === 0) return {};
 
   const candidateLines = new Set(centers);
   for (const failure of failures) {
@@ -123,11 +115,8 @@ export function ambiguousCandidateNeighborhoods(
     budget,
   );
   return {
-    facts: {
-      candidateNeighborhoods: groupContextRows(rows),
-      ...(omitted ? { omittedNeighborhoodRows: omitted } : {}),
-    },
-    shownLines: new Set(rows.map((row) => row.line)),
+    candidateNeighborhoods: groupContextRows(rows),
+    ...(omitted ? { omittedNeighborhoodRows: omitted } : {}),
   };
 }
 
@@ -138,7 +127,6 @@ function failureEntry(
   f: AnchorFailure,
   snapshot: Snapshot,
   currentLines: readonly string[],
-  shownLines: Map<number, string>,
   budget: OutputBudgets,
 ): AnchorFailureFact {
   const rowTooLarge = `row exceeds ${formatByteSize(budget.fieldBytes)}`;
@@ -148,17 +136,10 @@ function failureEntry(
     cited: snapshot.anchors.reference(f.cited.line, f.cited.hash),
     result: RESULT[f.recovery.kind],
   };
-  if (f.recovery.kind !== "none")
-    entry.search = f.recovery.scope === "local" ? "local window" : "full file";
   switch (f.recovery.kind) {
     case "found": {
       const { newLine, newHash } = f.recovery;
       entry.candidate = snapshot.anchors.reference(newLine, newHash);
-      const shownAt = shownLines.get(newLine);
-      if (shownAt !== undefined) {
-        entry.notShown = `shown in ${shownAt}`;
-        break;
-      }
       const content = currentLines[newLine - 1];
       // The row budget matches the neighborhoods'; the anchor itself is already `candidate`.
       if (
@@ -166,7 +147,6 @@ function failureEntry(
         Buffer.byteLength(snapshot.anchors.row(newLine, content), "utf8") <= budget.fieldBytes
       ) {
         entry.content = displayCarriageReturns(content);
-        shownLines.set(newLine, entry.field);
       } else {
         entry.notShown = rowTooLarge;
       }
@@ -182,78 +162,42 @@ function failureEntry(
       break;
     }
     case "none": {
-      const shownAt = shownLines.get(f.cited.line);
-      if (shownAt !== undefined) {
-        entry.notShown = `shown in ${shownAt}`;
-        break;
-      }
       const row = f.current === null ? null : snapshot.anchors.row(f.cited.line, f.current.content);
       if (row === null) entry.notShown = "cited line is out of range";
-      else if (Buffer.byteLength(row, "utf8") <= budget.fieldBytes) {
-        entry.observed = row;
-        shownLines.set(f.cited.line, entry.field);
-      } else entry.notShown = rowTooLarge;
+      else if (Buffer.byteLength(row, "utf8") <= budget.fieldBytes) entry.observed = row;
+      else entry.notShown = rowTooLarge;
       break;
     }
   }
   return entry;
 }
 
-/**
- * The batch's anchors whose checksum matched, by field. An anchor absent from
- * both `matched` and `failures` is counted as omitted, never implied matched.
- */
-function matchedAnchorFacts(
-  failure: Extract<ApplyFailure, { kind: "anchor" }>,
-  budget: OutputBudgets,
-): Pick<MismatchFacts, "matched" | "omittedMatched"> {
-  const { kept, omitted } = boundedFacts(
-    failure.checks
-      .filter((check) => check.status === "matched")
-      .map((check) => `edits[${check.opIndex}].${check.which}`),
-    budget.blockBytes,
-  );
-  return kept.length || omitted
-    ? { matched: kept, ...(omitted ? { omittedMatched: omitted } : {}) }
-    : {};
-}
-
 /** Classify a rejected edit batch with its bounded facts. */
 export function describeEditFailure(
   failure: ApplyFailure,
   snapshot: Snapshot,
-  isBatch: boolean,
   budget: OutputBudgets,
 ): HashlineError<"ANCHOR_MISMATCH" | "OVERLAPPING_EDITS"> {
   if (failure.kind === "overlap")
     return new HashlineError("OVERLAPPING_EDITS", failure.message, {
-      facts: { conflict: failure.conflict.map(({ opIndex }) => `edits[${opIndex}]`) },
-      next: failure.conflict.some(({ op }) => op === "copy" || op === "move")
-        ? "transfer"
-        : undefined,
+      facts: { conflict: failure.conflict.map((opIndex) => `edits[${opIndex}]`) },
     });
 
-  const matched = isBatch ? matchedAnchorFacts(failure, budget) : {};
-  const neighborhoods = ambiguousCandidateNeighborhoods(
-    snapshot.currentText,
-    failure.failures,
-    snapshot.anchors,
-    budget,
-  );
   const currentLines = splitLines(snapshot.currentText);
-  const shownLines = new Map(
-    [...neighborhoods.shownLines].map((line) => [line, "candidateNeighborhoods"]),
-  );
   const { kept, omitted } = boundedFacts(
-    failure.failures.map((f) => failureEntry(f, snapshot, currentLines, shownLines, budget)),
+    failure.failures.map((f) => failureEntry(f, snapshot, currentLines, budget)),
     budget.blockBytes,
   );
   return new HashlineError("ANCHOR_MISMATCH", "Anchors did not match the current file.", {
     facts: {
       failures: kept,
       ...(omitted ? { omittedFailures: omitted } : {}),
-      ...matched,
-      ...neighborhoods.facts,
+      ...ambiguousCandidateNeighborhoods(
+        snapshot.currentText,
+        failure.failures,
+        snapshot.anchors,
+        budget,
+      ),
     },
   });
 }

@@ -2,7 +2,7 @@ import { errnoCode, HashlineError } from "../core/errors.ts";
 
 /**
  * Cancellation, worded like Pi's built-in tools. A mutation report's
- * `publication` and `stage` say where it stopped, so the message does not.
+ * `publication` says where it stopped, so the message does not.
  * Whatever a cancelled operation threw is its effect, not a cause.
  */
 export function cancellationError(): HashlineError<"OPERATION_ABORTED"> {
