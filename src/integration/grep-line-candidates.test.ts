@@ -200,7 +200,7 @@ test("Cartesian adversarial bytes × syntax × flags × assertion positions → 
             },
           },
           rgPath,
-          scope: { globs: [], noIgnore: false, follow: false, searchPaths: [directory] },
+          scope: { globs: [], searchPaths: [directory] },
           query,
           limit,
           timeoutMs: processTimeoutMs,

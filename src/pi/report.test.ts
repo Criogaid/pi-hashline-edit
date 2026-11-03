@@ -146,19 +146,23 @@ test("native failure with deeply nested cause → retains the terminal diagnosti
   assert.doesNotMatch(serialized, /"omitted"/);
 });
 
-test("wide and repeated cause graph with a cycle → retains every distinct failure", () => {
-  const repeated = new Error("repeated failure");
-  const errors = Array.from({ length: 24 }, (_, index) => new Error(`failure ${index}`));
-  const aggregate = new AggregateError([repeated, repeated, ...errors], "root");
-  aggregate.cause = aggregate;
-  const cause = causeOf(aggregate, DEFAULT_OUTPUT_BUDGETS.fieldBytes);
-  assert.ok(cause);
-  assert.equal(cause.cause, undefined);
-  assert.deepEqual(
-    cause.errors?.map((value) => value.message),
-    [repeated.message, ...errors.map((error) => error.message)],
-  );
-  assert.doesNotMatch(JSON.stringify(cause), /"omitted"/);
+test("aggregate and cyclic causes → preserve only the linear cause chain", () => {
+  const terminal = new Error("terminal");
+  const aggregate = new AggregateError([terminal, terminal, new Error("ignored")], "aggregate", {
+    cause: terminal,
+  });
+  const self = new Error("self");
+  self.cause = self;
+  const first = new Error("first");
+  const second = new Error("second", { cause: first });
+  first.cause = second;
+  for (const [input, expected] of [
+    [aggregate, { message: "aggregate", cause: { message: "terminal" } }],
+    [self, { message: "self" }],
+    [first, { message: "first", cause: { message: "second" } }],
+  ] as const) {
+    assert.deepEqual(causeOf(input, DEFAULT_OUTPUT_BUDGETS.fieldBytes), expected);
+  }
 });
 
 test("oversized cause message → retains opening and terminal text within the message budget", () => {

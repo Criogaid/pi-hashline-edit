@@ -1,31 +1,34 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { DEFAULT_OUTPUT_BUDGETS, MAX_CONTENT_KIB, outputBudgetsFor } from "./budgets.ts";
-import { createOutputBudgetProvider } from "./model-budgets.ts";
+import { openTestSession } from "../testing/session.testing.ts";
+import { registerModelBudgets } from "./model-budgets.ts";
 
-test("unchanged model → budget calculation is lazy and reuses the immutable snapshot", () => {
-  let reads = 0;
-  let model = { provider: "local", id: "small", contextWindow: 65_536 };
-  const get = createOutputBudgetProvider(() => {
-    reads++;
-    return model;
+test("session start and model selection → budgets follow the live model", async (t) => {
+  let get: ReturnType<typeof registerModelBudgets> | undefined;
+  const { session, model } = await openTestSession(t, {
+    tools: [],
+    configure(pi) {
+      get = registerModelBudgets(pi);
+      assert.deepEqual(get(), DEFAULT_OUTPUT_BUDGETS);
+    },
   });
-  assert.equal(reads, 0);
-  const first = get();
-  assert.ok(Object.isFrozen(first));
-  assert.equal(get(), first);
-  model = { ...model };
-  assert.equal(get(), first);
-  model = { ...model, id: "large", contextWindow: 1_048_576 };
+  assert.ok(get);
+  assert.deepEqual(get(), outputBudgetsFor(model.contextWindow));
+  const selected = { ...model, id: "small", contextWindow: 65_536 };
+  await session.setModel(selected);
+  const small = get();
+  assert.ok(Object.isFrozen(small));
+  assert.deepEqual(small, outputBudgetsFor(selected.contextWindow));
+  selected.contextWindow = 1_048_576;
   const large = get();
-  assert.notEqual(large, first);
-  assert.ok(large.readBytes > first.readBytes);
-  assert.ok(large.blockBytes > first.blockBytes);
-  assert.ok(large.fieldBytes > first.fieldBytes);
-  assert.ok(large.grepPreviewUnits > first.grepPreviewUnits);
-  assert.equal(get(), large);
-  model = { ...model, contextWindow: 65_536 };
-  assert.equal(get().readBytes, first.readBytes);
+  assert.deepEqual(large, outputBudgetsFor(selected.contextWindow));
+  assert.ok(large.readBytes > small.readBytes);
+  assert.ok(large.blockBytes > small.blockBytes);
+  assert.ok(large.fieldBytes > small.fieldBytes);
+  assert.ok(large.grepPreviewUnits > small.grepPreviewUnits);
+  await session.setModel({ ...model, id: "small-again", contextWindow: 65_536 });
+  assert.deepEqual(get(), small);
 });
 
 test("unknown or invalid model capacity → bounded defaults are used", () => {

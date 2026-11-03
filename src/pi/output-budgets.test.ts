@@ -7,6 +7,7 @@ import { withFileMutationQueue } from "@earendil-works/pi-coding-agent";
 import { applyEdits } from "../core/apply.ts";
 import { HashlineError } from "../core/errors.ts";
 import { computeLineHash } from "../core/hash.ts";
+import { openTestSession } from "../testing/session.testing.ts";
 import { createAnchorFormatter } from "./anchor-format.ts";
 import { formatArgumentError } from "./argument-error.ts";
 import { formatByteSize, outputBudgetsFor } from "./budgets.ts";
@@ -14,7 +15,7 @@ import { DEFAULT_CONFIG } from "./config.ts";
 import { makeEditOverride } from "./edit-tool.ts";
 import { describeEditFailure } from "./failure-context.ts";
 import { assembleGrepOutput } from "./grep-output.ts";
-import { createOutputBudgetProvider } from "./model-budgets.ts";
+import { registerModelBudgets } from "./model-budgets.ts";
 import { describeFailure, decodeReport, reportOf } from "./report.ts";
 import { decodeWorkerReply } from "./replace-worker-contract.ts";
 import { restoreWorkerError } from "./regex-worker-contract.ts";
@@ -135,8 +136,16 @@ test("model switches while a mutation waits → failure uses its starting budget
   const path = join(dir, "queued.txt");
   const text = "中文🙂".repeat(800);
   await writeFile(path, text);
-  let model = { provider: "local", id: "small", contextWindow: 65_536 };
-  const budgets = createOutputBudgetProvider(() => model);
+  let budgets: ReturnType<typeof registerModelBudgets> | undefined;
+  const { session, model } = await openTestSession(t, {
+    cwd: dir,
+    tools: [],
+    configure(pi) {
+      budgets = registerModelBudgets(pi);
+    },
+  });
+  assert.ok(budgets);
+  await session.setModel({ ...model, id: "small", contextWindow: 65_536 });
   const entered = Promise.withResolvers<void>();
   const release = Promise.withResolvers<void>();
   const holding = withFileMutationQueue(path, async () => {
@@ -149,7 +158,7 @@ test("model switches while a mutation waits → failure uses its starting budget
       path,
       edits: [{ action: "delete", anchor: `1#${wrongHash(text)}` }],
     });
-    model = { ...model, id: "large", contextWindow: 1_048_576 };
+    await session.setModel({ ...model, id: "large", contextWindow: 1_048_576 });
     assert.equal(budgets().readBytes, large.readBytes);
     release.resolve();
     const report = reportOf(await running, "edit");

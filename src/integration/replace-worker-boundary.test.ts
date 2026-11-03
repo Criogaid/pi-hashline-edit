@@ -48,7 +48,7 @@ test("worker boundary: malformed external reply → rejects its result and facts
   }
 });
 
-test("worker boundary: deep structured cause reply → preserves the terminal cause and every branch", {
+test("worker boundary: deep structured cause reply → preserves the complete cause chain", {
   timeout: timeoutMs,
 }, async (t) => {
   let nested: Cause = { code: "EACCES", message: "permission denied" };
@@ -57,10 +57,6 @@ test("worker boundary: deep structured cause reply → preserves the terminal ca
   const cause: Cause = {
     message: "worker failure",
     cause: nested,
-    errors: Array.from({ length: 24 }, (_, index) => ({
-      code: "EIO",
-      message: `branch ${index}`,
-    })),
   };
   const emit = Worker.prototype.emit;
   t.mock.method(
@@ -116,7 +112,7 @@ test("worker boundary: cyclic structured cause → rejects a reply accepted with
           assert.ok(error instanceof HashlineError);
           if (cyclic) {
             assert.equal(error.errorCode, "REGEX_WORKER_FAILED");
-            assert.match(error.message, /invalid result/i);
+            assert.ok(error.cause instanceof RangeError);
           } else {
             assert.equal(error.errorCode, "NO_MATCH");
             assert.equal(error.message, reply.error.message);

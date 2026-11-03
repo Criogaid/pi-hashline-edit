@@ -21,7 +21,6 @@ import { test } from "node:test";
 import { spawn } from "node:child_process";
 import {
   commitFile,
-  commitReplacement,
   FileMutationError,
   fileRevision,
   readEditableSnapshot,
@@ -443,7 +442,8 @@ test("file changes after the read → bound commits reject changed and unchanged
 
     for (const content of [snapshot.text, "replacement\n"]) {
       await assert.rejects(
-        () => commitReplacement(target, content, snapshot.baseRevision),
+        () =>
+          commitFile(target, content, { mode: "overwrite", baseRevision: snapshot.baseRevision }),
         (error: unknown) => error instanceof HashlineError && error.errorCode === "FILE_CHANGED",
       );
       assert.equal(await readFile(target, "utf8"), "line 1\nmodified line 2\n");
@@ -461,11 +461,10 @@ test("file changes after the read → bound commits reject changed and unchanged
 
     // When target does not change externally, no-op commit succeeds and confirms observed revision.
     const freshSnapshot = await readEditableSnapshot(target);
-    const noopResult = await commitReplacement(
-      target,
-      freshSnapshot.text,
-      freshSnapshot.baseRevision,
-    );
+    const noopResult = await commitFile(target, freshSnapshot.text, {
+      mode: "overwrite",
+      baseRevision: freshSnapshot.baseRevision,
+    });
     assert.equal(noopResult.publication, "NOT_PUBLISHED");
     assert.equal(noopResult.publishedRevision, freshSnapshot.baseRevision);
     assert.equal(noopResult.observedRevision, freshSnapshot.baseRevision);
@@ -480,7 +479,10 @@ test("no-op commit with baseRevision rejects if target was deleted externally", 
     await rm(target);
 
     await assert.rejects(
-      commitReplacement(target, snapshot.text, snapshot.baseRevision),
+      commitFile(target, snapshot.text, {
+        mode: "overwrite",
+        baseRevision: snapshot.baseRevision,
+      }),
       (error: unknown) => error instanceof HashlineError && error.errorCode === "PATH_NOT_FOUND",
     );
   }));
