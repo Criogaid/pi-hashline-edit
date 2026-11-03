@@ -62,8 +62,8 @@ export type CommitResult = CommitRevisions &
   );
 
 /**
- * A mutation failure with what it published. Other failures of a mutation tool
- * happened while preparing and published nothing.
+ * A mutation failure with what it published. Every other failure of a mutation
+ * tool published nothing, so it stays a plain HashlineError.
  */
 export class FileMutationError<C extends ErrorCode = ErrorCode> extends HashlineError<C> {
   readonly publication: PublicationStatus;
@@ -82,7 +82,7 @@ export class FileMutationError<C extends ErrorCode = ErrorCode> extends Hashline
 
 function requireRegularFile(target: Stats | BigIntStats): void {
   if (!target.isFile())
-    throw prepareError("NOT_REGULAR_FILE", PATH_ERROR_MESSAGES.NOT_REGULAR_FILE);
+    throw new HashlineError("NOT_REGULAR_FILE", PATH_ERROR_MESSAGES.NOT_REGULAR_FILE);
 }
 
 /** Check the opened object before reading; a FIFO must not block even if the path changed. */
@@ -103,7 +103,7 @@ export async function readEditableSnapshot(path: string, signal?: AbortSignal) {
     const bytes = await readRegularFile(path, signal);
     return { text: decodeEditableText(bytes), baseRevision: byteRevision(bytes) };
   } catch (error) {
-    if (signal?.aborted) throw asPrepareError(cancellationError());
+    if (signal?.aborted) throw cancellationError();
     throw error;
   }
 }
@@ -118,34 +118,6 @@ export function commitReplacement(
   return commitFile(path, text, { mode: "overwrite", baseRevision, signal });
 }
 
-function prepareError<C extends ErrorCode>(
-  code: C,
-  message: string,
-  ...options: HashlineErrorArguments<NoInfer<C>>
-): FileMutationError<C> {
-  return new FileMutationError(code, "NOT_PUBLISHED", message, ...options);
-}
-
-/** A classified failure before any publication step keeps its code, facts, cause, and recovery. */
-function asPrepareError<C extends ErrorCode>(error: HashlineError<C>): FileMutationError<C> {
-  // The original constructor already enforced its code's facts; preserve that correlated tuple.
-  return prepareError(
-    error.errorCode,
-    error.message,
-    ...([
-      {
-        cause: error.cause,
-        next: error.next,
-        facts: error.facts,
-      },
-    ] as HashlineErrorArguments<C>),
-  );
-}
-
-function throwIfCancelledBeforePublication(signal: AbortSignal | undefined): void {
-  if (signal?.aborted) throw asPrepareError(cancellationError());
-}
-
 /** A failed filesystem step keeps the classification of its cause. */
 function causeCode(error: unknown, fallback: ErrorCode): ErrorCode {
   return error instanceof HashlineError
@@ -157,10 +129,11 @@ function causeCode(error: unknown, fallback: ErrorCode): ErrorCode {
  * A failure of a filesystem step before publication: the step is the message, the failure its
  * cause. A missing path or directory target keeps its own report, whichever step found it.
  */
-function stepError(step: string, error: unknown): FileMutationError {
-  const path = pathError(error);
-  if (path) return asPrepareError(path);
-  return prepareError(causeCode(error, "FILESYSTEM_ERROR"), step, { cause: error });
+function stepError(step: string, error: unknown): HashlineError {
+  return (
+    pathError(error) ??
+    new HashlineError(causeCode(error, "FILESYSTEM_ERROR"), step, { cause: error })
+  );
 }
 
 type TargetInfo = { readonly publishPath: string } & (
@@ -183,7 +156,7 @@ async function inspectTarget(path: string, knownRevision?: string): Promise<Targ
     try {
       publishPath = await realpath(path);
     } catch (error) {
-      throw prepareError("SYMLINK_UNRESOLVED", "Target symlink cannot be resolved.", {
+      throw new HashlineError("SYMLINK_UNRESOLVED", "Target symlink cannot be resolved.", {
         cause: error,
       });
     }
@@ -197,7 +170,7 @@ async function inspectTarget(path: string, knownRevision?: string): Promise<Targ
   }
   requireRegularFile(target);
   if (target.nlink > 1)
-    throw prepareError(
+    throw new HashlineError(
       "MULTIPLE_HARD_LINKS",
       "Target has multiple hard links; publishing would split the link set.",
     );
@@ -248,12 +221,7 @@ async function publishCreate(
     await link(tempPath, targetPath);
   } catch (error) {
     if (errnoCode(error) === "EEXIST" || errnoCode(error) === "ENOTEMPTY") {
-      throw new FileMutationError(
-        "TARGET_EXISTS",
-        "NOT_PUBLISHED",
-        "Target appeared during create.",
-        { cause: error },
-      );
+      throw new HashlineError("TARGET_EXISTS", "Target appeared during create.", { cause: error });
     }
     throw new FileMutationError("PUBLISH_FAILED", "UNKNOWN", "Unable to publish new target.", {
       cause: error,
@@ -314,19 +282,19 @@ export async function commitFile(
   // Tools reject such input in prepareArguments, but a transformation can still produce it
   // (a regex without `u` can split a surrogate pair), so publication keeps the final check.
   const unwritable = unwritableTextError(content);
-  if (unwritable) throw asPrepareError(unwritable);
+  if (unwritable) throw unwritable;
   const bytes = Buffer.from(content, "utf8");
   const { mode } = options;
   const baseRevision = mode === "overwrite" ? options.baseRevision : undefined;
   const target = await inspectTarget(path, baseRevision);
   if (mode === "create" && target.existed)
-    throw prepareError("TARGET_EXISTS", "Target already exists.");
+    throw new HashlineError("TARGET_EXISTS", "Target already exists.");
   if (mode === "overwrite" && !target.existed)
-    throw prepareError("PATH_NOT_FOUND", PATH_ERROR_MESSAGES.PATH_NOT_FOUND, {
+    throw new HashlineError("PATH_NOT_FOUND", PATH_ERROR_MESSAGES.PATH_NOT_FOUND, {
       facts: { missing: [path] },
       next: "useCreate",
     });
-  throwIfCancelledBeforePublication(options.signal);
+  throwIfCancelled(options.signal);
   const publishedRevision = byteRevision(bytes);
   // Mode, revision, target safety, and cancellation checks still apply to no-ops.
   if (target.beforeRevision === publishedRevision) {
@@ -334,15 +302,15 @@ export async function commitFile(
     if (baseRevision !== undefined) {
       let currentRevision: string;
       try {
-        throwIfCancelledBeforePublication(options.signal);
+        throwIfCancelled(options.signal);
         currentRevision = await fileRevision(target.publishPath);
-        throwIfCancelledBeforePublication(options.signal);
+        throwIfCancelled(options.signal);
       } catch (error) {
-        if (options.signal?.aborted) throw asPrepareError(cancellationError());
+        if (options.signal?.aborted) throw cancellationError();
         throw stepError("Unable to read target revision.", error);
       }
       if (currentRevision !== baseRevision)
-        throw prepareError("FILE_CHANGED", "File changed after it was read.");
+        throw new HashlineError("FILE_CHANGED", "File changed after it was read.");
     }
     return {
       created: false,
@@ -358,12 +326,9 @@ export async function commitFile(
   try {
     tempDir = await makeTempDirectory(publishDirectory);
   } catch (error) {
-    throw new FileMutationError(
-      "PUBLISH_FAILED",
-      "NOT_PUBLISHED",
-      "Unable to prepare temporary publication area.",
-      { cause: error },
-    );
+    throw new HashlineError("PUBLISH_FAILED", "Unable to prepare temporary publication area.", {
+      cause: error,
+    });
   }
   const tempPath = join(tempDir, "content");
   let published = false;
@@ -377,7 +342,7 @@ export async function commitFile(
         throw stepError("Unable to recheck target revision.", error);
       }
       if (currentRevision !== baseRevision)
-        throw prepareError("FILE_CHANGED", "File changed before publication.");
+        throw new HashlineError("FILE_CHANGED", "File changed before publication.");
     }
     if (mode === "create") await publishCreate(tempPath, publishPath, options.signal);
     else await publishReplace(tempPath, publishPath, options.signal);
@@ -402,7 +367,8 @@ export async function commitFile(
       );
     }
   } catch (error) {
-    if (error instanceof FileMutationError) throw error;
+    // Already classified, including cancellation and every publication failure.
+    if (error instanceof HashlineError) throw error;
     if (published)
       throw new FileMutationError(
         "POST_PROCESS_FAILED",
@@ -410,15 +376,9 @@ export async function commitFile(
         "Post-publication processing failed.",
         { cause: error },
       );
-    // Cancellation keeps its own record; any other failure here stopped before publication.
-    if (error instanceof HashlineError && error.errorCode === "OPERATION_ABORTED")
-      throw new FileMutationError("OPERATION_ABORTED", "NOT_PUBLISHED", error.message);
-    throw new FileMutationError(
-      "PUBLISH_FAILED",
-      "NOT_PUBLISHED",
-      "Unable to prepare or publish target.",
-      { cause: error },
-    );
+    throw new HashlineError("PUBLISH_FAILED", "Unable to prepare or publish target.", {
+      cause: error,
+    });
   } finally {
     // Best effort: a leftover temporary directory changes neither the publication nor the recovery.
     await rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
