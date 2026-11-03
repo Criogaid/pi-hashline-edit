@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { computeLineHash } from "../core/hash.ts";
 import { applyEdits } from "../core/apply.ts";
+import { HashlineError } from "../core/errors.ts";
 import type { AnchorFailure, Edit } from "../core/types.ts";
 import { formatByteSize, DEFAULT_OUTPUT_BUDGETS, outputBudgetsFor } from "./budgets.ts";
 import { DEFAULT_CONFIG } from "./config.ts";
@@ -192,14 +193,11 @@ function rejectedEdit(
   const result = applyEdits(text, edits, DEFAULT_CONFIG.hashLen, shiftRadius);
   assert.ok(!result.ok, "the fixture must reach failure reporting");
   const error = describeEditFailure(
-    result.failure,
+    result.failures,
     { currentText: text, anchors: createAnchorFormatter(DEFAULT_CONFIG.hashLen) },
     budget,
   );
-  return {
-    failure: result.failure,
-    report: describeFailure("edit", error, { path: "file.txt", budget }),
-  };
+  return describeFailure("edit", error, { path: "file.txt", budget });
 }
 const oldAnchor = { line: 1, hash: computeLineHash(1, "old", DEFAULT_CONFIG.hashLen) };
 
@@ -242,7 +240,7 @@ test("multiple unresolved anchors and candidate context → one recovery survive
     })),
   ];
   for (const fixture of cases) {
-    const { report } = rejectedEdit(fixture.text, fixture.edits, fixture.radius, budget);
+    const report = rejectedEdit(fixture.text, fixture.edits, fixture.radius, budget);
     assert.equal(report.error, "ANCHOR_MISMATCH");
     assert.equal(
       report.next,
@@ -305,16 +303,24 @@ test("overlapping edits → ordered conflict and shared recovery", () => {
     })),
   ];
   for (const { edits } of cases) {
-    const { failure, report } = rejectedEdit(text, edits);
-    assert.ok(failure.kind === "overlap");
-    assert.deepEqual(failure.conflict, [0, 2]);
-    assert.equal(report.error, "OVERLAPPING_EDITS");
-    assert.deepEqual(report.conflict, ["edits[0]", "edits[2]"]);
-    assert.equal(report.message, failure.message);
-    assert.equal(report.publication, "NOT_PUBLISHED");
-    assert.equal(
-      report.next,
-      "Merge them into one edit per range or position; rewrite a copy or move as body edits first.",
+    assert.throws(
+      () => applyEdits(text, edits, DEFAULT_CONFIG.hashLen, 0),
+      (error: unknown) => {
+        assert.ok(error instanceof HashlineError);
+        const report = describeFailure("edit", error, {
+          path: "file.txt",
+          budget: DEFAULT_OUTPUT_BUDGETS,
+        });
+        assert.equal(report.error, "OVERLAPPING_EDITS");
+        assert.deepEqual(report.conflict, ["edits[0]", "edits[2]"]);
+        assert.equal(report.message, error.message);
+        assert.equal(report.publication, "NOT_PUBLISHED");
+        assert.equal(
+          report.next,
+          "Merge them into one edit per range or position; rewrite a copy or move as body edits first.",
+        );
+        return true;
+      },
     );
   }
 });
@@ -329,7 +335,7 @@ test("unresolved row out of range or oversized → omission facts contain no rec
     { anchor: { ...oldAnchor, line: 2 }, reason: /cited line is out of range/ },
   ];
   for (const { anchor, reason } of cases) {
-    const { report } = rejectedEdit(text, [{ op: "delete", anchor }]);
+    const report = rejectedEdit(text, [{ op: "delete", anchor }]);
     assert.equal(report.error, "ANCHOR_MISMATCH");
     assert.match(report.failures?.[0].notShown ?? "", reason);
     assert.equal(report.failures?.[0].observed, undefined);

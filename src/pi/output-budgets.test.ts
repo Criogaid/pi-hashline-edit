@@ -71,9 +71,13 @@ test("model row allowance grows → anchor failures return complete observations
   if (applied.ok) return;
   const snapshot = { currentText: text, anchors: createAnchorFormatter(DEFAULT_CONFIG.hashLen) };
   const reports = [small, large].map((budget) => {
-    const report = describeFailure("edit", describeEditFailure(applied.failure, snapshot, budget), {
-      budget,
-    });
+    const report = describeFailure(
+      "edit",
+      describeEditFailure(applied.failures, snapshot, budget),
+      {
+        budget,
+      },
+    );
     assert.equal(report.error, "ANCHOR_MISMATCH");
     return report;
   });

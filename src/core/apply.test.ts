@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { computeLineHash } from "./hash.ts";
 import { splitLines } from "./lines.ts";
 import { applyEdits } from "./apply.ts";
+import { HashlineError } from "./errors.ts";
 import type { Anchor, Edit } from "./types.ts";
 
 /** Live anchor: hash the current content at the given line (1-based). */
@@ -102,7 +103,6 @@ test("line out of range rejected", () => {
     15,
   );
   assert.equal(r.ok, false);
-  if (!r.ok) assert.equal(r.failure.kind, "anchor");
 });
 
 test("anchor mismatch when the cited line's content differs (live verification)", () => {
@@ -115,7 +115,6 @@ test("anchor mismatch when the cited line's content differs (live verification)"
     15,
   );
   assert.equal(r.ok, false);
-  if (!r.ok) assert.equal(r.failure.kind, "anchor");
 });
 
 test("overlapping edit spans → report conflicting operations in input order", () => {
@@ -134,11 +133,16 @@ test("overlapping edit spans → report conflicting operations in input order", 
   for (const edits of cases) {
     for (const pair of [edits, [...edits].reverse()]) {
       const batch: Edit[] = [{ op: "append", body: ["tail"] }, ...pair];
-      const result = applyEdits(text, batch, 4, 0);
-      assert(!result.ok && result.failure.kind === "overlap");
-      assert.match(result.failure.message, /overlap/);
-      assert.deepEqual(Object.keys(result.failure).sort(), ["conflict", "kind", "message"]);
-      assert.deepEqual(result.failure.conflict, [1, 2]);
+      assert.throws(
+        () => applyEdits(text, batch, 4, 0),
+        (error: unknown) => {
+          assert(error instanceof HashlineError);
+          assert.equal(error.errorCode, "OVERLAPPING_EDITS");
+          assert.equal(error.message, "Two edits overlap.");
+          assert.deepEqual(error.facts?.conflict, ["edits[1]", "edits[2]"]);
+          return true;
+        },
+      );
     }
   }
 });
@@ -191,11 +195,16 @@ test("insertions sharing a gap → reject the batch", () => {
   ];
   for (const edits of cases) {
     for (const batch of [edits, [...edits].reverse()]) {
-      const result = applyEdits(text, batch, 4, 0);
-      assert(!result.ok && result.failure.kind === "overlap");
-      assert.match(result.failure.message, /insert.*one position/);
-      assert.deepEqual(Object.keys(result.failure).sort(), ["conflict", "kind", "message"]);
-      assert.deepEqual(result.failure.conflict, [0, 1]);
+      assert.throws(
+        () => applyEdits(text, batch, 4, 0),
+        (error: unknown) => {
+          assert(error instanceof HashlineError);
+          assert.equal(error.errorCode, "OVERLAPPING_EDITS");
+          assert.equal(error.message, "Two edits insert at one position.");
+          assert.deepEqual(error.facts?.conflict, ["edits[0]", "edits[1]"]);
+          return true;
+        },
+      );
     }
   }
 });
@@ -212,7 +221,7 @@ test("byte-identical edits → validate anchors and preserve the source bytes", 
       4,
       15,
     );
-    assert.ok(!invalid.ok && invalid.failure.kind === "anchor");
+    assert.ok(!invalid.ok);
   }
 });
 
@@ -374,8 +383,8 @@ test("rescued anchor lets the retry succeed without a re-read", () => {
     4,
     15,
   );
-  assert.ok(!r1.ok && r1.failure.kind === "anchor");
-  const f = r1.failure.failures[0];
+  assert.ok(!r1.ok);
+  const f = r1.failures[0];
   assert.ok(f.recovery.kind === "found");
   assert.equal(f.recovery.newLine, 4);
   assert.equal(computeLineHash(4, splitLines(currentText)[3], 4), f.recovery.newHash);
@@ -405,8 +414,8 @@ test("shifted recovery: duplicate content → ambiguous candidates", () => {
     4,
     15,
   );
-  assert.ok(!r.ok && r.failure.kind === "anchor");
-  const f = r.failure.failures[0];
+  assert.ok(!r.ok);
+  const f = r.failures[0];
   assert.ok(f.recovery.kind === "ambiguous");
   assert.deepEqual(
     f.recovery.candidates.map((c) => c.line),
@@ -423,8 +432,8 @@ test("shifted recovery: content genuinely changed → none", () => {
     4,
     15,
   );
-  assert.ok(!r.ok && r.failure.kind === "anchor");
-  const f = r.failure.failures[0];
+  assert.ok(!r.ok);
+  const f = r.failures[0];
   assert.equal(f.recovery.kind, "none");
 });
 
@@ -442,8 +451,8 @@ test("full-file recovery finds distant content and anchors beyond the current EO
       4,
       15,
     );
-    assert.ok(!result.ok && result.failure.kind === "anchor");
-    assert.deepEqual(result.failure.failures[0].recovery, {
+    assert.ok(!result.ok);
+    assert.deepEqual(result.failures[0].recovery, {
       kind: "found",
       newLine,
       newHash: computeLineHash(newLine, "target", 4),
@@ -465,9 +474,9 @@ test("full-file recovery collects both sides while preserving local candidate pr
       4,
       15,
     );
-    assert.ok(!result.ok && result.failure.kind === "anchor");
+    assert.ok(!result.ok);
     assert.deepEqual(
-      result.failure.failures[0].recovery,
+      result.failures[0].recovery,
       selected.length === 1
         ? {
             kind: "found",
@@ -485,7 +494,7 @@ test("full-file recovery collects both sides while preserving local candidate pr
   }
 });
 
-test("collect-all: two stale anchors in one batch → both failures returned", () => {
+test("two stale anchors and overlapping verified edits → return both anchor failures first", () => {
   const readText = "a\nb\nc\nd\n";
   const currentText = "X\na\nb\nc\nd\n"; // inserted X at top → all shifted +1
   const r = applyEdits(
@@ -493,15 +502,15 @@ test("collect-all: two stale anchors in one batch → both failures returned", (
     [
       { op: "replace", anchor: at(readText, 2), body: ["B"] },
       { op: "replace", anchor: at(readText, 4), body: ["D"] },
+      { op: "delete", anchor: at(currentText, 1) },
+      { op: "replace", anchor: at(currentText, 1), body: ["conflict"] },
     ],
     4,
     15,
   );
-  assert.ok(!r.ok && r.failure.kind === "anchor");
-  assert.equal(r.failure.failures.length, 2);
-  const found = r.failure.failures.map((f) =>
-    f.recovery.kind === "found" ? f.recovery.newLine : -1,
-  );
+  assert.ok(!r.ok);
+  assert.equal(r.failures.length, 2);
+  const found = r.failures.map((f) => (f.recovery.kind === "found" ? f.recovery.newLine : -1));
   assert.deepEqual(found, [3, 5]);
 });
 
@@ -514,8 +523,8 @@ test("shiftRadius=0 disables rescue (always none)", () => {
     4,
     0,
   );
-  assert.ok(!r.ok && r.failure.kind === "anchor");
-  assert.equal(r.failure.failures[0].recovery.kind, "none");
+  assert.ok(!r.ok);
+  assert.equal(r.failures[0].recovery.kind, "none");
 });
 
 test("BOM stays at byte zero through first-line edits while anchors retain their original hashes", () => {
@@ -711,9 +720,9 @@ test("copy/move bad source and destination anchors → aggregate every supplied 
         4,
         0,
       );
-      assert(!result.ok && result.failure.kind === "anchor");
+      assert(!result.ok);
       assert.deepEqual(
-        result.failure.failures.map((failure) => failure.which),
+        result.failures.map((failure) => failure.which),
         ["anchor", "end", Object.keys(destination)[0]],
       );
     }
