@@ -85,7 +85,7 @@ Argument and anchor validation failures leave the file untouched. The report nam
 
 A failure during or after publication states `NOT_PUBLISHED`, `PUBLISHED`, or `UNKNOWN`. Follow the report's `next` before retrying: an error after publication can leave the requested change on disk.
 
-Argument mistakes are reported per field, with what the field means and how to fix it, before any file is touched.
+Argument mistakes, including a reversed range or a move into its own range, are reported per field, with what the field means and how to fix it, before any file is touched.
 
 ## Action Fusion
 

@@ -17,8 +17,9 @@
  * ANY anchor fails, EVERY failure (with recovery) is collected and returned
  * together — nothing is written. This keeps the rescue report and the on-disk
  * file in sync: a partial write would shift lines and invalidate the very
- * recovery info we just returned. Range issues among the surviving ops are
- * deferred until anchors are corrected.
+ * recovery info we just returned. Overlaps among the surviving ops are deferred
+ * until anchors are corrected. The tool layer has already rejected reversed
+ * ranges and moves into their own range.
  *
  * Other strict semantics:
  * - Operation ranges must not overlap, and each position takes at most one insertion,
@@ -123,10 +124,11 @@ function verifyAnchor(
 
 type TranslateResult =
   | { readonly ok: true; readonly ops: readonly SpanOp[]; readonly checks: AnchorCheck[] }
-  | { readonly ok: false; readonly anchorFailures: AnchorFailure[]; readonly checks: AnchorCheck[] }
-  | { readonly ok: false; readonly rangeError: RangeError; readonly checks: AnchorCheck[] };
-
-type RangeError = Pick<Extract<ApplyFailure, { kind: "range" }>, "code" | "message">;
+  | {
+      readonly ok: false;
+      readonly anchorFailures: AnchorFailure[];
+      readonly checks: AnchorCheck[];
+    };
 
 function checkedAnchor(
   opIndex: number,
@@ -181,28 +183,9 @@ function translateEdit(
         if (failure) failures.push(failure);
       }
       if (failures.length > 0) return { ok: false, anchorFailures: failures, checks };
-      if (endLine < edit.anchor.line)
-        return {
-          ok: false,
-          rangeError: {
-            code: "INVALID_RANGE",
-            message: `Range ${edit.anchor.line}..${endLine} ends before it starts.`,
-          },
-          checks,
-        };
       if (destination) {
         const sourceLo = edit.anchor.line - 1;
         const gap = destination.cited.line - (destination.which === "before" ? 1 : 0);
-        if (edit.op === "move" && sourceLo < gap && gap < endLine) {
-          return {
-            ok: false,
-            rangeError: {
-              code: "INVALID_RANGE",
-              message: `Destination ${destination.which} line ${destination.cited.line} lies inside moved range ${edit.anchor.line}..${endLine}.`,
-            },
-            checks,
-          };
-        }
         if (edit.op === "move" && (gap === sourceLo || gap === endLine)) {
           return { ok: true, ops: [], checks };
         }
@@ -277,30 +260,24 @@ export function applyEdits(
   const ops: SpanOp[] = [];
   const anchorFailures: AnchorFailure[] = [];
   const anchorChecks: AnchorCheck[] = [];
-  let rangeError: RangeError | null = null;
 
   for (let i = 0; i < edits.length; i++) {
     const t = translateEdit(edits[i], i, lines, hashLen, shiftRadius);
     anchorChecks.push(...t.checks);
     if (t.ok) {
       for (const op of t.ops) ops.push(op);
-    } else if ("anchorFailures" in t) {
+    } else {
       anchorFailures.push(...t.anchorFailures);
-    } else if (rangeError === null) {
-      rangeError = t.rangeError;
     }
   }
 
-  // Anchor failures take priority: the model must fix anchors first; range
-  // issues among surviving ops are premature until anchors are corrected.
+  // Anchor failures take priority: the model must fix anchors first; overlaps
+  // among surviving ops are premature until anchors are corrected.
   if (anchorFailures.length > 0) {
     return {
       ok: false,
       failure: { kind: "anchor", failures: anchorFailures, checks: anchorChecks },
     };
-  }
-  if (rangeError !== null) {
-    return { ok: false, failure: { kind: "range", ...rangeError, checks: anchorChecks } };
   }
 
   const sorted = [...ops].sort((a, b) => a.lo - b.lo || a.hi - b.hi);

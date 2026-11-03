@@ -254,6 +254,26 @@ function checkEditArguments(
         );
       }
     }
+
+    // The cited line numbers alone decide these, whatever the file holds.
+    const lineOf = (field: EditItemField) => {
+      const anchor = edit[field];
+      return accepted.has(field) && typeof anchor === "string"
+        ? parseAnchorToken(anchor)?.line
+        : undefined;
+    };
+    const first = lineOf("anchor");
+    if (first === undefined) return;
+    const last = lineOf("end") ?? first;
+    if (last < first) report(`${path}.end`, `line ${last} is before anchor line ${first}`);
+    if (name !== "move") return;
+    for (const field of TRANSFER_DESTINATION) {
+      const line = lineOf(field);
+      if (line === undefined) continue;
+      const gap = field === "before" ? line - 1 : line;
+      if (first - 1 < gap && gap < last)
+        report(`${path}.${field}`, `lies inside the moved range ${first}..${last}`);
+    }
   });
 }
 

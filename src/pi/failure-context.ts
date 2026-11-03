@@ -216,7 +216,7 @@ export function describeEditFailure(
   snapshot: Snapshot,
   isBatch: boolean,
   budget: OutputBudgets,
-): HashlineError<"ANCHOR_MISMATCH" | "INVALID_RANGE" | "OVERLAPPING_EDITS"> {
+): HashlineError<"ANCHOR_MISMATCH" | "OVERLAPPING_EDITS"> {
   const matched = isBatch ? matchedAnchorFacts(failure, budget) : {};
   if (failure.kind === "range")
     return new HashlineError(failure.code, failure.message, { facts: matched });

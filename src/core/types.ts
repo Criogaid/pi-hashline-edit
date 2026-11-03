@@ -101,8 +101,8 @@ export type ApplyFailure =
     }
   | {
       readonly kind: "range";
-      /** INVALID_RANGE for a reversed range or a move into itself; OVERLAPPING_EDITS for overlap or a repeated insertion position. */
-      readonly code: "INVALID_RANGE" | "OVERLAPPING_EDITS";
+      /** OVERLAPPING_EDITS for overlap or a repeated insertion position. */
+      readonly code: "OVERLAPPING_EDITS";
       readonly message: string;
       readonly checks: readonly AnchorCheck[];
     };

@@ -296,9 +296,6 @@ export const ERROR_DEFINITIONS = {
         "Before reusing a candidate or observed anchor, confirm it is the intended target; use read or grep for omitted rows, out-of-range lines, or more context. Retries verify every anchor again.",
     },
   },
-  INVALID_RANGE: {
-    facts: facts([], MATCHED),
-  },
   OVERLAPPING_EDITS: {
     facts: facts([], MATCHED),
     next: {
