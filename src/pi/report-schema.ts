@@ -135,7 +135,10 @@ const ANCHOR_FAILURE_SCHEMA = Type.Object(
     omittedCandidates: opt(Type.Integer({ minimum: 1 })),
     observed: opt(Type.String()),
     omitted: opt(
-      Type.String({ description: "Why content (shifted) or observed (unresolved) is absent." }),
+      Type.String({
+        description:
+          "Why content (shifted) or observed (unresolved) is absent, or where it is shown.",
+      }),
     ),
   },
   { additionalProperties: false },
@@ -302,7 +305,7 @@ export const ERROR_DEFINITIONS = {
     ),
     next: {
       default:
-        "Before reusing a candidate or observed anchor, confirm it is the intended target; use read or grep for omitted rows, out-of-range lines, or more context. Retries verify every anchor again.",
+        "Before reusing a candidate or observed anchor, confirm it is the intended target; use read or grep for rows not shown, out-of-range lines, or more context. Retries verify every anchor again.",
     },
   },
   OVERLAPPING_EDITS: {

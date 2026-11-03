@@ -6,8 +6,8 @@
  * Each fact has one owner. A failure entry states what was cited and what the
  * search found; a shifted candidate's anchor is stated once, beside its
  * `content`; `matched` lists only the anchors that passed, so a mismatch
- * appears once, in `failures`; a row shown in a neighborhood is not repeated
- * in a failure entry. The `observed` and neighborhood rows are observations,
+ * appears once, in `failures`; a row shown in a neighborhood or an earlier entry
+ * is not repeated in a failure entry, whose `omitted` names where it is. The `observed` and neighborhood rows are observations,
  * not verified targets. Every list has its own byte budget and an explicit
  * omission count. The recovery instruction is the report's `next`, derived
  * from the code in report-schema.ts.
@@ -138,7 +138,7 @@ function failureEntry(
   f: AnchorFailure,
   snapshot: Snapshot,
   currentLines: readonly string[],
-  shownLines: Set<number>,
+  shownLines: Map<number, string>,
   budget: OutputBudgets,
 ): AnchorFailureFact {
   const rowTooLarge = `row exceeds ${formatByteSize(budget.fieldBytes)}`;
@@ -154,7 +154,11 @@ function failureEntry(
     case "found": {
       const { newLine, newHash } = f.recovery;
       entry.candidate = snapshot.anchors.reference(newLine, newHash);
-      if (shownLines.has(newLine)) break;
+      const shownAt = shownLines.get(newLine);
+      if (shownAt !== undefined) {
+        entry.omitted = `shown in ${shownAt}`;
+        break;
+      }
       const content = currentLines[newLine - 1];
       // The row budget matches the neighborhoods'; the anchor itself is already `candidate`.
       if (
@@ -162,7 +166,7 @@ function failureEntry(
         Buffer.byteLength(snapshot.anchors.row(newLine, content), "utf8") <= budget.fieldBytes
       ) {
         entry.content = displayCarriageReturns(content);
-        shownLines.add(newLine);
+        shownLines.set(newLine, entry.field);
       } else {
         entry.omitted = rowTooLarge;
       }
@@ -178,12 +182,16 @@ function failureEntry(
       break;
     }
     case "none": {
-      if (shownLines.has(f.cited.line)) break;
+      const shownAt = shownLines.get(f.cited.line);
+      if (shownAt !== undefined) {
+        entry.omitted = `shown in ${shownAt}`;
+        break;
+      }
       const row = f.current === null ? null : snapshot.anchors.row(f.cited.line, f.current.content);
       if (row === null) entry.omitted = "cited line is out of range";
       else if (Buffer.byteLength(row, "utf8") <= budget.fieldBytes) {
         entry.observed = row;
-        shownLines.add(f.cited.line);
+        shownLines.set(f.cited.line, entry.field);
       } else entry.omitted = rowTooLarge;
       break;
     }
@@ -233,7 +241,9 @@ export function describeEditFailure(
     budget,
   );
   const currentLines = splitLines(snapshot.currentText);
-  const shownLines = new Set(neighborhoods.shownLines);
+  const shownLines = new Map(
+    [...neighborhoods.shownLines].map((line) => [line, "candidateNeighborhoods"]),
+  );
   const { kept, omitted } = boundedFacts(
     failure.failures.map((f) => failureEntry(f, snapshot, currentLines, shownLines, budget)),
     budget.blockBytes,
