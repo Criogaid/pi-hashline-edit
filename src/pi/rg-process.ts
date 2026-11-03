@@ -8,7 +8,7 @@
 
 import { StringDecoder } from "node:string_decoder";
 import { DiagnosticBuffer } from "./diagnostic-buffer.ts";
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { spawn, type ChildProcessByStdio } from "node:child_process";
 import type { Readable } from "node:stream";
 import { HashlineError } from "../core/errors.ts";
 import { throwIfCancelled } from "./error-text.ts";
@@ -38,7 +38,7 @@ interface ExitResult {
 }
 
 interface RunningProcess {
-  child: ChildProcessWithoutNullStreams;
+  child: ChildProcessByStdio<null, Readable, Readable>;
   done: Promise<ExitResult>;
   kill(): void;
 }
@@ -70,7 +70,7 @@ function startRg(rgPath: string, args: readonly string[], signal?: AbortSignal):
   const env = { ...process.env };
   delete env.RIPGREP_CONFIG_PATH;
   const child = spawn(rgPath, [...args], {
-    stdio: ["pipe", "pipe", "pipe"],
+    stdio: ["ignore", "pipe", "pipe"],
     shell: false,
     env,
   });
@@ -94,12 +94,6 @@ function startRg(rgPath: string, args: readonly string[], signal?: AbortSignal):
   child.on("error", (cause) => {
     error = cause;
   });
-  child.stdin.on("error", (cause: NodeJS.ErrnoException) => {
-    if (cause.code !== "EPIPE") {
-      error = cause;
-      kill();
-    }
-  });
   const done = new Promise<ExitResult>((resolve) => {
     child.on("close", (code) => {
       closed = true;
@@ -115,9 +109,9 @@ function startRg(rgPath: string, args: readonly string[], signal?: AbortSignal):
 }
 
 async function* nulDelimitedRecords(stream: Readable): AsyncGenerator<Buffer> {
-  let pending = Buffer.alloc(0);
+  let pending: Buffer = Buffer.alloc(0);
   for await (const value of stream) {
-    const chunk = Buffer.isBuffer(value) ? value : Buffer.from(value);
+    const chunk = value as Buffer;
     // Fast path: no pending data — search the chunk directly.
     let buf = pending.length ? Buffer.concat([pending, chunk]) : chunk;
     pending = Buffer.alloc(0);
@@ -143,7 +137,6 @@ async function runRg(
   read: (stdout: Readable) => Promise<boolean>,
 ): Promise<RgRunResult> {
   const process = startRg(rgPath, args, signal);
-  process.child.stdin.end();
   try {
     const stopped = !(await read(process.child.stdout));
     if (stopped) process.kill();
