@@ -1,7 +1,7 @@
 /**
  * Static analysis of grep queries: smart case, and the necessary literals of grep's
  * candidate-file prefilter. Every JavaScript match of the query, on the LF view of a
- * file without NUL, satisfies every returned clause by containing one of its literals; that text
+ * file without NUL, contains one of the returned literals; that text
  * appears unchanged in the file's original bytes. Native RegExp still decides every
  * match; an unknown construct only widens the candidate set, down to every file.
  *
@@ -27,25 +27,20 @@ interface LiteralFilter {
   readonly kind: "literals";
   readonly literals: readonly Literal[];
 }
-export type Prefilter =
-  | { readonly kind: "all" }
-  | LiteralFilter
-  | { readonly kind: "and"; readonly filters: readonly LiteralFilter[] };
+export type Prefilter = { readonly kind: "all" } | LiteralFilter;
 
 const ALL: Prefilter = { kind: "all" };
 const MAX_SEQUENCES = 16;
 const MAX_SEQUENCE_LENGTH = 64;
 const MAX_CLASS_CHARS = 64;
 const MAX_LITERALS = 64;
-/** Dropping an AND clause widens safely; no OR alternative may be discarded. */
-const MAX_PREFILTER_CLAUSES = 8;
 
 /** Text of unknown length and content: a literal never spans it. */
 const GAP = null;
 type Unit = LiteralChar | typeof GAP;
 type Sequence = readonly Unit[];
 
-/** A node's bounded exact texts and necessary AND/OR conditions on original bytes. */
+/** A node's bounded exact texts and necessary condition on original bytes. */
 interface Info {
   readonly exact?: readonly Sequence[];
   readonly filter: Prefilter;
@@ -105,61 +100,35 @@ function literalFilter(values: readonly Literal[]): Prefilter {
   return first === GAP ? ALL : { kind: "literals", literals: [[first]] };
 }
 
-function implies(left: LiteralFilter, right: LiteralFilter): boolean {
-  return left.literals.every((long) =>
-    right.literals.some((short) => {
-      for (let offset = 0; offset <= long.length - short.length; offset++)
-        if (
-          short.every((chars, index) => long[offset + index].every((char) => chars.includes(char)))
-        )
-          return true;
-      return false;
-    }),
-  );
-}
-
-function andFilters(filters: readonly Prefilter[]): Prefilter {
-  const clauses = distinct(
-    filters.flatMap((filter) =>
-      filter.kind === "all" ? [] : filter.kind === "and" ? filter.filters : [filter],
-    ),
-  );
-  const kept = clauses.filter(
-    (clause, index) =>
-      !clauses.some(
-        (other, at) =>
-          at !== index && implies(other, clause) && (!implies(clause, other) || at < index),
-      ),
-  );
-  kept.sort(
-    (a, b) =>
-      Math.min(...b.literals.map((literal) => literal.length)) -
-        Math.min(...a.literals.map((literal) => literal.length)) ||
-      a.literals.length - b.literals.length,
-  );
-  const bounded = kept.slice(0, MAX_PREFILTER_CLAUSES);
-  return bounded.length === 0
-    ? ALL
-    : bounded.length === 1
-      ? bounded[0]
-      : { kind: "and", filters: bounded };
-}
-
-function orFilters(filters: readonly Prefilter[]): Prefilter {
-  const known = filters.filter((filter) => filter.kind !== "all");
-  if (!known.length || known.length < filters.length) return ALL;
-  let result: Prefilter = known[0];
-  for (const filter of known.slice(1)) {
-    // Distribution can drop every bounded clause, leaving no condition.
-    if (result.kind === "all") return ALL;
-    const left = result.kind === "and" ? result.filters : [result];
-    const right = filter.kind === "and" ? filter.filters : [filter];
-    // CNF distribution creates AND clauses; keeping only bounded clauses is a widening.
-    result = andFilters(
-      left.flatMap((a) => right.map((b) => literalFilter([...a.literals, ...b.literals]))),
-    );
+/**
+ * Of conditions that all hold, the most selective: the longest shortest literal, then the
+ * fewest literals. One rg pass per condition costs more than it saves, and dropping a
+ * necessary condition only widens the candidates.
+ */
+function strongestFilter(filters: readonly Prefilter[]): Prefilter {
+  const shortest = (filter: LiteralFilter) =>
+    Math.min(...filter.literals.map((literal) => literal.length));
+  let best: Prefilter = ALL;
+  for (const filter of filters) {
+    if (filter.kind === "all") continue;
+    if (
+      best.kind === "all" ||
+      shortest(filter) > shortest(best) ||
+      (shortest(filter) === shortest(best) && filter.literals.length < best.literals.length)
+    )
+      best = filter;
   }
-  return result;
+  return best;
+}
+
+/** Any of these conditions may hold, so the result keeps every alternative. */
+function orFilters(filters: readonly Prefilter[]): Prefilter {
+  const literals: Literal[] = [];
+  for (const filter of filters) {
+    if (filter.kind === "all") return ALL;
+    literals.push(...filter.literals);
+  }
+  return literalFilter(literals);
 }
 
 function sequenceFilter(sequences: readonly Sequence[]): Prefilter {
@@ -174,13 +143,13 @@ function sequenceFilter(sequences: readonly Sequence[]): Prefilter {
           run = [];
         }
       }
-      return andFilters(filters);
+      return strongestFilter(filters);
     }),
   );
 }
 
 const filterOf = (info: Info): Prefilter =>
-  info.exact ? andFilters([info.filter, sequenceFilter(info.exact)]) : info.filter;
+  info.exact ? strongestFilter([info.filter, sequenceFilter(info.exact)]) : info.filter;
 
 function cross(left: readonly Sequence[], right: readonly Sequence[]): Sequence[] | undefined {
   if (left.length * right.length > MAX_SEQUENCES) return undefined;
@@ -208,8 +177,8 @@ function concatenate(infos: readonly Info[]): Info {
     run = info.exact ?? [[]];
   }
   return whole
-    ? { exact: run, filter: andFilters(filters) }
-    : { filter: andFilters([...filters, sequenceFilter(run)]) };
+    ? { exact: run, filter: strongestFilter(filters) }
+    : { filter: strongestFilter([...filters, sequenceFilter(run)]) };
 }
 
 function alternate(infos: readonly Info[]): Info {
@@ -360,7 +329,7 @@ export function smartIgnoreCase(
   });
 }
 
-/** Necessary file conditions in bounded conjunctive normal form; every OR retains all alternatives. */
+/** One necessary file condition, its literals bounded; every OR retains all alternatives. */
 export function extractPrefilter(query: GrepQuery): Prefilter {
   const unicode = query.flags.includes("u") || query.flags.includes("v");
   const ctx: Context = {
