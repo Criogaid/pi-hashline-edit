@@ -199,23 +199,50 @@ function rejectedEdit(
 }
 const oldAnchor = { line: 1, hash: computeLineHash(1, "old", DEFAULT_CONFIG.hashLen) };
 
-test("unresolved observation already shown elsewhere → reports the row once", async (t) => {
+test("failed anchor row is already shown → reports it once and names its location", async (t) => {
   const cases = [
     {
-      name: "ambiguous candidate neighborhood",
+      name: "unresolved observation in candidate neighborhood",
       text: "current\nneighbor\nold\nold\n",
       anchors: [oldAnchor, { line: 2, hash: computeLineHash(2, "gone", DEFAULT_CONFIG.hashLen) }],
       radius: DEFAULT_CONFIG.shiftRadius,
       line: 2,
       content: "neighbor",
+      result: "unresolved",
+      omitted: "shown in candidateNeighborhoods",
     },
     {
-      name: "earlier unresolved failure",
+      name: "unresolved observation in earlier failure",
       text: "current\n",
       anchors: [oldAnchor, oldAnchor],
       radius: 0,
       line: 1,
       content: "current",
+      result: "unresolved",
+      omitted: "shown in edits[0].anchor",
+    },
+    {
+      name: "shifted content in earlier failure",
+      text: "current\nold\n",
+      anchors: [oldAnchor, oldAnchor],
+      radius: DEFAULT_CONFIG.shiftRadius,
+      line: 2,
+      content: "old",
+      result: "shifted",
+      omitted: "shown in edits[0].anchor",
+    },
+    {
+      name: "shifted content in candidate neighborhood",
+      text: "current\nneighbor\nold\nold\n",
+      anchors: [
+        oldAnchor,
+        { line: 1, hash: computeLineHash(1, "neighbor", DEFAULT_CONFIG.hashLen) },
+      ],
+      radius: DEFAULT_CONFIG.shiftRadius,
+      line: 2,
+      content: "neighbor",
+      result: "shifted",
+      omitted: "shown in candidateNeighborhoods",
     },
   ];
   for (const fixture of cases) {
@@ -225,15 +252,19 @@ test("unresolved observation already shown elsewhere → reports the row once", 
         fixture.anchors.map((anchor) => ({ op: "delete", anchor })),
         fixture.radius,
       );
-      const observed = createAnchorFormatter(DEFAULT_CONFIG.hashLen).row(
-        fixture.line,
-        fixture.content,
-      );
+      const row = createAnchorFormatter(DEFAULT_CONFIG.hashLen).row(fixture.line, fixture.content);
       const displayedRows = [
-        ...(report.failures?.flatMap((entry) => (entry.observed ? [entry.observed] : [])) ?? []),
+        ...(report.failures?.flatMap((entry) => [
+          ...(entry.observed ? [entry.observed] : []),
+          ...(entry.content !== undefined ? [`${entry.candidate}│${entry.content}`] : []),
+        ]) ?? []),
         ...(report.candidateNeighborhoods?.flatMap((group) => group.rows) ?? []),
       ];
-      assert.equal(displayedRows.filter((row) => row === observed).length, 1);
+      assert.equal(displayedRows.filter((displayed) => displayed === row).length, 1);
+      assert.equal(report.failures?.[1].result, fixture.result);
+      assert.equal(report.failures?.[1].omitted, fixture.omitted);
+      assert.equal(report.failures?.[1].observed, undefined);
+      assert.equal(report.failures?.[1].content, undefined);
     });
   }
 });
@@ -265,7 +296,7 @@ test("multiple unresolved anchors and candidate context → one recovery survive
     const { report } = rejectedEdit(fixture.text, fixture.edits, fixture.radius, budget);
     assert.equal(report.error, "ANCHOR_MISMATCH");
     assert.match(report.next ?? "", /confirm.*intended target/);
-    assert.match(report.next ?? "", /read or grep.*omitted rows.*out-of-range lines.*context/);
+    assert.match(report.next ?? "", /read or grep.*rows not shown.*out-of-range lines.*context/);
     const { next, ...facts } = report;
     assert.equal(renderReport(report).split(next!).length - 1, 1);
     assert.doesNotMatch(JSON.stringify(facts), /\b(?:confirm|read|grep|retries)\b/i);
@@ -280,25 +311,45 @@ test("multiple unresolved anchors and candidate context → one recovery survive
   }
 });
 
-test("reversed ranges and overlapping edits → original reason and unpublished status without anchor recovery", () => {
-  const text = "a\nb\nc\n";
+test("overlapping edits → ordered conflict and recovery based on the conflicting pair", () => {
+  const text = "a\nb\nc\nd\ne\n";
   const anchor = (line: number, content: string) => ({
     line,
     hash: computeLineHash(line, content, DEFAULT_CONFIG.hashLen),
   });
-  const cases: Edit[][] = [
-    [{ op: "delete", anchor: anchor(3, "c"), end: anchor(1, "a") }],
-    [
-      { op: "delete", anchor: anchor(1, "a"), end: anchor(2, "b") },
-      { op: "replace", anchor: anchor(2, "b"), body: ["changed"] },
-    ],
+  const cases: { edits: Edit[]; transfer: boolean }[] = [
+    ...(["copy", "move"] as const).map((op) => ({
+      edits: [
+        { op: "replace", anchor: anchor(2, "b"), body: ["changed"] },
+        { op, anchor: anchor(4, "d"), after: anchor(5, "e") },
+        { op: "delete", anchor: anchor(1, "a"), end: anchor(2, "b") },
+      ] satisfies Edit[],
+      transfer: false,
+    })),
+    ...(["copy", "move"] as const).map((op) => ({
+      edits: [
+        { op, anchor: anchor(5, "e"), after: anchor(2, "b") },
+        { op: "delete", anchor: anchor(4, "d") },
+        { op: "insert_before", anchor: anchor(3, "c"), body: ["changed"] },
+      ] satisfies Edit[],
+      transfer: true,
+    })),
   ];
-  for (const edits of cases) {
+  for (const { edits, transfer } of cases) {
     const { failure, report } = rejectedEdit(text, edits);
-    assert.ok(failure.kind === "range");
+    assert.ok(failure.kind === "overlap");
+    assert.deepEqual(failure.conflict, [
+      { opIndex: 0, op: edits[0].op },
+      { opIndex: 2, op: edits[2].op },
+    ]);
+    assert.equal(report.error, "OVERLAPPING_EDITS");
+    assert.deepEqual(report.conflict, ["edits[0]", "edits[2]"]);
+    assert.equal(report.matched, undefined);
+    assert.equal(report.omittedMatched, undefined);
     assert.equal(report.message, failure.message);
     assert.equal(report.publication, "NOT_PUBLISHED");
-    assert.doesNotMatch(report.next ?? "", /Before reusing|confirm|read or grep|Retries verify/);
+    if (transfer) assert.match(report.next ?? "", /copy or move.*body edits/i);
+    else assert.match(report.next ?? "", /merge overlapping edits/i);
   }
 });
 

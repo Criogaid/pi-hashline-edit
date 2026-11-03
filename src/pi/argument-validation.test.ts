@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import fs, { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { syncBuiltinESMExports } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -44,6 +45,32 @@ const cases = [
         { action: "append", body: ["bad\0", "bad\ud800"] },
         { action: "delete", anchor: `${Number.MAX_SAFE_INTEGER + 1}#${anchorHash}`, end: "1#A" },
         { action: "append", body: [] },
+        { action: "replace", anchor: `3#${anchorHash}`, end: `1#${anchorHash}`, body: ["text"] },
+        { action: "delete", anchor: `4#${anchorHash}`, end: `2#${anchorHash}` },
+        {
+          action: "copy",
+          anchor: `5#${anchorHash}`,
+          end: `3#${anchorHash}`,
+          before: `1#${anchorHash}`,
+        },
+        {
+          action: "move",
+          anchor: `2#${anchorHash}`,
+          end: `4#${anchorHash}`,
+          before: `3#${anchorHash}`,
+        },
+        {
+          action: "move",
+          anchor: `2#${anchorHash}`,
+          end: `4#${anchorHash}`,
+          after: `3#${anchorHash}`,
+        },
+        {
+          action: "move",
+          anchor: `4#${anchorHash}`,
+          end: `2#${anchorHash}`,
+          before: `1#${anchorHash}`,
+        },
       ],
       then_run: invalidCommand,
     },
@@ -54,8 +81,22 @@ const cases = [
       "edits[2].anchor",
       "edits[2].end",
       "edits[3].body",
+      "edits[4].end",
+      "edits[5].end",
+      "edits[6].end",
+      "edits[7].before",
+      "edits[8].after",
+      "edits[9].end",
       "then_run.command",
       "then_run.timeout",
+    ],
+    reasons: [
+      { field: "edits[4].end", reason: /line 1 is before anchor line 3/ },
+      { field: "edits[5].end", reason: /line 2 is before anchor line 4/ },
+      { field: "edits[6].end", reason: /line 3 is before anchor line 5/ },
+      { field: "edits[7].before", reason: /lies inside the moved range 2\.\.4/ },
+      { field: "edits[8].after", reason: /lies inside the moved range 2\.\.4/ },
+      { field: "edits[9].end", reason: /line 2 is before anchor line 4/ },
     ],
   },
   {
@@ -102,14 +143,29 @@ for (const scenario of cases) {
     const tool = scenario.make(cwd, fusion);
     const args: unknown = JSON.parse(JSON.stringify({ path, ...scenario.args, unexpected: true }));
     const snapshot = structuredClone(args);
-    await assert.rejects(callTool(tool, args), (error: unknown) => {
-      const result = argumentError(error);
-      assert.deepEqual(
-        new Set(result.issues.map((issue) => issue.field)),
-        new Set([...scenario.fields, "unexpected"]),
-      );
-      return true;
-    });
+    const open = t.mock.method(fs, "open");
+    syncBuiltinESMExports();
+    try {
+      await assert.rejects(callTool(tool, args), (error: unknown) => {
+        const result = argumentError(error);
+        assert.deepEqual(
+          new Set(result.issues.map((issue) => issue.field)),
+          new Set([...scenario.fields, "unexpected"]),
+        );
+        if ("reasons" in scenario) {
+          for (const expected of scenario.reasons) {
+            const issue = result.issues.find((issue) => issue.field === expected.field);
+            assert.ok(issue);
+            assert.match(issue.reason, expected.reason);
+          }
+        }
+        return true;
+      });
+      assert.equal(open.mock.callCount(), 0);
+    } finally {
+      t.mock.restoreAll();
+      syncBuiltinESMExports();
+    }
     assert.deepEqual(args, snapshot);
     assert.equal(await readFile(path, "utf8"), original);
     assert.equal(commandRuns, 0);
@@ -558,7 +614,7 @@ test("edit fields contain semantic errors → checks only fields accepted by the
     const valid = {
       action: scenario.action,
       ...Object.fromEntries(scenario.required.map((field) => [field, fieldValues[field]])),
-      ...(scenario.transfer ? { before: fieldValues.before } : {}),
+      ...(scenario.transfer ? { end: fieldValues.end, before: fieldValues.before } : {}),
     };
     for (const field of editFields) {
       const accepted = scenario.required.includes(field) || scenario.optional.includes(field);
@@ -672,30 +728,44 @@ test("copy/move destination count and field errors coexist → retains object an
   }
 });
 
-test("copy/move has zero or two destinations → reports one exactly-one issue without a fix", async (t) => {
-  const tool = makeEditOverride(process.cwd(), DEFAULT_CONFIG);
+test("copy/move destination shapes → rejects invalid counts and accepts adjacent or copy-interior gaps", async (t) => {
+  const cwd = await mkdtemp(join(tmpdir(), "hashline-destinations-"));
+  t.after(() => rm(cwd, { recursive: true, force: true }));
+  const tool = makeEditOverride(cwd, DEFAULT_CONFIG);
   for (const action of ["copy", "move"]) {
-    for (const destinations of [{}, { before: fieldValues.before, after: fieldValues.after }]) {
-      await t.test(
-        `${action}/${Object.keys(destinations).length} destinations → reports the item`,
-        async () => {
-          await assert.rejects(
-            callTool(tool, {
-              path: "unused.txt",
-              edits: [{ action, anchor: fieldValues.anchor, ...destinations }],
-            }),
-            (error: unknown) => {
-              assert.deepEqual(argumentError(error).issues, [
-                {
-                  field: "edits[0]",
-                  reason: "expected exactly one of: before, after",
-                },
-              ]);
-              return true;
-            },
-          );
-        },
-      );
+    for (const scenario of [
+      { name: "no destination", fields: {}, valid: false },
+      {
+        name: "two destinations",
+        fields: { before: fieldValues.before, after: fieldValues.after },
+        valid: false,
+      },
+      { name: "before source", fields: { before: fieldValues.anchor }, valid: true },
+      { name: "after source", fields: { after: fieldValues.end }, valid: true },
+      ...(action === "copy"
+        ? [
+            { name: "before interior line", fields: { before: fieldValues.end }, valid: true },
+            { name: "after interior line", fields: { after: fieldValues.anchor }, valid: true },
+          ]
+        : []),
+    ]) {
+      await t.test(`${action}/${scenario.name}`, async () => {
+        const args = {
+          path: "missing.txt",
+          edits: [{ action, anchor: fieldValues.anchor, end: fieldValues.end, ...scenario.fields }],
+        };
+        if (scenario.valid) {
+          const result = await callTool(tool, args);
+          assert.equal(reportOf(result, "edit")?.error, "PATH_NOT_FOUND");
+        } else {
+          await assert.rejects(callTool(tool, args), (error: unknown) => {
+            assert.deepEqual(argumentError(error).issues, [
+              { field: "edits[0]", reason: "expected exactly one of: before, after" },
+            ]);
+            return true;
+          });
+        }
+      });
     }
   }
 });
