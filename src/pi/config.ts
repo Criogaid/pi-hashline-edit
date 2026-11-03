@@ -123,9 +123,9 @@ function readSettings(filePath: string): Record<string, unknown> {
  * Load config. The `hashlineEdit` in project `cwd/.pi/settings.json` replaces
  * the global one wholesale; missing or invalid settings use their defaults.
  */
-export function loadConfig(cwd?: string): HashlineEditConfig {
+export function loadConfig(cwd: string): HashlineEditConfig {
   const globalSettings = readSettings(path.join(getAgentDir(), "settings.json"));
-  const projectSettings = cwd ? readSettings(path.join(cwd, ".pi", "settings.json")) : {};
+  const projectSettings = readSettings(path.join(cwd, ".pi", "settings.json"));
   // Any project value replaces the global one, even null or an invalid value, which yields defaults.
   const settings = Object.hasOwn(projectSettings, "hashlineEdit")
     ? projectSettings
