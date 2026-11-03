@@ -42,6 +42,9 @@ function expandReplacement(template: string, match: RegExpMatchArray, source: st
   });
 }
 
+/** A rule's field in the tool's arguments, as argument issues name it. */
+const ruleField = (index: number): string => `replacements[${index}]`;
+
 export function applyReplacements(
   source: string,
   rules: readonly Replacement[],
@@ -49,6 +52,7 @@ export function applyReplacements(
   const changes: { start: number; end: number; text: string; rule: number }[] = [];
   const view = createLfTextView(source);
   const fallbackEnding = detectLineEnding(source) === "crlf" ? "\r\n" : "\n";
+  const unmatched: string[] = [];
   for (const [index, rule] of rules.entries()) {
     const regex = buildRegex(rule.find, rule.literal, rule.flags);
     let count = 0;
@@ -68,18 +72,22 @@ export function applyReplacements(
         ),
       });
     }
-    if (count === 0)
-      throw new HashlineError("NO_MATCH", "The rule matches nothing in the file.", {
-        facts: { rule: index },
-      });
+    if (count === 0) unmatched.push(ruleField(index));
   }
+  if (unmatched.length)
+    throw new HashlineError("NO_MATCH", "Rules match nothing in the file.", {
+      facts: { unmatched },
+    });
   changes.sort((a, b) => a.start - b.start || a.end - b.end);
   const conflict = findSortedRangeConflict(changes.map((change) => [change.start, change.end]));
   if (conflict !== undefined) {
     const previous = changes[conflict - 1];
     const current = changes[conflict];
-    throw new HashlineError("OVERLAPPING_MATCHES", "Matches of the rules overlap.", {
-      facts: { rules: [previous.rule, current.rule], offset: current.start },
+    throw new HashlineError("OVERLAPPING_MATCHES", "Matches of two rules overlap.", {
+      facts: {
+        conflict: [previous.rule, current.rule].sort((a, b) => a - b).map(ruleField),
+        line: source.slice(0, current.start).split("\n").length,
+      },
     });
   }
   const parts: string[] = [];

@@ -134,7 +134,7 @@ const ANCHOR_FAILURE_SCHEMA = Type.Object(
     candidates: opt(Type.Array(Type.String())),
     omittedCandidates: opt(Type.Integer({ minimum: 1 })),
     observed: opt(Type.String()),
-    omitted: opt(
+    notShown: opt(
       Type.String({
         description:
           "Why content (shifted) or observed (unresolved) is absent, or where it is shown.",
@@ -185,14 +185,13 @@ const FACT_FIELDS = {
     ),
   ),
   omittedNeighborhoodRows: count("Neighborhood rows omitted from the byte budget."),
-  // Overlap (failure-context.ts).
+  // Overlap (failure-context.ts, core/replace.ts).
   conflict: Type.Array(Type.String(), {
-    description: "The first conflicting pair of operations found; more conflicts may exist.",
+    description: "The first conflicting pair of inputs found; more conflicts may exist.",
   }),
   // Replacement rules (core/replace.ts, replace-regex.ts).
-  rule: Type.Integer({ minimum: 0 }),
-  rules: Type.Array(Type.Integer({ minimum: 0 })),
-  offset: Type.Integer({ minimum: 0 }),
+  unmatched: Type.Array(Type.String(), { description: "Rules that match nothing." }),
+  line: Type.Integer({ minimum: 1, description: "Line where the conflicting match starts." }),
   timeoutMs: Type.Integer({ minimum: 1 }),
   exitCode: Type.Union([Type.Integer(), Type.Null()]),
   // read outcome; `outputLimit` below is shared with grep.
@@ -212,7 +211,7 @@ const FACT_FIELDS = {
   // grep outcome; `matches` is also replace's match count.
   matches: Type.Integer({ minimum: 0 }),
   files: Type.Integer({ minimum: 0 }),
-  candidates: Type.Union([Type.Literal("files"), Type.Literal("all")], {
+  scanned: Type.Union([Type.Literal("files"), Type.Literal("all")], {
     description:
       "Without line candidates, the files searched whole: those containing text every match needs, or every file in scope.",
   }),
@@ -319,14 +318,18 @@ export const ERROR_DEFINITIONS = {
     },
   },
   NO_MATCH: {
-    facts: facts(["rule"]),
+    facts: facts(["unmatched"]),
     next: {
       default:
         "Verify the target text with read or grep; check case sensitivity or regex flags if applicable.",
     },
   },
   OVERLAPPING_MATCHES: {
-    facts: facts(["rules", "offset"]),
+    facts: facts(["conflict", "line"]),
+    next: {
+      default:
+        "Change the conflicting rules so their matches do not overlap, or merge them into one rule.",
+    },
   },
   REGEX_TIMEOUT: {
     facts: facts(["timeoutMs"]),
@@ -354,7 +357,7 @@ export const ERROR_DEFINITIONS = {
     facts: NONE,
   },
   SEARCH_INCOMPLETE: {
-    facts: facts(["diagnostics"], ["candidates", "scanLimit"]),
+    facts: facts(["diagnostics"], ["scanned", "scanLimit"]),
   },
   RIPGREP_FAILED: {
     facts: facts([], ["exitCode"]),
@@ -445,7 +448,7 @@ const SUCCESS_DEFINITIONS = {
     [
       "matches",
       "files",
-      "candidates",
+      "scanned",
       "matchLimit",
       "scanLimit",
       "outputLimit",

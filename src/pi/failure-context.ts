@@ -7,7 +7,7 @@
  * search found; a shifted candidate's anchor is stated once, beside its
  * `content`; `matched` lists only the anchors that passed, so a mismatch
  * appears once, in `failures`; a row shown in a neighborhood or an earlier entry
- * is not repeated in a failure entry, whose `omitted` names where it is. The `observed` and neighborhood rows are observations,
+ * is not repeated in a failure entry, whose `notShown` names where it is. The `observed` and neighborhood rows are observations,
  * not verified targets. Every list has its own byte budget and an explicit
  * omission count. The recovery instruction is the report's `next`, derived
  * from the code in report-schema.ts.
@@ -156,7 +156,7 @@ function failureEntry(
       entry.candidate = snapshot.anchors.reference(newLine, newHash);
       const shownAt = shownLines.get(newLine);
       if (shownAt !== undefined) {
-        entry.omitted = `shown in ${shownAt}`;
+        entry.notShown = `shown in ${shownAt}`;
         break;
       }
       const content = currentLines[newLine - 1];
@@ -168,7 +168,7 @@ function failureEntry(
         entry.content = displayCarriageReturns(content);
         shownLines.set(newLine, entry.field);
       } else {
-        entry.omitted = rowTooLarge;
+        entry.notShown = rowTooLarge;
       }
       break;
     }
@@ -184,15 +184,15 @@ function failureEntry(
     case "none": {
       const shownAt = shownLines.get(f.cited.line);
       if (shownAt !== undefined) {
-        entry.omitted = `shown in ${shownAt}`;
+        entry.notShown = `shown in ${shownAt}`;
         break;
       }
       const row = f.current === null ? null : snapshot.anchors.row(f.cited.line, f.current.content);
-      if (row === null) entry.omitted = "cited line is out of range";
+      if (row === null) entry.notShown = "cited line is out of range";
       else if (Buffer.byteLength(row, "utf8") <= budget.fieldBytes) {
         entry.observed = row;
         shownLines.set(f.cited.line, entry.field);
-      } else entry.omitted = rowTooLarge;
+      } else entry.notShown = rowTooLarge;
       break;
     }
   }
