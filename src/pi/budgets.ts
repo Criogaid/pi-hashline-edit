@@ -3,7 +3,6 @@
  * The context window is a capacity hint, not a tokenizer or remaining-context counter.
  */
 
-const BYTES_PER_CONTEXT_TOKEN = 1;
 const BLOCK_SHARE = 4;
 const FIELD_SHARE = 4;
 const UTF16_PREVIEW_BYTES = 4;
@@ -16,6 +15,7 @@ const MIN_FIELD_BYTES = 128;
 export const MAX_CONTENT_KIB = 4096;
 const MAX_CONTENT_BYTES = MAX_CONTENT_KIB * 1024;
 
+// Declared apart so Object.freeze keeps these as numbers rather than literal types.
 const fallbackBudgets = {
   readBytes: 256 * 1024,
   grepBytes: 50 * 1024,
@@ -32,7 +32,8 @@ export function outputBudgetsFor(contextWindow: number | undefined): OutputBudge
   if (contextWindow === undefined || !Number.isSafeInteger(contextWindow) || contextWindow <= 0) {
     return DEFAULT_OUTPUT_BUDGETS;
   }
-  const contentBytes = Math.min(contextWindow * BYTES_PER_CONTEXT_TOKEN, MAX_CONTENT_BYTES);
+  // One byte per declared context token.
+  const contentBytes = Math.min(contextWindow, MAX_CONTENT_BYTES);
   const blockBytes = Math.max(MIN_BLOCK_BYTES, Math.floor(contentBytes / BLOCK_SHARE));
   const fieldBytes = Math.max(MIN_FIELD_BYTES, Math.floor(blockBytes / FIELD_SHARE));
   return Object.freeze({
