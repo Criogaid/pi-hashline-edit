@@ -157,7 +157,7 @@ export function mutationToolBase<
 }
 
 /** A whole-file text transformation produced from one snapshot. */
-export interface TextChange<TTool extends MutationToolName> {
+interface TextChange<TTool extends MutationToolName> {
   /** Complete replacement text; equal to the snapshot for a no-op. */
   readonly text: string;
   /** The tool's own outcome facts, such as replace's match count. */

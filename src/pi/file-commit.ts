@@ -37,7 +37,7 @@ import type { Freshness, PublicationStatus } from "./report-schema.ts";
  * that it exist; with `baseRevision` (read-modify-write), the target must still hold the bytes
  * that revision names, and that revision stands in for hashing the target again.
  */
-export type CommitOptions = { readonly signal?: AbortSignal } & (
+type CommitOptions = { readonly signal?: AbortSignal } & (
   | { readonly mode: "create" }
   | { readonly mode: "overwrite"; readonly baseRevision?: string }
 );

@@ -8,8 +8,6 @@
 
 import type { ErrorCode, ErrorFacts, NextVariant } from "../pi/report-schema.ts";
 
-export type { ErrorCode } from "../pi/report-schema.ts";
-
 /** Options of a failure of `C`: its facts are required exactly when the code has required facts. */
 export type HashlineErrorOptions<C extends ErrorCode> = {
   /** The failure beneath this step; reported as structured `cause`, never folded into `message`. */
