@@ -181,6 +181,10 @@ const FACT_FIELDS = {
     ),
   ),
   omittedNeighborhoodRows: count("Neighborhood rows omitted from the byte budget."),
+  // Overlap (failure-context.ts).
+  conflict: Type.Array(Type.String(), {
+    description: "The first conflicting pair of operations found; more conflicts may exist.",
+  }),
   // Replacement rules (core/replace.ts, replace-regex.ts).
   rule: Type.Integer({ minimum: 0 }),
   rules: Type.Array(Type.Integer({ minimum: 0 })),
@@ -256,7 +260,6 @@ function facts<const R extends readonly FactName[], const O extends readonly Fac
   );
 }
 const NONE = facts([]);
-const MATCHED = ["matched", "omittedMatched"] as const;
 
 /**
  * Each error code: its facts and its recovery. `next.default` is the code's
@@ -289,7 +292,13 @@ export const ERROR_DEFINITIONS = {
   ANCHOR_MISMATCH: {
     facts: facts(
       ["failures"],
-      ["omittedFailures", ...MATCHED, "candidateNeighborhoods", "omittedNeighborhoodRows"],
+      [
+        "omittedFailures",
+        "matched",
+        "omittedMatched",
+        "candidateNeighborhoods",
+        "omittedNeighborhoodRows",
+      ],
     ),
     next: {
       default:
@@ -297,10 +306,12 @@ export const ERROR_DEFINITIONS = {
     },
   },
   OVERLAPPING_EDITS: {
-    facts: facts([], MATCHED),
+    facts: facts(["conflict"]),
     next: {
       default:
         "Merge overlapping edits into one edit per range, and insertions at one position into one insertion.",
+      transfer:
+        "A copy or move cannot merge with another edit. Rewrite it as body edits that include its lines, then merge those with the other edit.",
     },
   },
   NO_MATCH: {

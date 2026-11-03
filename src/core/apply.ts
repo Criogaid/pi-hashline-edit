@@ -240,7 +240,7 @@ function translateEdit(
 /**
  * Apply edits to `text`. Anchors are verified against the current content.
  * On any anchor mismatch, all failures (with shifted recovery) are collected
- * and returned together. Every failure includes per-input anchor checks.
+ * and returned together, with per-input anchor checks.
  *
  * @param text        current full file text
  * @param edits       validated edit operations; each body element is one logical line
@@ -257,7 +257,7 @@ export function applyEdits(
   const bom = text.startsWith("\uFEFF") ? "\uFEFF" : "";
   const ending = detectLineEnding(text);
 
-  const ops: SpanOp[] = [];
+  const ops: (SpanOp & { readonly opIndex: number })[] = [];
   const anchorFailures: AnchorFailure[] = [];
   const anchorChecks: AnchorCheck[] = [];
 
@@ -265,7 +265,7 @@ export function applyEdits(
     const t = translateEdit(edits[i], i, lines, hashLen, shiftRadius);
     anchorChecks.push(...t.checks);
     if (t.ok) {
-      for (const op of t.ops) ops.push(op);
+      for (const op of t.ops) ops.push({ ...op, opIndex: i });
     } else {
       anchorFailures.push(...t.anchorFailures);
     }
@@ -286,18 +286,19 @@ export function applyEdits(
     true,
   );
   if (conflict !== undefined) {
-    const { lo, hi } = sorted[conflict];
+    const current = sorted[conflict];
     const previous = sorted[conflict - 1];
-    const repeatedInsertion = lo === hi && previous.lo === lo && previous.hi === hi;
+    const repeatedInsertion =
+      current.lo === current.hi && previous.lo === current.lo && previous.hi === current.hi;
+    const [first, second] = [previous.opIndex, current.opIndex]
+      .sort((a, b) => a - b)
+      .map((opIndex) => ({ opIndex, op: edits[opIndex].op }));
     return {
       ok: false,
       failure: {
-        kind: "range",
-        code: "OVERLAPPING_EDITS",
-        message: repeatedInsertion
-          ? `Edits insert more than once at one position near line ${lo + 1}.`
-          : `Edits overlap near line ${lo + 1}.`,
-        checks: anchorChecks,
+        kind: "overlap",
+        message: repeatedInsertion ? "Two edits insert at one position." : "Two edits overlap.",
+        conflict: [first, second],
       },
     };
   }

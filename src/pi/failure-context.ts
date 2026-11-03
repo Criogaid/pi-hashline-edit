@@ -196,7 +196,7 @@ function failureEntry(
  * both `matched` and `failures` is counted as omitted, never implied matched.
  */
 function matchedAnchorFacts(
-  failure: ApplyFailure,
+  failure: Extract<ApplyFailure, { kind: "anchor" }>,
   budget: OutputBudgets,
 ): Pick<MismatchFacts, "matched" | "omittedMatched"> {
   const { kept, omitted } = boundedFacts(
@@ -217,10 +217,15 @@ export function describeEditFailure(
   isBatch: boolean,
   budget: OutputBudgets,
 ): HashlineError<"ANCHOR_MISMATCH" | "OVERLAPPING_EDITS"> {
-  const matched = isBatch ? matchedAnchorFacts(failure, budget) : {};
-  if (failure.kind === "range")
-    return new HashlineError(failure.code, failure.message, { facts: matched });
+  if (failure.kind === "overlap")
+    return new HashlineError("OVERLAPPING_EDITS", failure.message, {
+      facts: { conflict: failure.conflict.map(({ opIndex }) => `edits[${opIndex}]`) },
+      next: failure.conflict.some(({ op }) => op === "copy" || op === "move")
+        ? "transfer"
+        : undefined,
+    });
 
+  const matched = isBatch ? matchedAnchorFacts(failure, budget) : {};
   const neighborhoods = ambiguousCandidateNeighborhoods(
     snapshot.currentText,
     failure.failures,

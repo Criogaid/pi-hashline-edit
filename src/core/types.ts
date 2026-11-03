@@ -92,6 +92,12 @@ export interface AnchorCheck {
   readonly status: "matched" | "mismatched";
 }
 
+/** One operation of the input `edits[]`. */
+export interface EditRef {
+  readonly opIndex: number;
+  readonly op: Edit["op"];
+}
+
 /** Batch-level failure. Anchor checks describe only checksum validation in this snapshot. */
 export type ApplyFailure =
   | {
@@ -100,17 +106,17 @@ export type ApplyFailure =
       readonly checks: readonly AnchorCheck[];
     }
   | {
-      readonly kind: "range";
-      /** OVERLAPPING_EDITS for overlap or a repeated insertion position. */
-      readonly code: "OVERLAPPING_EDITS";
+      /** Two ranges overlap, or two insertions share a position. */
+      readonly kind: "overlap";
       readonly message: string;
-      readonly checks: readonly AnchorCheck[];
+      /** The first conflicting pair found, in input order. */
+      readonly conflict: readonly [EditRef, EditRef];
     };
 
 /**
  * Apply result. Byte-identical output is a success; the commit layer detects the no-op.
  * On failure, `failure` is either the collected set of anchor failures
- * (each with recovery) or a range error, plus per-input anchor checks.
+ * (each with recovery and per-input anchor checks) or an overlap.
  * Nothing is written on failure.
  */
 export type ApplyResult =
