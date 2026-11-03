@@ -61,19 +61,6 @@ function projectValueSchema(
       projection.applicable.add(path);
       return Type.Unknown({ enum: [...new Set(choices)] });
     }
-    const typed = schema.anyOf.filter((branch) => "type" in branch);
-    if (typed.length === schema.anyOf.length) {
-      const matches = typed.filter(
-        (branch) => "type" in branch && Value.Check(Type.Unknown({ type: branch.type }), value),
-      );
-      if (matches.length === 1) return projectSchema(matches[0], value, path, projection);
-      if (matches.length === 0) {
-        const types = typed.flatMap((branch) =>
-          "type" in branch ? (Array.isArray(branch.type) ? branch.type : [branch.type]) : [],
-        );
-        return Type.Unknown({ type: [...new Set(types)] });
-      }
-    }
     return schema;
   }
   if ("type" in schema && !Value.Check(Type.Unknown({ type: schema.type }), value)) return schema;
