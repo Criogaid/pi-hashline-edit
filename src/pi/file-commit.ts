@@ -27,8 +27,6 @@ import {
   PATH_ERROR_MESSAGES,
   pathError,
   HashlineError,
-  type ErrorCode,
-  type HashlineErrorArguments,
 } from "../core/errors.ts";
 import { cancellationError, FileChangedDuringReadError, throwIfCancelled } from "./error-text.ts";
 import { withFileRead } from "./file-read.ts";
@@ -65,16 +63,16 @@ export type CommitResult = CommitRevisions &
  * A mutation failure with what it published. Every other failure of a mutation
  * tool published nothing, so it stays a plain HashlineError.
  */
-export class FileMutationError<C extends ErrorCode = ErrorCode> extends HashlineError<C> {
+export class FileMutationError extends HashlineError<"PUBLISH_FAILED" | "POST_PROCESS_FAILED"> {
   readonly publication: PublicationStatus;
 
   constructor(
-    code: C,
+    code: "PUBLISH_FAILED" | "POST_PROCESS_FAILED",
     publication: PublicationStatus,
     message: string,
-    ...options: HashlineErrorArguments<NoInfer<C>>
+    options?: { readonly cause?: unknown },
   ) {
-    super(code, message, ...options);
+    super(code, message, options);
     this.name = "FileMutationError";
     this.publication = publication;
   }
@@ -118,22 +116,17 @@ export function commitReplacement(
   return commitFile(path, text, { mode: "overwrite", baseRevision, signal });
 }
 
-/** A failed filesystem step keeps the classification of its cause. */
-function causeCode(error: unknown, fallback: ErrorCode): ErrorCode {
-  return error instanceof HashlineError
-    ? error.errorCode
-    : (filesystemErrorCode(error) ?? fallback);
-}
-
 /**
  * A failure of a filesystem step before publication: the step is the message, the failure its
- * cause. A missing path or directory target keeps its own report, whichever step found it.
+ * cause, whose classification it keeps. A missing path or directory target keeps its own report,
+ * whichever step found it.
  */
 function stepError(step: string, error: unknown): HashlineError {
-  return (
-    pathError(error) ??
-    new HashlineError(causeCode(error, "FILESYSTEM_ERROR"), step, { cause: error })
-  );
+  const code =
+    error instanceof HashlineError
+      ? error.errorCode
+      : (filesystemErrorCode(error) ?? "FILESYSTEM_ERROR");
+  return pathError(error) ?? new HashlineError(code, step, { cause: error });
 }
 
 type TargetInfo = { readonly publishPath: string } & (
