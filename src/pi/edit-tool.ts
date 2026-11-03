@@ -255,12 +255,13 @@ function checkEditArguments(
       }
     }
 
-    // The cited line numbers alone decide these, whatever the file holds.
+    // The cited line numbers alone decide these, whatever the file holds. An
+    // unsafe line number was reported above, and comparing it would add a false issue.
     const lineOf = (field: EditItemField) => {
       const anchor = edit[field];
-      return accepted.has(field) && typeof anchor === "string"
-        ? parseAnchorToken(anchor)?.line
-        : undefined;
+      if (!accepted.has(field) || typeof anchor !== "string") return undefined;
+      const line = parseAnchorToken(anchor)?.line;
+      return Number.isSafeInteger(line) ? line : undefined;
     };
     const first = lineOf("anchor");
     if (first === undefined) return;
