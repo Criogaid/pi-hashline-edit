@@ -281,7 +281,7 @@ export async function searchFiles(options: {
       const warning =
         error instanceof SearchFileLimitError
           ? `${filePath}: ${error.message}`
-          : fileReadWarning(filePath, error, poolSignal);
+          : fileReadWarning(filePath, error);
       result = warning
         ? { warning }
         : { error: error instanceof ScanWorkerFailure ? error.error : error };
