@@ -30,19 +30,9 @@ export function workerReplyDecoder<T extends TSchema>(result: T) {
     Type.Object({ result }, { additionalProperties: false }),
     Type.Object({ error: Type.Union(ERROR_SCHEMAS) }, { additionalProperties: false }),
   ]);
-  return (value: unknown): RegexWorkerReply<Static<T>> | undefined => {
-    if (typeof value !== "object" || value === null) return undefined;
-    try {
-      const error: unknown = Reflect.get(value, "error");
-      // Structured cloning permits cycles and BigInt; reports must remain JSON-serializable.
-      if (typeof error === "object" && error !== null) JSON.stringify(error);
-      // The dynamic error union is validated against the same code-specific schemas.
-      return Value.Check(schema, value) ? (value as RegexWorkerReply<Static<T>>) : undefined;
-    } catch (error) {
-      if (error instanceof TypeError || error instanceof RangeError) return undefined;
-      throw error;
-    }
-  };
+  // The dynamic error union is validated against the same code-specific schemas.
+  return (value: unknown): RegexWorkerReply<Static<T>> | undefined =>
+    Value.Check(schema, value) ? (value as RegexWorkerReply<Static<T>>) : undefined;
 }
 
 /** Restore an error workerReplyDecoder checked as the same HashlineError the worker threw. */
