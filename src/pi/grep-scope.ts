@@ -12,24 +12,18 @@ import { errnoCode, HashlineError, PATH_ERROR_MESSAGES } from "../core/errors.ts
 
 export interface SearchScope {
   readonly globs: readonly string[];
-  readonly noIgnore: boolean;
-  readonly follow: boolean;
   readonly searchPaths: readonly string[];
 }
 
+const globArgs = (globs: readonly string[]) => globs.flatMap((glob) => ["--glob", glob]);
+
 /**
- * The only place scope becomes rg flags. Traversal that respects ignore rules also skips
- * `.git` directories, which `--hidden` would otherwise search; a named path is still searched.
- * The exclusion follows the caller's globs, because a later rg glob takes precedence.
+ * The rg flags of a search. Traversal respects ignore rules and also skips `.git` directories,
+ * which `--hidden` would otherwise search; a named path is still searched. The exclusion follows
+ * the caller's globs, because a later rg glob takes precedence.
  */
 export function scopeArgs(scope: SearchScope): string[] {
-  return [
-    "--hidden",
-    ...(scope.noIgnore ? ["--no-ignore"] : []),
-    ...(scope.follow ? ["--follow"] : []),
-    ...scope.globs.flatMap((glob) => ["--glob", glob]),
-    ...(scope.noIgnore ? [] : ["--glob", "!.git"]),
-  ];
+  return ["--hidden", ...globArgs(scope.globs), "--glob", "!.git"];
 }
 
 interface SearchPathInfo {
@@ -99,7 +93,10 @@ export async function filterExplicitFilesByGlob(
   // Direct file arguments bypass ignore and symlink traversal; let only the ordered globs decide admission.
   const args = [
     ...COMMON_RG_ARGS,
-    ...scopeArgs({ ...scope, noIgnore: true, follow: true }),
+    "--hidden",
+    "--no-ignore",
+    "--follow",
+    ...globArgs(scope.globs),
     "--files",
     "--null",
     "--max-depth=1",

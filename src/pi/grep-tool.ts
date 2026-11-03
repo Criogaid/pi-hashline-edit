@@ -216,8 +216,6 @@ export function makeGrepOverrideWithBackend(
         const { searchPaths, pathInfo } = await resolveSearchPaths(cwd, params.path);
         const unfiltered: SearchScope = {
           globs: params.glob ?? [],
-          noIgnore: false,
-          follow: false,
           searchPaths,
         };
         const admitted = await filterExplicitFilesByGlob(
