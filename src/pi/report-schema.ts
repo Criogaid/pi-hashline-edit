@@ -29,7 +29,6 @@ export const CAUSE_SCHEMA = Type.Cyclic(
         code: Type.Optional(Type.String({ description: "Node errno code, such as EACCES." })),
         message: Type.String(),
         cause: Type.Optional(Type.Ref("Cause")),
-        errors: Type.Optional(Type.Array(Type.Ref("Cause"))),
       },
       { additionalProperties: false },
     ),

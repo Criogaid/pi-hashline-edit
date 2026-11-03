@@ -39,7 +39,6 @@ function boundedCause(data: Cause, maxBytes: number): Cause {
     ...data,
     message: boundedText(data.message, maxBytes),
     ...(data.cause ? { cause: boundedCause(data.cause, maxBytes) } : {}),
-    ...(data.errors ? { errors: data.errors.map((inner) => boundedCause(inner, maxBytes)) } : {}),
   };
 }
 /**
@@ -89,15 +88,10 @@ export function causeOf(
   if (error instanceof RestoredCause) return boundedCause(error.data, maxBytes);
   const errno = errnoCode(error);
   const nested = error instanceof Error ? causeOf(error.cause, maxBytes, seen) : undefined;
-  const errors =
-    error instanceof AggregateError
-      ? error.errors.flatMap((inner: unknown) => causeOf(inner, maxBytes, seen) ?? [])
-      : [];
   return {
     ...(error instanceof HashlineError ? { error: error.errorCode } : {}),
     ...(errno === undefined ? {} : { code: errno }),
     message: boundedText(errorMessage(error), maxBytes),
     ...(nested ? { cause: nested } : {}),
-    ...(errors.length ? { errors } : {}),
   };
 }
