@@ -23,7 +23,7 @@ import {
   errnoCode,
   filesystemErrorCode,
   HashlineError,
-  PATH_ERROR_MESSAGES,
+  pathError,
 } from "../core/errors.ts";
 import { boundedText, causeOf } from "./report-cause.ts";
 import type { OutputBudgets } from "./budgets.ts";
@@ -196,18 +196,10 @@ function classify(error: unknown, signal: AbortSignal | undefined): HashlineErro
   if (error instanceof HashlineError) return error;
   // Pi's native tools and Node report cancellation with their own errors.
   if (signal?.aborted) return cancellationError();
+  const path = pathError(error);
+  if (path) return path;
   const code: ErrorCode = filesystemErrorCode(error) ?? "UNCLASSIFIED";
   const cause = error instanceof Error ? error.cause : undefined;
-  if (code === "PATH_NOT_FOUND") {
-    // Node's resolved path shows where a relative path led, such as under the wrong directory.
-    const path: unknown = Reflect.get(error as object, "path");
-    return new HashlineError(code, PATH_ERROR_MESSAGES[code], {
-      cause,
-      facts: typeof path === "string" ? { missing: [path] } : {},
-    });
-  }
-  if (code === "NOT_REGULAR_FILE")
-    return new HashlineError(code, PATH_ERROR_MESSAGES[code], { cause });
   const diagnostic = errorMessage(error);
   const errno = errnoCode(error);
   const message = errno && !diagnostic.includes(errno) ? `${errno}: ${diagnostic}` : diagnostic;

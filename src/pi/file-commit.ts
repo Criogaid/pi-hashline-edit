@@ -25,6 +25,7 @@ import {
   errnoCode,
   filesystemErrorCode,
   PATH_ERROR_MESSAGES,
+  pathError,
   HashlineError,
   type ErrorCode,
   type HashlineErrorArguments,
@@ -152,8 +153,13 @@ function causeCode(error: unknown, fallback: ErrorCode): ErrorCode {
     : (filesystemErrorCode(error) ?? fallback);
 }
 
-/** A failure of a filesystem step before publication: the step is the message, the failure its cause. */
+/**
+ * A failure of a filesystem step before publication: the step is the message, the failure its
+ * cause. A missing path or directory target keeps its own report, whichever step found it.
+ */
 function stepError(step: string, error: unknown): FileMutationError {
+  const path = pathError(error);
+  if (path) return asPrepareError(path);
   return prepareError(causeCode(error, "FILESYSTEM_ERROR"), step, { cause: error });
 }
 

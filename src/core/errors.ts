@@ -83,3 +83,22 @@ export function filesystemErrorCode(
   if (code === "ENOENT") return "PATH_NOT_FOUND";
   return code === "EISDIR" ? "NOT_REGULAR_FILE" : "FILESYSTEM_ERROR";
 }
+
+/** A missing path or directory target as every tool reports it; undefined for any other failure. */
+export function pathError(error: unknown): HashlineError | undefined {
+  if (error instanceof HashlineError)
+    return error.errorCode in PATH_ERROR_MESSAGES ? error : undefined;
+  const code = filesystemErrorCode(error);
+  const cause = error instanceof Error ? error.cause : undefined;
+  if (code === "PATH_NOT_FOUND") {
+    // Node's resolved path shows where a relative path led, such as under the wrong directory.
+    const path: unknown = Reflect.get(error as object, "path");
+    return new HashlineError(code, PATH_ERROR_MESSAGES[code], {
+      cause,
+      facts: typeof path === "string" ? { missing: [path] } : {},
+    });
+  }
+  return code === "NOT_REGULAR_FILE"
+    ? new HashlineError(code, PATH_ERROR_MESSAGES[code], { cause })
+    : undefined;
+}
