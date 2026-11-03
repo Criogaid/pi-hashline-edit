@@ -112,12 +112,12 @@ export function detailsReport(details: unknown): Report | undefined {
 
 /** Tool results carry their report in details; Pi argument failures carry it as their final text block. */
 export function reportOf(
-  result: { readonly content?: Content; readonly details?: unknown },
+  result: { readonly content: Content; readonly details?: unknown },
   tool: ReportTool,
 ): Report | undefined {
   const report = detailsReport(result.details);
   if (report) return report;
-  const last = result.content?.at(-1);
+  const last = result.content.at(-1);
   return last?.type === "text" ? decodeReport(last.text, tool) : undefined;
 }
 

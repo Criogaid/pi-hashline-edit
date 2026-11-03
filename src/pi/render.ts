@@ -100,10 +100,10 @@ export function formatDiffCounts(counts: DiffCounts, theme: Theme): string {
  */
 function publishDiffCounts(
   diff: string | undefined,
-  context: { state?: MutationRenderState },
+  context: { state: MutationRenderState },
   refreshHeader: (counts: DiffCounts) => void,
 ): void {
-  if (!diff || !context?.state) return;
+  if (!diff) return;
   const counts = countDiffLines(diff);
   const prev: DiffCounts | undefined = context.state.diffCounts;
   context.state.diffCounts = counts;
@@ -115,12 +115,12 @@ function publishDiffCounts(
 export function renderMutationCall<TArgs>(
   args: TArgs,
   theme: Theme,
-  context: { lastComponent?: Component; state?: MutationRenderState },
+  context: { lastComponent?: Component; state: MutationRenderState },
   header: (args: TArgs, theme: Theme, counts?: DiffCounts) => string,
 ): Text {
-  const text = (context?.lastComponent as Text | undefined) ?? new Text("", 0, 0);
-  if (context?.state) context.state.callText = text;
-  text.setText(header(args, theme, context?.state?.diffCounts));
+  const text = (context.lastComponent as Text | undefined) ?? new Text("", 0, 0);
+  context.state.callText = text;
+  text.setText(header(args, theme, context.state.diffCounts));
   return text;
 }
 
@@ -167,7 +167,10 @@ function factLines(key: string, value: unknown, theme: Theme, indent = ""): stri
 }
 
 /** Highlight field issues. */
-function argumentLines(report: Report, theme: Theme): string[] {
+function argumentLines(
+  report: Extract<Report, { error: "INVALID_ARGUMENTS" }>,
+  theme: Theme,
+): string[] {
   const lines = [theme.fg("error", theme.bold(`Invalid arguments · ${report.tool} not executed`))];
   // Keep source omission notices ahead of the bounded collapsed preview.
   if (report.schemaLimited)
@@ -176,7 +179,7 @@ function argumentLines(report: Report, theme: Theme): string[] {
     );
   if (report.omittedIssues)
     lines.push(theme.fg("warning", `${report.omittedIssues} issues omitted from diagnostic.`));
-  for (const { field, reason, fix } of report.issues ?? []) {
+  for (const { field, reason, fix } of report.issues) {
     const [first, ...rest] = reason.split("\n");
     lines.push(`${theme.fg("accent", theme.bold(field))}: ${theme.fg("error", first)}`);
     for (const line of rest) lines.push(`  ${theme.fg("error", line)}`);
@@ -269,7 +272,7 @@ export function renderMutationResult<TArgs>(
   >,
   { isPartial, expanded }: ToolRenderResultOptions,
   theme: Theme,
-  context: { isError: boolean; args: TArgs; state?: MutationRenderState },
+  context: { isError: boolean; args: TArgs; state: MutationRenderState },
   pending: string,
   header: (args: TArgs, theme: Theme, counts?: DiffCounts) => string,
   tool: MutationToolName,
@@ -280,7 +283,7 @@ export function renderMutationResult<TArgs>(
   const diff = result.details?.diff;
   // Refresh in place: invalidation inside a renderer re-enters updateDisplay.
   publishDiffCounts(diff, context, (counts) => {
-    context.state?.callText?.setText(header(context.args, theme, counts));
+    context.state.callText?.setText(header(context.args, theme, counts));
   });
   const { report } = splitReport(result);
   const facts = report ? reportLines(report, theme, MUTATION_CARD_SHOWN) : [];

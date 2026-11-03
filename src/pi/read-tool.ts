@@ -154,7 +154,7 @@ export function makeReadOverride(
     renderResult(result, options, theme, context) {
       const { isPartial, expanded } = options;
       if (isPartial) return new Text(theme.fg("warning", "Reading…"), 0, 0);
-      if (context?.isError) return renderToolError(result, "read", theme, expanded);
+      if (context.isError) return renderToolError(result, "read", theme, expanded);
       const { content, report } = splitReport(result);
       if (result.details?.nativeRead)
         return builtin.renderResult!({ ...result, content }, options, theme, context);
@@ -164,7 +164,7 @@ export function makeReadOverride(
       const raw = content[0]?.type === "text" ? content[0].text : "";
       return new Text(
         [
-          renderReadBody(raw, String(context?.args?.path ?? ""), theme),
+          renderReadBody(raw, String(context.args?.path ?? ""), theme),
           ...(report ? reportLines(report, theme) : []),
         ].join("\n"),
         0,
