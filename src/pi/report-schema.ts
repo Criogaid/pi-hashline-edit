@@ -6,7 +6,7 @@
  * One report describes every result of every tool, success or failure. A
  * failure report is the entire result; a success report follows the tool's
  * content payload (read rows, grep rows). Each field has one
- * owning layer (README "Reports"), so no fact can be stated twice. report.ts
+ * owning layer, so no fact can be stated twice. report.ts
  * omits the call's tool and path from result text; render.ts uses the full report for the TUI.
  *
  * Types derive from these schemas. src/core imports only types from this module,
@@ -176,9 +176,10 @@ const FACT_FIELDS = {
   conflict: Type.Array(Type.String(), {
     description: "The first conflicting pair of inputs found; more conflicts may exist.",
   }),
-  // Replacement rules (core/replace.ts, replace-regex.ts).
+  // Replacement rules (core/replace.ts).
   unmatched: Type.Array(Type.String(), { description: "Rules that match nothing." }),
   line: Type.Integer({ minimum: 1, description: "Line where the conflicting match starts." }),
+  // Worker and ripgrep processes (regex-worker.ts, rg-process.ts).
   timeoutMs: Type.Integer({ minimum: 1 }),
   exitCode: Type.Union([Type.Integer(), Type.Null()]),
   // read outcome; `outputLimit` below is shared with grep.
@@ -460,15 +461,12 @@ const MUTATION_WIRE_FIELDS = {
   then_run: REPORT_SCHEMA.properties.then_run,
   progressError: REPORT_SCHEMA.properties.progressError,
 };
-const FAILURE_WIRE_FIELDS = {
-  cause: REPORT_SCHEMA.properties.cause,
-};
 const FAILURE_SCHEMAS = ERROR_CODES.map((code) =>
   Type.Object(
     {
       ...COMMON_WIRE_FIELDS,
       ...MUTATION_WIRE_FIELDS,
-      ...FAILURE_WIRE_FIELDS,
+      cause: REPORT_SCHEMA.properties.cause,
       error: Type.Literal(code),
       message: code === MESSAGE_OPTIONAL ? opt(Type.String()) : Type.String(),
       ...ERROR_DEFINITIONS[code].facts.properties,
@@ -513,7 +511,7 @@ export type SuccessReport = {
 export type FailureReport = {
   [C in ErrorCode]: ReportVariant<
     Envelope & { tool: ReportTool; error: C } & MutationFields &
-      Fields<typeof FAILURE_WIRE_FIELDS> &
+      Pick<ReportFields, "cause"> &
       (C extends typeof MESSAGE_OPTIONAL ? { message?: string } : { message: string }) &
       Static<Definitions[C]["facts"]>
   >;

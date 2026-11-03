@@ -19,7 +19,8 @@ import type {
   SuccessFacts,
   SuccessReport,
 } from "./report-schema.ts";
-import { causeOf, reportResult, type ReportDetails } from "./report.ts";
+import { reportResult, type ReportDetails } from "./report.ts";
+import { causeOf } from "./report-cause.ts";
 import type { OutputBudgets } from "./budgets.ts";
 import type { ActionFusionProgress } from "./action-fusion.ts";
 

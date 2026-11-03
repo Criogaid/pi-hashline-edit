@@ -89,7 +89,7 @@ export type ApplyFailure =
       readonly kind: "overlap";
       readonly message: string;
       /** Indexes in the input `edits[]` of the first conflicting pair found, ascending. */
-      readonly conflict: readonly number[];
+      readonly conflict: readonly [number, number];
     };
 
 /**

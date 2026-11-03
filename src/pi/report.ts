@@ -27,7 +27,6 @@ import {
 } from "../core/errors.ts";
 import { boundedText, causeOf } from "./report-cause.ts";
 import type { OutputBudgets } from "./budgets.ts";
-export { boundedText, causeOf } from "./report-cause.ts";
 import { cancellationError } from "./error-text.ts";
 import { FileMutationError } from "./file-commit.ts";
 import {
@@ -60,6 +59,9 @@ export type ReportText<R extends Report = Report> = R extends unknown
   ? Omit<R, "tool" | "path">
   : never;
 
+/** Fields the originating call supplies, which a result's text never repeats. */
+const CALL_FIELDS = new Set(["tool", "path"]);
+
 /** The fields a report states, in schema order; both renderers list them in this order. */
 export function reportEntries(report: ReportText): [string, unknown][] {
   return Object.keys(REPORT_SCHEMA.properties).flatMap((key) => {
@@ -70,7 +72,7 @@ export function reportEntries(report: ReportText): [string, unknown][] {
 
 /** Serialize facts in schema order; a result never repeats its call's tool and path. */
 export function renderReport(report: ReportText): string {
-  const entries = reportEntries(report).filter(([key]) => !ENVELOPE.has(key));
+  const entries = reportEntries(report).filter(([key]) => !CALL_FIELDS.has(key));
   return JSON.stringify(Object.fromEntries(entries), null, 2);
 }
 
@@ -119,8 +121,6 @@ export function reportOf(
   return last?.type === "text" ? decodeReport(last.text, tool) : undefined;
 }
 
-const ENVELOPE = new Set(["tool", "path"]);
-
 /** The recovery a successful result's facts call for: the first in OUTCOME_NEXT order. */
 function outcomeNext(report: Report): string | undefined {
   return OUTCOME_NEXT.find(([fact]) => report[fact] !== undefined)?.[1];
@@ -139,7 +139,7 @@ export function reportResult<TDetails extends object | undefined>(
     reportEntries({ ...report, next: outcomeNext(report) }),
   ) as SuccessReport;
   const stated = Object.entries(complete).some(
-    ([key, value]) => value !== undefined && !ENVELOPE.has(key),
+    ([key, value]) => value !== undefined && !CALL_FIELDS.has(key),
   );
   return {
     content:

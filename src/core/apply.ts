@@ -264,7 +264,10 @@ export function applyEdits(
       failure: {
         kind: "overlap",
         message: repeatedInsertion ? "Two edits insert at one position." : "Two edits overlap.",
-        conflict: [previous.opIndex, current.opIndex].sort((a, b) => a - b),
+        conflict: [
+          Math.min(previous.opIndex, current.opIndex),
+          Math.max(previous.opIndex, current.opIndex),
+        ],
       },
     };
   }

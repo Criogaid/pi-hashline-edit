@@ -4,7 +4,8 @@
  * so it travels as the thrown message only. Oversized issues are omitted whole.
  */
 import type { OutputBudgets } from "./budgets.ts";
-import { boundedText, renderReport, type ReportText } from "./report.ts";
+import { renderReport, type ReportText } from "./report.ts";
+import { boundedText } from "./report-cause.ts";
 import type { ArgumentIssue, FailureReport } from "./report-schema.ts";
 
 type ArgumentRejection = ReportText<Extract<FailureReport, { error: "INVALID_ARGUMENTS" }>>;

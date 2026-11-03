@@ -36,7 +36,8 @@ import {
 } from "./mutation-result.ts";
 import { errnoCode, errorMessage } from "../core/errors.ts";
 import { throwIfCancelled } from "./error-text.ts";
-import { causeOf, CommandNotRun, type ReportDetails } from "./report.ts";
+import { CommandNotRun, type ReportDetails } from "./report.ts";
+import { causeOf } from "./report-cause.ts";
 import type { OutputBudgets } from "./budgets.ts";
 import type {
   ActionFusionProgress,

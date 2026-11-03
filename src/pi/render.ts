@@ -186,7 +186,7 @@ function argumentLines(report: Report, theme: Theme): string[] {
 }
 
 /** Fields every card shows in its own header or call line. */
-const ENVELOPE_FIELDS = ["error", "tool", "path", "publication", "message", "next"];
+const HEADER_FIELDS = ["error", "tool", "path", "publication", "message", "next"];
 
 /**
  * The one TUI presentation of a report: for a failure, a header with the code,
@@ -213,7 +213,7 @@ export function reportLines(
       for (const line of report.message.split("\n")) lines.push(theme.fg("error", line));
   }
   for (const [key, value] of reportEntries(report)) {
-    if (ENVELOPE_FIELDS.includes(key) || shown.has(key)) continue;
+    if (HEADER_FIELDS.includes(key) || shown.has(key)) continue;
     for (const line of factLines(key, value, theme)) lines.push(line);
   }
   if (report.next !== undefined) lines.push(`${theme.fg("dim", "next:")} ${report.next}`);
