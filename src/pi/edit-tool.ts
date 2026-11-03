@@ -406,7 +406,7 @@ function runEdit(
     const result = applyEdits(currentText, translated, hashLen, shiftRadius);
     if (!result.ok) {
       throw describeEditFailure(
-        result.failure,
+        result.failures,
         { currentText, anchors: anchorFormatter },
         target.budget,
       );

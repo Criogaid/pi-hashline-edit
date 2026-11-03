@@ -78,29 +78,14 @@ export interface AnchorFailure {
   readonly recovery: AnchorRecovery;
 }
 
-/** Batch-level failure. */
-export type ApplyFailure =
-  | {
-      readonly kind: "anchor";
-      readonly failures: readonly AnchorFailure[];
-    }
-  | {
-      /** Two ranges overlap, or two insertions share a position. */
-      readonly kind: "overlap";
-      readonly message: string;
-      /** Indexes in the input `edits[]` of the first conflicting pair found, ascending. */
-      readonly conflict: readonly [number, number];
-    };
-
 /**
  * Apply result. Byte-identical output is a success; the commit layer detects the no-op.
- * On failure, `failure` is either the collected set of anchor failures
- * (each with recovery) or an overlap.
- * Nothing is written on failure.
+ * On failure, `failures` is the collected set of anchor failures, each with recovery;
+ * the tool layer bounds and formats them. Nothing is written on failure.
  */
 export type ApplyResult =
   | {
       readonly ok: true;
       readonly text: string;
     }
-  | { readonly ok: false; readonly failure: ApplyFailure };
+  | { readonly ok: false; readonly failures: readonly AnchorFailure[] };

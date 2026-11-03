@@ -13,7 +13,7 @@
 
 import { type AnchorFormatter, displayCarriageReturns } from "./anchor-format.ts";
 import { splitLines } from "../core/lines.ts";
-import type { Anchor, AnchorFailure, ApplyFailure } from "../core/types.ts";
+import type { Anchor, AnchorFailure } from "../core/types.ts";
 import { mergeRanges } from "../core/ranges.ts";
 import { HashlineError } from "../core/errors.ts";
 import { formatByteSize, type OutputBudgets } from "./budgets.ts";
@@ -173,32 +173,22 @@ function failureEntry(
   return entry;
 }
 
-/** Classify a rejected edit batch with its bounded facts. */
+/** Classify a batch's anchor failures with their bounded facts. */
 export function describeEditFailure(
-  failure: ApplyFailure,
+  failures: readonly AnchorFailure[],
   snapshot: Snapshot,
   budget: OutputBudgets,
-): HashlineError<"ANCHOR_MISMATCH" | "OVERLAPPING_EDITS"> {
-  if (failure.kind === "overlap")
-    return new HashlineError("OVERLAPPING_EDITS", failure.message, {
-      facts: { conflict: failure.conflict.map((opIndex) => `edits[${opIndex}]`) },
-    });
-
+): HashlineError<"ANCHOR_MISMATCH"> {
   const currentLines = splitLines(snapshot.currentText);
   const { kept, omitted } = boundedFacts(
-    failure.failures.map((f) => failureEntry(f, snapshot, currentLines, budget)),
+    failures.map((f) => failureEntry(f, snapshot, currentLines, budget)),
     budget.blockBytes,
   );
   return new HashlineError("ANCHOR_MISMATCH", "Anchors did not match the current file.", {
     facts: {
       failures: kept,
       ...(omitted ? { omittedFailures: omitted } : {}),
-      ...ambiguousCandidateNeighborhoods(
-        snapshot.currentText,
-        failure.failures,
-        snapshot.anchors,
-        budget,
-      ),
+      ...ambiguousCandidateNeighborhoods(snapshot.currentText, failures, snapshot.anchors, budget),
     },
   });
 }

@@ -39,14 +39,8 @@ import {
   replacementSeparator,
   splitLines,
 } from "./lines.ts";
-import type {
-  Anchor,
-  AnchorFailure,
-  AnchorRecovery,
-  ApplyFailure,
-  ApplyResult,
-  Edit,
-} from "./types.ts";
+import type { Anchor, AnchorFailure, AnchorRecovery, ApplyResult, Edit } from "./types.ts";
+import { HashlineError } from "./errors.ts";
 import { findSortedRangeConflict } from "./ranges.ts";
 
 /** Replace `[lo, hi)` with caller text or a range captured from the verified original lines. */
@@ -246,7 +240,7 @@ export function applyEdits(
   // Anchor failures take priority: the model must fix anchors first; overlaps
   // among surviving ops are premature until anchors are corrected.
   if (anchorFailures.length > 0) {
-    return { ok: false, failure: { kind: "anchor", failures: anchorFailures } };
+    return { ok: false, failures: anchorFailures };
   }
 
   const sorted = [...ops].sort((a, b) => a.lo - b.lo || a.hi - b.hi);
@@ -259,17 +253,19 @@ export function applyEdits(
     const previous = sorted[conflict - 1];
     const repeatedInsertion =
       current.lo === current.hi && previous.lo === current.lo && previous.hi === current.hi;
-    return {
-      ok: false,
-      failure: {
-        kind: "overlap",
-        message: repeatedInsertion ? "Two edits insert at one position." : "Two edits overlap.",
-        conflict: [
-          Math.min(previous.opIndex, current.opIndex),
-          Math.max(previous.opIndex, current.opIndex),
-        ],
+    throw new HashlineError(
+      "OVERLAPPING_EDITS",
+      repeatedInsertion ? "Two edits insert at one position." : "Two edits overlap.",
+      {
+        // The first conflicting pair found, ascending.
+        facts: {
+          conflict: [
+            `edits[${Math.min(previous.opIndex, current.opIndex)}]`,
+            `edits[${Math.max(previous.opIndex, current.opIndex)}]`,
+          ],
+        },
       },
-    };
+    );
   }
 
   // Mixed line endings: each line carries the separator that FOLLOWED it in

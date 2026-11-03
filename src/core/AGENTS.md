@@ -5,7 +5,7 @@ Internal pure engine: no Pi imports and no public API. It trusts input already f
 ## Modules
 
 - `hash.ts` computes position-dependent line checksums (line number + content → `LINE#HASH`). `lines.ts` handles splitting, line-ending detection, and physical line counts. `text.ts` does strict UTF-8 decoding.
-- `apply.ts` `applyEdits` validates a whole batch of `Edit` ops (see `types.ts`) against a single snapshot: anchor checks, overlap and conflict detection, and shifted-anchor recovery (`AnchorRecovery`: local `shiftRadius` search, then full file). It returns new text or structured failures and never touches the filesystem.
+- `apply.ts` `applyEdits` validates a whole batch of `Edit` ops (see `types.ts`) against a single snapshot: anchor checks, overlap and conflict detection, and shifted-anchor recovery (`AnchorRecovery`: local `shiftRadius` search, then full file). It returns new text or structured anchor failures, throws `OVERLAPPING_EDITS` for an overlap, and never touches the filesystem.
 - `regex.ts` builds JavaScript regexes on the LF view (`regexSource`, `buildRegex`) for both grep and replace; neither engine imports the other.
 - `replace.ts` is replace's engine: literal and JavaScript-regex matching on the LF view, separator restoration, and overlap rejection. `replace-schema.ts` defines the tool's replacement schema and the engine's result schema, with their derived types.
 - `search.ts` evaluates native JavaScript queries on the LF view and returns bounded physical rows; `search-schema.ts` defines its result.
