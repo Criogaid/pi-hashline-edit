@@ -45,13 +45,6 @@ const PUBLICATION_SCHEMA = Type.Union([
 ]);
 export type PublicationStatus = Static<typeof PUBLICATION_SCHEMA>;
 
-const STAGE_SCHEMA = Type.Union([
-  Type.Literal("prepare"),
-  Type.Literal("commit"),
-  Type.Literal("post_process"),
-]);
-export type MutationStage = Static<typeof STAGE_SCHEMA>;
-
 const FRESHNESS_SCHEMA = Type.Union([
   Type.Literal("unchanged"),
   Type.Literal("changed"),
@@ -431,7 +424,6 @@ export const REPORT_SCHEMA = Type.Object({
   tool: Type.String(),
   path: opt(Type.Union([Type.String(), Type.Array(Type.String())])),
   publication: opt(PUBLICATION_SCHEMA),
-  stage: opt(STAGE_SCHEMA),
   message: opt(Type.String()),
   cause: opt(CAUSE_SCHEMA),
   ...(Object.fromEntries(
@@ -483,7 +475,6 @@ const MUTATION_WIRE_FIELDS = {
   progressError: REPORT_SCHEMA.properties.progressError,
 };
 const FAILURE_WIRE_FIELDS = {
-  stage: REPORT_SCHEMA.properties.stage,
   cause: REPORT_SCHEMA.properties.cause,
 };
 const FAILURE_SCHEMAS = ERROR_CODES.map((code) =>

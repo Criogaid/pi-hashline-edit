@@ -26,7 +26,7 @@ pi 扩展 `@criogaid/pi-hashline-edit`，注册入口为 `src/index.ts`。它替
 - `edit/replace` 提交绑定实际读取字节的 revision。Action Fusion 以提交层返回的 `publishedRevision` 为 freshness 基线；revision 不进入工具结果。
 - Return successful mutations as one report without anchor rows; keep anchors in read/grep output and edit failure diagnostics. Keep diffs in mutation details for the TUI.
 - 不为旧版本保存的数据（会话回放中的结果、报告、Fusion 卡片）保留兼容：格式变更直接破坏性更新，旧数据按非法输入处理；唯一例外是会导致 Pi 崩溃的输入。
-- 保留提交阶段与 `NOT_PUBLISHED` / `PUBLISHED` / `UNKNOWN` 状态，分别报告文件发布结果和后续命令结果。
+- 保留 `NOT_PUBLISHED` / `PUBLISHED` / `UNKNOWN` 状态，分别报告文件发布结果和后续命令结果。
 - Action Fusion 通过 `ctx.executeTool("bash", ...)` 调用会话中的 Bash，遵循 override、`tool_call` 和 `tool_result` 钩子；以最终会话结果判定命令状态并向父结果传递 `terminate`，命令失败不回滚已发布文件。
 - 配置字段为 `hashlineEdit`。项目 `.pi/settings.json` 的该字段整体替换全局字段；每个设置项单独校验，缺失或非法时回退默认值。类型、范围和默认值只在 `src/pi/config.ts` 的 schema 中定义。全局路径通过 `getAgentDir()` 获取。
 - 工具在注册时接收解析后的配置并在生命周期内保持不变；修改配置需要 reload。

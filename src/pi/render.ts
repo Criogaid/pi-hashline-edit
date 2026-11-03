@@ -186,7 +186,7 @@ function argumentLines(report: Report, theme: Theme): string[] {
 }
 
 /** Fields every card shows in its own header or call line. */
-const ENVELOPE_FIELDS = ["error", "tool", "path", "publication", "stage", "message", "next"];
+const ENVELOPE_FIELDS = ["error", "tool", "path", "publication", "message", "next"];
 
 /**
  * The one TUI presentation of a report: for a failure, a header with the code,
@@ -207,10 +207,7 @@ export function reportLines(
     lines.push(theme.fg("error", theme.bold(`${report.error} · ${report.tool}${target}`)));
     if (report.publication !== undefined)
       lines.push(
-        theme.fg(
-          report.publication === "NOT_PUBLISHED" ? "dim" : "warning",
-          `${report.publication}${report.stage === undefined ? "" : ` · ${report.stage}`}`,
-        ),
+        theme.fg(report.publication === "NOT_PUBLISHED" ? "dim" : "warning", report.publication),
       );
     if (report.message !== undefined)
       for (const line of report.message.split("\n")) lines.push(theme.fg("error", line));

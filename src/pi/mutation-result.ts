@@ -44,13 +44,9 @@ export function postProcessMutation<T>(publication: PublicationStatus, build: ()
   try {
     return build();
   } catch (error) {
-    throw new FileMutationError(
-      "POST_PROCESS_FAILED",
-      "post_process",
-      publication,
-      "Result generation failed.",
-      { cause: error },
-    );
+    throw new FileMutationError("POST_PROCESS_FAILED", publication, "Result generation failed.", {
+      cause: error,
+    });
   }
 }
 

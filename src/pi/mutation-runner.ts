@@ -13,7 +13,7 @@
  * returns a typed `MutationOutcome` (commit facts, details, outcome facts);
  * `finalizeMutation` alone turns it into the result, so nothing
  * downstream reads publication or revisions back from result details. Every
- * failure leaves as one report with the call's path, stage, and publication.
+ * failure leaves as one report with the call's path and publication.
  *
  * `runTextMutation` adds the read-modify-write sequence shared by edit and
  * replace: snapshot bound to the bytes read, cancellation before apply and

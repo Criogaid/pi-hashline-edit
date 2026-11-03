@@ -3,7 +3,7 @@
  *
  * Every result of every tool states its facts in one report (report-schema.ts).
  * Layers return structured facts and never append sentences: the commit layer
- * owns publication, stage, and freshness; each tool owns its outcome facts;
+ * owns publication and freshness; each tool owns its outcome facts;
  * Action Fusion owns `then_run`. This module builds the
  * report of a success or a failure, derives its single `next`, and owns the
  * one model-facing serialization: one JSON object in schema order, without the
@@ -246,18 +246,12 @@ export function describeFailure(
       ? failure.publication
       : ("NOT_PUBLISHED" as const)
     : undefined;
-  const stage = mutation
-    ? failure instanceof FileMutationError
-      ? failure.stage
-      : ("prepare" as const)
-    : undefined;
   // HashlineError's constructor ties its facts to its code; the union cannot carry that link.
   return {
     error: failure.errorCode,
     tool,
     path: context.path as Report["path"],
     publication,
-    stage,
     message: boundedText(failure.message, budget.fieldBytes),
     cause: causeOf(failure.cause, budget.fieldBytes),
     ...failure.facts,

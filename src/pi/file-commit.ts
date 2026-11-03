@@ -31,7 +31,7 @@ import {
 } from "../core/errors.ts";
 import { cancellationError, FileChangedDuringReadError, throwIfCancelled } from "./error-text.ts";
 import { withFileRead } from "./file-read.ts";
-import type { Freshness, MutationStage, PublicationStatus } from "./report-schema.ts";
+import type { Freshness, PublicationStatus } from "./report-schema.ts";
 
 /**
  * How a commit treats the target. `create` requires that it not exist. `overwrite` requires
@@ -61,23 +61,20 @@ export type CommitResult = CommitRevisions &
   );
 
 /**
- * A mutation failure with the stage it reached and what it published. Other
- * failures of a mutation tool happened while preparing and published nothing.
+ * A mutation failure with what it published. Other failures of a mutation tool
+ * happened while preparing and published nothing.
  */
 export class FileMutationError<C extends ErrorCode = ErrorCode> extends HashlineError<C> {
-  readonly stage: MutationStage;
   readonly publication: PublicationStatus;
 
   constructor(
     code: C,
-    stage: MutationStage,
     publication: PublicationStatus,
     message: string,
     ...options: HashlineErrorArguments<NoInfer<C>>
   ) {
     super(code, message, ...options);
     this.name = "FileMutationError";
-    this.stage = stage;
     this.publication = publication;
   }
 }
@@ -125,7 +122,7 @@ function prepareError<C extends ErrorCode>(
   message: string,
   ...options: HashlineErrorArguments<NoInfer<C>>
 ): FileMutationError<C> {
-  return new FileMutationError(code, "prepare", "NOT_PUBLISHED", message, ...options);
+  return new FileMutationError(code, "NOT_PUBLISHED", message, ...options);
 }
 
 /** A classified failure before any publication step keeps its code, facts, cause, and recovery. */
@@ -155,7 +152,7 @@ function causeCode(error: unknown, fallback: ErrorCode): ErrorCode {
     : (filesystemErrorCode(error) ?? fallback);
 }
 
-/** A prepare-stage failure of a filesystem step: the step is the message, the failure its cause. */
+/** A failure of a filesystem step before publication: the step is the message, the failure its cause. */
 function stepError(step: string, error: unknown): FileMutationError {
   return prepareError(causeCode(error, "FILESYSTEM_ERROR"), step, { cause: error });
 }
@@ -247,19 +244,14 @@ async function publishCreate(
     if (errnoCode(error) === "EEXIST" || errnoCode(error) === "ENOTEMPTY") {
       throw new FileMutationError(
         "TARGET_EXISTS",
-        "commit",
         "NOT_PUBLISHED",
         "Target appeared during create.",
         { cause: error },
       );
     }
-    throw new FileMutationError(
-      "PUBLISH_FAILED",
-      "commit",
-      "UNKNOWN",
-      "Unable to publish new target.",
-      { cause: error },
-    );
+    throw new FileMutationError("PUBLISH_FAILED", "UNKNOWN", "Unable to publish new target.", {
+      cause: error,
+    });
   }
 }
 
@@ -273,13 +265,9 @@ async function publishReplace(
   try {
     await rename(tempPath, targetPath);
   } catch (error) {
-    throw new FileMutationError(
-      "PUBLISH_FAILED",
-      "commit",
-      "UNKNOWN",
-      "Unable to publish replacement.",
-      { cause: error },
-    );
+    throw new FileMutationError("PUBLISH_FAILED", "UNKNOWN", "Unable to publish replacement.", {
+      cause: error,
+    });
   }
 }
 
@@ -366,7 +354,6 @@ export async function commitFile(
   } catch (error) {
     throw new FileMutationError(
       "PUBLISH_FAILED",
-      "commit",
       "NOT_PUBLISHED",
       "Unable to prepare temporary publication area.",
       { cause: error },
@@ -403,7 +390,6 @@ export async function commitFile(
       if (error instanceof FileChangedDuringReadError) return committed;
       throw new FileMutationError(
         "POST_PROCESS_FAILED",
-        "post_process",
         "PUBLISHED",
         "Final revision could not be read.",
         { cause: error },
@@ -414,17 +400,15 @@ export async function commitFile(
     if (published)
       throw new FileMutationError(
         "POST_PROCESS_FAILED",
-        "post_process",
         "PUBLISHED",
         "Post-publication processing failed.",
         { cause: error },
       );
     // Cancellation keeps its own record; any other failure here stopped before publication.
     if (error instanceof HashlineError && error.errorCode === "OPERATION_ABORTED")
-      throw new FileMutationError("OPERATION_ABORTED", "commit", "NOT_PUBLISHED", error.message);
+      throw new FileMutationError("OPERATION_ABORTED", "NOT_PUBLISHED", error.message);
     throw new FileMutationError(
       "PUBLISH_FAILED",
-      "commit",
       "NOT_PUBLISHED",
       "Unable to prepare or publish target.",
       { cause: error },
