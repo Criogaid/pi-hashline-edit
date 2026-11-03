@@ -24,7 +24,7 @@ export function buildRegex(find: string, literal: boolean, flagsRaw: string | un
 /**
  * Report V8's diagnostics for a rule's flags and, in regex mode, for each pattern that
  * buildRegex would reject. Invalid flags stop the check, since every pattern compiles with
- * them; values that are not non-empty strings are left to schema validation.
+ * them; values that are not strings are left to schema validation.
  */
 export function checkRegexArguments(
   flagsField: string,
@@ -41,7 +41,7 @@ export function checkRegexArguments(
   }
   if (literal) return;
   for (const [field, value] of patterns) {
-    if (typeof value !== "string" || value === "") continue;
+    if (typeof value !== "string") continue;
     try {
       buildRegex(value, false, flags);
     } catch (error) {

@@ -129,17 +129,18 @@ async function formatMatches(options: FormatMatchesOptions) {
                 filePath,
                 (number) => windowSet.has(number),
                 (line) => {
-                  if (line.text === undefined) return;
+                  // No maxLineBytes: every selected line keeps its text.
+                  const text = line.text!;
                   // Rows make CR visible one unit for one, so preview columns stay source columns.
                   const { text: display, wasTruncated } = previewLine(
-                    line.text,
+                    text,
                     columns.get(line.number),
                     budget.grepPreviewUnits,
                   );
                   if (wasTruncated) firstTruncatedLine ??= lines.length;
                   lines.push(
                     snapshot.validUtf8
-                      ? anchors.row(line.number, line.text, display)
+                      ? anchors.row(line.number, text, display)
                       : plainRow(line.number, display),
                   );
                 },
@@ -148,7 +149,7 @@ async function formatMatches(options: FormatMatchesOptions) {
                   decoding: "lossy",
                 },
               );
-              if (stats.hasNul) throw searchChangedError();
+              // A NUL the search did not see also changes the revision.
               if (snapshot.revision !== stats.revision) {
                 throw searchChangedError();
               }
