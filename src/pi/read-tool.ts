@@ -66,7 +66,6 @@ const READ_HEADER = /^(.+?) · (\d+ lines(?: \(from line \d+\))?(?: · no traili
  */
 function renderReadBody(raw: string, path: string, theme: Theme): string {
   const lines = raw.split("\n");
-  if (lines.length === 0) return "";
   const out: string[] = [];
 
   // Header: "<path> · <N> lines", optionally followed by " (from line <offset>)"
@@ -99,7 +98,7 @@ function renderReadBody(raw: string, path: string, theme: Theme): string {
   } else {
     rendered = detabbed.map((l) => theme.fg("toolOutput", l));
   }
-  for (let i = 0; i < rendered.length && i < lineNos.length; i++) {
+  for (let i = 0; i < rendered.length; i++) {
     out.push(theme.fg("dim", `   ${lineNos[i]}: `) + rendered[i]);
   }
 

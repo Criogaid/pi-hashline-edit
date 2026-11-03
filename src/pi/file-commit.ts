@@ -106,16 +106,6 @@ export async function readEditableSnapshot(path: string, signal?: AbortSignal) {
   }
 }
 
-/** Publish a read-modify-write result against its source revision. Callers own the queue. */
-export function commitReplacement(
-  path: string,
-  text: string,
-  baseRevision: string,
-  signal?: AbortSignal,
-): Promise<CommitResult> {
-  return commitFile(path, text, { mode: "overwrite", baseRevision, signal });
-}
-
 /**
  * A failure of a filesystem step before publication: the step is the message, the failure its
  * cause, whose classification it keeps. A missing path or directory target keeps its own report,

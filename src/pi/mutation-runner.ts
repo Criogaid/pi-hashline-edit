@@ -35,7 +35,7 @@ import {
 } from "./action-fusion.ts";
 import { createArgumentPreparer, type CheckArguments } from "./argument-validation.ts";
 import type { MutationToolName } from "./report-schema.ts";
-import { commitFreshness, commitReplacement, readEditableSnapshot } from "./file-commit.ts";
+import { commitFile, commitFreshness, readEditableSnapshot } from "./file-commit.ts";
 import {
   finalizeMutation,
   generateMutationDetails,
@@ -205,7 +205,11 @@ export async function runTextMutation<TTool extends MutationToolName>(
   // Cancelled before write: don't touch the disk.
   throwIfCancelled(signal);
 
-  const commit = await commitReplacement(absolutePath, next.text, baseRevision, signal);
+  const commit = await commitFile(absolutePath, next.text, {
+    mode: "overwrite",
+    baseRevision,
+    signal,
+  });
   return postProcessMutation(commit.publication, () => ({
     commit,
     details: generateMutationDetails(currentText, next.text),

@@ -113,7 +113,6 @@ export const DEFAULT_CONFIG: HashlineEditConfig = resolveSetting(configSchema, {
 /** Parse JSON directly without stripping comments (standard JSON forbids comments; on error fall back to default). */
 function readSettings(filePath: string): Record<string, unknown> {
   try {
-    if (!fs.existsSync(filePath)) return {};
     return asRecord(JSON.parse(fs.readFileSync(filePath, "utf-8")));
   } catch {
     return {};
