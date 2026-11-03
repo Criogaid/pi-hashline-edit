@@ -247,8 +247,8 @@ export function registerFusionCards(pi: ExtensionAPI) {
     return card;
   });
 
-  return (progress: ActionFusionProgress, ctx?: ExtensionContext) => {
-    if (ctx?.cwd) currentCwd = ctx.cwd;
+  return (progress: ActionFusionProgress, ctx: ExtensionContext) => {
+    currentCwd = ctx.cwd;
     const first = !states.has(progress.toolCallId);
     states.set(progress.toolCallId, progress);
     const pending = progress.command === "waiting" || progress.command === "running";
