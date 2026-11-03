@@ -3,7 +3,8 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { FileMutationError, readEditableSnapshot } from "./file-commit.ts";
+import { HashlineError } from "../core/errors.ts";
+import { readEditableSnapshot } from "./file-commit.ts";
 
 test("snapshot cancelled while opening → rejects as an unpublished cancellation", async (t) => {
   const directory = await mkdtemp(join(tmpdir(), "hashline-snapshot-"));
@@ -15,10 +16,7 @@ test("snapshot cancelled while opening → rejects as an unpublished cancellatio
   controller.abort();
   await assert.rejects(
     reading,
-    (error: unknown) =>
-      error instanceof FileMutationError &&
-      error.publication === "NOT_PUBLISHED" &&
-      error.message.startsWith("Operation aborted"),
+    (error: unknown) => error instanceof HashlineError && error.errorCode === "OPERATION_ABORTED",
   );
   assert.equal(await readFile(path, "utf8"), "before\n");
 });

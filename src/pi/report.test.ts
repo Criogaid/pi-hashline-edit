@@ -3,12 +3,12 @@ import { test } from "node:test";
 import { stripVTControlCharacters } from "node:util";
 import { initTheme } from "@earendil-works/pi-coding-agent";
 import { theme } from "../../node_modules/@earendil-works/pi-coding-agent/dist/modes/interactive/theme/theme.js";
-import { PATH_ERROR_MESSAGES } from "../core/errors.ts";
+import { HashlineError, PATH_ERROR_MESSAGES } from "../core/errors.ts";
 import { FileMutationError } from "./file-commit.ts";
 import { formatArgumentError } from "./argument-error.ts";
 import { renderToolError, splitReport } from "./render.ts";
+import { causeOf } from "./report-cause.ts";
 import {
-  causeOf,
   decodeReport,
   failureResult,
   reportOf,
@@ -212,13 +212,21 @@ test("native path errors → classify fixed messages and retain the missing path
 
 test("mutation publication → recovery reflects whether the change was saved", () => {
   for (const [publication, expected] of [
+    ["NOT_PUBLISHED", undefined],
     ["PUBLISHED", "The change is saved; do not repeat it. Read the file before further edits."],
     [
       "UNKNOWN",
       "The change may or may not be saved. Read the file, and repeat the change only if it is missing.",
     ],
   ] as const) {
-    const error = new FileMutationError("FILESYSTEM_ERROR", publication, "failed");
+    const error =
+      publication === "NOT_PUBLISHED"
+        ? new HashlineError("PUBLISH_FAILED", "failed")
+        : new FileMutationError(
+            publication === "PUBLISHED" ? "POST_PROCESS_FAILED" : "PUBLISH_FAILED",
+            publication,
+            "failed",
+          );
     const report = describeFailure("edit", error, { budget: DEFAULT_OUTPUT_BUDGETS });
     assert.equal(report.publication, publication);
     assert.equal(report.next, expected);

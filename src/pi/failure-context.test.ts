@@ -16,7 +16,6 @@ function failure(recovery: AnchorFailure["recovery"]): AnchorFailure {
     op: "replace",
     cited: { line: 1, hash: "OLD" },
     recovery,
-    current: null,
   };
 }
 function ambiguous(lines: readonly string[], positions: number[], hashLen = 4): AnchorFailure {

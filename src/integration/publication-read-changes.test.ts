@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test, type TestContext } from "node:test";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
+import { HashlineError } from "../core/errors.ts";
 import { createActionFusionExecutor } from "../pi/action-fusion.ts";
 import { DEFAULT_OUTPUT_BUDGETS } from "../pi/budgets.ts";
 import { DEFAULT_CONFIG } from "../pi/config.ts";
@@ -288,13 +289,11 @@ test("concurrent change during pre-publication revision read → rejects without
               ...(phase !== "inspect target" ? { baseRevision: revision } : {}),
             }),
             (error: unknown) => {
-              assert.ok(error instanceof FileMutationError);
-              assert.equal(error.publication, "NOT_PUBLISHED");
+              assert.ok(error instanceof HashlineError);
               assert.equal(error.errorCode, "FILE_CHANGED");
-              assert.equal(
-                describeFailure("write", error, { budget: DEFAULT_OUTPUT_BUDGETS }).next,
-                "Retry the call.",
-              );
+              const report = describeFailure("write", error, { budget: DEFAULT_OUTPUT_BUDGETS });
+              assert.equal(report.publication, "NOT_PUBLISHED");
+              assert.equal(report.next, "Retry the call.");
               return true;
             },
           );
@@ -302,6 +301,64 @@ test("concurrent change during pre-publication revision read → rejects without
       );
       await assertTarget(path, BEFORE, "append");
     });
+  }
+});
+
+test("target disappears or becomes a directory before publication → keeps the path error without publishing", async (t) => {
+  for (const phase of ["inspect target", "revision recheck", "no-op check"] as const) {
+    for (const disturbance of ["missing", "directory"] as const) {
+      await t.test(`${phase}: ${disturbance}`, async (t) => {
+        const { directory, path } = await targetFile(t, BEFORE);
+        const originalPath = join(directory, "original.txt");
+        const revision = byteRevision(Buffer.from(BEFORE));
+        const nativeOpen = fs.promises.open;
+        let disturbed = false;
+        t.mock.method(fs.promises, "open", async (...args: Parameters<typeof nativeOpen>) => {
+          if (args[0] === path && !disturbed) {
+            disturbed = true;
+            // Keep the displaced inode to prove the commit never changed its bytes.
+            fs.renameSync(path, originalPath);
+            if (disturbance === "directory") fs.mkdirSync(path);
+          }
+          return nativeOpen(...args);
+        });
+        syncBuiltinESMExports();
+        try {
+          await assert.rejects(
+            commitFile(path, phase === "no-op check" ? BEFORE : PUBLISHED, {
+              mode: "overwrite",
+              ...(phase !== "inspect target" ? { baseRevision: revision } : {}),
+            }),
+            (error: unknown) => {
+              assert.ok(error instanceof HashlineError);
+              assert.equal(
+                error.errorCode,
+                disturbance === "missing" ? "PATH_NOT_FOUND" : "NOT_REGULAR_FILE",
+              );
+              const report = describeFailure("write", error, {
+                path,
+                budget: DEFAULT_OUTPUT_BUDGETS,
+              });
+              assert.equal(
+                report.message,
+                disturbance === "missing" ? "Path not found." : "Path is not a regular file.",
+              );
+              assert.deepEqual(report.missing, disturbance === "missing" ? [path] : undefined);
+              assert.equal(report.publication, "NOT_PUBLISHED");
+              assert.equal(error.cause, undefined);
+              return true;
+            },
+          );
+          assert.equal(disturbed, true, "the intended target read must be disturbed");
+          assert.deepEqual(await readFile(originalPath), Buffer.from(BEFORE));
+          if (disturbance === "directory") assert.deepEqual(fs.readdirSync(path), []);
+          else await assertTarget(path, BEFORE, "delete");
+        } finally {
+          t.mock.restoreAll();
+          syncBuiltinESMExports();
+        }
+      });
+    }
   }
 });
 

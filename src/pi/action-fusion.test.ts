@@ -11,6 +11,7 @@ import { makeWriteOverride } from "./write-tool.ts";
 import { computeLineHash } from "../core/hash.ts";
 import type { ActionFusionProgress, CommandOutcome } from "./action-fusion.ts";
 import { ACTION_FUSION_GUIDELINES, createActionFusionExecutor } from "./action-fusion.ts";
+import { HashlineError } from "../core/errors.ts";
 import { FileMutationError } from "./file-commit.ts";
 import { DEFAULT_OUTPUT_BUDGETS } from "./budgets.ts";
 import { DEFAULT_CONFIG } from "./config.ts";
@@ -674,7 +675,9 @@ test("Fusion fails at a mutation or command boundary → reports each command ou
           ctx: context,
           mutate: async () => {
             if (scenario === "failed") throw new Error("mutation diagnostic");
-            if (scenario === "NOT_PUBLISHED" || scenario === "PUBLISHED" || scenario === "UNKNOWN")
+            if (scenario === "NOT_PUBLISHED")
+              throw new HashlineError("PUBLISH_FAILED", "mutation diagnostic");
+            if (scenario === "PUBLISHED" || scenario === "UNKNOWN")
               throw new FileMutationError(
                 scenario === "PUBLISHED" ? "POST_PROCESS_FAILED" : "PUBLISH_FAILED",
                 scenario,

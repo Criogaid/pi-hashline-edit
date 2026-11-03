@@ -4,7 +4,7 @@ import { test } from "node:test";
 import { HashlineError } from "../core/errors.ts";
 import { runRegexReplacements } from "../pi/replace-regex.ts";
 import { DEFAULT_OUTPUT_BUDGETS } from "../pi/budgets.ts";
-import { causeOf } from "../pi/report.ts";
+import { causeOf } from "../pi/report-cause.ts";
 import type { Cause } from "../pi/report-schema.ts";
 
 const timeoutMs = 10_000;

@@ -414,7 +414,7 @@ test("shifted recovery: duplicate content → ambiguous candidates", () => {
   );
 });
 
-test("shifted recovery: content genuinely changed → none, with live content", () => {
+test("shifted recovery: content genuinely changed → none", () => {
   const readText = "a\nb\nc\n";
   const currentText = "a\nBCHANGED\nc\n"; // "b" is gone
   const r = applyEdits(
@@ -426,7 +426,6 @@ test("shifted recovery: content genuinely changed → none, with live content", 
   assert.ok(!r.ok && r.failure.kind === "anchor");
   const f = r.failure.failures[0];
   assert.equal(f.recovery.kind, "none");
-  assert.equal(f.current?.content, "BCHANGED");
 });
 
 test("full-file recovery finds distant content and anchors beyond the current EOF", () => {

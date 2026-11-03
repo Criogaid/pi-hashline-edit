@@ -29,11 +29,12 @@ import {
   type FreshnessObservation,
 } from "./file-commit.ts";
 import { byteRevision } from "./file-revision.ts";
-import { PATH_ERROR_MESSAGES } from "../core/errors.ts";
+import { HashlineError, PATH_ERROR_MESSAGES } from "../core/errors.ts";
 import { createActionFusionExecutor } from "./action-fusion.ts";
 import { makeWriteOverride } from "./write-tool.ts";
 import { callTool } from "./tool-call.testing.ts";
-import { reportOf } from "./report.ts";
+import { describeFailure, reportOf } from "./report.ts";
+import { DEFAULT_OUTPUT_BUDGETS } from "./budgets.ts";
 
 // Checked by tsc; these states cannot be returned by the commit layer.
 function invalidCommitStates() {
@@ -123,8 +124,8 @@ test("independent create commits race at the no-replace publication primitive", 
     const rejected = results.find(
       (result) => result.status === "rejected",
     ) as PromiseRejectedResult;
-    assert.ok(rejected.reason instanceof FileMutationError);
-    assert.equal(rejected.reason.publication, "NOT_PUBLISHED");
+    assert.ok(rejected.reason instanceof HashlineError);
+    assert.equal(rejected.reason.errorCode, "TARGET_EXISTS");
     assert.match(await readFile(target, "utf8"), /^winner-[ab]\n$/);
   }));
 
@@ -135,8 +136,7 @@ test("create never overwrites an existing target", async () =>
     const revision = await fileRevision(target);
     await assert.rejects(
       commitFile(target, "replacement\n", { mode: "create" }),
-      (error: unknown) =>
-        error instanceof FileMutationError && error.publication === "NOT_PUBLISHED",
+      (error: unknown) => error instanceof HashlineError && error.errorCode === "TARGET_EXISTS",
     );
     assert.equal(await fileRevision(target), revision);
     assert.equal(await readFile(target, "utf8"), "original\n");
@@ -237,10 +237,11 @@ test("directories are rejected instead of entering regular-file publication", as
   withTemp(async (dir) => {
     const target = join(dir, "directory");
     await mkdir(target);
-    await assert.rejects(commitFile(target, "bad\n", { mode: "overwrite" }), {
-      errorCode: "NOT_REGULAR_FILE",
-      message: PATH_ERROR_MESSAGES.NOT_REGULAR_FILE,
-      publication: "NOT_PUBLISHED",
+    await assert.rejects(commitFile(target, "bad\n", { mode: "overwrite" }), (error: unknown) => {
+      assert.ok(error instanceof HashlineError);
+      assert.equal(error.errorCode, "NOT_REGULAR_FILE");
+      assert.equal(error.message, PATH_ERROR_MESSAGES.NOT_REGULAR_FILE);
+      return true;
     });
   }));
 
@@ -329,8 +330,13 @@ test("cancellation racing publication never reports a settled operation as unpub
       publication = result.publication;
       assert.equal(publication, "PUBLISHED");
     } catch (error) {
-      assert.ok(error instanceof FileMutationError);
-      publication = error.publication;
+      assert.ok(error instanceof HashlineError);
+      if (!(error instanceof FileMutationError)) assert.equal(error.errorCode, "OPERATION_ABORTED");
+      const reported = describeFailure("write", error, {
+        budget: DEFAULT_OUTPUT_BUDGETS,
+      }).publication;
+      assert.ok(reported);
+      publication = reported;
     }
     const finalContent = await readFile(target, "utf8");
     assert.ok(finalContent === oldContent || finalContent === newContent);
@@ -363,9 +369,7 @@ test("commit rejects lossy UTF-8 output before modifying or creating files", asy
         await assert.rejects(
           commitFile(path, content, { mode: path === existing ? "overwrite" : "create" }),
           (error: unknown) =>
-            error instanceof FileMutationError &&
-            error.publication === "NOT_PUBLISHED" &&
-            error.errorCode === "INVALID_UNICODE",
+            error instanceof HashlineError && error.errorCode === "INVALID_UNICODE",
         );
       }
     }
@@ -403,23 +407,22 @@ test("identical commits preserve the file and still enforce mode, revision, and 
     await assert.rejects(
       commitFile(target, content, { mode: "overwrite", baseRevision: "stale" }),
       (error: unknown) =>
-        error instanceof FileMutationError &&
+        error instanceof HashlineError &&
         error.errorCode === "FILE_CHANGED" &&
-        error.publication === "NOT_PUBLISHED" &&
         /before publication/.test(error.message),
     );
     await assert.rejects(
       commitFile(target, content, { mode: "overwrite", signal: AbortSignal.abort() }),
-      (error: unknown) =>
-        error instanceof FileMutationError && error.publication === "NOT_PUBLISHED",
+      (error: unknown) => error instanceof HashlineError && error.errorCode === "OPERATION_ABORTED",
     );
     const missing = join(dir, "missing");
-    await assert.rejects(commitFile(missing, "", { mode: "overwrite" }), {
-      errorCode: "PATH_NOT_FOUND",
-      message: PATH_ERROR_MESSAGES.PATH_NOT_FOUND,
-      facts: { missing: [missing] },
-      next: "useCreate",
-      publication: "NOT_PUBLISHED",
+    await assert.rejects(commitFile(missing, "", { mode: "overwrite" }), (error: unknown) => {
+      assert.ok(error instanceof HashlineError);
+      assert.equal(error.errorCode, "PATH_NOT_FOUND");
+      assert.equal(error.message, PATH_ERROR_MESSAGES.PATH_NOT_FOUND);
+      assert.deepEqual(error.facts, { missing: [missing] });
+      assert.equal(error.next, "useCreate");
+      return true;
     });
     const created = await commitFile(join(dir, "empty"), "", { mode: "create" });
     assert.equal(created.created, true);
@@ -441,10 +444,7 @@ test("file changes after the read → bound commits reject changed and unchanged
     for (const content of [snapshot.text, "replacement\n"]) {
       await assert.rejects(
         () => commitReplacement(target, content, snapshot.baseRevision),
-        (error: unknown) =>
-          error instanceof FileMutationError &&
-          error.publication === "NOT_PUBLISHED" &&
-          error.errorCode === "FILE_CHANGED",
+        (error: unknown) => error instanceof HashlineError && error.errorCode === "FILE_CHANGED",
       );
       assert.equal(await readFile(target, "utf8"), "line 1\nmodified line 2\n");
       assert.equal(await fileRevision(target), externalRevision);
@@ -481,8 +481,7 @@ test("no-op commit with baseRevision rejects if target was deleted externally", 
 
     await assert.rejects(
       commitReplacement(target, snapshot.text, snapshot.baseRevision),
-      (error: unknown) =>
-        error instanceof FileMutationError && error.publication === "NOT_PUBLISHED",
+      (error: unknown) => error instanceof HashlineError && error.errorCode === "PATH_NOT_FOUND",
     );
   }));
 
@@ -514,9 +513,8 @@ test("commitFile temporary publication → handles existing and missing parents 
           await assert.rejects(
             commitFile(target, "data", { mode: "create" }),
             (error: unknown) =>
-              error instanceof FileMutationError &&
+              error instanceof HashlineError &&
               error.errorCode === "PUBLISH_FAILED" &&
-              error.publication === "NOT_PUBLISHED" &&
               error.cause === denied,
           );
           await assert.rejects(readFile(target), { code: "ENOENT" });
