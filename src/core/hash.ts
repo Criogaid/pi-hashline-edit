@@ -28,33 +28,13 @@ export const HASH_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
  * distributed, non-cryptographic. Uses `Math.imul` for correct 32-bit integer
  * multiplication under JS.
  */
-function fnv1a32(str: string, seed = 0x811c9dc5): number {
-  let h = seed;
+function fnv1a32(str: string): number {
+  let h = 0x811c9dc5;
   for (let i = 0; i < str.length; i++) {
     h ^= str.charCodeAt(i);
     h = Math.imul(h, 0x01000193);
   }
   return h >>> 0;
-}
-
-/**
- * Compute the FNV-1a 32-bit hash of `${line}\n${content}` without allocating
- * the intermediate template string.
- */
-function fnv1a32Line(line: number, content: string): number {
-  let h = 0x811c9dc5;
-  // Feed digit characters of the line number without String(line) allocation.
-  let n = line;
-  let divisor = 1;
-  while (divisor * 10 <= n) divisor *= 10;
-  while (divisor >= 1) {
-    h ^= (((n / divisor) | 0) % 10) + 48;
-    h = Math.imul(h, 0x01000193);
-    divisor = (divisor / 10) | 0;
-  }
-  h ^= 10;
-  h = Math.imul(h, 0x01000193);
-  return fnv1a32(content, h);
 }
 
 /**
@@ -84,5 +64,5 @@ export const HASH_LEN_MAX = 8;
  * @param len     caller-selected hash length
  */
 export function computeLineHash(line: number, content: string, len: number): string {
-  return toBase32(fnv1a32Line(line, content), len);
+  return toBase32(fnv1a32(`${line}\n${content}`), len);
 }
