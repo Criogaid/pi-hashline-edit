@@ -22,22 +22,6 @@ import { formatByteSize } from "./budgets.ts";
 export const COMMON_RG_ARGS = ["--no-config", "--color=never", "--sort=path"];
 export const MAX_RG_RECORD_BYTES = 16 * 1024 * 1024;
 const RG_RECORD_LIMIT_MESSAGE = `ripgrep output record exceeds ${formatByteSize(MAX_RG_RECORD_BYTES)}.`;
-/**
- * A ripgrep process or output-protocol failure. A finished run contributes its
- * exit code and, as the cause, its stderr.
- */
-function ripgrepFailure(
-  message: string,
-  run?: { readonly code: number | null; readonly stderr: string } | { readonly error: unknown },
-): HashlineError<"RIPGREP_FAILED"> {
-  if (run === undefined) return new HashlineError("RIPGREP_FAILED", message);
-  if ("error" in run) return new HashlineError("RIPGREP_FAILED", message, { cause: run.error });
-  const stderr = run.stderr.trim();
-  return new HashlineError("RIPGREP_FAILED", message, {
-    facts: { exitCode: run.code },
-    ...(stderr ? { cause: stderr } : {}),
-  });
-}
 
 /** rg reported a path that is not valid UTF-8; tools cannot address it. */
 function unsupportedPath(): HashlineError {
@@ -139,11 +123,13 @@ async function* nulDelimitedRecords(stream: Readable): AsyncGenerator<Buffer> {
     pending = Buffer.alloc(0);
     let at: number;
     while ((at = buf.indexOf("\0")) !== -1) {
-      if (at > MAX_RG_RECORD_BYTES) throw ripgrepFailure(RG_RECORD_LIMIT_MESSAGE);
+      if (at > MAX_RG_RECORD_BYTES)
+        throw new HashlineError("RIPGREP_FAILED", RG_RECORD_LIMIT_MESSAGE);
       yield buf.subarray(0, at);
       buf = buf.subarray(at + 1);
     }
-    if (buf.length > MAX_RG_RECORD_BYTES) throw ripgrepFailure(RG_RECORD_LIMIT_MESSAGE);
+    if (buf.length > MAX_RG_RECORD_BYTES)
+      throw new HashlineError("RIPGREP_FAILED", RG_RECORD_LIMIT_MESSAGE);
     pending = buf;
   }
   if (pending.length) yield pending;
@@ -163,7 +149,8 @@ async function runRg(
     if (stopped) process.kill();
     const result = await process.done;
     throwIfCancelled(signal);
-    if (result.error) throw ripgrepFailure("Failed to run ripgrep.", { error: result.error });
+    if (result.error)
+      throw new HashlineError("RIPGREP_FAILED", "Failed to run ripgrep.", { cause: result.error });
     return { code: result.code, stderr: result.stderr, stopped };
   } finally {
     process.kill();
@@ -245,15 +232,17 @@ export function runRgLines(
           const colon = record.indexOf(58);
           const line = colon > 0 ? Number(record.subarray(0, colon).toString("latin1")) : NaN;
           if (!Number.isSafeInteger(line) || line < 1)
-            throw ripgrepFailure("ripgrep printed an unexpected line record.");
+            throw new HashlineError("RIPGREP_FAILED", "ripgrep printed an unexpected line record.");
           if (lines.length < maxLines) lines.push(line);
           else lines = undefined;
         }
       }
       pending = buf.subarray(at);
-      if (pending.length > MAX_RG_RECORD_BYTES) throw ripgrepFailure(RG_RECORD_LIMIT_MESSAGE);
+      if (pending.length > MAX_RG_RECORD_BYTES)
+        throw new HashlineError("RIPGREP_FAILED", RG_RECORD_LIMIT_MESSAGE);
     }
-    if (pending.length) throw ripgrepFailure("ripgrep printed an incomplete line record.");
+    if (pending.length)
+      throw new HashlineError("RIPGREP_FAILED", "ripgrep printed an incomplete line record.");
     return path === undefined || flush();
   });
 }

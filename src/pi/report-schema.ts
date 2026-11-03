@@ -179,7 +179,7 @@ const FACT_FIELDS = {
   // Replacement rules (core/replace.ts).
   unmatched: Type.Array(Type.String(), { description: "Rules that match nothing." }),
   line: Type.Integer({ minimum: 1, description: "Line where the conflicting match starts." }),
-  // Worker and ripgrep processes (regex-worker.ts, rg-process.ts).
+  // Regex workers (regex-worker.ts).
   timeoutMs: Type.Integer({ minimum: 1 }),
   exitCode: Type.Union([Type.Integer(), Type.Null()]),
   // read outcome; `outputLimit` below is shared with grep.
@@ -340,7 +340,7 @@ export const ERROR_DEFINITIONS = {
     facts: facts(["diagnostics"], ["scanned", "scanLimit"]),
   },
   RIPGREP_FAILED: {
-    facts: facts([], ["exitCode"]),
+    facts: NONE,
   },
   UNSUPPORTED_PATH: {
     facts: NONE,
