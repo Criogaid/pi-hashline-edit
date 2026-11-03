@@ -1,7 +1,19 @@
 /** Run a validated replacement batch through the shared isolated regex lifecycle. */
-import type { Replacement, ReplacementResult } from "../core/replace-schema.ts";
-import { decodeWorkerReply, type ReplacementRequest } from "./replace-worker-contract.ts";
+import {
+  REPLACEMENT_RESULT_SCHEMA,
+  type Replacement,
+  type ReplacementResult,
+} from "../core/replace-schema.ts";
+import { workerReplyDecoder } from "./regex-worker-contract.ts";
 import { withRegexWorker } from "./regex-worker.ts";
+
+export interface ReplacementRequest {
+  readonly source: string;
+  readonly rules: readonly Replacement[];
+}
+
+/** Shared worker errors are checked by the host. */
+export const decodeWorkerReply = workerReplyDecoder(REPLACEMENT_RESULT_SCHEMA);
 
 export function runRegexReplacements(
   source: string,

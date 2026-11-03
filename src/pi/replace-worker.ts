@@ -1,6 +1,6 @@
 import { parentPort } from "node:worker_threads";
 import { applyReplacements } from "../core/replace.ts";
-import type { ReplacementRequest } from "./replace-worker-contract.ts";
+import type { ReplacementRequest } from "./replace-regex.ts";
 // report-cause.ts only: the worker runs on plain jiti without the host's typebox mapping.
 import { workerFailure } from "./report-cause.ts";
 
