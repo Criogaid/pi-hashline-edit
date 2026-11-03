@@ -387,7 +387,9 @@ test("replace header retains the rule count when a long path wraps", () => {
       { literal: true, find: "third", replace: "fourth" },
     ],
   };
-  const header = tool.renderCall(args, stubTheme, {} as Parameters<typeof tool.renderCall>[2]);
+  const header = tool.renderCall(args, stubTheme, {
+    state: {},
+  } as Parameters<typeof tool.renderCall>[2]);
   assert.match(header.render(120).join("\n"), /2 rules/);
   assert.match(header.render(80).join("\n"), /2\s+rules/);
 });

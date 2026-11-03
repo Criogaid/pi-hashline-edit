@@ -53,7 +53,7 @@ test("empty logical diff → render according to confirmed publication state", (
         },
         { isPartial: false, expanded: true },
         theme,
-        { isError: false, args: {} },
+        { isError: false, args: {}, state: {} },
         "Editing…",
         () => "",
         "edit",
