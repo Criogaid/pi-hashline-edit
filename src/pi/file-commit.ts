@@ -285,7 +285,6 @@ export async function commitFile(
     if (baseRevision !== undefined) {
       let currentRevision: string;
       try {
-        throwIfCancelled(options.signal);
         currentRevision = await fileRevision(target.publishPath);
         throwIfCancelled(options.signal);
       } catch (error) {

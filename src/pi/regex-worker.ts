@@ -85,7 +85,6 @@ export async function withRegexWorker<Input, Result, Output>(
       });
     });
   try {
-    if (signal?.aborted) abort();
     return await execute(run);
   } finally {
     clear();

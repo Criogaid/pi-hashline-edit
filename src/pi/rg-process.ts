@@ -104,7 +104,6 @@ function startRg(rgPath: string, args: readonly string[], signal?: AbortSignal):
     });
   });
   signal?.addEventListener("abort", kill, { once: true });
-  if (signal?.aborted) kill();
   return { child, done, kill };
 }
 
