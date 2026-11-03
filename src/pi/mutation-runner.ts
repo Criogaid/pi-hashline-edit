@@ -63,26 +63,33 @@ export interface MutationTarget {
   readonly budget: OutputBudgets;
 }
 
-interface MutationToolSpec<
-  TParams extends { path: string },
-  TDetails,
-  TTool extends MutationToolName,
-> {
+/** A mutation tool's own parameters; executeMutation separates then_run. */
+type MutationParams<P extends TProperties> = Static<TObject<P>> & { readonly path: string };
+
+/** What a mutation tool supplies to the shared definition; renderers stay with the tool. */
+interface MutationToolSpec<P extends TProperties, TDetails, TTool extends MutationToolName> {
   readonly tool: TTool;
   readonly cwd: string;
   readonly fusion: ActionFusionExecutor | undefined;
   readonly budgets: OutputBudgetProvider;
+  /** Parameters without then_run, which Action Fusion adds. */
+  readonly schema: TObject<P>;
+  readonly description: string;
+  readonly promptSnippet: string;
+  readonly promptGuidelines?: readonly string[];
+  /** Semantic argument checks the schema cannot express. */
+  readonly check?: CheckArguments;
   /** Perform the mutation. Runs inside the file mutation queue. */
   run(
-    params: Omit<TParams, "then_run">,
+    params: Omit<MutationParams<P>, "then_run">,
     target: MutationTarget,
   ): Promise<MutationOutcome<TDetails, TTool>>;
 }
 
-interface MutationCall<TParams, TDetails> {
+interface MutationCall<P extends TProperties, TDetails> {
   readonly toolCallId: string;
   /** Arguments already prepared and validated by Pi against the tool schema. */
-  readonly params: TParams & { then_run?: ThenRunInput };
+  readonly params: MutationParams<P> & { then_run?: ThenRunInput };
   readonly signal: AbortSignal | undefined;
   readonly onUpdate: AgentToolUpdateCallback<MutationResultDetails<TDetails>> | undefined;
   readonly ctx: ExtensionToolContext;
@@ -90,12 +97,12 @@ interface MutationCall<TParams, TDetails> {
 
 /** Queue and publish one validated mutation call, then run its then_run command when fused. */
 async function executeMutation<
-  TParams extends { path: string },
+  P extends TProperties,
   TDetails extends object,
   TTool extends MutationToolName,
 >(
-  spec: MutationToolSpec<TParams, TDetails, TTool>,
-  call: MutationCall<TParams, TDetails>,
+  spec: MutationToolSpec<P, TDetails, TTool>,
+  call: MutationCall<P, TDetails>,
 ): Promise<AgentToolResult<MutationFinalDetails<TDetails>>> {
   const { cwd, fusion, tool } = spec;
   const { toolCallId, signal, onUpdate, ctx } = call;
@@ -133,21 +140,6 @@ async function executeMutation<
   });
 }
 
-/** A mutation tool's own parameters; executeMutation separates then_run. */
-type MutationParams<P extends TProperties> = Static<TObject<P>> & { readonly path: string };
-
-/** What a mutation tool supplies to the shared definition; renderers stay with the tool. */
-interface MutationToolBaseSpec<P extends TProperties, TDetails, TTool extends MutationToolName>
-  extends MutationToolSpec<MutationParams<P>, TDetails, TTool> {
-  /** Parameters without then_run, which Action Fusion adds. */
-  readonly schema: TObject<P>;
-  readonly description: string;
-  readonly promptSnippet: string;
-  readonly promptGuidelines?: readonly string[];
-  /** Semantic argument checks the schema cannot express. */
-  readonly check?: CheckArguments;
-}
-
 /**
  * The definition every mutation tool shares. Action Fusion adds then_run to the
  * schema, description, and guidelines only when it is on; arguments are prepared
@@ -157,7 +149,7 @@ export function mutationToolBase<
   P extends TProperties,
   TDetails extends object,
   TTool extends MutationToolName,
->(spec: MutationToolBaseSpec<P, TDetails, TTool>) {
+>(spec: MutationToolSpec<P, TDetails, TTool>) {
   const { tool, schema, fusion, budgets } = spec;
   const actionFusion = fusion !== undefined;
   const parameters = withThenRunSchema(schema, tool, actionFusion);
