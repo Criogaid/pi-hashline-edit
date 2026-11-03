@@ -63,7 +63,7 @@ export interface MutationTarget {
   readonly budget: OutputBudgets;
 }
 
-/** A mutation tool's own parameters; executeMutation separates then_run. */
+/** A mutation tool's own parameters; `execute` separates then_run. */
 type MutationParams<P extends TProperties> = Static<TObject<P>> & { readonly path: string };
 
 /** What a mutation tool supplies to the shared definition; renderers stay with the tool. */
@@ -86,71 +86,18 @@ interface MutationToolSpec<P extends TProperties, TDetails, TTool extends Mutati
   ): Promise<MutationOutcome<TDetails, TTool>>;
 }
 
-interface MutationCall<P extends TProperties, TDetails> {
-  readonly toolCallId: string;
-  /** Arguments already prepared and validated by Pi against the tool schema. */
-  readonly params: MutationParams<P> & { then_run?: ThenRunInput };
-  readonly signal: AbortSignal | undefined;
-  readonly onUpdate: AgentToolUpdateCallback<MutationResultDetails<TDetails>> | undefined;
-  readonly ctx: ExtensionToolContext;
-}
-
-/** Queue and publish one validated mutation call, then run its then_run command when fused. */
-async function executeMutation<
-  P extends TProperties,
-  TDetails extends object,
-  TTool extends MutationToolName,
->(
-  spec: MutationToolSpec<P, TDetails, TTool>,
-  call: MutationCall<P, TDetails>,
-): Promise<AgentToolResult<MutationFinalDetails<TDetails>>> {
-  const { cwd, fusion, tool } = spec;
-  const { toolCallId, signal, onUpdate, ctx } = call;
-  const { then_run, ...mutationParams } = call.params;
-  const displayPath = mutationParams.path;
-  const budget = spec.budgets();
-  return runTool(tool, { path: displayPath, signal, budget }, async () => {
-    const absolutePath = canonicalPath(cwd, displayPath);
-    const target: MutationTarget = { absolutePath, signal, budget };
-    const mutate = (): Promise<MutationOutcome<TDetails, TTool>> =>
-      withFileMutationQueue(absolutePath, () => spec.run(mutationParams, target));
-    if (!fusion) {
-      const outcome = await mutate();
-      return finalizeMutation(
-        tool,
-        displayPath,
-        outcome,
-        commitFreshness(outcome.commit),
-        undefined,
-        budget,
-      );
-    }
-    return fusion({
-      toolCallId,
-      tool,
-      displayPath,
-      absolutePath,
-      thenRun: then_run,
-      budget,
-      mutate,
-      signal,
-      ctx,
-      onUpdate,
-    });
-  });
-}
-
 /**
  * The definition every mutation tool shares. Action Fusion adds then_run to the
  * schema, description, and guidelines only when it is on; arguments are prepared
- * against the parameters Pi registers; execution runs through executeMutation.
+ * against the parameters Pi registers; `execute` queues and publishes one
+ * validated call, then runs its then_run command when fused.
  */
 export function mutationToolBase<
   P extends TProperties,
   TDetails extends object,
   TTool extends MutationToolName,
 >(spec: MutationToolSpec<P, TDetails, TTool>) {
-  const { tool, schema, fusion, budgets } = spec;
+  const { tool, cwd, schema, fusion, budgets } = spec;
   const actionFusion = fusion !== undefined;
   const parameters = withThenRunSchema(schema, tool, actionFusion);
   return {
@@ -172,8 +119,39 @@ export function mutationToolBase<
       signal: AbortSignal | undefined,
       onUpdate: AgentToolUpdateCallback<MutationResultDetails<TDetails>> | undefined,
       ctx: ExtensionToolContext,
-    ) {
-      return executeMutation(spec, { toolCallId, params, signal, onUpdate, ctx });
+    ): Promise<AgentToolResult<MutationFinalDetails<TDetails>>> {
+      const { then_run, ...mutationParams } = params;
+      const displayPath = mutationParams.path;
+      const budget = budgets();
+      return runTool(tool, { path: displayPath, signal, budget }, async () => {
+        const absolutePath = canonicalPath(cwd, displayPath);
+        const target: MutationTarget = { absolutePath, signal, budget };
+        const mutate = (): Promise<MutationOutcome<TDetails, TTool>> =>
+          withFileMutationQueue(absolutePath, () => spec.run(mutationParams, target));
+        if (!fusion) {
+          const outcome = await mutate();
+          return finalizeMutation(
+            tool,
+            displayPath,
+            outcome,
+            commitFreshness(outcome.commit),
+            undefined,
+            budget,
+          );
+        }
+        return fusion({
+          toolCallId,
+          tool,
+          displayPath,
+          absolutePath,
+          thenRun: then_run,
+          budget,
+          mutate,
+          signal,
+          ctx,
+          onUpdate,
+        });
+      });
     },
   };
 }
