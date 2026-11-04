@@ -7,8 +7,8 @@ import { test } from "node:test";
 import { createActionFusionExecutor, type ActionFusionProgress } from "./action-fusion.ts";
 import { FileMutationError } from "./file-commit.ts";
 import { DEFAULT_OUTPUT_BUDGETS } from "./budgets.ts";
-import { REREAD } from "./report-schema.ts";
-import { CommandNotRun, describeFailure, renderReport, reportOf } from "./report.ts";
+import { CommandNotRun, describeMutationFailure } from "./mutation-result.ts";
+import { renderReport, reportOf } from "./report.ts";
 import { callTool, createToolContext } from "./tool-call.testing.ts";
 import { makeWriteOverride } from "./write-tool.ts";
 import { publishedMutation } from "./mutation-outcome.testing.ts";
@@ -21,7 +21,6 @@ async function withTemp<T>(run: (dir: string) => Promise<T>): Promise<T> {
     await rm(dir, { recursive: true, force: true });
   }
 }
-const mutation = (content: string) => publishedMutation(content, { content: [], details: {} });
 
 test("temporary preparation and cleanup failures → preserve the commit failure and target bytes", async (t) =>
   withTemp(async (dir) => {
@@ -81,10 +80,7 @@ test("published post-processing failure → skips command and preserves publicat
     );
     await assert.rejects(
       fusion({
-        budget: DEFAULT_OUTPUT_BUDGETS,
         toolCallId: "published",
-        tool: "edit",
-        displayPath: "published.txt",
         absolutePath: target,
         thenRun: { command: "check" },
         mutate: async () => {
@@ -98,7 +94,7 @@ test("published post-processing failure → skips command and preserves publicat
         assert.equal(error.status, "skipped");
         assert.equal(error.cause, mutationError);
         assert.equal(Object.hasOwn(error, "error"), false);
-        const report = describeFailure("edit", error, { budget: DEFAULT_OUTPUT_BUDGETS });
+        const report = describeMutationFailure("edit", error, { budget: DEFAULT_OUTPUT_BUDGETS });
         assert.equal(report.publication, "PUBLISHED");
         assert.equal(report.then_run?.status, "skipped");
         assert.match(report.next ?? "", /change is saved; do not repeat/);
@@ -125,25 +121,21 @@ test("cancellation after publication → does not rerun mutation and still inspe
         controller.abort();
         throw new Error("timed out");
       });
-      const outcome = await fusion({
-        budget: DEFAULT_OUTPUT_BUDGETS,
+      const settled = await fusion({
         toolCallId: "cancelled",
-        tool: "edit",
-        displayPath: `${state}.txt`,
         absolutePath: target,
         thenRun: { command: "check" },
         mutate: async () => {
           mutations++;
           await writeFile(target, "mutation\n");
-          return mutation("mutation\n");
+          return publishedMutation("mutation\n", { content: [], details: {} });
         },
         signal: controller.signal,
         ctx: await createToolContext(dir, t),
       });
-      const report = reportOf(outcome, "edit");
-      assert.equal(report?.publication, "PUBLISHED");
-      assert.equal(report?.then_run?.status, "cancelled");
-      assert.equal(report?.freshness, state);
+      assert.equal(settled.outcome.commit.publication, "PUBLISHED");
+      assert.equal(settled.command?.status, "cancelled");
+      assert.equal(settled.observation.freshness, state);
       assert.equal(mutations, 1);
       if (state === "changed") assert.equal(await readFile(target, "utf8"), "command changed\n");
       else await assert.rejects(readFile(target), { code: "ENOENT" });
@@ -161,22 +153,18 @@ test("first command fails → releases the queue for the next mutation", async (
       return { status: "succeeded", result: { content: [{ type: "text", text: "ok" }] } };
     });
     for (const content of ["first\n", "second\n"]) {
-      const result = await fusion({
-        budget: DEFAULT_OUTPUT_BUDGETS,
-        toolCallId: content,
-        tool: "edit",
-        displayPath: "queue.txt",
-        absolutePath: target,
-        thenRun: { command: "check" },
-        mutate: async () => {
-          await writeFile(target, content);
-          return mutation(content);
+      const result = await callTool(
+        makeWriteOverride(dir, fusion),
+        {
+          path: target,
+          content,
+          mode: calls === 0 ? "create" : "overwrite",
+          then_run: { command: "check" },
         },
-        signal: undefined,
-        ctx,
-      });
+        { toolCallId: content, ctx },
+      );
       assert.equal(
-        reportOf(result, "edit")?.then_run?.status,
+        reportOf(result, "write")?.then_run?.status,
         calls === 1 ? "failed" : "succeeded",
       );
     }
@@ -195,26 +183,51 @@ test("command succeeds on an unchanged target → retains the result and complet
       }),
       (event) => progress.push(event),
     );
-    const completed = await fusion({
-      budget: DEFAULT_OUTPUT_BUDGETS,
-      toolCallId: "finalize",
-      tool: "edit",
-      displayPath: "finalize.txt",
-      absolutePath: target,
-      thenRun: { command: "check" },
-      signal: undefined,
-      ctx: await createToolContext(dir, t),
-      mutate: async () => {
-        await writeFile(target, "saved\n");
-        return mutation("saved\n");
-      },
-    });
+    const completed = await callTool(
+      makeWriteOverride(dir, fusion),
+      { path: target, content: "saved\n", mode: "create", then_run: { command: "check" } },
+      { ctx: await createToolContext(dir, t) },
+    );
     assert.equal(completed.content.length, 1);
-    assert.equal(reportOf(completed, "edit")?.then_run?.status, "succeeded");
-    assert.equal(reportOf(completed, "edit")?.then_run?.output, "command finished");
+    assert.equal(reportOf(completed, "write")?.then_run?.status, "succeeded");
+    assert.equal(reportOf(completed, "write")?.then_run?.output, "command finished");
     assert.equal(progress.filter((event) => event.command === "succeeded").length, 1);
     assert.equal(progress.at(-1)?.freshness, "unchanged");
     assert.deepEqual(progress.at(-1)?.result, {
       content: [{ type: "text", text: "command finished" }],
     });
+  }));
+
+test("cancellation before mutation → reports a cancelled command without publishing", async (t) =>
+  withTemp(async (dir) => {
+    const target = join(dir, "cancelled.txt");
+    await writeFile(target, "before\n");
+    const controller = new AbortController();
+    controller.abort();
+    let commands = 0;
+    const progress: ActionFusionProgress[] = [];
+    const fusion = createActionFusionExecutor(
+      async () => {
+        commands++;
+        return { status: "succeeded", result: { content: [] } };
+      },
+      (event) => progress.push(event),
+    );
+    const result = await callTool(
+      makeWriteOverride(dir, fusion),
+      { path: target, mode: "overwrite", content: "after\n", then_run: { command: "check" } },
+      { signal: controller.signal, ctx: await createToolContext(dir, t) },
+    );
+    const report = reportOf(result, "write");
+    assert.equal(result.isError, true);
+    assert.equal(report?.error, "OPERATION_ABORTED");
+    assert.equal(report?.publication, "NOT_PUBLISHED");
+    assert.equal(report?.then_run?.status, "cancelled");
+    assert.deepEqual(
+      progress.map((event) => event.command),
+      ["waiting", "cancelled"],
+    );
+    assert.ok(progress.every((event) => !event.mutationCompleted));
+    assert.equal(commands, 0);
+    assert.equal(await readFile(target, "utf8"), "before\n");
   }));

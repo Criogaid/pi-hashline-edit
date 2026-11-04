@@ -5,6 +5,7 @@ import { initTheme } from "@earendil-works/pi-coding-agent";
 import { theme } from "../../node_modules/@earendil-works/pi-coding-agent/dist/modes/interactive/theme/theme.js";
 import { HashlineError, PATH_ERROR_MESSAGES } from "../core/errors.ts";
 import { FileMutationError } from "./file-commit.ts";
+import { describeMutationFailure } from "./mutation-result.ts";
 import { formatArgumentError } from "./argument-error.ts";
 import { renderToolError, splitReport } from "./render.ts";
 import { causeOf } from "./report-cause.ts";
@@ -231,7 +232,7 @@ test("mutation publication → recovery reflects whether the change was saved", 
             publication,
             "failed",
           );
-    const report = describeFailure("edit", error, { budget: DEFAULT_OUTPUT_BUDGETS });
+    const report = describeMutationFailure("edit", error, { budget: DEFAULT_OUTPUT_BUDGETS });
     assert.equal(report.publication, publication);
     assert.equal(report.next, expected);
     assert.equal(decodeReport(renderReport(report), "edit")?.next, expected);
@@ -406,9 +407,31 @@ test("hooked details contain a cyclic report cause → preserves payload and dec
 
 test("native mutation failure before commit → retains publication", () => {
   for (const tool of ["edit", "replace", "write"] as const) {
-    const report = describeFailure(tool, new Error("native failure"), {
+    const report = describeMutationFailure(tool, new Error("native failure"), {
       budget: DEFAULT_OUTPUT_BUDGETS,
     });
     assert.equal(report.publication, "NOT_PUBLISHED", tool);
+  }
+});
+
+test("failure classification without mutation facts → omits mutation state for every tool", () => {
+  for (const tool of ["read", "grep", "edit", "replace", "write"] as const) {
+    const error =
+      tool === "read" || tool === "grep"
+        ? new Error("native failure")
+        : new FileMutationError("POST_PROCESS_FAILED", "PUBLISHED", "result generation failed");
+    const report = describeFailure(tool, error, { budget: DEFAULT_OUTPUT_BUDGETS });
+    assert.equal(
+      report.error,
+      error instanceof FileMutationError ? "POST_PROCESS_FAILED" : "UNCLASSIFIED",
+    );
+    assert.equal(report.publication, undefined);
+    assert.equal(report.then_run, undefined);
+    assert.equal(report.progressError, undefined);
+    assert.equal(report.next, undefined);
+    const serialized: unknown = JSON.parse(renderReport(report));
+    assert.ok(typeof serialized === "object" && serialized !== null);
+    for (const field of ["publication", "then_run", "progressError", "next"])
+      assert.equal(Object.hasOwn(serialized, field), false);
   }
 });

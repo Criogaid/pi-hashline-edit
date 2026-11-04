@@ -14,8 +14,14 @@ import { makeWriteOverride } from "./write-tool.ts";
 import { makeEditOverride } from "./edit-tool.ts";
 import { commitFreshness, FileMutationError } from "./file-commit.ts";
 import { byteRevision } from "./file-revision.ts";
-import { finalizeMutation, postProcessMutation, type MutationOutcome } from "./mutation-result.ts";
-import { CommandNotRun, decodeReport, reportOf } from "./report.ts";
+import {
+  CommandNotRun,
+  describeMutationFailure,
+  finalizeMutation,
+  postProcessMutation,
+  type MutationOutcome,
+} from "./mutation-result.ts";
+import { decodeReport, reportOf } from "./report.ts";
 import { REREAD } from "./report-schema.ts";
 import { callTool, createToolContext as ctx } from "./tool-call.testing.ts";
 import { DEFAULT_CONFIG } from "./config.ts";
@@ -123,7 +129,7 @@ test("edit and replace commands change or remove the file → withhold anchors a
   }
 });
 
-test("progress callback failures preserve publication and do not prevent the command", async (t) => {
+test("progress callback failures → preserve publication and allow the command", async (t) => {
   const dir = await mkdtemp(join(tmpdir(), "hashline-progress-"));
   try {
     for (const callback of ["reporter", "update"]) {
@@ -158,35 +164,69 @@ test("progress callback failures preserve publication and do not prevent the com
       assert.equal(reportOf(result, "write")?.then_run?.status, "succeeded");
       assert.match(text(result), /display unavailable/);
     }
-    const fusion = createActionFusionExecutor(undefined, () => {
-      throw new Error("display unavailable");
-    });
-    await assert.rejects(
-      fusion({
-        budget: DEFAULT_OUTPUT_BUDGETS,
-        toolCallId: "failed",
-        absolutePath: join(dir, "failed"),
-        tool: "write",
-        displayPath: "failed",
-        thenRun: { command: "check" },
-        mutate: async () => {
-          throw new FileMutationError("POST_PROCESS_FAILED", "PUBLISHED", "original failure");
-        },
-        signal: undefined,
-        ctx: await ctx(dir, t),
-      }),
-      (error: unknown) =>
-        error instanceof CommandNotRun &&
-        error.cause instanceof FileMutationError &&
-        error.cause.publication === "PUBLISHED" &&
-        /original failure/.test(error.cause.message),
-    );
+    for (const publication of ["NOT_PUBLISHED", "PUBLISHED", "UNKNOWN"] as const) {
+      for (const progressError of [
+        "display unavailable",
+        Object.assign(new Error("display unavailable " + "界".repeat(anchorBudget.fieldBytes)), {
+          code: "EIO",
+          cause: new Error("nested " + "界".repeat(anchorBudget.fieldBytes)),
+        }),
+      ]) {
+        const mutationError = new FileMutationError(
+          "POST_PROCESS_FAILED",
+          publication,
+          "original failure",
+        );
+        const fusion = createActionFusionExecutor(undefined, () => {
+          throw progressError;
+        });
+        await assert.rejects(
+          fusion({
+            toolCallId: "failed",
+            absolutePath: join(dir, "failed"),
+            thenRun: { command: "check" },
+            mutate: async () => {
+              throw mutationError;
+            },
+            signal: undefined,
+            ctx: await ctx(dir, t),
+          }),
+          (error: unknown) => {
+            assert.ok(error instanceof CommandNotRun);
+            assert.equal(error.status, "skipped");
+            assert.equal(error.cause, mutationError);
+            assert.equal(error.progressError, progressError);
+            const report = describeMutationFailure("write", error, { budget: anchorBudget });
+            assert.equal(report.error, "POST_PROCESS_FAILED");
+            assert.equal(report.publication, publication);
+            assert.equal(report.message, "original failure");
+            assert.equal(report.then_run?.status, "skipped");
+            assert.ok(report.progressError);
+            if (typeof progressError === "string") {
+              assert.deepEqual(report.progressError, { message: progressError });
+            } else {
+              assert.equal(report.progressError.code, "EIO");
+              assert.ok(report.progressError.message.startsWith("display unavailable"));
+              assert.ok(Buffer.byteLength(report.progressError.message) <= anchorBudget.fieldBytes);
+              assert.notEqual(report.progressError.message, progressError.message);
+              assert.ok(report.progressError.cause);
+              assert.ok(report.progressError.cause.message.startsWith("nested"));
+              assert.ok(
+                Buffer.byteLength(report.progressError.cause.message) <= anchorBudget.fieldBytes,
+              );
+              assert.notEqual(report.progressError.cause.message, progressError.cause.message);
+            }
+            return true;
+          },
+        );
+      }
+    }
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
 });
 
-test("standalone and Fusion finalizers → take publication and freshness from commit facts, independent of diff", async (t) => {
+test("commit facts with absent or empty diff → determine standalone reports and Fusion outcomes", async (t) => {
   const dir = await mkdtemp(join(tmpdir(), "hashline-finalizer-"));
   try {
     const path = join(dir, "file");
@@ -219,6 +259,7 @@ test("standalone and Fusion finalizers → take publication and freshness from c
             DEFAULT_OUTPUT_BUDGETS,
           );
           assert.equal(reportOf(standalone, "edit")?.publication, publication);
+          assert.equal(standalone.content.length, 1);
           assert.equal(reportOf(standalone, "edit")?.freshness, fresh ? undefined : "changed");
           for (const thenRun of [undefined, { command: "check" }]) {
             let commands = 0;
@@ -229,9 +270,6 @@ test("standalone and Fusion finalizers → take publication and freshness from c
                 result: { content: [{ type: "text", text: "checked" }] },
               };
             })({
-              budget: DEFAULT_OUTPUT_BUDGETS,
-              tool: "edit",
-              displayPath: path,
               toolCallId: "commit-facts",
               absolutePath: path,
               thenRun,
@@ -239,18 +277,17 @@ test("standalone and Fusion finalizers → take publication and freshness from c
               signal: undefined,
               ctx: context,
             });
-            if (!thenRun) assert.deepEqual(fused.content, standalone.content);
-            assert.equal(fused.content.length, 1);
-            const report = reportOf(fused, "edit");
-            assert.equal(report?.publication, publication);
-            assert.equal(report?.freshness, fresh ? undefined : "changed");
+            assert.equal(fused.outcome, mutation);
+            assert.equal(fused.outcome.commit.publication, publication);
+            assert.equal(fused.observation.freshness, fresh ? "unchanged" : "changed");
+            if (!thenRun) assert.deepEqual(fused.observation, observation);
             assert.equal(
-              report?.then_run?.status,
+              fused.command?.status,
               thenRun ? (fresh ? "succeeded" : "skipped") : undefined,
             );
             assert.equal(commands, thenRun && fresh ? 1 : 0);
             for (const [key, value] of Object.entries(expectedDetails))
-              assert.deepEqual(Reflect.get(fused.details, key), value);
+              assert.deepEqual(Reflect.get(fused.outcome.details, key), value);
             assert.equal(await readFile(path, "utf8"), content);
           }
           assert.deepEqual(mutation.details, expectedDetails);

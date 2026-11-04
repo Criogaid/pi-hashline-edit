@@ -14,7 +14,8 @@ import { DEFAULT_CONFIG } from "../pi/config.ts";
 import { makeEditOverride } from "../pi/edit-tool.ts";
 import { commitFile, FileMutationError } from "../pi/file-commit.ts";
 import { byteRevision } from "../pi/file-revision.ts";
-import { describeFailure, reportOf } from "../pi/report.ts";
+import { describeMutationFailure } from "../pi/mutation-result.ts";
+import { reportOf } from "../pi/report.ts";
 import { expectToolFailure } from "../pi/report-failure.testing.ts";
 import { REREAD } from "../pi/report-schema.ts";
 import { makeReplaceTool } from "../pi/replace-tool.ts";
@@ -291,7 +292,9 @@ test("concurrent change during pre-publication revision read → rejects without
             (error: unknown) => {
               assert.ok(error instanceof HashlineError);
               assert.equal(error.errorCode, "FILE_CHANGED");
-              const report = describeFailure("write", error, { budget: DEFAULT_OUTPUT_BUDGETS });
+              const report = describeMutationFailure("write", error, {
+                budget: DEFAULT_OUTPUT_BUDGETS,
+              });
               assert.equal(report.publication, "NOT_PUBLISHED");
               assert.equal(report.next, "Retry the call.");
               return true;
@@ -335,7 +338,7 @@ test("target disappears or becomes a directory before publication → keeps the 
                 error.errorCode,
                 disturbance === "missing" ? "PATH_NOT_FOUND" : "NOT_REGULAR_FILE",
               );
-              const report = describeFailure("write", error, {
+              const report = describeMutationFailure("write", error, {
                 path,
                 budget: DEFAULT_OUTPUT_BUDGETS,
               });

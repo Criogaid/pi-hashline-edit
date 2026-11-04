@@ -16,7 +16,8 @@ import { makeEditOverride } from "./edit-tool.ts";
 import { describeEditFailure } from "./failure-context.ts";
 import { assembleGrepOutput } from "./grep-output.ts";
 import { registerModelBudgets } from "./model-budgets.ts";
-import { describeFailure, decodeReport, reportOf } from "./report.ts";
+import { describeMutationFailure } from "./mutation-result.ts";
+import { decodeReport, reportOf } from "./report.ts";
 import { decodeWorkerReply } from "./replace-regex.ts";
 import { restoreWorkerError } from "./regex-worker-contract.ts";
 import { workerFailure } from "./report-cause.ts";
@@ -78,7 +79,7 @@ test("model row allowance grows → anchor failures return complete observations
   if (applied.ok) return;
   const snapshot = { currentText: text, anchors: createAnchorFormatter(DEFAULT_CONFIG.hashLen) };
   const reports = [small, large].map((budget) => {
-    const report = describeFailure(
+    const report = describeMutationFailure(
       "edit",
       describeEditFailure(applied.failures, snapshot, budget),
       {
@@ -135,7 +136,9 @@ test("worker error reaches the tool → text is bounded once using the selected 
   );
   assert.ok(reply && "error" in reply);
   const error = restoreWorkerError(reply.error);
-  const reports = [small, large].map((budget) => describeFailure("replace", error, { budget }));
+  const reports = [small, large].map((budget) =>
+    describeMutationFailure("replace", error, { budget }),
+  );
   assert.ok(Buffer.byteLength(reports[0].message!) <= small.fieldBytes);
   assert.ok(Buffer.byteLength(reports[0].cause!.message) <= small.fieldBytes);
   assert.equal(reports[1].message, text);

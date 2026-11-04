@@ -8,7 +8,8 @@ import { formatByteSize, DEFAULT_OUTPUT_BUDGETS, outputBudgetsFor } from "./budg
 import { DEFAULT_CONFIG } from "./config.ts";
 import { createAnchorFormatter } from "./anchor-format.ts";
 import { ambiguousCandidateNeighborhoods, describeEditFailure } from "./failure-context.ts";
-import { describeFailure, renderReport } from "./report.ts";
+import { describeMutationFailure } from "./mutation-result.ts";
+import { renderReport } from "./report.ts";
 
 function failure(recovery: AnchorFailure["recovery"]): AnchorFailure {
   return {
@@ -197,7 +198,7 @@ function rejectedEdit(
     { currentText: text, anchors: createAnchorFormatter(DEFAULT_CONFIG.hashLen) },
     budget,
   );
-  return describeFailure("edit", error, { path: "file.txt", budget });
+  return describeMutationFailure("edit", error, { path: "file.txt", budget });
 }
 const oldAnchor = { line: 1, hash: computeLineHash(1, "old", DEFAULT_CONFIG.hashLen) };
 
@@ -307,7 +308,7 @@ test("overlapping edits → ordered conflict and shared recovery", () => {
       () => applyEdits(text, edits, DEFAULT_CONFIG.hashLen, 0),
       (error: unknown) => {
         assert.ok(error instanceof HashlineError);
-        const report = describeFailure("edit", error, {
+        const report = describeMutationFailure("edit", error, {
           path: "file.txt",
           budget: DEFAULT_OUTPUT_BUDGETS,
         });

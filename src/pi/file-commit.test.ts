@@ -32,7 +32,8 @@ import { HashlineError, PATH_ERROR_MESSAGES } from "../core/errors.ts";
 import { createActionFusionExecutor } from "./action-fusion.ts";
 import { makeWriteOverride } from "./write-tool.ts";
 import { callTool } from "./tool-call.testing.ts";
-import { describeFailure, reportOf } from "./report.ts";
+import { describeMutationFailure } from "./mutation-result.ts";
+import { reportOf } from "./report.ts";
 import { DEFAULT_OUTPUT_BUDGETS } from "./budgets.ts";
 
 // Checked by tsc; these states cannot be returned by the commit layer.
@@ -331,7 +332,7 @@ test("cancellation racing publication never reports a settled operation as unpub
     } catch (error) {
       assert.ok(error instanceof HashlineError);
       if (!(error instanceof FileMutationError)) assert.equal(error.errorCode, "OPERATION_ABORTED");
-      const reported = describeFailure("write", error, {
+      const reported = describeMutationFailure("write", error, {
         budget: DEFAULT_OUTPUT_BUDGETS,
       }).publication;
       assert.ok(reported);
