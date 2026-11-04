@@ -206,7 +206,7 @@ function quantifier(node: AST.Quantifier, ctx: Context): string {
   return node.min === 0 ? `${group}*` : `${group}+`;
 }
 
-/** A modifier group's i and m; its s needs nothing, since every . already matches anything. */
+/** A modifier group's i and m; `nativeFlags` reads its s from the node's ancestors. */
 function modified(node: AST.Group, ctx: Context): Context {
   const { add, remove } = node.modifiers ?? {};
   if (!add) return ctx;

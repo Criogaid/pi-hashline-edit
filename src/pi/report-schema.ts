@@ -10,7 +10,7 @@
  * omits the call's tool and path from result text; render.ts uses the full report for the TUI.
  *
  * Types derive from these schemas. src/core imports only types from this module,
- * so engines stay independent of Pi. The worker loads TypeBox at its data boundary.
+ * so engines stay independent of Pi. Workers do not load TypeBox; the host validates their replies.
  *
  * @module pi-hashline-edit/pi
  */
@@ -171,7 +171,7 @@ const FACT_FIELDS = {
     ),
   ),
   omittedNeighborhoodRows: count("Neighborhood rows omitted from the byte budget."),
-  // Overlap (failure-context.ts, core/replace.ts).
+  // Overlap (core/apply.ts, core/replace.ts).
   conflict: Type.Array(Type.String(), {
     description: "The first conflicting pair of inputs found; more conflicts may exist.",
   }),
