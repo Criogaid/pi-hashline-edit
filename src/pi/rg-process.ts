@@ -75,14 +75,11 @@ function startFailure(cause: unknown): HashlineError {
 
 function startRg(args: readonly string[], signal?: AbortSignal): RunningProcess {
   throwIfCancelled(signal);
-  const env = { ...process.env };
-  delete env.RIPGREP_CONFIG_PATH;
   let child: ChildProcessByStdio<null, Readable, Readable>;
   try {
     child = spawn(rgPath, [...args], {
       stdio: ["ignore", "pipe", "pipe"],
       shell: false,
-      env,
     });
   } catch (cause) {
     throw startFailure(cause);
