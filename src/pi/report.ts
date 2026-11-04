@@ -41,8 +41,6 @@ import {
   type SuccessReport,
 } from "./report-schema.ts";
 
-export type { Report } from "./report-schema.ts";
-
 /** Every result's details carry its report for the TUI; Pi does not send details to the model. */
 export interface ReportDetails<TReport extends Report = Report> {
   readonly report: TReport;

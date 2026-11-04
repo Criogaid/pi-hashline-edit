@@ -17,8 +17,8 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import { Text, type Component } from "@earendil-works/pi-tui";
-import type { MutationToolName, ReportTool } from "./report-schema.ts";
-import { renderReport, reportEntries, reportOf, type Report, detailsReport } from "./report.ts";
+import type { MutationToolName, Report, ReportTool } from "./report-schema.ts";
+import { renderReport, reportEntries, reportOf, detailsReport } from "./report.ts";
 
 /** Max diff lines shown when a result is rendered collapsed. */
 const MAX_COLLAPSED_DIFF_LINES = 24;
@@ -29,10 +29,10 @@ const MAX_COLLAPSED_OUTPUT_LINES = 15;
  * Render a pi-format diff (`+N`/`-N`/` N` content) for the TUI, reusing pi's
  * built-in renderer: semantic diff colors plus intra-line (word-level) change
  * highlighting on single-line modifications. When not expanded, collapse to the
- * first 24 rendered lines with an overflow marker — truncating after rendering
+ * first rendered lines with an overflow marker — truncating after rendering
  * keeps `-`/`+` pairs intact so the intra-line highlight never dangles.
  */
-export function renderDiffPreview(diff: string, expanded: boolean, theme: Theme): string {
+function renderDiffPreview(diff: string, expanded: boolean, theme: Theme): string {
   const rendered = renderDiff(diff);
   if (expanded) return rendered;
   const allLines = rendered.split("\n");
@@ -260,7 +260,7 @@ export function renderToolError(
 const MUTATION_CARD_SHOWN = new Set(["then_run", "progressError"]);
 
 /** Render mutation status or a diff, refreshing the call header's counts in place. */
-export function renderMutationResult<TArgs>(
+function renderMutationResult<TArgs>(
   result: AgentToolResult<{ diff?: string; report?: Report } | undefined>,
   { isPartial, expanded }: ToolRenderResultOptions,
   theme: Theme,
