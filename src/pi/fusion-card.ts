@@ -25,8 +25,7 @@ import {
 } from "@earendil-works/pi-tui";
 import type { TSchema } from "typebox";
 import { Value } from "typebox/value";
-import { ACTION_FUSION_PROGRESS_SCHEMA } from "./report-schema.ts";
-import type { ActionFusionProgress } from "./action-fusion.ts";
+import { ACTION_FUSION_PROGRESS_SCHEMA, type ActionFusionProgress } from "./report-schema.ts";
 import { commandText } from "./mutation-result.ts";
 import type { MutationRenderState } from "./render.ts";
 
@@ -36,6 +35,11 @@ const RESULT_TYPE = "hashline-then-run-result";
 /** A command card persists its progress as is; restored entries are checked against the same schema. */
 const COMMAND_CARD_SCHEMA = ACTION_FUSION_PROGRESS_SCHEMA;
 type CommandCardData = ActionFusionProgress;
+
+const commandPending = ({ command }: CommandCardData) =>
+  command === "waiting" || command === "running";
+const commandFailed = ({ command }: CommandCardData) =>
+  command === "failed" || command === "timeout";
 
 const TARGET_STATE = {
   changed: "the target changed after the mutation",
@@ -160,14 +164,14 @@ export function registerFusionCards(pi: ExtensionAPI) {
             box = new Box(outputPadding, 1);
           }
           const value = current();
-          const pending = value.command === "waiting" || value.command === "running";
+          const pending = commandPending(value);
           const interrupted = pending && !active.has(value.toolCallId);
           const status = interrupted ? "interrupted (final status unknown)" : value.command;
           const countdown =
             value.command === "running" && !interrupted && value.timing
               ? ` · ${value.timing.remainingSeconds}s remaining`
               : "";
-          const failed = value.command === "failed" || value.command === "timeout";
+          const failed = commandFailed(value);
           const color =
             pending || value.command === "cancelled"
               ? "warning"
@@ -221,10 +225,9 @@ export function registerFusionCards(pi: ExtensionAPI) {
           native.updateResult(
             {
               ...(value.result ?? { content: [] }),
-              isError: value.command === "failed" || value.command === "timeout",
+              isError: commandFailed(value),
             },
-            (value.command === "waiting" || value.command === "running") &&
-              active.has(value.toolCallId),
+            commandPending(value) && active.has(value.toolCallId),
           );
         },
         "bash",
@@ -250,7 +253,7 @@ export function registerFusionCards(pi: ExtensionAPI) {
   return (progress: ActionFusionProgress) => {
     const first = !states.has(progress.toolCallId);
     states.set(progress.toolCallId, progress);
-    const pending = progress.command === "waiting" || progress.command === "running";
+    const pending = commandPending(progress);
     if (pending) active.add(progress.toolCallId);
     else active.delete(progress.toolCallId);
     // Only endpoints are persisted; streaming snapshots reuse Bash's bounded output.

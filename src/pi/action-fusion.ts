@@ -43,7 +43,6 @@ import type {
   Freshness,
   MutationToolName,
 } from "./report-schema.ts";
-export type { ActionFusionProgress } from "./report-schema.ts";
 
 const MILLISECONDS_PER_SECOND = 1_000;
 
@@ -166,19 +165,18 @@ async function defaultCommandRunner(
 }
 
 async function canonicalQueueKey(path: string): Promise<string> {
+  const folded = (key: string) => (process.platform === "win32" ? key.toLowerCase() : key);
   const resolved = resolve(path);
   let current = resolved;
   const missing: string[] = [];
   while (true) {
     try {
-      const canonical = resolve(await realpath(current), ...missing);
-      return process.platform === "win32" ? canonical.toLowerCase() : canonical;
+      return folded(resolve(await realpath(current), ...missing));
     } catch (error) {
       const code = errnoCode(error);
       if (code !== "ENOENT" && code !== "ENOTDIR") throw error;
       const parent = dirname(current);
-      if (parent === current)
-        return process.platform === "win32" ? resolved.toLowerCase() : resolved;
+      if (parent === current) return folded(resolved);
       missing.unshift(basename(current));
       current = parent;
     }
