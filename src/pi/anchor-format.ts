@@ -9,8 +9,10 @@
 
 import { computeLineHash, HASH_ALPHABET, HASH_LEN_MIN, HASH_LEN_MAX } from "../core/hash.ts";
 
+const LINE_NUMBER = "([1-9][0-9]*)";
+
 function anchorSource(hashQuantifier: string): string {
-  return `([1-9][0-9]*)#([${HASH_ALPHABET}]${hashQuantifier})`;
+  return `${LINE_NUMBER}#([${HASH_ALPHABET}]${hashQuantifier})`;
 }
 
 /** Schema pattern for a `LINE#HASH` anchor whose hash has exactly `hashLen` characters. */
@@ -48,7 +50,7 @@ export function parseHashline(line: string): HashlineRow | null {
   return match ? { lineNo: match[1], content: match[3] } : null;
 }
 
-const PLAIN_ROW = new RegExp(`^([1-9][0-9]*)${ROW_SEPARATOR}(.*)$`, "s");
+const PLAIN_ROW = new RegExp(`^${LINE_NUMBER}${ROW_SEPARATOR}(.*)$`, "s");
 
 /** Parse an anchored row or a non-editable `LINE│content` row; null for other text. */
 export function parseDisplayRow(line: string): HashlineRow | null {
@@ -61,7 +63,6 @@ export function parseDisplayRow(line: string): HashlineRow | null {
 /** Anchor serialization bound to a caller-supplied hash length. */
 export interface AnchorFormatter {
   reference(line: number, hash: string): string;
-  token(line: number, content: string): string;
   row(line: number, content: string, displayContent?: string): string;
 }
 
@@ -77,12 +78,9 @@ export function plainRow(line: number, displayContent: string): string {
 
 export function createAnchorFormatter(hashLen: number): AnchorFormatter {
   const reference = (line: number, hash: string) => `${line}#${hash}`;
-  const token = (line: number, content: string) =>
-    reference(line, computeLineHash(line, content, hashLen));
   return {
-    token,
     reference,
     row: (line, content, displayContent = content) =>
-      `${token(line, content)}${ROW_SEPARATOR}${displayCarriageReturns(displayContent)}`,
+      `${reference(line, computeLineHash(line, content, hashLen))}${ROW_SEPARATOR}${displayCarriageReturns(displayContent)}`,
   };
 }
