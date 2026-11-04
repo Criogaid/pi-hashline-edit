@@ -37,9 +37,6 @@ const SUPPLEMENTARY: Ranges = [[0x10000, MAX_SCALAR]];
 const MAX_EXACT_REPEAT = 16;
 /** Bound expanded class strings by total code points, counting an empty string as one. */
 const MAX_EXPANDED_STRING_POINTS = 256;
-/** Bound emitted string alternatives; oversized sets retain necessary prefixes. */
-const MAX_STRING_PATTERN_UNITS = 8192;
-const MAX_STRING_PREFIX_POINTS = 16;
 /** Leave room for rg's arguments and paths on hosts with small command-line limits. */
 const MAX_LINE_PATTERN_UNITS = 24 * 1024;
 
@@ -152,30 +149,7 @@ function wordTree(words: readonly (readonly number[])[], ctx: Context): string {
 function stringPattern(strings: readonly string[], ctx: Context): string {
   const words = [...new Set(strings)].map((text) => [...text].map((char) => char.codePointAt(0)!));
   const size = words.reduce((sum, word) => sum + Math.max(1, word.length), 0);
-  if (size <= MAX_EXPANDED_STRING_POINTS) return wordTree(words, ctx);
-  const shortest = words.reduce((length, word) => Math.min(length, word.length), Infinity);
-  if (!shortest) return ANY_TEXT;
-  // A suffix survives only where it cannot overlap the retained prefix.
-  const suffix: number[] = [];
-  for (
-    let index = 1;
-    index <= Math.min(MAX_STRING_PREFIX_POINTS, Math.floor(shortest / 2));
-    index++
-  ) {
-    const point = words[0].at(-index)!;
-    if (!words.every((word) => word.at(-index) === point)) break;
-    suffix.unshift(point);
-  }
-  for (
-    let length = Math.min(MAX_STRING_PREFIX_POINTS, shortest - suffix.length);
-    length >= 1;
-    length = Math.floor(length / 2)
-  ) {
-    const prefixes = words.map((word) => word.slice(0, length));
-    const pattern = wordTree(prefixes, ctx) + ANY_TEXT + wordTree([suffix], ctx);
-    if (pattern.length <= MAX_STRING_PATTERN_UNITS) return pattern;
-  }
-  return ANY_TEXT;
+  return size <= MAX_EXPANDED_STRING_POINTS ? wordTree(words, ctx) : ANY_TEXT;
 }
 
 function characterPattern(node: CharacterNode, ctx: Context): string {
