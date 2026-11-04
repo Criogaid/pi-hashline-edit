@@ -67,7 +67,7 @@ export function restoreLineEndings(logical: string, original: string, fallback: 
 /** Build an LF matching view with UTF-16 boundary offsets back into the original text. */
 export function createLfTextView(source: string) {
   const removed: number[] = [];
-  for (const match of source.matchAll(/\r\n/g)) removed.push(match.index! - removed.length);
+  for (const match of source.matchAll(/\r\n/g)) removed.push(match.index - removed.length);
   return {
     text: normalizeLineEndings(source),
     sourceOffset(offset: number): number {

@@ -217,7 +217,7 @@ function translateEdit(
  */
 export function applyEdits(
   text: string,
-  edits: Edit[],
+  edits: readonly Edit[],
   hashLen: number,
   shiftRadius: number,
 ): ApplyResult {

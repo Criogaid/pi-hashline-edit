@@ -104,7 +104,7 @@ function publishDiffCounts(
 ): void {
   if (!diff) return;
   const counts = countDiffLines(diff);
-  const prev: DiffCounts | undefined = context.state.diffCounts;
+  const prev = context.state.diffCounts;
   context.state.diffCounts = counts;
   if (!prev || prev.added !== counts.added || prev.removed !== counts.removed)
     refreshHeader(counts);
