@@ -414,18 +414,27 @@ test("identical commits preserve the file and still enforce mode, revision, and 
       commitFile(target, content, { mode: "overwrite", signal: AbortSignal.abort() }),
       (error: unknown) => error instanceof HashlineError && error.errorCode === "OPERATION_ABORTED",
     );
-    const missing = join(dir, "missing");
-    await assert.rejects(commitFile(missing, "", { mode: "overwrite" }), (error: unknown) => {
-      assert.ok(error instanceof HashlineError);
-      assert.equal(error.errorCode, "PATH_NOT_FOUND");
-      assert.equal(error.message, PATH_ERROR_MESSAGES.PATH_NOT_FOUND);
-      assert.deepEqual(error.facts, { missing: [missing] });
-      assert.equal(error.next, "useCreate");
-      return true;
-    });
     const created = await commitFile(join(dir, "empty"), "", { mode: "create" });
     assert.equal(created.created, true);
     assert.equal(created.publication, "PUBLISHED");
+  }));
+
+test("missing overwrite target → suggests create only without a base revision", async () =>
+  withTemp(async (dir) => {
+    const missing = join(dir, "missing");
+    for (const baseRevision of [undefined, "previous-revision"]) {
+      await assert.rejects(
+        commitFile(missing, "", { mode: "overwrite", baseRevision }),
+        (error: unknown) => {
+          assert.ok(error instanceof HashlineError);
+          assert.equal(error.errorCode, "PATH_NOT_FOUND");
+          assert.equal(error.message, PATH_ERROR_MESSAGES.PATH_NOT_FOUND);
+          assert.deepEqual(error.facts, { missing: [missing] });
+          assert.equal(error.next, baseRevision === undefined ? "useCreate" : undefined);
+          return true;
+        },
+      );
+    }
   }));
 
 test("file changes after the read → bound commits reject changed and unchanged output", async () =>
