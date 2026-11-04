@@ -6,7 +6,6 @@ import {
   type Theme,
   type ToolRenderResultOptions,
 } from "@earendil-works/pi-coding-agent";
-import type { ThenRunInput } from "./action-fusion.ts";
 import { commitFile } from "./file-commit.ts";
 import { mutationToolBase, type ActionFusionExecutor } from "./mutation-runner.ts";
 import { throwIfCancelled } from "./error-text.ts";
@@ -30,7 +29,7 @@ const writeSchema = Type.Object(
   { additionalProperties: false },
 );
 
-type WriteParams = Static<typeof writeSchema> & { then_run?: ThenRunInput };
+type WriteParams = Static<typeof writeSchema>;
 /** write shows the built-in card; its report states every fact. */
 type WriteMutationDetails = object;
 /** The write card's call line shows the content; the command card owns then_run. */

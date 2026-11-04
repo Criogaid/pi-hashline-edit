@@ -31,7 +31,6 @@ import { checkRegexArguments } from "../core/regex.ts";
 import { REPLACEMENTS_SCHEMA } from "../core/replace-schema.ts";
 import { runRegexReplacements } from "./replace-regex.ts";
 import { unwritableTextError } from "../core/text.ts";
-import type { ThenRunInput } from "./action-fusion.ts";
 import type { HashlineEditConfig } from "./config.ts";
 import {
   diffCardRenderers,
@@ -59,7 +58,7 @@ const replaceSchema = Type.Object(
   { additionalProperties: false },
 );
 
-type ReplaceParams = Static<typeof replaceSchema> & { then_run?: ThenRunInput };
+type ReplaceParams = Static<typeof replaceSchema>;
 
 /** Call-header line: `replace path — N rules`, plus `+N -N` once diff counts are known. */
 function replaceHeader(args: ReplaceParams, theme: Theme, counts?: DiffCounts): string {

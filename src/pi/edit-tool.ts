@@ -17,7 +17,6 @@
 
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import { Type, type Static, type TLiteral } from "typebox";
-import type { ThenRunInput } from "./action-fusion.ts";
 import { applyEdits } from "../core/apply.ts";
 import { unwritableTextError } from "../core/text.ts";
 import { EDIT_ANCHOR_FIELDS, type Anchor, type Edit } from "../core/types.ts";
@@ -160,7 +159,7 @@ function buildEditSchema(hashLen: number) {
 }
 type EditSchema = ReturnType<typeof buildEditSchema>;
 
-type EditParams = Static<EditSchema> & { then_run?: ThenRunInput };
+type EditParams = Static<EditSchema>;
 
 type EditOpInput = Static<EditSchema>["edits"][number];
 type EditOpSchema = EditSchema["properties"]["edits"]["items"];
