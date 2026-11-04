@@ -16,8 +16,6 @@
  * @module pi-hashline-edit/core
  */
 
-import type { LineEnding } from "./types.ts";
-
 /** Normalize CRLF boundaries to LF; standalone CR remains content. */
 export function normalizeLineEndings(text: string): string {
   return text.replace(/\r\n/g, "\n");
@@ -103,7 +101,7 @@ export function splitLines(text: string): string[] {
 }
 
 /** Whether the text uses CRLF at all (any `\r\n` counts; mixed files report "crlf"). */
-export function detectLineEnding(text: string): LineEnding {
+export function detectLineEnding(text: string): "lf" | "crlf" {
   return text.includes("\r\n") ? "crlf" : "lf";
 }
 

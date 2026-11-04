@@ -36,8 +36,6 @@ export type Edit =
   | { readonly op: "append"; readonly body: string[] }
   | { readonly op: "prepend"; readonly body: string[] };
 
-export type LineEnding = "lf" | "crlf";
-
 /**
  * Outcome of shifted-anchor recovery. Search ±radius first; only if there are
  * no candidates, search the rest of the file. Radius 0 disables recovery.
