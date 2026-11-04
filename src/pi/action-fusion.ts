@@ -124,7 +124,6 @@ interface CommandOutcome {
 }
 
 type CommandRunner = (
-  toolCallId: string,
   input: ThenRunInput,
   signal: AbortSignal | undefined,
   ctx: ExtensionToolContext,
@@ -132,7 +131,6 @@ type CommandRunner = (
 ) => Promise<CommandOutcome>;
 
 async function defaultCommandRunner(
-  _toolCallId: string,
   input: ThenRunInput,
   signal: AbortSignal | undefined,
   ctx: ExtensionToolContext,
@@ -369,7 +367,7 @@ export function createActionFusionExecutor(
       progress.report("running", "unchanged");
       let command: CommandOutcome;
       try {
-        command = await commandRunner(toolCallId, thenRun, signal, ctx, progress.followCommand);
+        command = await commandRunner(thenRun, signal, ctx, progress.followCommand);
       } catch (error) {
         command = {
           status: signal?.aborted ? "cancelled" : "failed",
