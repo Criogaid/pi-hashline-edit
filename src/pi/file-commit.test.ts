@@ -218,7 +218,7 @@ test("replacement rejects a multi-hardlink target without changing either link",
     assert.equal((await stat(target)).nlink, 2);
   }));
 
-test("existing private and executable permissions survive replacement; new files use private mode", async (t) =>
+test("files are replaced or created → preserve existing modes and apply umask to new files", async (t) =>
   withTemp(async (dir) => {
     if (process.platform === "win32")
       return t.skip("Windows mode bits are not an ACL preservation test");
@@ -229,7 +229,7 @@ test("existing private and executable permissions survive replacement; new files
     assert.equal((await stat(existing)).mode & 0o777, 0o750);
     const created = join(dir, "created.txt");
     await commitFile(created, "new\n", { mode: "create" });
-    assert.equal((await stat(created)).mode & 0o777, 0o600);
+    assert.equal((await stat(created)).mode & 0o777, 0o666 & ~process.umask());
   }));
 
 test("directories are rejected instead of entering regular-file publication", async () =>

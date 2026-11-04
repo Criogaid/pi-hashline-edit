@@ -79,7 +79,7 @@ test("out-of-order file completions → listing order fixes rows, warnings, and 
         );
         const backend: GrepBackend = {
           runRgPaths: async () => assert.fail("This query uses line candidates"),
-          runRgLines: async (_rg, _args, _signal, _maxLines, onFile) => {
+          runRgLines: async (_args, _signal, _maxLines, onFile) => {
             for (const name of names) {
               if (!(await onFile(join(dir, name), undefined))) {
                 return { code: 2, stderr: listingDiagnostic, stopped: true };
@@ -179,9 +179,9 @@ test("match limit reached before a repeated candidate → stop listing before la
       };
       const result = await callTool(
         makeGrepOverrideWithBackend(dir, DEFAULT_CONFIG, {
-          runRgLines: (_rg, _args, _signal, _maxLines, onFile) =>
+          runRgLines: (_args, _signal, _maxLines, onFile) =>
             list((path) => onFile(path, undefined)),
-          runRgPaths: (_rg, _args, _signal, onFile) => list(onFile),
+          runRgPaths: (_args, _signal, onFile) => list(onFile),
         }),
         { path: file, ...query, limit: 1, outputMode: "files" },
       );
@@ -231,7 +231,7 @@ test("file-associated failure → listing position decides failure or cutoff, wh
   ] as const;
   const backend: GrepBackend = {
     runRgPaths: async () => assert.fail("This query uses line candidates"),
-    runRgLines: async (_rg, _args, _signal, _maxLines, onFile) => {
+    runRgLines: async (_args, _signal, _maxLines, onFile) => {
       for (const name of names) if (!(await onFile(join(dir, name), undefined))) break;
       return { code: 0, stderr: "", stopped: false };
     },

@@ -30,8 +30,15 @@ function wrongHash(text: string): string {
   return (hash[0] === "0" ? "1" : "0") + hash.slice(1);
 }
 
-test("byte budget size → uses MiB for whole MiB and KiB otherwise", () => {
+test("byte budget sizes include fractional KiB → round to one decimal and preserve whole units", () => {
   for (const [bytes, expected] of [
+    [outputBudgetsFor(200_000).readBytes, "195.3 KiB"],
+    [outputBudgetsFor(200_000).blockBytes, "48.8 KiB"],
+    [outputBudgetsFor(200_000).fieldBytes, "12.2 KiB"],
+    [16 * 1024, "16 KiB"],
+    [50 * 1024, "50 KiB"],
+    [256 * 1024, "256 KiB"],
+    [64 * 1024 * 1024, "64 MiB"],
     [1024, "1 KiB"],
     [1023 * 1024, "1023 KiB"],
     [1024 * 1024, "1 MiB"],

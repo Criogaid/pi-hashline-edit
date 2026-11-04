@@ -3,7 +3,6 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { rgPath } from "@vscode/ripgrep";
 import { acceptsNative } from "../core/search-matrix.testing.ts";
 import { searchText, type GrepQuery } from "../core/search.ts";
 import { searchFiles, type GrepFileMatch } from "../pi/grep-search.ts";
@@ -188,18 +187,17 @@ test("Cartesian adversarial bytes × syntax × flags × assertion positions → 
             async runRgPaths() {
               assert.fail(`unexpected file fallback: ${JSON.stringify(query)}`);
             },
-            runRgLines: (rg, args, signal, maxLines, onFile) => {
+            runRgLines: (args, signal, maxLines, onFile) => {
               assert.equal(maxLines, candidateLineLimit);
               const emitted = args.flatMap((arg, index) => (arg === "-e" ? [args[index + 1]] : []));
               assert.deepEqual(emitted, translated);
-              return runRgLines(rg, args, signal, maxLines, (path, lines) => {
+              return runRgLines(args, signal, maxLines, (path, lines) => {
                 candidates.set(path, lines);
                 listedRows += lines?.length ?? 0;
                 return onFile(path, lines);
               });
             },
           },
-          rgPath,
           scope: { globs: [], searchPaths: [directory] },
           query,
           limit,

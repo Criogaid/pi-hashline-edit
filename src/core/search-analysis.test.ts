@@ -64,19 +64,19 @@ for (const boundary of ["\n", "\r\n", "\uFFFD", "\uD800", "\uDC00", "\0"]) {
 }
 
 for (const [patterns, isLiteral, expected, flags] of [
-  [["foo", "bar"], false, true],
-  [["foo", "Bar"], false, false],
-  [["foo\\S*", "\\D", "\\W"], false, true],
-  [["\\u0041"], false, false],
-  [["\\x41"], false, false],
-  [["\\u0061"], false, true],
-  [["[A-Z]"], false, false],
-  [["(?<UPPER>foo)"], false, true],
-  [["ς", "σ"], false, true],
-  [["σ", "Σ"], false, false],
-  [["foo\\S*"], true, false],
-  [["\\u0041"], true, true],
-  [["foo", "BAR"], true, false],
+  [["foo", "bar"], false, true, ""],
+  [["foo", "Bar"], false, false, ""],
+  [["foo\\S*", "\\D", "\\W"], false, true, ""],
+  [["\\u0041"], false, false, ""],
+  [["\\x41"], false, false, ""],
+  [["\\u0061"], false, true, ""],
+  [["[A-Z]"], false, false, ""],
+  [["(?<UPPER>foo)"], false, true, ""],
+  [["ς", "σ"], false, true, ""],
+  [["σ", "Σ"], false, false, ""],
+  [["foo\\S*"], true, false, ""],
+  [["\\u0041"], true, true, ""],
+  [["foo", "BAR"], true, false, ""],
   [["\\u{41}"], false, false, "u"],
   [["\\u{41}"], false, false, "v"],
   [["\\u{61}"], false, true, "u"],
@@ -86,7 +86,7 @@ for (const [patterns, isLiteral, expected, flags] of [
   [["𐐨"], false, true, "u"],
   [["𐐨"], false, true, "v"],
 ] as const) {
-  test(`${JSON.stringify(patterns)} literal=${isLiteral} flags=${flags ?? ""} → smart case follows decoded letters`, () => {
+  test(`${JSON.stringify(patterns)} literal=${isLiteral} flags=${flags} → smart case follows decoded letters`, () => {
     assert.equal(smartIgnoreCase(patterns, isLiteral, flags), expected);
   });
 }
@@ -199,7 +199,7 @@ test("deeply nested uppercase pattern → smart case stays sensitive and prefilt
   for (const depth of [50, 200, 500, 1_000, 2_000, 4_000]) {
     const pattern = `${"(?:".repeat(depth)}A${")".repeat(depth)}`;
     assert.equal(new RegExp(pattern).test("A"), true);
-    assert.equal(smartIgnoreCase([pattern], false), false);
+    assert.equal(smartIgnoreCase([pattern], false, ""), false);
     assert.equal(hasCandidateBytes(Buffer.from("A"), extractPrefilter(query(pattern))), true);
   }
 });

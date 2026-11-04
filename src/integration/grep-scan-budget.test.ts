@@ -71,7 +71,7 @@ test("all-file candidates exceed the scan budget → stop listing and retain sca
       let stopped = false;
       const tool = makeGrepOverrideWithBackend(directory, DEFAULT_CONFIG, {
         runRgLines: async () => assert.fail("multiline candidates must use file listing"),
-        runRgPaths: async (_rgPath, _args, _signal, onFile) => {
+        runRgPaths: async (_args, _signal, onFile) => {
           for (const path of paths) {
             offered.push(path);
             if (!(await onFile(path))) {

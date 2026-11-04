@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { applyReplacements, type Replacement } from "./replace.ts";
+import { applyReplacements } from "./replace.ts";
+import type { Replacement } from "./replace-schema.ts";
 import { HashlineError } from "./errors.ts";
 
 test("replacement joins beside LF → preserve standalone CR content", async (t) => {

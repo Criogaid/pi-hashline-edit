@@ -3,7 +3,6 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { test } from "node:test";
-import { rgPath } from "@vscode/ripgrep";
 import { searchText, type GrepQuery } from "../core/search.ts";
 import { searchFiles, type GrepFileMatch } from "../pi/grep-search.ts";
 import { runRgLines, runRgPaths } from "../pi/rg-process.ts";
@@ -74,13 +73,12 @@ test("upstream regex witnesses × LF/CRLF/malformed bytes → sound candidates, 
         const result = await searchFiles({
           backend: {
             runRgPaths: async () => assert.fail("unexpected file fallback"),
-            runRgLines: (rg, args, signal, maxLines, onFile) =>
-              runRgLines(rg, args, signal, maxLines, (path, lines) => {
+            runRgLines: (args, signal, maxLines, onFile) =>
+              runRgLines(args, signal, maxLines, (path, lines) => {
                 candidates.set(resolve(path), lines);
                 return onFile(path, lines);
               }),
           },
-          rgPath,
           scope: {
             globs: [],
             searchPaths: inputs.map((input) => input.filePath),
@@ -133,7 +131,6 @@ test("real rg AND/OR file prefilter → broad candidates retain exact JS results
   };
   const candidates: string[] = [];
   const listing = await runRgPaths(
-    rgPath,
     [...candidateArgs(extractPrefilter(query)), "--null", "--", directory],
     AbortSignal.timeout(timeoutMs),
     (path) => {
@@ -146,7 +143,6 @@ test("real rg AND/OR file prefilter → broad candidates retain exact JS results
   assert.deepEqual(candidates.sort(), [paths[0], paths[1], paths[2], paths[3], paths[4]].sort());
   const result = await searchFiles({
     backend: { runRgPaths, runRgLines },
-    rgPath,
     scope: { globs: [], searchPaths: [directory] },
     query,
     limit: 100,
@@ -181,7 +177,6 @@ test("oversized line translation → file prefilter fallback preserves JS result
       },
       runRgLines: async () => assert.fail("translation budget must select file prefilter"),
     },
-    rgPath,
     scope: { globs: [], searchPaths: [path] },
     query,
     limit: 10,

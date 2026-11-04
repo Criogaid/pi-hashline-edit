@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import childProcess from "node:child_process";
+import { syncBuiltinESMExports } from "node:module";
 import { DiagnosticBuffer } from "./diagnostic-buffer.ts";
 import { DEFAULT_OUTPUT_BUDGETS } from "./budgets.ts";
 import { assembleGrepOutput } from "./grep-output.ts";
@@ -65,13 +67,21 @@ test("search warning aggregation retains the final cause and labels truncation",
 });
 
 test("stderr overflow → UTF-8 opening and final cause survive", async (t) => {
+  const spawn = childProcess.spawn;
+  t.mock.method(childProcess, "spawn", (...args: Parameters<typeof spawn>) =>
+    spawn(process.execPath, args[1] ?? [], args[2]),
+  );
+  syncBuiltinESMExports();
+  t.after(() => {
+    t.mock.restoreAll();
+    syncBuiltinESMExports();
+  });
   const directory = await mkdtemp(join(tmpdir(), "hl-rg-stderr-"));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const path = join(directory, "stderr.txt");
   for (const source of ["权限不足🙂\n", diagnostic(MAX_RG_STDERR_BYTES)]) {
     await writeFile(path, source);
     const result = await runRgPaths(
-      process.execPath,
       [
         "--input-type=module",
         "--eval",

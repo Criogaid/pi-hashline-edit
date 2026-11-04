@@ -148,35 +148,33 @@ test("real rg candidates → include every JS row and preserve confirmed output 
     await t.test(`${pattern} /${flags} → identical confirmed results`, async () => {
       const candidates = new Map<string, readonly number[] | undefined>();
       const filtered = makeGrepOverrideWithBackend(directory, DEFAULT_CONFIG, {
-        runRgPaths(rg, args, signal, onPath) {
-          return runRgPaths(rg, args, signal, (path) => {
+        runRgPaths(args, signal, onPath) {
+          return runRgPaths(args, signal, (path) => {
             candidates.set(path, undefined);
             return onPath(path);
           });
         },
-        runRgLines(rg, args, signal, maxLines, onFile) {
-          return runRgLines(rg, args, signal, maxLines, (path, lines) => {
+        runRgLines(args, signal, maxLines, onFile) {
+          return runRgLines(args, signal, maxLines, (path, lines) => {
             candidates.set(path, lines);
             return onFile(path, lines);
           });
         },
       });
       const full = makeGrepOverrideWithBackend(directory, DEFAULT_CONFIG, {
-        runRgPaths(rg, args, signal, onPath) {
+        runRgPaths(args, signal, onPath) {
           const scopeStart = args.indexOf("--null");
           assert.ok(scopeStart >= 0);
           return runRgPaths(
-            rg,
             [...COMMON_RG_ARGS, "--files", ...args.slice(scopeStart)],
             signal,
             onPath,
           );
         },
-        runRgLines(rg, args, signal, _maxLines, onFile) {
+        runRgLines(args, signal, _maxLines, onFile) {
           const scopeStart = args.indexOf("--hidden");
           assert.ok(scopeStart >= 0);
           return runRgPaths(
-            rg,
             [...COMMON_RG_ARGS, "--files", "--null", ...args.slice(scopeStart)],
             signal,
             (path) => onFile(path, undefined),

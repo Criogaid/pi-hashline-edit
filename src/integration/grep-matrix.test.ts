@@ -3,7 +3,6 @@ import { test, type TestContext } from "node:test";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
-import { rgPath } from "@vscode/ripgrep";
 import { extractPrefilter, type Prefilter } from "../core/search-analysis.ts";
 import { searchText, type GrepQuery } from "../core/search.ts";
 import {
@@ -67,7 +66,6 @@ async function checkCandidates(t: TestContext, queries: Iterable<{ readonly quer
         const { prefilter, required } = cases[next++];
         const actual = new Set<string>();
         const result = await runRgPaths(
-          rgPath,
           [...candidateArgs(prefilter), "--null", "--", directory],
           AbortSignal.timeout(processTimeoutMs),
           (path) => {

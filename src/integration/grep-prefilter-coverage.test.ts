@@ -3,7 +3,6 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { test } from "node:test";
-import { rgPath } from "@vscode/ripgrep";
 import { extractPrefilter, type Prefilter } from "../core/search-analysis.ts";
 import {
   acceptsNative,
@@ -141,7 +140,6 @@ test("Cartesian prefilter coverage × composition × flags × bytes → real rg 
         const group = cases[next++];
         const actual = new Set<string>();
         const result = await runRgPaths(
-          rgPath,
           [...candidateArgs(group.prefilter), "--null", "--", directory],
           AbortSignal.timeout(processTimeoutMs),
           (path) => {

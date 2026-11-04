@@ -437,8 +437,8 @@ test("null optional fields → grep applies defaults without filename filters", 
     return { code: 0, stderr: "", stopped: false };
   };
   const tool = makeGrepOverrideWithBackend(cwd, config, {
-    runRgPaths: (_rg, args, _signal, onPath) => discover(args, onPath),
-    runRgLines: (_rg, args, _signal, _maxLines, onFile) =>
+    runRgPaths: (args, _signal, onPath) => discover(args, onPath),
+    runRgLines: (args, _signal, _maxLines, onFile) =>
       discover(args, (file) => onFile(file, undefined)),
   });
   const result = await callTool(tool, {

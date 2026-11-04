@@ -11,7 +11,6 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import fsPromises from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { rgPath } from "@vscode/ripgrep";
 import { initTheme } from "@earendil-works/pi-coding-agent";
 import { theme } from "../../node_modules/@earendil-works/pi-coding-agent/dist/modes/interactive/theme/theme.js";
 import { computeLineHash } from "../core/hash.ts";
@@ -51,14 +50,13 @@ async function withDir<T>(fn: (dir: string) => Promise<T>): Promise<T> {
 }
 
 function fakeBackend(options: FakeOptions = {}) {
-  const calls: { kind: "paths" | "lines"; path: string; args: readonly string[] }[] = [];
+  const calls: { kind: "paths" | "lines"; args: readonly string[] }[] = [];
   const run = async (
     kind: "paths" | "lines",
-    path: string,
     args: readonly string[],
     onPath: (file: string) => boolean | Promise<boolean>,
   ) => {
-    calls.push({ kind, path, args });
+    calls.push({ kind, args });
     await options.onRun?.();
     if (options.error) throw options.error;
     for (const file of options.paths ?? []) {
@@ -71,9 +69,9 @@ function fakeBackend(options: FakeOptions = {}) {
     };
   };
   const backend: GrepBackend = {
-    runRgPaths: (path, args, _signal, onPath) => run("paths", path, args, onPath),
-    runRgLines: (path, args, _signal, _maxLines, onFile) =>
-      run("lines", path, args, (file) => onFile(file, options.lines)),
+    runRgPaths: (args, _signal, onPath) => run("paths", args, onPath),
+    runRgLines: (args, _signal, _maxLines, onFile) =>
+      run("lines", args, (file) => onFile(file, options.lines)),
   };
   return { backend, calls };
 }
@@ -275,7 +273,6 @@ test("matched files → full-line hash anchors", async () => {
     assert.match(output, /b\.ts · 1 match/);
     assert.match(output, new RegExp(`1#${computeLineHash(1, "alpha beta", 4)}│alpha beta`));
     assert.match(output, /3#[0-9A-Z]+│alpha only/);
-    assert.equal(fake.calls[0].path, rgPath);
   });
 });
 

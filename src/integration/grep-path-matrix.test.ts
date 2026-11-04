@@ -29,14 +29,14 @@ test("Cartesian literal mode × flags × case override × line mode × bytes →
   const limit = inputs.reduce((sum, input) => sum + input.bytes.length, 0);
   const candidates = new Map<string, readonly number[] | undefined>();
   const tool = makeGrepOverrideWithBackend(directory, DEFAULT_CONFIG, {
-    runRgPaths(rg, args, signal, onPath) {
-      return runRgPaths(rg, args, signal, (path) => {
+    runRgPaths(args, signal, onPath) {
+      return runRgPaths(args, signal, (path) => {
         candidates.set(basename(path), undefined);
         return onPath(path);
       });
     },
-    runRgLines(rg, args, signal, maxLines, onFile) {
-      return runRgLines(rg, args, signal, maxLines, (path, lines) => {
+    runRgLines(args, signal, maxLines, onFile) {
+      return runRgLines(args, signal, maxLines, (path, lines) => {
         candidates.set(basename(path), lines);
         return onFile(path, lines);
       });

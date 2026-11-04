@@ -20,7 +20,6 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { rgPath } from "@vscode/ripgrep";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { makeGrepOverrideWithBackend } from "../pi/grep-tool.ts";
 import { makeEditOverride } from "../pi/edit-tool.ts";
@@ -310,9 +309,14 @@ test("shared rg runner stops and cleans up after limits, callback failures, and 
   const spawn = childProcess.spawn;
   const children: ReturnType<typeof spawn>[] = [];
   const closed = new Set<ReturnType<typeof spawn>>();
+  let missingExecutable = false;
   try {
     t.mock.method(childProcess, "spawn", (...args: Parameters<typeof spawn>) => {
-      const child = spawn(...args);
+      const child = spawn(
+        missingExecutable ? join(directory, "missing-rg") : process.execPath,
+        args[1],
+        args[2],
+      );
       children.push(child);
       child.once("close", () => closed.add(child));
       return child;
@@ -332,7 +336,6 @@ test("shared rg runner stops and cleans up after limits, callback failures, and 
       const consumed: string[] = [];
       let aliveAtCallback = false;
       const run = runRgPaths(
-        process.execPath,
         args,
         AbortSignal.any([controller.signal, AbortSignal.timeout(processTimeoutMs)]),
         (path) => {
@@ -353,8 +356,9 @@ test("shared rg runner stops and cleans up after limits, callback failures, and 
       assert.ok(child && closed.has(child), "runner must await child close");
       assert.ok(child.exitCode !== null || child.signalCode !== null);
     }
+    missingExecutable = true;
     await assert.rejects(
-      runRgPaths(join(directory, "missing-rg"), [], undefined, () => true),
+      runRgPaths([], undefined, () => true),
       /Failed to run ripgrep/,
     );
   } finally {
@@ -1429,11 +1433,19 @@ test("literal LF and CRLF queries match original valid and invalid UTF-8 files a
   }
 });
 
-test("oversized candidate path record → bounded runner rejects before invoking its consumer", async () => {
+test("oversized candidate path record → bounded runner rejects before invoking its consumer", async (t) => {
+  const spawn = childProcess.spawn;
+  t.mock.method(childProcess, "spawn", (...args: Parameters<typeof spawn>) =>
+    spawn(process.execPath, args[1], args[2]),
+  );
+  syncBuiltinESMExports();
+  t.after(() => {
+    t.mock.restoreAll();
+    syncBuiltinESMExports();
+  });
   let called = false;
   await assert.rejects(
     runRgPaths(
-      process.execPath,
       [
         "--input-type=module",
         "--eval",
