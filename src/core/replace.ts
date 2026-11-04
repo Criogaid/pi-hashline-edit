@@ -21,7 +21,7 @@ import { HashlineError } from "./errors.ts";
 import type { Replacement, ReplacementResult } from "./replace-schema.ts";
 
 /** Expand JS replacement tokens against the original match, including prefix/suffix context. */
-function expandReplacement(template: string, match: RegExpMatchArray, source: string): string {
+function expandReplacement(template: string, match: RegExpExecArray, source: string): string {
   // Without named captures, $<...> is ordinary text and may contain other $ tokens.
   const tokens =
     match.groups === undefined ? /\$(\$|&|`|'|\d{1,2})/g : /\$(\$|&|`|'|<[^>]*>|\d{1,2})/g;
@@ -29,9 +29,8 @@ function expandReplacement(template: string, match: RegExpMatchArray, source: st
     if (key === "$") return "$";
     if (key === "&") return match[0];
     if (key === "`") return source.slice(0, match.index);
-    if (key === "'") return source.slice(match.index! + match[0].length);
-    if (key.startsWith("<"))
-      return match.groups === undefined ? token : (match.groups[key.slice(1, -1)] ?? "");
+    if (key === "'") return source.slice(match.index + match[0].length);
+    if (key.startsWith("<")) return match.groups![key.slice(1, -1)] ?? "";
     const index = Number(key);
     if (index > 0 && index < match.length) return match[index] ?? "";
     // $12 falls back to capture 1 plus literal 2 when capture 12 does not exist.
@@ -58,8 +57,8 @@ export function applyReplacements(
     const replacement = normalizeLineEndings(rule.replace);
     for (const match of view.text.matchAll(regex)) {
       count++;
-      const start = view.sourceOffset(match.index!);
-      const end = view.sourceOffset(match.index! + match[0].length);
+      const start = view.sourceOffset(match.index);
+      const end = view.sourceOffset(match.index + match[0].length);
       changes.push({
         start,
         end,

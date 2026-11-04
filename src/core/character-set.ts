@@ -59,14 +59,14 @@ export function normalize(ranges: Iterable<readonly [number, number]>): Ranges {
   return merged;
 }
 
-function complement(ranges: Ranges, max: number): Ranges {
+function complement(ranges: Ranges): Ranges {
   const result: [number, number][] = [];
   let next = 0;
   for (const [low, high] of ranges) {
     if (low > next) result.push([next, low - 1]);
     next = high + 1;
   }
-  if (next <= max) result.push([next, max]);
+  if (next <= MAX_SCALAR) result.push([next, MAX_SCALAR]);
   return result;
 }
 
@@ -85,7 +85,7 @@ export function intersect(left: Ranges, right: Ranges): Ranges {
 }
 
 export function subtract(ranges: Ranges, removed: Ranges): Ranges {
-  return intersect(ranges, complement(normalize(removed), MAX_SCALAR));
+  return intersect(ranges, complement(normalize(removed)));
 }
 
 export const total = (ranges: Ranges): number =>
