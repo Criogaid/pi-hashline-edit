@@ -37,12 +37,16 @@ import {
 } from "./action-fusion.ts";
 import { createArgumentPreparer, type CheckArguments } from "./argument-validation.ts";
 import type { MutationToolName } from "./report-schema.ts";
-import { commitFile, commitFreshness, readEditableSnapshot } from "./file-commit.ts";
+import {
+  commitFile,
+  commitFreshness,
+  FileMutationError,
+  readEditableSnapshot,
+} from "./file-commit.ts";
 import {
   describeMutationFailure,
   finalizeMutation,
   generateMutationDetails,
-  postProcessMutation,
   type MutationOutcome,
   type MutationFinalDetails,
   type MutationResultDetails,
@@ -190,9 +194,19 @@ export async function runTextMutation<TTool extends MutationToolName>(
     baseRevision,
     signal,
   });
-  return postProcessMutation(commit.publication, () => ({
-    commit,
-    details: generateMutationDetails(currentText, next.text),
-    facts: next.facts,
-  }));
+  try {
+    return {
+      commit,
+      details: generateMutationDetails(currentText, next.text),
+      facts: next.facts,
+    };
+  } catch (error) {
+    // Keep result-building failures distinct from file publication failures.
+    throw new FileMutationError(
+      "POST_PROCESS_FAILED",
+      commit.publication,
+      "Result generation failed.",
+      { cause: error },
+    );
+  }
 }

@@ -1,6 +1,5 @@
 /**
- * Mutation report building: details, diffs, and post-process outcome
- * classification.
+ * Mutation report building: details, diffs, and failure classification.
  *
  * @module pi-hashline-edit/pi
  */
@@ -17,7 +16,6 @@ import type {
   CommandStatus,
   FailureReport,
   MutationToolName,
-  PublicationStatus,
   ReportTool,
   SuccessFacts,
   SuccessReport,
@@ -45,17 +43,6 @@ export type MutationResultDetails<TDetails> =
 export function generateMutationDetails(before: string, after: string) {
   const { diff } = generateDiffString(normalizeLineEndings(before), normalizeLineEndings(after));
   return { diff: displayCarriageReturns(diff) };
-}
-
-/** Keep result-building failures distinct from file publication failures. */
-export function postProcessMutation<T>(publication: PublicationStatus, build: () => T): T {
-  try {
-    return build();
-  } catch (error) {
-    throw new FileMutationError("POST_PROCESS_FAILED", publication, "Result generation failed.", {
-      cause: error,
-    });
-  }
 }
 
 /** The facts a mutation tool states about its own outcome. */
