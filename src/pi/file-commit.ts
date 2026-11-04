@@ -28,7 +28,7 @@ import {
   pathError,
   HashlineError,
 } from "../core/errors.ts";
-import { cancellationError, FileChangedDuringReadError, throwIfCancelled } from "./error-text.ts";
+import { FileChangedDuringReadError, throwIfCancelled } from "./error-text.ts";
 import { withFileRead } from "./file-read.ts";
 import type { Freshness, PublicationStatus } from "./report-schema.ts";
 
@@ -101,7 +101,7 @@ export async function readEditableSnapshot(path: string, signal?: AbortSignal) {
     const bytes = await readRegularFile(path, signal);
     return { text: decodeEditableText(bytes), baseRevision: byteRevision(bytes) };
   } catch (error) {
-    if (signal?.aborted) throw cancellationError();
+    throwIfCancelled(signal);
     throw error;
   }
 }

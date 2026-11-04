@@ -26,11 +26,6 @@ export const MAX_RG_PATTERN_UNITS = 24 * 1024;
 export const MAX_RG_RECORD_BYTES = 16 * 1024 * 1024;
 const RG_RECORD_LIMIT_MESSAGE = `ripgrep output record exceeds ${formatByteSize(MAX_RG_RECORD_BYTES)}.`;
 
-/** rg reported a path that is not valid UTF-8; tools cannot address it. */
-function unsupportedPath(): HashlineError {
-  return new HashlineError("UNSUPPORTED_PATH", "Non-UTF-8 search paths are not supported.");
-}
-
 /** Bounded ripgrep stderr retains the beginning and end with an omission notice. */
 export const MAX_RG_STDERR_BYTES = 64 * 1024;
 
@@ -173,9 +168,11 @@ export function runRgPaths(
   });
 }
 
+/** A path rg reported; one that is not valid UTF-8 cannot be addressed by tools. */
 function decodePath(record: Buffer): string {
   const path = record.toString("utf8");
-  if (!Buffer.from(path, "utf8").equals(record)) throw unsupportedPath();
+  if (!Buffer.from(path, "utf8").equals(record))
+    throw new HashlineError("UNSUPPORTED_PATH", "Non-UTF-8 search paths are not supported.");
   return path;
 }
 
