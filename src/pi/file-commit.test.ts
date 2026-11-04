@@ -22,7 +22,6 @@ import { spawn } from "node:child_process";
 import {
   commitFile,
   FileMutationError,
-  fileRevision,
   readEditableSnapshot,
   type CommitResult,
   type FreshnessObservation,
@@ -133,12 +132,12 @@ test("create never overwrites an existing target", async () =>
   withTemp(async (dir) => {
     const target = join(dir, "existing.txt");
     await writeFile(target, "original\n");
-    const revision = await fileRevision(target);
+    const revision = byteRevision(await readFile(target));
     await assert.rejects(
       commitFile(target, "replacement\n", { mode: "create" }),
       (error: unknown) => error instanceof HashlineError && error.errorCode === "TARGET_EXISTS",
     );
-    assert.equal(await fileRevision(target), revision);
+    assert.equal(byteRevision(await readFile(target)), revision);
     assert.equal(await readFile(target, "utf8"), "original\n");
   }));
 
@@ -348,7 +347,7 @@ test("bound overwrite → reports published and observed revisions for the publi
   withTemp(async (dir) => {
     const target = join(dir, "versions.txt");
     await writeFile(target, "before\n");
-    const baseRevision = await fileRevision(target);
+    const baseRevision = byteRevision(await readFile(target));
     const result = await commitFile(target, "after\n", {
       mode: "overwrite",
       baseRevision,
@@ -387,7 +386,7 @@ test("identical commits preserve the file and still enforce mode, revision, and 
     const content = "\uFEFFsame\r\nbytes\n";
     await writeFile(target, content);
     const before = await stat(target);
-    const revision = await fileRevision(target);
+    const revision = byteRevision(await readFile(target));
     const result = await commitFile(target, content, {
       mode: "overwrite",
       baseRevision: revision,
@@ -409,7 +408,7 @@ test("identical commits preserve the file and still enforce mode, revision, and 
       (error: unknown) =>
         error instanceof HashlineError &&
         error.errorCode === "FILE_CHANGED" &&
-        /before publication/.test(error.message),
+        error.message === "File changed after it was read.",
     );
     await assert.rejects(
       commitFile(target, content, { mode: "overwrite", signal: AbortSignal.abort() }),
@@ -439,7 +438,7 @@ test("file changes after the read → bound commits reject changed and unchanged
 
     // External process modifies target after snapshot is read.
     await writeFile(target, "line 1\nmodified line 2\n");
-    const externalRevision = await fileRevision(target);
+    const externalRevision = byteRevision(await readFile(target));
 
     for (const content of [snapshot.text, "replacement\n"]) {
       await assert.rejects(
@@ -448,7 +447,7 @@ test("file changes after the read → bound commits reject changed and unchanged
         (error: unknown) => error instanceof HashlineError && error.errorCode === "FILE_CHANGED",
       );
       assert.equal(await readFile(target, "utf8"), "line 1\nmodified line 2\n");
-      assert.equal(await fileRevision(target), externalRevision);
+      assert.equal(byteRevision(await readFile(target)), externalRevision);
     }
 
     // Without baseRevision, overwrite hashes the current target instead of using the snapshot.

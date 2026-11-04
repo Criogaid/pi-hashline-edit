@@ -6,11 +6,8 @@ import { Type } from "typebox";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { openTestSession, responseStream } from "../testing/session.testing.ts";
-import {
-  createActionFusionExecutor,
-  type ActionFusionProgress,
-  type ThenRunInput,
-} from "../pi/action-fusion.ts";
+import type { ActionFusionProgress } from "../pi/report-schema.ts";
+import { createActionFusionExecutor, type ThenRunInput } from "../pi/action-fusion.ts";
 import { makeWriteOverride } from "../pi/write-tool.ts";
 import { commandText } from "../pi/mutation-result.ts";
 import { reportOf } from "../pi/report.ts";

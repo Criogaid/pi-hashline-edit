@@ -11,11 +11,11 @@ import type { TSchema } from "typebox";
 import { theme } from "../../node_modules/@earendil-works/pi-coding-agent/dist/modes/interactive/theme/theme.js";
 import { makeEditOverride } from "./edit-tool.ts";
 import { makeReplaceTool } from "./replace-tool.ts";
-import { renderDiffPreview, renderMutationResult, reportLines } from "./render.ts";
+import { diffCardRenderers, reportLines } from "./render.ts";
 import { withMutationStatus } from "./fusion-card.ts";
 import { makeWriteOverride } from "./write-tool.ts";
 import { generateMutationDetails } from "./mutation-result.ts";
-import { createActionFusionExecutor, type ActionFusionProgress } from "./action-fusion.ts";
+import { createActionFusionExecutor } from "./action-fusion.ts";
 import { DEFAULT_CONFIG } from "./config.ts";
 import { toDisplayLines } from "./grep-render.ts";
 import { parseFileHeader } from "./grep-output.ts";
@@ -25,8 +25,8 @@ import { renderToolError } from "./render.ts";
 import { formatArgumentError } from "./argument-error.ts";
 import { makeGrepOverride } from "./grep-tool.ts";
 import { openTestSession } from "../testing/session.testing.ts";
-import type { SuccessReport } from "./report-schema.ts";
-import { renderReport, type Report } from "./report.ts";
+import type { ActionFusionProgress, Report, SuccessReport } from "./report-schema.ts";
+import { renderReport } from "./report.ts";
 import { DEFAULT_OUTPUT_BUDGETS, MAX_CONTENT_KIB, outputBudgetsFor } from "./budgets.ts";
 
 const mutationDetails = (
@@ -46,18 +46,16 @@ test("empty logical diff → render according to confirmed publication state", (
   assert.equal(diff.diff, "");
   for (const publication of ["PUBLISHED", "NOT_PUBLISHED", undefined] as const) {
     const output = stripVTControlCharacters(
-      renderMutationResult(
-        {
-          content: [],
-          details: { ...diff, report: { tool: "edit", publication } },
-        },
-        { isPartial: false, expanded: true },
-        theme,
-        { isError: false, args: {}, state: {} },
-        "Editing…",
-        () => "",
-        "edit",
-      )
+      diffCardRenderers("edit", "Editing…", () => "")
+        .renderResult(
+          {
+            content: [],
+            details: { ...diff, report: { tool: "edit", publication } },
+          },
+          { isPartial: false, expanded: true },
+          theme,
+          { isError: false, args: {}, state: {} },
+        )
         .render(100)
         .join("\n"),
     );
@@ -324,7 +322,13 @@ test("diff previews retain standalone CR and literal control-picture characters"
     );
     assert.match(result.render(160).join("\n"), /␍/);
   }
-  assert.match(renderDiffPreview("-1 old␍\n+1 new␍", true, theme), /␍/);
+  const preview = diffCardRenderers("edit", "Editing…", () => "").renderResult(
+    { content: [], details: { diff: "-1 old␍\n+1 new␍" } },
+    { isPartial: false, expanded: true },
+    theme,
+    { isError: false, args: {}, state: {} },
+  );
+  assert.match(preview.render(160).join("\n"), /␍/);
 });
 
 test("150,000 rows in one grep group → renders every row with shared indentation folded", () => {

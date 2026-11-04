@@ -10,22 +10,22 @@ import {
   plainRow,
 } from "./anchor-format.ts";
 
+function token(line: number, content: string, hashLen: number): string {
+  return createAnchorFormatter(hashLen).reference(line, computeLineHash(line, content, hashLen));
+}
+
 test("anchor formatter binds the supplied hash length and hashes undisplayed content", () => {
   const formatter = createAnchorFormatter(6);
-  const shortFormatter = createAnchorFormatter(4);
 
-  assert.equal(formatter.token(3, "full content"), `3#${computeLineHash(3, "full content", 6)}`);
+  assert.equal(token(3, "full content", 6), `3#${computeLineHash(3, "full content", 6)}`);
   assert.equal(formatter.reference(3, "ABCDEF"), "3#ABCDEF");
-  assert.match(formatter.token(3, "full content"), new RegExp(anchorPattern(6)));
-  assert.doesNotMatch(formatter.token(3, "full content"), new RegExp(anchorPattern(4)));
+  assert.match(token(3, "full content", 6), new RegExp(anchorPattern(6)));
+  assert.doesNotMatch(token(3, "full content", 6), new RegExp(anchorPattern(4)));
   assert.equal(
     formatter.row(3, "full content", "full…"),
     `3#${computeLineHash(3, "full content", 6)}│full…`,
   );
-  assert.equal(
-    shortFormatter.token(3, "full content"),
-    `3#${computeLineHash(3, "full content", 4)}`,
-  );
+  assert.equal(token(3, "full content", 4), `3#${computeLineHash(3, "full content", 4)}`);
 });
 
 test("anchor tokens parse at any hash length so wrong lengths can be explained", () => {
@@ -38,7 +38,7 @@ test("anchor tokens parse at any hash length so wrong lengths can be explained",
 test("anchor rows expose carriage returns while checksums retain source content", () => {
   const formatter = createAnchorFormatter(4);
   assert.equal(formatter.row(1, "a\rb"), `1#${computeLineHash(1, "a\rb", 4)}│a␍b`);
-  assert.notEqual(formatter.token(1, "a\rb"), formatter.token(1, "a␍b"));
+  assert.notEqual(token(1, "a\rb", 4), token(1, "a␍b", 4));
 });
 
 test("anchor syntax rejects characters absent from the checksum alphabet", () => {

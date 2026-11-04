@@ -16,6 +16,7 @@ import { argumentError, rejectsArgument } from "./argument-error.testing.ts";
 import { POSITIVE_SAFE_INTEGER } from "./schema.ts";
 import { reportOf } from "./report.ts";
 import { createAnchorFormatter } from "./anchor-format.ts";
+import { computeLineHash } from "../core/hash.ts";
 import { grepCounts } from "./grep-output.testing.ts";
 
 const invalidCommand = { command: "", timeout: 0 };
@@ -381,7 +382,6 @@ test("optional edit fields and then_run are null with Fusion → publishes bytes
     return { status: "succeeded", result: { content: [{ type: "text", text: "ran" }] } };
   });
   const tool = makeEditOverride(cwd, DEFAULT_CONFIG, fusion);
-  const anchors = createAnchorFormatter(DEFAULT_CONFIG.hashLen);
   for (const scenario of actionCases) {
     for (const side of scenario.transfer ? ["before", "after"] : [undefined]) {
       await t.test(
@@ -394,15 +394,12 @@ test("optional edit fields and then_run are null with Fusion → publishes bytes
             ...Object.fromEntries(
               scenario.required.map((field) => [
                 field,
-                field === "body" ? ["text"] : anchors.token(1, "alpha"),
+                field === "body" ? ["text"] : token(1, "alpha"),
               ]),
             ),
             ...(side
               ? {
-                  [side]: anchors.token(
-                    side === "before" ? 3 : 2,
-                    side === "before" ? "gamma" : "beta",
-                  ),
+                  [side]: token(side === "before" ? 3 : 2, side === "before" ? "gamma" : "beta"),
                 }
               : {}),
           };
@@ -469,7 +466,6 @@ test("edit batch has 64 or 65 operations → publishes the maximum or rejects th
   assert.equal(maxEdits, 64);
   const lines = Array.from({ length: maxEdits + 2 }, (_, i) => `line ${i + 1}`);
   const original = Buffer.from(`${lines.join("\n")}\n`);
-  const anchors = createAnchorFormatter(DEFAULT_CONFIG.hashLen);
   for (const count of [maxEdits, maxEdits + 1]) {
     await t.test(
       `${count} edits → ${count === maxEdits ? "publishes distinct deletions" : `rejects edits above max${maxEdits}`}`,
@@ -479,7 +475,7 @@ test("edit batch has 64 or 65 operations → publishes the maximum or rejects th
           path,
           edits: lines
             .slice(0, count)
-            .map((line, i) => ({ action: "delete", anchor: anchors.token(i + 1, line) })),
+            .map((line, i) => ({ action: "delete", anchor: token(i + 1, line) })),
         };
         const snapshot = structuredClone(args);
         if (count === maxEdits) {
@@ -962,6 +958,33 @@ test("value has the wrong type → the reason carries no fix", async () => {
       assert.equal(result.issues[0].field, "limit");
       assert.match(result.issues[0].reason, /must be number/);
       assert.equal(result.issues[0].fix, undefined);
+      return true;
+    },
+  );
+});
+
+function token(line: number, content: string): string {
+  const hashLen = DEFAULT_CONFIG.hashLen;
+  return createAnchorFormatter(hashLen).reference(line, computeLineHash(line, content, hashLen));
+}
+
+test("20 unknown keys including a slash → bounded issues retain one accepted-fields fix", async () => {
+  const tool = makeReadOverride(process.cwd(), DEFAULT_CONFIG);
+  const keys = Array.from({ length: 20 }, (_, index) =>
+    index === 0 ? "unknown/key" : `unknown${index}`,
+  );
+  await assert.rejects(
+    callTool(tool, { path: "unused.txt", ...Object.fromEntries(keys.map((key) => [key, true])) }),
+    (error: unknown) => {
+      const result = argumentError(error);
+      assert.equal(result.schemaLimited, true);
+      assert.ok(result.issues.length >= 8);
+      assert.ok(result.issues.some((issue) => issue.field.includes("unknown/key")));
+      for (const issue of result.issues) {
+        assert.equal(issue.reason, "is not allowed");
+      }
+      assert.equal(result.issues[0].fix, acceptedFields({ properties: schemaProperties(tool) }));
+      assert.ok(result.issues.slice(1).every((issue) => issue.fix === undefined));
       return true;
     },
   );

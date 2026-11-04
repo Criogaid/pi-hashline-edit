@@ -214,3 +214,31 @@ test("real rg candidates → include every JS row and preserve confirmed output 
     });
   }
 });
+
+test("NUL past a search limit → skips oversized line and multiline files without diagnostics", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "hl-grep-nul-limit-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const path = join(directory, "large-nul.txt");
+  // Place NUL beyond the chunk that first exceeds the search limit.
+  const bytes = Buffer.alloc(MAX_MULTILINE_SEARCH_BYTES + 1024 * 1024, 0x61);
+  const tool = makeGrepOverrideWithBackend(directory, DEFAULT_CONFIG, {});
+  for (const hasNul of [true, false]) {
+    bytes[bytes.length - 1] = hasNul ? 0 : 0x61;
+    await writeFile(path, bytes);
+    for (const multiline of [false, true]) {
+      await t.test(`multiline=${multiline}, NUL=${hasNul}`, async () => {
+        const result = await callTool(tool, { path, pattern: "a", literal: true, multiline });
+        const report = reportOf(result, "grep");
+        if (hasNul) {
+          assert.equal(result.isError, undefined, JSON.stringify(report));
+          assert.deepEqual(grepCounts(result), { matches: 0, files: 0 });
+          assert.equal(report?.diagnostics, undefined);
+        } else {
+          assert.equal(result.isError, true);
+          assert.equal(report?.error, "SEARCH_INCOMPLETE");
+          assert.match(report?.diagnostics ?? "", multiline ? /MiB/ : /UTF-16 code units/);
+        }
+      });
+    }
+  }
+});

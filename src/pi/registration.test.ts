@@ -20,7 +20,7 @@ import { theme } from "../../node_modules/@earendil-works/pi-coding-agent/dist/m
 import { computeLineHash } from "../core/hash.ts";
 import { callTool } from "./tool-call.testing.ts";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
-import type { ActionFusionProgress } from "./action-fusion.ts";
+import type { ActionFusionProgress } from "./report-schema.ts";
 import { reportOf } from "./report.ts";
 import { formatByteSize } from "./budgets.ts";
 import { expectToolFailure } from "./report-failure.testing.ts";

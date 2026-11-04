@@ -5,7 +5,8 @@ import { join } from "node:path";
 import hashlineEdit from "../index.ts";
 import { callTool } from "../pi/tool-call.testing.ts";
 import { outputBudgetsFor } from "../pi/budgets.ts";
-import { decodeReport, reportOf, type Report } from "../pi/report.ts";
+import { decodeReport, reportOf } from "../pi/report.ts";
+import type { Report } from "../pi/report-schema.ts";
 import { openTestSession } from "../testing/session.testing.ts";
 
 // Budget invalidation relies on Pi publishing the new model before tool preparation.
