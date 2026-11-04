@@ -1,6 +1,6 @@
 /**
- * Cause transport shared by reports and the replacement worker, without Pi runtime imports.
- * The worker loads this module on plain jiti, which lacks the host's typebox
+ * Cause transport shared by reports and the regex workers, without Pi runtime imports.
+ * Workers load this module on plain jiti, which lacks the host's typebox
  * mapping, so it must not import typebox at runtime.
  * External boundaries validate cause data before restoreCause.
  */
@@ -41,6 +41,7 @@ function boundedCause(data: Cause, maxBytes: number): Cause {
     ...(data.cause ? { cause: boundedCause(data.cause, maxBytes) } : {}),
   };
 }
+
 /**
  * A failure a regex worker transports: its code ties the facts that code requires.
  * The host still validates every reply (regex-worker-contract.ts) before trusting it.

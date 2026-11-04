@@ -42,6 +42,7 @@ const MAX_SEARCH_WORKERS = 4;
 const SEARCH_WORKERS = Math.max(1, Math.min(MAX_SEARCH_WORKERS, availableParallelism() - 1));
 /** Listed files that may wait, searched or not, for an earlier file's result to commit. */
 const MAX_UNCOMMITTED_FILES = 16 * SEARCH_WORKERS;
+
 class SearchFileLimitError extends Error {
   constructor(multiline: boolean) {
     super(

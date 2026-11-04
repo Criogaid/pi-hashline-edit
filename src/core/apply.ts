@@ -243,7 +243,7 @@ export function applyEdits(
     return { ok: false, failures: anchorFailures };
   }
 
-  const sorted = [...ops].sort((a, b) => a.lo - b.lo || a.hi - b.hi);
+  const sorted = ops.sort((a, b) => a.lo - b.lo || a.hi - b.hi);
   const conflict = findSortedRangeConflict(
     sorted.map((op) => [op.lo, op.hi]),
     true,

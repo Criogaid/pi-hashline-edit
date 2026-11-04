@@ -5,9 +5,7 @@
  * The core verifies each anchor live against
  * the current file content — no prior-read revision guard: a cited line
  * that changed (or was misremembered) fails its own anchor; unchanged lines
- * elsewhere never block the edit. The extension requires structured `edits` arrays
- * at execution; Pi may coerce a single object before validation. Legacy
- * oldText/newText inputs fail schema validation before mutation.
+ * elsewhere never block the edit.
  *
  * Concurrency safety: read-modify-write is wrapped in withFileMutationQueue.
  * AbortSignal is honored — checked after read / before write.
@@ -161,7 +159,7 @@ type EditSchema = ReturnType<typeof buildEditSchema>;
 
 type EditParams = Static<EditSchema>;
 
-type EditOpInput = Static<EditSchema>["edits"][number];
+type EditOpInput = EditParams["edits"][number];
 type EditOpSchema = EditSchema["properties"]["edits"]["items"];
 
 /** How to correct edit argument issues; each reason states only what is wrong. */
@@ -379,12 +377,10 @@ function runEdit(
   const anchorFormatter = createAnchorFormatter(hashLen);
 
   return runTextMutation<"edit">(target, (currentText) => {
-    const translated = toCoreEdits(editOps);
-
     // Recovery reports checksum candidates from nearby lines, then the whole file
     // if needed. Every failed anchor still rejects the batch; callers inspect
     // candidates and resubmit with fresh anchors.
-    const result = applyEdits(currentText, translated, hashLen, shiftRadius);
+    const result = applyEdits(currentText, toCoreEdits(editOps), hashLen, shiftRadius);
     if (!result.ok) {
       throw describeEditFailure(
         result.failures,
@@ -392,10 +388,6 @@ function runEdit(
         target.budget,
       );
     }
-
-    return {
-      text: result.text,
-      facts: {},
-    };
+    return { text: result.text, facts: {} };
   });
 }

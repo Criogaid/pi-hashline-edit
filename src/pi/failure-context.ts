@@ -87,7 +87,7 @@ function groupContextRows(rows: readonly ContextRow[]) {
 }
 
 /**
- * Observation rows (±3) around listed ambiguous candidates, lowest lines first.
+ * Observation rows around listed ambiguous candidates, lowest lines first.
  * @internal Performs no I/O.
  */
 export function ambiguousCandidateNeighborhoods(

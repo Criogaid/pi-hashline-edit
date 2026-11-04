@@ -17,11 +17,10 @@ export class DiagnosticBuffer {
   private head = "";
   private tail = "";
   private truncated = false;
+  private readonly maxBytes: number;
   private readonly notice: string;
   private readonly headBytes: number;
   private readonly tailBytes: number;
-
-  private readonly maxBytes: number;
 
   constructor(maxBytes: number) {
     this.maxBytes = maxBytes;

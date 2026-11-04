@@ -276,9 +276,7 @@ export const ERROR_DEFINITIONS = {
   },
   UNSUPPORTED_ENCODING: { facts: NONE },
   UNSUPPORTED_TEXT: { facts: NONE },
-  INVALID_UNICODE: {
-    facts: NONE,
-  },
+  INVALID_UNICODE: { facts: NONE },
   ANCHOR_MISMATCH: {
     facts: facts(
       ["failures"],
