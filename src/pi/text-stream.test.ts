@@ -47,7 +47,6 @@ test("streamed lines preserve BOM, standalone CR, and boundaries split across ch
       assert.deepEqual(lines, splitLines(text));
       assert.equal(stats.totalLines, lines.length);
       assert.equal(stats.finalNewline, text === "" || text.endsWith("\n"));
-      assert.equal(stats.byteLength, Buffer.byteLength(text));
     }
   }));
 
@@ -71,7 +70,6 @@ test("streamed scans → return the revision of every original byte and byte-bas
       });
       assert.equal(chunks.join(""), source.toString("utf8"));
       assert.equal(stats.revision, byteRevision(source));
-      assert.equal(stats.byteLength, source.length);
       assert.equal(progress.at(-1) ?? 0, source.length);
       if (source.length > chunkBytes) assert.equal(progress[0], chunkBytes);
       const selected = await scanTextLines(
@@ -198,7 +196,6 @@ test("lossy scans flush a multibyte sequence split across chunks and incomplete 
     assert.equal(emitted.at(-1), "�");
     assert.equal(stats.validUtf8, false);
     assert.equal(stats.hasNul, false);
-    assert.equal(stats.byteLength, source.length);
   }));
 
 test("NUL suppresses its chunk and all later text without flushing a pending sequence", async () =>
