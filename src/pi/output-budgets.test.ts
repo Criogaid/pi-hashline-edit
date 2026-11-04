@@ -81,7 +81,7 @@ test("model row allowance grows → anchor failures return complete observations
   const reports = [small, large].map((budget) => {
     const report = describeMutationFailure(
       "edit",
-      describeEditFailure(applied.failures, snapshot, budget),
+      describeEditFailure(snapshot.currentText, applied.failures, snapshot.anchors, budget),
       {
         budget,
       },

@@ -194,8 +194,9 @@ function rejectedEdit(
   const result = applyEdits(text, edits, DEFAULT_CONFIG.hashLen, shiftRadius);
   assert.ok(!result.ok, "the fixture must reach failure reporting");
   const error = describeEditFailure(
+    text,
     result.failures,
-    { currentText: text, anchors: createAnchorFormatter(DEFAULT_CONFIG.hashLen) },
+    createAnchorFormatter(DEFAULT_CONFIG.hashLen),
     budget,
   );
   return describeMutationFailure("edit", error, { path: "file.txt", budget });
