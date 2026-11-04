@@ -73,15 +73,7 @@ export async function withRegexWorker<Input, Result, Output>(
             ),
           timeoutMs,
         );
-        try {
-          worker.postMessage(input);
-        } catch (error) {
-          fail(
-            new HashlineError("REGEX_WORKER_FAILED", "Could not send the regex request.", {
-              cause: error,
-            }),
-          );
-        }
+        worker.postMessage(input);
       });
     });
   try {
