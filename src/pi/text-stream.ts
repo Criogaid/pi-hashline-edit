@@ -35,6 +35,17 @@ export async function scanTextFile(
     let lastByte = -1;
     let hasNul = false;
     let decodingError: unknown;
+    /** Strict text of a chunk, or of the final flush without bytes; undefined once malformed. */
+    const decodeStrict = (bytes?: Buffer): string | undefined => {
+      if (decodingError) return undefined;
+      try {
+        return decode(bytes, bytes !== undefined);
+      } catch (error) {
+        if (!(error instanceof Utf8DecodingError)) throw error;
+        decodingError = error;
+        return undefined;
+      }
+    };
     const stream = createReadStream(path, {
       fd: handle,
       autoClose: false,
@@ -55,15 +66,7 @@ export async function scanTextFile(
         }
         // NUL takes precedence even when an earlier chunk contained malformed UTF-8.
         if (hasNul) continue;
-        let text: string | undefined;
-        if (!decodingError) {
-          try {
-            text = decode(bytes, true);
-          } catch (error) {
-            if (!(error instanceof Utf8DecodingError)) throw error;
-            decodingError = error;
-          }
-        }
+        let text = decodeStrict(bytes);
         if (lossy) text = lossy(bytes, true);
         if (text !== undefined) await onChunk?.(text, byteLength);
       }
@@ -74,15 +77,7 @@ export async function scanTextFile(
     }
     throwIfCancelled(signal);
     if (!hasNul) {
-      let tail: string | undefined;
-      if (!decodingError) {
-        try {
-          tail = decode();
-        } catch (error) {
-          if (!(error instanceof Utf8DecodingError)) throw error;
-          decodingError = error;
-        }
-      }
+      let tail = decodeStrict();
       if (lossy) tail = lossy();
       else if (decodingError && decoding === "strict") throw decodingError;
       if (tail) await onChunk?.(tail, byteLength);
