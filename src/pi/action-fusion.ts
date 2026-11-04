@@ -60,7 +60,7 @@ export const ACTION_FUSION_GUIDELINES = [
   "When a check covers several changes, run it once after all of those changes.",
 ];
 
-type ProgressReporter = (progress: ActionFusionProgress, ctx: ExtensionToolContext) => void;
+type ProgressReporter = (progress: ActionFusionProgress) => void;
 
 function createThenRunSchema(tool: MutationToolName) {
   return Type.Optional(
@@ -194,13 +194,11 @@ async function canonicalQueueKey(path: string): Promise<string> {
 function createProgressTracker<TDetails extends object>({
   toolCallId,
   thenRun,
-  ctx,
   onProgress,
   onUpdate,
 }: {
   toolCallId: string;
   thenRun: ThenRunInput;
-  ctx: ExtensionToolContext;
   onProgress: ProgressReporter | undefined;
   onUpdate: AgentToolUpdateCallback<MutationResultDetails<TDetails>> | undefined;
 }) {
@@ -231,7 +229,7 @@ function createProgressTracker<TDetails extends object>({
         : {}),
     };
     for (const notify of [
-      () => onProgress?.(progress, ctx),
+      () => onProgress?.(progress),
       () => onUpdate?.({ content: [], details: { ...mutationDetails, actionFusion: progress } }),
     ]) {
       try {
@@ -329,7 +327,6 @@ export function createActionFusionExecutor(
     const progress = createProgressTracker<TDetails>({
       toolCallId,
       thenRun,
-      ctx,
       onProgress,
       onUpdate,
     });
