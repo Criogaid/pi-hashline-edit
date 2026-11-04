@@ -81,6 +81,7 @@ function createThenRunSchema(tool: MutationToolName) {
     ),
   );
 }
+
 /** Add the optional then_run field to a mutation schema when Action Fusion is enabled. */
 export function withThenRunSchema<P extends TProperties>(
   schema: TObject<P>,
@@ -94,6 +95,7 @@ export function withThenRunSchema<P extends TProperties>(
       )
     : schema;
 }
+
 export type ThenRunInput = NonNullable<Static<ReturnType<typeof createThenRunSchema>>>;
 
 /** Name then_run in a mutation tool's description when Action Fusion is enabled. */

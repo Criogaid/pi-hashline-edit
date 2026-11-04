@@ -9,10 +9,9 @@
  * Owns the sequencing every mutation tool must keep identical once Pi has
  * prepared and validated the arguments: separating then_run, path resolution,
  * the shared file mutation queue, the hand-off to Action Fusion, and
- * finalization. Each tool
- * returns a typed `MutationOutcome` (commit facts, details, outcome facts);
- * Action Fusion returns facts too, and this module's single `finalizeMutation`
- * call turns them into the result, so nothing
+ * finalization. Each tool returns a typed `MutationOutcome` (commit facts,
+ * details, outcome facts); Action Fusion returns facts too, and this module's
+ * single `finalizeMutation` call turns them into the result, so nothing
  * downstream reads publication or revisions back from result details. Every
  * failure leaves as one report with the call's path and publication.
  *

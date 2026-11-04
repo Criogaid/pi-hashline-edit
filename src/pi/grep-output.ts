@@ -241,7 +241,6 @@ export async function grepOutput(
   const { warnings: rereadWarnings, ...formatted } = await formatMatches({
     ...options,
     files: search.files,
-    budget,
   });
   return assembleGrepOutput({
     formatted,

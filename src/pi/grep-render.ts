@@ -36,7 +36,7 @@ export function toDisplayLines(raw: string, theme: Theme): string[] {
       while (next < lines.length) {
         const row = parseDisplayRow(lines[next]);
         if (!row) break;
-        group.push({ lineNo: row.lineNo, content: row.content });
+        group.push(row);
         next++;
       }
       // Indentation shared by every row is folded into one marker.

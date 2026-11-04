@@ -75,10 +75,10 @@ function checkReplaceArguments(args: unknown, report: ReportArgumentIssue): void
   const rules = argumentItems((args as { replacements?: unknown } | null)?.replacements);
   rules.forEach((rule, index) => {
     const { find, replace, literal, flags } = (rule ?? {}) as Record<string, unknown>;
-    const unwritable = typeof replace === "string" ? unwritableTextError(replace) : undefined;
-    if (unwritable) report(`replacements[${index}].replace`, unwritable.message);
-    if (flags !== undefined && typeof flags !== "string") return;
     const item = `replacements[${index}]`;
+    const unwritable = typeof replace === "string" ? unwritableTextError(replace) : undefined;
+    if (unwritable) report(`${item}.replace`, unwritable.message);
+    if (flags !== undefined && typeof flags !== "string") return;
     checkRegexArguments(
       `${item}.flags`,
       flags,
