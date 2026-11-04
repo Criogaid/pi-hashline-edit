@@ -199,7 +199,7 @@ interface AssembleGrepOutputOptions {
   readonly outputMode: GrepOutputMode;
   readonly matchLimitReached: boolean;
   readonly effectiveLimit: number;
-  readonly searchFacts?: SearchFacts;
+  readonly searchFacts: SearchFacts;
   readonly budget: OutputBudgets;
 }
 
@@ -214,7 +214,7 @@ export function assembleGrepOutput(options: AssembleGrepOutputOptions): {
     outputMode,
     matchLimitReached,
     effectiveLimit,
-    searchFacts = {},
+    searchFacts,
     budget,
   } = options;
   const { blocks, matches, files } = formatted;
