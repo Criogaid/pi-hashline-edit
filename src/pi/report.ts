@@ -227,22 +227,3 @@ export async function runTool<T>(
     return failureResult(describe(tool, error, context));
   }
 }
-
-/**
- * Keep the leading entries of a fact list whose compact JSON fits `maxBytes`;
- * report how many were omitted. Whole entries are omitted, never cut.
- */
-export function boundedFacts<T>(
-  entries: readonly T[],
-  maxBytes: number,
-): { kept: T[]; omitted: number } {
-  const kept: T[] = [];
-  let bytes = 0;
-  for (const entry of entries) {
-    const entryBytes = Buffer.byteLength(JSON.stringify(entry)) + 1;
-    if (bytes + entryBytes > maxBytes) break;
-    kept.push(entry);
-    bytes += entryBytes;
-  }
-  return { kept, omitted: entries.length - kept.length };
-}
