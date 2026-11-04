@@ -82,18 +82,15 @@ export function createArgumentPreparer<T extends TObject>(
     check?.(checked, (field, reason, fix) =>
       issues.push(fix === undefined ? { field, reason } : { field, reason, fix }),
     );
+    // Keep Pi's preparation contract: the framework performs its own coercion next.
     if (schemaFailure === undefined && issues.length === 0) return args as Static<T>;
     const result = diagnoseArguments(parameters, checked, issues, schemaFailure !== undefined);
     const reported =
       result.issues.length > 0
         ? result.issues
         : [{ field: "$", reason: errorMessage(schemaFailure) }];
-    if (schemaFailure !== undefined || result.issues.length > 0) {
-      throw new Error(formatArgumentError(reported, result.limited, budgets()), {
-        cause: schemaFailure,
-      });
-    }
-    // Keep Pi's preparation contract: the framework performs its own coercion next.
-    return args as Static<T>;
+    throw new Error(formatArgumentError(reported, result.limited, budgets()), {
+      cause: schemaFailure,
+    });
   };
 }
