@@ -12,14 +12,12 @@
  * @module pi-hashline-edit/pi
  */
 
-import { visitRegExpAST, type AST } from "@eslint-community/regexpp";
+import type { AST } from "@eslint-community/regexpp";
 import {
-  MAX_UNIT,
   MAX_SCALAR,
   normalize,
   subtract,
   intersect,
-  total,
   contains,
   nativeCharacterRanges,
   foldRanges,
@@ -28,7 +26,6 @@ import {
   type CharacterNode,
   surrogatePair,
 } from "../core/character-set.ts";
-import { caseVariants } from "../core/case-fold.ts";
 import { analyzeQueryPattern } from "../core/search-analysis.ts";
 import type { GrepQuery } from "../core/search.ts";
 
@@ -65,7 +62,6 @@ interface Context {
   readonly multilineAnchors: boolean;
   /** Translating a group as the text a backreference repeats, away from where it matched. */
   readonly repeated: boolean;
-  readonly bindings: ReadonlyMap<AST.CapturingGroup, string>;
 }
 
 /** Whether nothing consumed can precede or follow an element within its pattern's match. */
@@ -74,10 +70,6 @@ interface Position {
   readonly last: boolean;
 }
 const INNER: Position = { first: false, last: false };
-
-/** Bound correlated capture expansion. */
-const MAX_ANALYSIS_BRANCHES = 16;
-const MAX_FIXED_UNITS = 64;
 
 const intersects = (ranges: Ranges, other: Ranges) => intersect(ranges, other).length !== 0;
 
@@ -307,10 +299,6 @@ function participates(group: AST.CapturingGroup, reference: AST.Backreference): 
  * not have matched leaves the reference empty.
  */
 function backreference(node: AST.Backreference, ctx: Context): string {
-  if (!node.ambiguous) {
-    const bound = ctx.bindings.get(node.resolved);
-    if (bound !== undefined) return literalWord(bound, ctx);
-  }
   // A reference inside repeated text could repeat itself.
   if (ctx.repeated) return ANY_TEXT;
   const groups = node.ambiguous ? node.resolved : [node.resolved];
@@ -342,9 +330,7 @@ function element(node: AST.Element, ctx: Context, position: Position): string {
     case "Group":
       return alternatives(node.alternatives, modified(node, ctx), position);
     case "CapturingGroup":
-      return ctx.bindings.has(node)
-        ? literalWord(ctx.bindings.get(node)!, { ...ctx, ignoreCase: false })
-        : alternatives(node.alternatives, ctx, position);
+      return alternatives(node.alternatives, ctx, position);
     case "Quantifier":
       return quantifier(node, ctx);
   }
@@ -371,112 +357,6 @@ function alternatives(nodes: readonly AST.Alternative[], ctx: Context, position:
   );
 }
 
-function literalWord(text: string, ctx: Context): string {
-  return [...text]
-    .map((char) => {
-      const point = char.codePointAt(0)!;
-      return !ctx.unicode && point > MAX_UNIT
-        ? classPattern([[point, point]])
-        : unit(folded([[point, point]], ctx), ctx);
-    })
-    .join("");
-}
-
-function joinWords(
-  left: readonly string[],
-  right: readonly string[],
-): readonly string[] | undefined {
-  if (left.length * right.length > MAX_ANALYSIS_BRANCHES) return undefined;
-  const words = [...new Set(left.flatMap((a) => right.map((b) => a + b)))];
-  return words.some((word) => word.length > MAX_FIXED_UNITS) ? undefined : words;
-}
-
-function finiteWords(node: AST.Element, ctx: Context): readonly string[] | undefined {
-  if (node.type === "Assertion" || node.type === "Backreference") return undefined;
-  if (node.type === "Group" || node.type === "CapturingGroup") {
-    const result: string[] = [];
-    for (const branch of node.alternatives) {
-      let words: readonly string[] = [""];
-      for (const child of branch.elements) {
-        const part = finiteWords(child, ctx);
-        const joined = part && joinWords(words, part);
-        if (!joined) return undefined;
-        words = joined;
-      }
-      result.push(...words);
-      if (result.length > MAX_ANALYSIS_BRANCHES) return undefined;
-    }
-    return [...new Set(result)];
-  }
-  if (node.type === "Quantifier") {
-    if (node.max > MAX_ANALYSIS_BRANCHES) return undefined;
-    if (!node.max) return [""];
-    const inner = finiteWords(node.element, ctx);
-    if (!inner) return undefined;
-    let words: readonly string[] = [""];
-    const result: string[] = node.min === 0 ? [""] : [];
-    for (let count = 1; count <= node.max; count++) {
-      const joined = joinWords(words, inner);
-      if (!joined) return undefined;
-      words = joined;
-      if (count >= node.min) result.push(...words);
-      if (result.length > MAX_ANALYSIS_BRANCHES) return undefined;
-    }
-    return [...new Set(result)];
-  }
-  const ranges = scalarRanges(node, ctx);
-  if (total(ranges) > MAX_ANALYSIS_BRANCHES) return undefined;
-  const result: string[] = [];
-  for (const [low, high] of ranges)
-    for (let point = low; point <= high; point++) result.push(String.fromCodePoint(point));
-  const strings = acceptedClassStrings(node, nativeFlags(node, ctx));
-  if (!strings) return undefined;
-  for (const value of strings) {
-    let words: readonly string[] = [""];
-    for (const char of value) {
-      const variants = ignoreCaseAt(node, ctx) ? caseVariants(char, ctx.unicode) : [char];
-      const joined = joinWords(words, variants);
-      if (!joined) return undefined;
-      words = joined;
-    }
-    result.push(...words);
-    if (result.length > MAX_ANALYSIS_BRANCHES) return undefined;
-  }
-  return [...new Set(result)];
-}
-
-/** Enumerate only captures whose value is stable at every reference. */
-function bindingContexts(parsed: AST.Pattern, ctx: Context): readonly Context[] {
-  let contexts = [ctx];
-  visitRegExpAST(parsed, {
-    onCapturingGroupEnter(group) {
-      if (
-        !group.references.length ||
-        group.references.some((ref) => ref.ambiguous || !participates(group, ref))
-      )
-        return;
-      for (let parent: AST.Node | null = group.parent; parent; parent = parent.parent)
-        if (parent.type === "Assertion" || parent.type === "Quantifier") return;
-      let nested = false;
-      visitRegExpAST(group, {
-        onCapturingGroupEnter(node) {
-          if (node !== group) nested = true;
-        },
-      });
-      if (nested) return;
-      const words = finiteWords(group, ctx);
-      if (!words?.length || words.length * contexts.length > MAX_ANALYSIS_BRANCHES) return;
-      contexts = contexts.flatMap((context) =>
-        words.map((word) => ({
-          ...context,
-          bindings: new Map([...context.bindings, [group, word]]),
-        })),
-      );
-    },
-  });
-  return contexts;
-}
-
 /**
  * rg patterns, one per query pattern, whose matching lines include every line the query
  * matches without multiline; undefined when parsing or translation exceeds supported budgets.
@@ -490,16 +370,11 @@ export function lineCandidatePatterns(query: GrepQuery): string[] | undefined {
     unicodeSets: query.flags.includes("v"),
     multilineAnchors: query.flags.includes("m"),
     repeated: false,
-    bindings: new Map(),
   };
   const patterns: string[] = [];
   for (const pattern of query.patterns) {
     const translated = analyzeQueryPattern(pattern, query.literal, query.flags, (parsed) =>
-      choice(
-        bindingContexts(parsed, ctx).map((context) =>
-          alternatives(parsed.alternatives, context, { first: true, last: true }),
-        ),
-      ),
+      alternatives(parsed.alternatives, ctx, { first: true, last: true }),
     );
     if (translated === undefined) return undefined;
     if (
