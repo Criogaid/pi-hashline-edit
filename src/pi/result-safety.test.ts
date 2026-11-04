@@ -2,25 +2,17 @@ import { rejectsArgument } from "./argument-error.testing.ts";
 import { computeLineHash } from "../core/hash.ts";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import fs, { mkdtemp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { syncBuiltinESMExports } from "node:module";
 import { writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { DEFAULT_OUTPUT_BUDGETS, outputBudgetsFor } from "./budgets.ts";
+import { outputBudgetsFor } from "./budgets.ts";
 import { createActionFusionExecutor } from "./action-fusion.ts";
 import { makeReplaceTool } from "./replace-tool.ts";
 import { makeWriteOverride } from "./write-tool.ts";
 import { makeEditOverride } from "./edit-tool.ts";
-import { commitFreshness, FileMutationError } from "./file-commit.ts";
-import { byteRevision } from "./file-revision.ts";
-import {
-  CommandNotRun,
-  describeMutationFailure,
-  finalizeMutation,
-  postProcessMutation,
-  type MutationOutcome,
-} from "./mutation-result.ts";
 import { decodeReport, reportOf } from "./report.ts";
 import { REREAD } from "./report-schema.ts";
 import { callTool, createToolContext as ctx } from "./tool-call.testing.ts";
@@ -28,15 +20,6 @@ import { DEFAULT_CONFIG } from "./config.ts";
 
 const text = (result: Pick<AgentToolResult<unknown>, "content">): string =>
   result.content.map((block) => (block.type === "text" ? block.text : "")).join("\n");
-
-const invoke = (
-  tool: any,
-  toolCallId: string,
-  args: unknown,
-  signal?: AbortSignal,
-  onUpdate?: unknown,
-  context?: unknown,
-) => callTool(tool, args, { toolCallId, signal, onUpdate, ctx: context });
 
 const anchorBudget = outputBudgetsFor(4096);
 const anchorBatchSize: unknown = Reflect.get(
@@ -145,154 +128,21 @@ test("progress callback failures → preserve publication and allow the command"
         callback === "reporter" ? fail : undefined,
       );
       const path = join(dir, callback);
-      const result = await invoke(
+      const result = await callTool(
         makeWriteOverride(dir, fusion),
-        "write",
         {
           path,
           content: "saved\n",
           mode: "create",
           then_run: { command: "check" },
         },
-        undefined,
-        callback === "update" ? fail : undefined,
-        await ctx(dir, t),
+        { onUpdate: callback === "update" ? fail : undefined, ctx: await ctx(dir, t) },
       );
       assert.equal(commands, 1);
       assert.equal(await readFile(path, "utf8"), "saved\n");
       assert.equal(reportOf(result, "write")?.publication, "PUBLISHED");
       assert.equal(reportOf(result, "write")?.then_run?.status, "succeeded");
       assert.match(text(result), /display unavailable/);
-    }
-    for (const publication of ["NOT_PUBLISHED", "PUBLISHED", "UNKNOWN"] as const) {
-      for (const progressError of [
-        "display unavailable",
-        Object.assign(new Error("display unavailable " + "界".repeat(anchorBudget.fieldBytes)), {
-          code: "EIO",
-          cause: new Error("nested " + "界".repeat(anchorBudget.fieldBytes)),
-        }),
-      ]) {
-        const mutationError = new FileMutationError(
-          "POST_PROCESS_FAILED",
-          publication,
-          "original failure",
-        );
-        const fusion = createActionFusionExecutor(undefined, () => {
-          throw progressError;
-        });
-        await assert.rejects(
-          fusion({
-            toolCallId: "failed",
-            absolutePath: join(dir, "failed"),
-            thenRun: { command: "check" },
-            mutate: async () => {
-              throw mutationError;
-            },
-            signal: undefined,
-            ctx: await ctx(dir, t),
-          }),
-          (error: unknown) => {
-            assert.ok(error instanceof CommandNotRun);
-            assert.equal(error.status, "skipped");
-            assert.equal(error.cause, mutationError);
-            assert.equal(error.progressError, progressError);
-            const report = describeMutationFailure("write", error, { budget: anchorBudget });
-            assert.equal(report.error, "POST_PROCESS_FAILED");
-            assert.equal(report.publication, publication);
-            assert.equal(report.message, "original failure");
-            assert.equal(report.then_run?.status, "skipped");
-            assert.ok(report.progressError);
-            if (typeof progressError === "string") {
-              assert.deepEqual(report.progressError, { message: progressError });
-            } else {
-              assert.equal(report.progressError.code, "EIO");
-              assert.ok(report.progressError.message.startsWith("display unavailable"));
-              assert.ok(Buffer.byteLength(report.progressError.message) <= anchorBudget.fieldBytes);
-              assert.notEqual(report.progressError.message, progressError.message);
-              assert.ok(report.progressError.cause);
-              assert.ok(report.progressError.cause.message.startsWith("nested"));
-              assert.ok(
-                Buffer.byteLength(report.progressError.cause.message) <= anchorBudget.fieldBytes,
-              );
-              assert.notEqual(report.progressError.cause.message, progressError.cause.message);
-            }
-            return true;
-          },
-        );
-      }
-    }
-  } finally {
-    await rm(dir, { recursive: true, force: true });
-  }
-});
-
-test("commit facts with absent or empty diff → determine standalone reports and Fusion outcomes", async (t) => {
-  const dir = await mkdtemp(join(tmpdir(), "hashline-finalizer-"));
-  try {
-    const path = join(dir, "file");
-    const context = await ctx(dir, t);
-    const publishedRevision = byteRevision(Buffer.from("published\n"));
-    for (const publication of ["PUBLISHED", "NOT_PUBLISHED"] as const) {
-      for (const content of ["published\n", "external\n"]) {
-        await writeFile(path, content);
-        for (const details of [{}, { diff: "" }]) {
-          const expectedDetails = structuredClone(details);
-          const mutation = {
-            details,
-            facts: {},
-            commit: {
-              publication,
-              publishedRevision,
-              observedRevision: byteRevision(Buffer.from(content)),
-              created: false,
-            },
-          } satisfies MutationOutcome<object>;
-          const fresh = content === "published\n";
-          const observation = commitFreshness(mutation.commit);
-          assert.equal(observation.freshness, fresh ? "unchanged" : "changed");
-          const standalone = finalizeMutation(
-            "edit",
-            path,
-            mutation,
-            observation,
-            undefined,
-            DEFAULT_OUTPUT_BUDGETS,
-          );
-          assert.equal(reportOf(standalone, "edit")?.publication, publication);
-          assert.equal(standalone.content.length, 1);
-          assert.equal(reportOf(standalone, "edit")?.freshness, fresh ? undefined : "changed");
-          for (const thenRun of [undefined, { command: "check" }]) {
-            let commands = 0;
-            const fused = await createActionFusionExecutor(async () => {
-              commands++;
-              return {
-                status: "succeeded",
-                result: { content: [{ type: "text", text: "checked" }] },
-              };
-            })({
-              toolCallId: "commit-facts",
-              absolutePath: path,
-              thenRun,
-              mutate: async () => mutation,
-              signal: undefined,
-              ctx: context,
-            });
-            assert.equal(fused.outcome, mutation);
-            assert.equal(fused.outcome.commit.publication, publication);
-            assert.equal(fused.observation.freshness, fresh ? "unchanged" : "changed");
-            if (!thenRun) assert.deepEqual(fused.observation, observation);
-            assert.equal(
-              fused.command?.status,
-              thenRun ? (fresh ? "succeeded" : "skipped") : undefined,
-            );
-            assert.equal(commands, thenRun && fresh ? 1 : 0);
-            for (const [key, value] of Object.entries(expectedDetails))
-              assert.deepEqual(Reflect.get(fused.outcome.details, key), value);
-            assert.equal(await readFile(path, "utf8"), content);
-          }
-          assert.deepEqual(mutation.details, expectedDetails);
-        }
-      }
     }
   } finally {
     await rm(dir, { recursive: true, force: true });
@@ -304,9 +154,8 @@ test("aggregate anchor diagnostics → respect their byte budgets", async (t) =>
   try {
     const path = join(dir, "long.txt");
     await writeFile(path, "current\n");
-    const failure = await invoke(
+    const failure = await callTool(
       makeEditOverride(dir, DEFAULT_CONFIG, undefined, () => anchorBudget),
-      "errors",
       {
         path,
         edits: Array.from({ length: anchorBatchSize }, () => ({
@@ -314,9 +163,7 @@ test("aggregate anchor diagnostics → respect their byte budgets", async (t) =>
           anchor: "1#XXXX",
         })),
       },
-      undefined,
-      undefined,
-      await ctx(dir, t),
+      { ctx: await ctx(dir, t) },
     );
     assert.equal(failure.isError, true);
     assertFailureByteBudgets(text(failure));
@@ -388,9 +235,8 @@ test("ambiguous recovery bounds candidate lists and never claims content identit
     const lines = Array.from({ length: 100 }, () => "same");
     lines[49] = "different";
     await writeFile(path, lines.join("\n"));
-    const failure = await invoke(
+    const failure = await callTool(
       makeEditOverride(dir, DEFAULT_CONFIG, undefined, () => anchorBudget),
-      "ambiguous",
       {
         path,
         edits: Array.from({ length: anchorBatchSize }, () => ({
@@ -398,9 +244,7 @@ test("ambiguous recovery bounds candidate lists and never claims content identit
           anchor: `50#${computeLineHash(50, "same", 4)}`,
         })),
       },
-      undefined,
-      undefined,
-      await ctx(dir, t),
+      { ctx: await ctx(dir, t) },
     );
     assert.equal(failure.isError, true);
     assertFailureByteBudgets(text(failure));
@@ -502,19 +346,69 @@ test("Fusion skips the command when a replacement produces unencodable text", as
   }
 });
 
-test("result generation failure → preserves publication and cause", () => {
-  for (const publication of ["NOT_PUBLISHED", "PUBLISHED", "UNKNOWN"] as const) {
-    const cause = new Error("render failed");
-    assert.throws(
-      () =>
-        postProcessMutation(publication, () => {
-          throw cause;
-        }),
-      (error: any) =>
-        error instanceof FileMutationError &&
-        error.publication === publication &&
-        error.cause === cause,
-    );
+test("result generation fails after a real mutation → preserves publication and cause", async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), "hashline-result-generation-"));
+  try {
+    for (const content of ["before\n", "after\n"]) {
+      const path = join(dir, "file.txt");
+      await writeFile(path, "before\n");
+      const cause = new Error("render failed");
+      const context = await ctx(dir, t);
+      const nativeOpen = fs.open;
+      const nativeReplace = String.prototype.replace;
+      const readsBeforeDiff = content === "before\n" ? 2 : 3;
+      let targetReads = 0;
+      let injected = false;
+      let commands = 0;
+      const fusion = createActionFusionExecutor(async () => {
+        commands++;
+        return { status: "succeeded", result: { content: [] } };
+      });
+      try {
+        t.mock.method(fs, "open", async (...args: Parameters<typeof nativeOpen>) => {
+          if (String(args[0]) === path) targetReads++;
+          return nativeOpen(...args);
+        });
+        syncBuiltinESMExports();
+        // Only fail diff normalization after the commit's final target read.
+        t.mock.method(
+          String.prototype,
+          "replace",
+          function (this: string, ...args: Parameters<typeof nativeReplace>) {
+            if (!injected && targetReads === readsBeforeDiff && String(this) === content) {
+              injected = true;
+              throw cause;
+            }
+            return nativeReplace.apply(this, args);
+          },
+        );
+        const result = await callTool(
+          makeReplaceTool(dir, DEFAULT_CONFIG, fusion),
+          {
+            path,
+            replacements: [{ literal: true, find: "before\n", replace: content }],
+            then_run: { command: "check" },
+          },
+          { ctx: context },
+        );
+        const report = reportOf(result, "replace");
+        assert.equal(injected, true, `diff injection after ${targetReads} target reads`);
+        assert.equal(result.isError, true);
+        assert.equal(report?.error, "POST_PROCESS_FAILED");
+        assert.ok(result.details);
+        assert.equal(Reflect.get(result.details, "diff"), undefined);
+        assert.equal(report?.publication, content === "before\n" ? "NOT_PUBLISHED" : "PUBLISHED");
+        assert.deepEqual(report?.cause, { message: cause.message });
+        assert.equal(report?.then_run?.status, "skipped");
+        assert.equal(commands, 0);
+      } finally {
+        t.mock.restoreAll();
+        syncBuiltinESMExports();
+      }
+      assert.equal(await readFile(path, "utf8"), content);
+    }
+  } finally {
+    await rm(dir, { recursive: true, force: true });
   }
 });
 
@@ -552,16 +446,15 @@ test("all mutation tools succeed without rewriting on no-op, with and without Fu
           commands++;
           return { status: "succeeded", result: { content: [{ type: "text", text: "checked" }] } };
         });
-        const tool: any = makeTool(dir, mode === "standalone" ? undefined : fusion);
-        const result = await invoke(
+        const tool = makeTool(dir, mode === "standalone" ? undefined : fusion);
+        const result = await callTool(
           tool,
-          tool.name,
           { path, ...params, ...(mode === "command" ? { then_run: { command: "check" } } : {}) },
-          undefined,
-          undefined,
-          await ctx(dir, t),
+          { ctx: await ctx(dir, t) },
         );
         assert.equal(reportOf(result, tool.name)?.publication, "NOT_PUBLISHED");
+        assert.ok(result.details);
+        assert.equal(Reflect.get(result.details, "diff"), tool.name === "write" ? undefined : "");
         assert.equal(reportOf(result, tool.name)?.freshness, undefined);
         assert.doesNotMatch(text(result), /Updated anchors|\d+#[0-9A-Z]+│/);
         assert.equal(commands, mode === "command" ? 1 : 0);
@@ -576,6 +469,61 @@ test("all mutation tools succeed without rewriting on no-op, with and without Fu
         );
         assert.equal(await readFile(path, "utf8"), "same\n");
       }
+    }
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("line movement changes only line endings → publishes with an empty diff and still checks Fusion freshness", async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), "hashline-empty-diff-"));
+  try {
+    const context = await ctx(dir, t);
+    for (const mode of ["standalone", "fusion", "command", "stale"] as const) {
+      const path = join(dir, `${mode}.txt`);
+      await writeFile(path, "same\r\nsame\n");
+      let commands = 0;
+      const fusion = createActionFusionExecutor(
+        async () => {
+          commands++;
+          assert.equal(await readFile(path, "utf8"), "same\nsame\r\n");
+          return { status: "succeeded", result: { content: [] } };
+        },
+        (progress) => {
+          if (mode === "stale" && progress.mutationCompleted && progress.command === "waiting")
+            writeFileSync(path, "external\n");
+        },
+      );
+      const result = await callTool(
+        makeEditOverride(dir, DEFAULT_CONFIG, mode === "standalone" ? undefined : fusion),
+        {
+          path,
+          edits: [
+            {
+              action: "move",
+              anchor: `1#${computeLineHash(1, "same", DEFAULT_CONFIG.hashLen)}`,
+              after: `2#${computeLineHash(2, "same", DEFAULT_CONFIG.hashLen)}`,
+            },
+          ],
+          ...(["command", "stale"].includes(mode) ? { then_run: { command: "check" } } : {}),
+        },
+        { ctx: context },
+      );
+      const report = reportOf(result, "edit");
+      assert.equal(result.isError, undefined);
+      assert.equal(Reflect.get(result.details, "diff"), "");
+      assert.equal(report?.publication, "PUBLISHED");
+      assert.equal(report?.freshness, mode === "stale" ? "changed" : undefined);
+      assert.equal(
+        report?.then_run?.status,
+        mode === "command" ? "succeeded" : mode === "stale" ? "skipped" : undefined,
+      );
+      assert.equal(report?.next, mode === "stale" ? REREAD : undefined);
+      assert.equal(commands, mode === "command" ? 1 : 0);
+      assert.equal(
+        await readFile(path, "utf8"),
+        mode === "stale" ? "external\n" : "same\nsame\r\n",
+      );
     }
   } finally {
     await rm(dir, { recursive: true, force: true });
@@ -606,14 +554,11 @@ test("no-op Fusion still detects external changes and reports command failures",
               writeFileSync(path, "external\n");
           },
         );
-        const tool: any = makeTool(dir, fusion);
-        const result = await invoke(
+        const tool = makeTool(dir, fusion);
+        const result = await callTool(
           tool,
-          tool.name,
           { path, ...params, then_run: { command: "check" } },
-          undefined,
-          undefined,
-          await ctx(dir, t),
+          { ctx: await ctx(dir, t) },
         );
         assert.equal(reportOf(result, tool.name)?.publication, "NOT_PUBLISHED");
         assert.equal(commands, scenario === "before" ? 0 : 1);

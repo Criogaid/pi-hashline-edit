@@ -1,46 +1,55 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { generateDiffString } from "@earendil-works/pi-coding-agent";
-import {
-  commandText,
-  finalizeMutation,
-  generateMutationDetails,
-  type MutationFacts,
-  type MutationFinalDetails,
-  type MutationOutcome,
-} from "./mutation-result.ts";
+import { generateMutationDetails } from "./mutation-result.ts";
 import { displayCarriageReturns } from "./anchor-format.ts";
-import { DEFAULT_OUTPUT_BUDGETS } from "./budgets.ts";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { createActionFusionExecutor } from "./action-fusion.ts";
+import { makeWriteOverride } from "./write-tool.ts";
+import { makeReplaceTool } from "./replace-tool.ts";
+import type { SuccessReport } from "./report-schema.ts";
+import { callTool, createToolContext } from "./tool-call.testing.ts";
+import { reportOf } from "./report.ts";
 
-// Checked by tsc; these callers must never run.
-function invalidMutationConstruction(
-  replacement: MutationOutcome<object, "replace">,
-  result: MutationFinalDetails<{ diff: string }>,
+// Checked by tsc at the report and tool boundaries; these callers must never run.
+function invalidMutationResults(
+  replacement: Extract<SuccessReport, { tool: "replace" }>,
+  result: Awaited<ReturnType<ReturnType<typeof makeReplaceTool>["execute"]>>,
 ) {
-  // @ts-expect-error edit has no replacement-count fact.
-  const editFacts: MutationFacts<"edit"> = { matches: 1 };
-  finalizeMutation(
-    "edit",
-    "file.txt",
-    // @ts-expect-error Replacement facts cannot be finalized as edit facts.
-    replacement,
-    { freshness: "unchanged" },
-    undefined,
-    DEFAULT_OUTPUT_BUDGETS,
-  );
-  // @ts-expect-error A failed mutation has no diff details.
-  const diff: string = result.diff;
+  // @ts-expect-error Edit reports cannot carry replacement counts.
+  const countedEdit: Extract<SuccessReport, { tool: "edit" }> = { tool: "edit", matches: 1 };
+  // @ts-expect-error A replacement report cannot be used as an edit report.
+  const edit: Extract<SuccessReport, { tool: "edit" }> = replacement;
+  // @ts-expect-error A possibly failed tool result has no guaranteed diff.
+  const diff: string = result.details.diff;
 }
 
-test("command content includes images → report text joins only text blocks", () => {
-  assert.equal(
-    commandText([
-      { type: "text", text: "first" },
-      { type: "image", data: "iVBORw0KGgo=", mimeType: "image/png" },
-      { type: "text", text: "second" },
-    ]),
-    "first\nsecond",
-  );
+test("command content includes images → report text joins only text blocks", async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), "hashline-command-content-"));
+  try {
+    const path = join(dir, "file.txt");
+    const fusion = createActionFusionExecutor(async () => ({
+      status: "succeeded",
+      result: {
+        content: [
+          { type: "text", text: "first" },
+          { type: "image", data: "iVBORw0KGgo=", mimeType: "image/png" },
+          { type: "text", text: "second" },
+        ],
+      },
+    }));
+    const result = await callTool(
+      makeWriteOverride(dir, fusion),
+      { path, content: "saved\n", mode: "create", then_run: { command: "check" } },
+      { ctx: await createToolContext(dir, t) },
+    );
+    assert.equal(reportOf(result, "write")?.then_run?.output, "first\nsecond");
+    assert.equal(await readFile(path, "utf8"), "saved\n");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 });
 
 for (const [name, before, after] of [

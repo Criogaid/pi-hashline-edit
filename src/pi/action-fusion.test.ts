@@ -1,5 +1,6 @@
 import { argumentError, rejectsArguments } from "./argument-error.testing.ts";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import assert from "node:assert/strict";
@@ -8,29 +9,25 @@ import { callTool, createToolContext as ctx } from "./tool-call.testing.ts";
 import { makeEditOverride } from "./edit-tool.ts";
 import { makeReplaceTool } from "./replace-tool.ts";
 import { makeWriteOverride } from "./write-tool.ts";
-import { computeLineHash } from "../core/hash.ts";
-import type { ActionFusionProgress, CommandOutcome } from "./action-fusion.ts";
+import type { ActionFusionProgress } from "./report-schema.ts";
 import { ACTION_FUSION_GUIDELINES, createActionFusionExecutor } from "./action-fusion.ts";
-import { HashlineError } from "../core/errors.ts";
-import { FileMutationError } from "./file-commit.ts";
-import { DEFAULT_OUTPUT_BUDGETS } from "./budgets.ts";
 import { DEFAULT_CONFIG } from "./config.ts";
-import { ACTION_FUSION_PROGRESS_SCHEMA, PUBLICATION_NEXT, REREAD } from "./report-schema.ts";
+import { ACTION_FUSION_PROGRESS_SCHEMA, REREAD } from "./report-schema.ts";
 import { Value } from "typebox/value";
-import { renderReport, reportOf } from "./report.ts";
-import {
-  CommandNotRun,
-  describeMutationFailure,
-  type MutationResultDetails,
-} from "./mutation-result.ts";
+import { reportOf } from "./report.ts";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import { publishedMutation } from "./mutation-outcome.testing.ts";
+
+type ProgressUpdate = AgentToolResult<{ actionFusion?: ActionFusionProgress }>;
 
 async function tempDir(): Promise<string> {
   return mkdtemp(join(tmpdir(), "hashline-action-fusion-"));
 }
 
 type Fusion = Parameters<typeof makeWriteOverride>[1];
+type CommandCompletion = Awaited<
+  ReturnType<NonNullable<Parameters<typeof createActionFusionExecutor>[0]>>
+>;
 const mutationFactories = [
   (cwd: string, fusion?: Fusion) => makeEditOverride(cwd, DEFAULT_CONFIG, fusion),
   (cwd: string, fusion?: Fusion) => makeReplaceTool(cwd, DEFAULT_CONFIG, fusion),
@@ -173,124 +170,52 @@ test("then_run returns a termination flag → parent results preserve its value 
   }
 });
 
-test("mutation failure skips the command and command failure does not roll back", async (t) => {
+test("target changes after publication → skips then_run and reports freshness without retry advice", async (t) => {
   const dir = await tempDir();
   try {
-    let calls = 0;
-    const commandFailure = "compiler: unexpected token\nCommand exited with code 7";
-    const fusion = createActionFusionExecutor(async () => {
-      calls++;
-      throw new Error(commandFailure);
-    });
-    await assert.rejects(
-      fusion({
-        toolCallId: "x",
-        absolutePath: join(dir, "missing.txt"),
-        thenRun: { command: "check" },
-        mutate: async () => {
-          throw new Error("anchor mismatch: current 1#ABCD");
+    const context = await ctx(dir, t);
+    for (const state of ["changed", "missing", "unknown"] as const) {
+      const target = join(dir, `${state}.txt`);
+      await writeFile(target, "before\n");
+      let commands = 0;
+      let disturbed = false;
+      const fusion = createActionFusionExecutor(
+        async () => {
+          commands++;
+          return { status: "succeeded", result: { content: [] } };
         },
-        signal: undefined,
-        ctx: await ctx(dir, t),
-      }),
-      (error: unknown) =>
-        error instanceof CommandNotRun &&
-        error.status === "skipped" &&
-        error.message.includes("anchor mismatch: current 1#ABCD"),
-    );
-    assert.equal(calls, 0);
-    const target = join(dir, "changed.txt");
-    await writeFile(target, "changed\n");
-    const result = await fusion({
-      toolCallId: "y",
-      absolutePath: target,
-      thenRun: { command: "check" },
-      mutate: async () =>
-        publishedMutation("changed\n", {
-          content: [{ type: "text", text: "mutation" }],
-          details: { ok: true },
-        }),
-      signal: undefined,
-      ctx: await ctx(dir, t),
-    });
-    assert.equal(result.outcome.details.ok, true);
-    assert.equal(result.outcome.commit.publication, "PUBLISHED");
-    assert.equal(result.command?.status, "failed");
-    assert.deepEqual(result.command?.result?.content, [{ type: "text", text: commandFailure }]);
-    assert.equal(await readFile(target, "utf8"), "changed\n");
-    assert.equal(calls, 1);
-  } finally {
-    await rm(dir, { recursive: true, force: true });
-  }
-});
-
-test("cancelled calls do not mutate or run the command", async (t) => {
-  const dir = await tempDir();
-  try {
-    const controller = new AbortController();
-    controller.abort();
-    let mutated = false;
-    let commanded = false;
-    const fusion = createActionFusionExecutor(async () => {
-      commanded = true;
-      return { status: "succeeded", result: { content: [] } };
-    });
-    await assert.rejects(
-      fusion({
-        toolCallId: "x",
-        absolutePath: join(dir, "cancelled.txt"),
-        thenRun: { command: "check" },
-        mutate: async () => {
-          mutated = true;
-          throw new Error("Cancelled mutation must not run");
+        (progress) => {
+          if (!progress.mutationCompleted || disturbed) return;
+          disturbed = true;
+          if (state === "changed") writeFileSync(target, "external\n");
+          else {
+            rmSync(target);
+            if (state === "unknown") mkdirSync(target);
+          }
         },
-        signal: controller.signal,
-        ctx: await ctx(dir, t),
-      }),
-    );
-    assert.equal(mutated, false);
-    assert.equal(commanded, false);
-  } finally {
-    await rm(dir, { recursive: true, force: true });
-  }
-});
-
-test("unreadable target after mutation → reports unknown freshness and skips the command", async (t) => {
-  const dir = await tempDir();
-  try {
-    const missing = join(dir, "unreadable.txt");
-    let commands = 0;
-    const fusion = createActionFusionExecutor(async () => {
-      commands++;
-      return { status: "succeeded", result: { content: [{ type: "text", text: "unexpected" }] } };
-    });
-    await writeFile(missing, "before\n");
-    const result = await callTool(
-      makeEditOverride(dir, DEFAULT_CONFIG, (input) =>
-        fusion({
-          ...input,
-          mutate: async () => {
-            const outcome = await input.mutate();
-            await rm(missing);
-            await mkdir(missing);
-            return outcome;
-          },
-        }),
-      ),
-      {
-        path: missing,
-        edits: [{ action: "append", body: ["mutation"] }],
-        then_run: { command: "check" },
-      },
-      { ctx: await ctx(dir, t) },
-    );
-    const output = result.content
-      .map((block) => (block.type === "text" ? block.text : ""))
-      .join("\n");
-    assert.equal(commands, 0);
-    assert.equal(reportOf(result, "edit")?.freshness, "unknown");
-    assert.doesNotMatch(output, /ANCHOR/);
-    assert.equal(reportOf(result, "edit")?.next, REREAD);
+      );
+      const result = await callTool(
+        makeEditOverride(dir, DEFAULT_CONFIG, fusion),
+        {
+          path: target,
+          edits: [{ action: "append", body: ["mutation"] }],
+          then_run: { command: "check" },
+        },
+        { ctx: context },
+      );
+      const report = reportOf(result, "edit");
+      assert.equal(disturbed, true);
+      assert.equal(commands, 0);
+      assert.doesNotMatch(JSON.stringify(result.content), /Updated anchors|\d+#[0-9A-Z]+│/);
+      assert.equal(result.isError, undefined);
+      assert.equal(report?.publication, "PUBLISHED");
+      assert.equal(report?.freshness, state);
+      assert.equal(report?.then_run?.status, "skipped");
+      assert.equal(report?.next, REREAD);
+      assert.equal(result.content.length, 1);
+      if (state === "unknown") assert.ok(report?.freshnessError);
+      if (state === "changed") assert.equal(await readFile(target, "utf8"), "external\n");
+    }
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
@@ -300,7 +225,7 @@ test("all mutation tools forward command progress before completion in RPC mode"
   const dir = await tempDir();
   try {
     const events: ActionFusionProgress[] = [];
-    const updates: AgentToolResult<MutationResultDetails<{ diff: string }>>[] = [];
+    const updates: ProgressUpdate[] = [];
     const fusion = createActionFusionExecutor(
       async (_id, _input, _signal, _ctx, onUpdate) => {
         assert.equal(events.at(-1)?.command, "running");
@@ -337,8 +262,7 @@ test("all mutation tools forward command progress before completion in RPC mode"
           },
           {
             ctx: rpcContext,
-            onUpdate: (update: AgentToolResult<MutationResultDetails<{ diff: string }>>) =>
-              updates.push(update),
+            onUpdate: (update: ProgressUpdate) => updates.push(update),
           },
         ),
       () =>
@@ -351,8 +275,7 @@ test("all mutation tools forward command progress before completion in RPC mode"
           },
           {
             ctx: rpcContext,
-            onUpdate: (update: AgentToolResult<MutationResultDetails<{ diff: string }>>) =>
-              updates.push(update),
+            onUpdate: (update: ProgressUpdate) => updates.push(update),
           },
         ),
       () =>
@@ -366,8 +289,7 @@ test("all mutation tools forward command progress before completion in RPC mode"
           },
           {
             ctx: rpcContext,
-            onUpdate: (update: AgentToolResult<MutationResultDetails<{ diff: string }>>) =>
-              updates.push(update),
+            onUpdate: (update: ProgressUpdate) => updates.push(update),
           },
         ),
     ];
@@ -421,6 +343,8 @@ test("progress reports skipped mutations and failed commands without rolling bac
     );
     assert.equal(skipped.isError, true);
     assert.equal(reportOf(skipped, "edit")?.then_run?.status, "skipped");
+    assert.equal(reportOf(skipped, "edit")?.publication, "NOT_PUBLISHED");
+    assert.equal(skipped.content.length, 1);
     assert.equal(commands, 0);
     assert.deepEqual(
       events.map((event) => event.command),
@@ -459,6 +383,13 @@ test("progress reports skipped mutations and failed commands without rolling bac
       { ctx: await ctx(dir, t) },
     );
     assert.equal(reportOf(failed, "write")?.then_run?.status, "failed");
+    assert.equal(reportOf(failed, "write")?.publication, "PUBLISHED");
+    assert.equal(
+      reportOf(failed, "write")?.then_run?.output,
+      "diagnostic\nCommand exited with code 7",
+    );
+    assert.equal(failed.content.length, 1);
+    assert.equal(commands, 1);
     assert.deepEqual(
       events.map((event) => event.command),
       ["waiting", "waiting", "running", "failed"],
@@ -472,7 +403,7 @@ test("progress reports skipped mutations and failed commands without rolling bac
   }
 });
 
-test("concurrent mutations on case-differing paths serialize on Windows", {
+test("case-differing paths on Windows → the Fusion queue serializes mutation start and completion", {
   skip: process.platform !== "win32",
 }, async (t) => {
   const dir = await tempDir();
@@ -521,13 +452,13 @@ test("concurrent mutations on case-differing paths serialize on Windows", {
   }
 });
 
-test("timed command progress ticks during silence, preserves output, and stops at every outcome", async (t) => {
+test("timed command stays silent → heartbeat preserves output and stops after every terminal outcome", async (t) => {
   for (const outcome of ["succeeded", "failed", "timeout", "cancelled"] as const) {
     await t.test(outcome, async (t) => {
       const dir = await tempDir();
       t.mock.timers.enable({ apis: ["Date", "setInterval"], now: 0 });
       const started = Promise.withResolvers<void>();
-      const finished = Promise.withResolvers<CommandOutcome>();
+      const finished = Promise.withResolvers<CommandCompletion>();
       const controller = new AbortController();
       const events: ActionFusionProgress[] = [];
       const updates: unknown[] = [];
@@ -593,11 +524,11 @@ test("timed command progress ticks during silence, preserves output, and stops a
   }
 });
 
-test("commands without an explicit timeout do not start countdown updates", async (t) => {
+test("command omits timeout → no countdown events occur while it waits", async (t) => {
   const dir = await tempDir();
   t.mock.timers.enable({ apis: ["Date", "setInterval"], now: 0 });
   const started = Promise.withResolvers<void>();
-  const finished = Promise.withResolvers<CommandOutcome>();
+  const finished = Promise.withResolvers<CommandCompletion>();
   const events: ActionFusionProgress[] = [];
   try {
     const fusion = createActionFusionExecutor(
@@ -635,143 +566,38 @@ test("commands without an explicit timeout do not start countdown updates", asyn
   }
 });
 
-test("Fusion fails at a mutation or command boundary → reports each command outcome and cause once", async (t) => {
+test("command returns a terminal status → reports its status and diagnostic once without rolling back", async (t) => {
   const dir = await tempDir();
   try {
     const context = await ctx(dir, t);
-    for (const scenario of [
-      "not started",
-      "failed",
-      "NOT_PUBLISHED",
-      "PUBLISHED",
-      "UNKNOWN",
-      "target changed",
-      "revision unreadable",
-      "command failed",
-      "command timeout",
-      "command cancelled",
-    ] as const) {
-      await t.test(`${scenario} → one phase, status, and cause`, async () => {
-        const target = join(dir, `${scenario}.txt`);
-        const controller = new AbortController();
-        if (scenario === "not started") controller.abort();
-        let commands = 0;
-        const fusion = createActionFusionExecutor(async () => {
-          commands++;
-          return {
-            status:
-              scenario === "command timeout"
-                ? "timeout"
-                : scenario === "command cancelled"
-                  ? "cancelled"
-                  : "failed",
-            result: { content: [{ type: "text", text: "command diagnostic" }] },
-          };
-        });
-        const stoppedDuringMutation = [
-          "not started",
-          "failed",
-          "NOT_PUBLISHED",
-          "PUBLISHED",
-          "UNKNOWN",
-        ].includes(scenario);
-        const expectedCommand =
-          scenario === "not started" || scenario === "command cancelled"
-            ? "cancelled"
-            : scenario === "command timeout"
-              ? "timeout"
-              : scenario === "command failed"
-                ? "failed"
-                : "skipped";
-        let diagnostic = "";
-        if (stoppedDuringMutation) {
-          const invocation = fusion({
-            toolCallId: scenario,
-            absolutePath: target,
-            thenRun: { command: "check" },
-            signal: controller.signal,
-            ctx: context,
-            mutate: async () => {
-              if (scenario === "failed") throw new Error("mutation diagnostic");
-              if (scenario === "NOT_PUBLISHED")
-                throw new HashlineError("PUBLISH_FAILED", "mutation diagnostic");
-              if (scenario === "PUBLISHED" || scenario === "UNKNOWN")
-                throw new FileMutationError(
-                  scenario === "PUBLISHED" ? "POST_PROCESS_FAILED" : "PUBLISH_FAILED",
-                  scenario,
-                  "mutation diagnostic",
-                );
-              throw new Error("Cancelled mutation must not run");
-            },
-          });
-          await assert.rejects(invocation, (error: unknown) => {
-            assert.ok(error instanceof CommandNotRun);
-            const report = describeMutationFailure("edit", error, {
-              budget: DEFAULT_OUTPUT_BUDGETS,
-            });
-            diagnostic = renderReport(report);
-            assert.equal(report.then_run?.status, expectedCommand);
-            if (
-              scenario === "NOT_PUBLISHED" ||
-              scenario === "PUBLISHED" ||
-              scenario === "UNKNOWN"
-            ) {
-              assert.equal(report.publication, scenario);
-              assert.equal(
-                report.next,
-                scenario === "NOT_PUBLISHED" ? undefined : PUBLICATION_NEXT[scenario],
-              );
-            }
-            return true;
-          });
-        } else {
-          const result = await callTool(
-            makeWriteOverride(dir, (input) =>
-              fusion({
-                ...input,
-                mutate: async () => {
-                  const outcome = await input.mutate();
-                  if (scenario === "target changed") await writeFile(target, "external\n");
-                  else if (scenario === "revision unreadable") await rm(target);
-                  return outcome;
-                },
-              }),
-            ),
-            {
-              path: target,
-              content: "published\n",
-              mode: "create",
-              then_run: { command: "check" },
-            },
-            { ctx: context, signal: controller.signal },
-          );
-          diagnostic = result.content
-            .map((block) => (block.type === "text" ? block.text : ""))
-            .join("\n");
-          assert.equal(result.details.report.publication, "PUBLISHED");
-          assert.equal(renderReport(result.details.report), diagnostic);
-        }
-        const report = JSON.parse(diagnostic);
-        assert.equal(report.then_run.status, expectedCommand);
-        assert.equal((diagnostic.match(/"then_run"/g) ?? []).length, 1);
-        assert.doesNotMatch(
-          diagnostic,
-          /the command was not run|then_run did not complete successfully/,
-        );
-        assert.equal(commands, scenario.startsWith("command ") ? 1 : 0);
-        if (stoppedDuringMutation && scenario !== "not started")
-          assert.equal((diagnostic.match(/mutation diagnostic/g) ?? []).length, 1);
-        if (scenario === "target changed") {
-          assert.equal(report.freshness, "changed");
-          assert.equal(report.next, REREAD);
-          assert.equal(await readFile(target, "utf8"), "external\n");
-        } else if (scenario === "revision unreadable") {
-          assert.equal(report.freshness, "missing");
-        } else if (scenario.startsWith("command ")) {
-          assert.equal((diagnostic.match(/command diagnostic/g) ?? []).length, 1);
-          assert.equal(await readFile(target, "utf8"), "published\n");
-        }
+    for (const status of ["failed", "timeout", "cancelled"] as const) {
+      const target = join(dir, `${status}.txt`);
+      let commands = 0;
+      const fusion = createActionFusionExecutor(async () => {
+        commands++;
+        return { status, result: { content: [{ type: "text", text: "command diagnostic" }] } };
       });
+      const result = await callTool(
+        makeWriteOverride(dir, fusion),
+        { path: target, content: "published\n", mode: "create", then_run: { command: "check" } },
+        { ctx: context },
+      );
+      const report = reportOf(result, "write");
+      assert.equal(result.isError, undefined);
+      assert.equal(report?.publication, "PUBLISHED");
+      assert.equal(report?.then_run?.status, status);
+      assert.equal(report?.then_run?.output, "command diagnostic");
+      assert.equal(result.content.length, 1);
+      const diagnostic = result.content[0];
+      assert.ok(diagnostic.type === "text");
+      assert.equal((diagnostic.text.match(/"then_run"/g) ?? []).length, 1);
+      assert.equal((diagnostic.text.match(/command diagnostic/g) ?? []).length, 1);
+      assert.doesNotMatch(
+        diagnostic.text,
+        /the command was not run|then_run did not complete successfully/,
+      );
+      assert.equal(commands, 1);
+      assert.equal(await readFile(target, "utf8"), "published\n");
     }
   } finally {
     await rm(dir, { recursive: true, force: true });

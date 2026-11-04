@@ -7,17 +7,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test, type TestContext } from "node:test";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
-import { HashlineError } from "../core/errors.ts";
 import { createActionFusionExecutor } from "../pi/action-fusion.ts";
-import { DEFAULT_OUTPUT_BUDGETS } from "../pi/budgets.ts";
 import { DEFAULT_CONFIG } from "../pi/config.ts";
 import { makeEditOverride } from "../pi/edit-tool.ts";
-import { commitFile, FileMutationError } from "../pi/file-commit.ts";
-import { byteRevision } from "../pi/file-revision.ts";
-import { describeMutationFailure } from "../pi/mutation-result.ts";
 import { reportOf } from "../pi/report.ts";
 import { expectToolFailure } from "../pi/report-failure.testing.ts";
-import { REREAD } from "../pi/report-schema.ts";
+import { PUBLICATION_NEXT, REREAD } from "../pi/report-schema.ts";
 import { makeReplaceTool } from "../pi/replace-tool.ts";
 import { callTool, createToolContext } from "../pi/tool-call.testing.ts";
 import { makeWriteOverride } from "../pi/write-tool.ts";
@@ -113,6 +108,19 @@ const mutationCases = [
   },
 ] as const;
 
+const prePublicationCases = [
+  { phase: "inspect target", mutation: mutationCases[2], observation: 1 },
+  { phase: "revision recheck", mutation: mutationCases[0], observation: 2 },
+  {
+    phase: "no-op check",
+    mutation: {
+      ...mutationCases[1],
+      args: { replacements: [{ literal: true, find: BEFORE, replace: BEFORE }] },
+    },
+    observation: 2,
+  },
+] as const;
+
 for (const fused of [false, true]) {
   test(`concurrent change during post-publication read without then_run (${fused ? "Fusion enabled" : "plain"}) → succeeds and withholds stale anchors`, async (t) => {
     for (const mutation of mutationCases) {
@@ -124,7 +132,11 @@ for (const fused of [false, true]) {
               t,
               mutation.name === "write create" ? undefined : BEFORE,
             );
-            const fusion = fused ? createActionFusionExecutor() : undefined;
+            const fusion = fused
+              ? createActionFusionExecutor(async () =>
+                  assert.fail("command must not run without then_run"),
+                )
+              : undefined;
             const result = await withDisturbedRead(
               t,
               path,
@@ -253,72 +265,91 @@ test("disturbance during post-command freshness read → retains publication and
 });
 
 test("other I/O failure during post-publication read → retains the published post-process error", async (t) => {
-  const { path } = await targetFile(t, BEFORE);
-  await withDisturbedRead(
-    t,
-    path,
-    PUBLISHED,
-    "I/O failure",
-    (bytes) => bytes.equals(Buffer.from(PUBLISHED)),
-    async () => {
-      await assert.rejects(commitFile(path, PUBLISHED, { mode: "overwrite" }), (error: unknown) => {
-        assert.ok(error instanceof FileMutationError);
-        assert.equal(error.publication, "PUBLISHED");
-        assert.equal(error.cause, READ_FAILURE);
-        return true;
-      });
-    },
-  );
-  await assertTarget(path, PUBLISHED, "I/O failure");
+  for (const fused of [false, true]) {
+    await t.test(fused ? "Fusion enabled" : "plain", async (t) => {
+      const { directory, path } = await targetFile(t, BEFORE);
+      let commands = 0;
+      const fusion = fused
+        ? createActionFusionExecutor(async () => {
+            commands++;
+            return {
+              status: "succeeded",
+              result: { content: [{ type: "text", text: "checked" }] },
+            };
+          })
+        : undefined;
+      const ctx = await createToolContext(directory, t);
+      await withDisturbedRead(
+        t,
+        path,
+        PUBLISHED,
+        "I/O failure",
+        (bytes) => bytes.equals(Buffer.from(PUBLISHED)),
+        () =>
+          expectToolFailure(
+            callTool(
+              makeWriteOverride(directory, fusion),
+              {
+                path,
+                content: PUBLISHED,
+                mode: "overwrite",
+                ...(fused ? { then_run: { command: "check" } } : {}),
+              },
+              { ctx },
+            ),
+            "POST_PROCESS_FAILED",
+            (report) => {
+              assert.equal(report.publication, "PUBLISHED");
+              assert.equal(report.cause?.message, READ_FAILURE.message);
+              assert.equal(report.cause?.code, "EIO");
+              assert.equal(report.then_run?.status, fused ? "skipped" : undefined);
+              assert.equal(report.next, PUBLICATION_NEXT.PUBLISHED);
+            },
+          ),
+      );
+      assert.equal(commands, 0);
+      await assertTarget(path, PUBLISHED, "I/O failure");
+    });
+  }
 });
 
 test("concurrent change during pre-publication revision read → rejects without publishing and keeps retry advice", async (t) => {
-  for (const phase of ["inspect target", "revision recheck", "no-op check"] as const) {
+  for (const { phase, mutation, observation } of prePublicationCases) {
     await t.test(`${phase} → NOT_PUBLISHED`, async (t) => {
-      const { path } = await targetFile(t, BEFORE);
-      const revision = byteRevision(Buffer.from(BEFORE));
+      const { directory, path } = await targetFile(t, BEFORE);
+      let targetReads = 0;
       await withDisturbedRead(
         t,
         path,
         BEFORE,
         "append",
-        () => true,
-        async () => {
-          await assert.rejects(
-            commitFile(path, phase === "no-op check" ? BEFORE : PUBLISHED, {
-              mode: "overwrite",
-              ...(phase !== "inspect target" ? { baseRevision: revision } : {}),
-            }),
-            (error: unknown) => {
-              assert.ok(error instanceof HashlineError);
-              assert.equal(error.errorCode, "FILE_CHANGED");
-              const report = describeMutationFailure("write", error, {
-                budget: DEFAULT_OUTPUT_BUDGETS,
-              });
+        () => ++targetReads === observation,
+        () =>
+          expectToolFailure(
+            callTool(mutation.make(directory), { path, ...mutation.args }),
+            "FILE_CHANGED",
+            (report) => {
               assert.equal(report.publication, "NOT_PUBLISHED");
               assert.equal(report.next, "Retry the call.");
-              return true;
             },
-          );
-        },
+          ),
       );
+      assert.equal(targetReads, observation);
       await assertTarget(path, BEFORE, "append");
     });
   }
 });
 
 test("target disappears or becomes a directory before publication → keeps the path error without publishing", async (t) => {
-  for (const phase of ["inspect target", "revision recheck", "no-op check"] as const) {
+  for (const { phase, mutation, observation } of prePublicationCases) {
     for (const disturbance of ["missing", "directory"] as const) {
       await t.test(`${phase}: ${disturbance}`, async (t) => {
         const { directory, path } = await targetFile(t, BEFORE);
         const originalPath = join(directory, "original.txt");
-        const revision = byteRevision(Buffer.from(BEFORE));
         const nativeOpen = fs.promises.open;
-        let disturbed = false;
+        let targetReads = 0;
         t.mock.method(fs.promises, "open", async (...args: Parameters<typeof nativeOpen>) => {
-          if (args[0] === path && !disturbed) {
-            disturbed = true;
+          if (args[0] === path && ++targetReads === observation) {
             // Keep the displaced inode to prove the commit never changed its bytes.
             fs.renameSync(path, originalPath);
             if (disturbance === "directory") fs.mkdirSync(path);
@@ -327,32 +358,20 @@ test("target disappears or becomes a directory before publication → keeps the 
         });
         syncBuiltinESMExports();
         try {
-          await assert.rejects(
-            commitFile(path, phase === "no-op check" ? BEFORE : PUBLISHED, {
-              mode: "overwrite",
-              ...(phase !== "inspect target" ? { baseRevision: revision } : {}),
-            }),
-            (error: unknown) => {
-              assert.ok(error instanceof HashlineError);
-              assert.equal(
-                error.errorCode,
-                disturbance === "missing" ? "PATH_NOT_FOUND" : "NOT_REGULAR_FILE",
-              );
-              const report = describeMutationFailure("write", error, {
-                path,
-                budget: DEFAULT_OUTPUT_BUDGETS,
-              });
+          await expectToolFailure(
+            callTool(mutation.make(directory), { path, ...mutation.args }),
+            disturbance === "missing" ? "PATH_NOT_FOUND" : "NOT_REGULAR_FILE",
+            (report) => {
               assert.equal(
                 report.message,
                 disturbance === "missing" ? "Path not found." : "Path is not a regular file.",
               );
               assert.deepEqual(report.missing, disturbance === "missing" ? [path] : undefined);
               assert.equal(report.publication, "NOT_PUBLISHED");
-              assert.equal(error.cause, undefined);
-              return true;
+              assert.equal(report.cause, undefined);
             },
           );
-          assert.equal(disturbed, true, "the intended target read must be disturbed");
+          assert.equal(targetReads, observation, "the intended target read must be disturbed");
           assert.deepEqual(await readFile(originalPath), Buffer.from(BEFORE));
           if (disturbance === "directory") assert.deepEqual(fs.readdirSync(path), []);
           else await assertTarget(path, BEFORE, "delete");
