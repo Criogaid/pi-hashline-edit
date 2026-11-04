@@ -185,6 +185,97 @@ async function canonicalQueueKey(path: string): Promise<string> {
   }
 }
 
+/**
+ * One then_run call's display state and the observers that follow it. Display callbacks are
+ * observers: their failures must not change publication or command execution, so the first is
+ * kept for the report. The tracker owns the heartbeat lifetime; Pi Bash owns timeout and
+ * process cleanup.
+ */
+function createProgressTracker<TDetails extends object>({
+  toolCallId,
+  thenRun,
+  ctx,
+  onProgress,
+  onUpdate,
+}: {
+  toolCallId: string;
+  thenRun: ThenRunInput;
+  ctx: ExtensionToolContext;
+  onProgress: ProgressReporter | undefined;
+  onUpdate: AgentToolUpdateCallback<MutationResultDetails<TDetails>> | undefined;
+}) {
+  let mutationDetails: TDetails | undefined;
+  let failure: unknown;
+  let commandResult: CommandResult | undefined;
+  let commandTiming: { readonly timeoutSeconds: number; readonly deadlineMs: number } | undefined;
+  let heartbeat: ReturnType<typeof setInterval> | undefined;
+
+  const report = (command: ActionFusionProgress["command"], freshness: Freshness) => {
+    const progress: ActionFusionProgress = {
+      toolCallId,
+      commandText: thenRun.command,
+      command,
+      freshness,
+      ...(commandResult ? { result: commandResult } : {}),
+      mutationCompleted: mutationDetails !== undefined,
+      ...(commandTiming
+        ? {
+            timing: {
+              timeoutSeconds: commandTiming.timeoutSeconds,
+              remainingSeconds: Math.max(
+                0,
+                Math.ceil((commandTiming.deadlineMs - Date.now()) / MILLISECONDS_PER_SECOND),
+              ),
+            },
+          }
+        : {}),
+    };
+    for (const notify of [
+      () => onProgress?.(progress, ctx),
+      () => onUpdate?.({ content: [], details: { ...mutationDetails, actionFusion: progress } }),
+    ]) {
+      try {
+        notify();
+      } catch (error) {
+        failure ??= error;
+      }
+    }
+  };
+
+  /** Follow the running command's partial results. */
+  const followCommand: AgentToolUpdateCallback<unknown> = (partial) => {
+    // Pi Bash emits an initial update even for silent commands. Start its
+    // countdown here, after session permission hooks have allowed execution.
+    if (!commandTiming && thenRun.timeout !== undefined) {
+      commandTiming = {
+        timeoutSeconds: thenRun.timeout,
+        deadlineMs: Date.now() + thenRun.timeout * MILLISECONDS_PER_SECOND,
+      };
+      if (onProgress || onUpdate) {
+        heartbeat = setInterval(() => report("running", "unknown"), MILLISECONDS_PER_SECOND);
+        heartbeat.unref();
+      }
+    }
+    commandResult = { content: partial.content, details: partial.details };
+    report("running", "unknown");
+  };
+
+  return {
+    report,
+    followCommand,
+    failure: () => failure,
+    mutationCompleted(details: TDetails) {
+      mutationDetails = details;
+    },
+    stopHeartbeat() {
+      if (heartbeat) clearInterval(heartbeat);
+    },
+    commandSettled(result: CommandResult) {
+      commandResult = result;
+    },
+  };
+}
+
 export function createActionFusionExecutor(
   commandRunner: CommandRunner = defaultCommandRunner,
   onProgress?: ProgressReporter,
@@ -235,52 +326,19 @@ export function createActionFusionExecutor(
       });
     }
 
-    let completedMutation: MutationOutcome<TDetails, TTool> | undefined;
-    let progressFailure: unknown;
-    let commandResult: CommandResult | undefined;
-    let commandTiming: { readonly timeoutSeconds: number; readonly deadlineMs: number } | undefined;
-    const report = (command: ActionFusionProgress["command"], freshness: Freshness) => {
-      const progress: ActionFusionProgress = {
-        toolCallId,
-        commandText: thenRun.command,
-        command,
-        freshness,
-        ...(commandResult ? { result: commandResult } : {}),
-        mutationCompleted: completedMutation !== undefined,
-        ...(commandTiming
-          ? {
-              timing: {
-                timeoutSeconds: commandTiming.timeoutSeconds,
-                remainingSeconds: Math.max(
-                  0,
-                  Math.ceil((commandTiming.deadlineMs - Date.now()) / MILLISECONDS_PER_SECOND),
-                ),
-              },
-            }
-          : {}),
-      };
-      // Display callbacks are observers: their failures must not change publication or command execution.
-      for (const notify of [
-        () => onProgress?.(progress, ctx),
-        () =>
-          onUpdate?.({
-            content: [],
-            details: { ...completedMutation?.details, actionFusion: progress },
-          }),
-      ]) {
-        try {
-          notify();
-        } catch (error) {
-          progressFailure ??= error;
-        }
-      }
-    };
+    const progress = createProgressTracker<TDetails>({
+      toolCallId,
+      thenRun,
+      ctx,
+      onProgress,
+      onUpdate,
+    });
     /** A mutation that did not complete keeps its own failure; Fusion adds only the command status. */
     const notRun = (error: unknown, command: "skipped" | "cancelled") => {
-      report(command, "unknown");
-      return new CommandNotRun(error, command, progressFailure);
+      progress.report(command, "unknown");
+      return new CommandNotRun(error, command, progress.failure());
     };
-    report("waiting", "unknown");
+    progress.report("waiting", "unknown");
     return withQueue(absolutePath, async () => {
       try {
         throwIfCancelled(signal);
@@ -290,19 +348,19 @@ export function createActionFusionExecutor(
       let outcome: MutationOutcome<TDetails, TTool>;
       try {
         outcome = await mutate();
-        completedMutation = outcome;
+        progress.mutationCompleted(outcome.details);
       } catch (error) {
         throw notRun(error, "skipped");
       }
 
       const { publishedRevision } = outcome.commit;
-      report("waiting", "unknown");
+      progress.report("waiting", "unknown");
       const settle = (observation: FreshnessObservation, command: CommandFacts) => {
-        report(command.status, observation.freshness);
+        progress.report(command.status, observation.freshness);
         return {
           outcome,
           observation,
-          command: { ...command, progressError: progressFailure },
+          command: { ...command, progressError: progress.failure() },
         };
       };
 
@@ -311,36 +369,19 @@ export function createActionFusionExecutor(
       if (signal?.aborted) return settle(before, { status: "cancelled" });
       if (before.freshness !== "unchanged") return settle(before, { status: "skipped" });
 
-      report("running", "unchanged");
+      progress.report("running", "unchanged");
       let command: CommandOutcome;
-      // The executor owns the heartbeat lifetime; Pi Bash owns timeout and process cleanup.
-      let heartbeat: ReturnType<typeof setInterval> | undefined;
       try {
-        command = await commandRunner(toolCallId, thenRun, signal, ctx, (partial) => {
-          // Pi Bash emits an initial update even for silent commands. Start its
-          // countdown here, after session permission hooks have allowed execution.
-          if (!commandTiming && thenRun.timeout !== undefined) {
-            commandTiming = {
-              timeoutSeconds: thenRun.timeout,
-              deadlineMs: Date.now() + thenRun.timeout * MILLISECONDS_PER_SECOND,
-            };
-            if (onProgress || onUpdate) {
-              heartbeat = setInterval(() => report("running", "unknown"), MILLISECONDS_PER_SECOND);
-              heartbeat.unref();
-            }
-          }
-          commandResult = { content: partial.content, details: partial.details };
-          report("running", "unknown");
-        });
+        command = await commandRunner(toolCallId, thenRun, signal, ctx, progress.followCommand);
       } catch (error) {
         command = {
           status: signal?.aborted ? "cancelled" : "failed",
           result: { content: [{ type: "text", text: errorMessage(error) }] },
         };
       } finally {
-        if (heartbeat) clearInterval(heartbeat);
+        progress.stopHeartbeat();
       }
-      commandResult = command.result;
+      progress.commandSettled(command.result);
       const settled = settle(await observeFreshness(absolutePath, publishedRevision), {
         status: command.status,
         result: command.result,
