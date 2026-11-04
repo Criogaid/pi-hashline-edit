@@ -138,9 +138,7 @@ export function reportResult<TDetails extends object | undefined>(
   const complete = Object.fromEntries(
     reportEntries({ ...report, next: outcomeNext(report) }),
   ) as SuccessReport;
-  const stated = Object.entries(complete).some(
-    ([key, value]) => value !== undefined && !CALL_FIELDS.has(key),
-  );
+  const stated = Object.keys(complete).some((key) => !CALL_FIELDS.has(key));
   return {
     content:
       stated || payload.length === 0
