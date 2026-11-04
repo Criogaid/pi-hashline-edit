@@ -59,7 +59,7 @@ export function normalize(ranges: Iterable<readonly [number, number]>): Ranges {
   return merged;
 }
 
-export function complement(ranges: Ranges, max: number): Ranges {
+function complement(ranges: Ranges, max: number): Ranges {
   const result: [number, number][] = [];
   let next = 0;
   for (const [low, high] of ranges) {

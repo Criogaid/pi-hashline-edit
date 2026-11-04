@@ -17,7 +17,7 @@ export interface LineCollector<T> {
   finish(): T;
 }
 
-export type Reread<T> = { readonly value: T } | { readonly warning: string };
+type Reread<T> = { readonly value: T } | { readonly warning: string };
 
 /** The physical lines shown for a file's matches: each match with `context` lines around it. */
 function shownLines(file: GrepFileMatch, context: number): Set<number> {
