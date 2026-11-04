@@ -1,18 +1,18 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createUtf8Decoder, decodeEditableText, decodeUtf8, Utf8DecodingError } from "./text.ts";
+import { createUtf8Decoder, decodeEditableText, Utf8DecodingError } from "./text.ts";
 import { HashlineError, TEXT_ERROR_MESSAGES } from "./errors.ts";
 
-test("decodeUtf8 rejects malformed input instead of replacing bytes", () => {
+test("decodeEditableText rejects malformed input instead of replacing bytes", () => {
   assert.throws(
-    () => decodeUtf8(Uint8Array.from([0xc3, 0x28])),
+    () => decodeEditableText(Uint8Array.from([0xc3, 0x28])),
     (error: unknown) =>
       error instanceof HashlineError && error.errorCode === "UNSUPPORTED_ENCODING",
   );
 });
 
-test("decodeUtf8 preserves a leading BOM", () => {
-  assert.equal(decodeUtf8(Uint8Array.from([0xef, 0xbb, 0xbf, 0x61])), "\ufeffa");
+test("decodeEditableText preserves a leading BOM", () => {
+  assert.equal(decodeEditableText(Uint8Array.from([0xef, 0xbb, 0xbf, 0x61])), "\ufeffa");
 });
 
 test("decodeEditableText rejects NUL bytes", () => {
