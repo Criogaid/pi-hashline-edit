@@ -4,7 +4,7 @@
  *
  * @module pi-hashline-edit/pi
  */
-import { fileReadWarning, searchChangedError } from "./error-text.ts";
+import { fileReadWarning, searchChangedError, throwIfCancelled } from "./error-text.ts";
 import type { GrepFileMatch } from "./grep-search.ts";
 import { scanTextLines } from "./text-stream.ts";
 
@@ -74,7 +74,8 @@ export async function rereadMatches<T>(
               value: await rereadFile(file, context, collect(file), scanSignal),
             };
           } catch (error) {
-            const warning = fileReadWarning(file.filePath, error, scanSignal);
+            throwIfCancelled(scanSignal);
+            const warning = fileReadWarning(file.filePath, error);
             if (!warning) throw error;
             results[current] = { warning };
           }

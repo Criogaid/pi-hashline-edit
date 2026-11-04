@@ -37,12 +37,8 @@ export function searchChangedError(): HashlineError<"FILE_CHANGED"> {
  * A per-file failure that leaves the rest of the search valid: a filesystem error, or the
  * file changing while it was searched or displayed. Undefined for any other failure.
  */
-export function fileReadWarning(
-  filePath: string,
-  error: unknown,
-  signal?: AbortSignal,
-): string | undefined {
-  if (signal?.aborted || !(error instanceof Error)) return undefined;
+export function fileReadWarning(filePath: string, error: unknown): string | undefined {
+  if (!(error instanceof Error)) return undefined;
   const changed = error instanceof HashlineError && error.errorCode === "FILE_CHANGED";
   if (!changed && errnoCode(error) === undefined) return undefined;
   return `Could not read ${filePath}: ${error.message}`;
