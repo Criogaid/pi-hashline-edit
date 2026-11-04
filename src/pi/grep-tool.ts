@@ -8,11 +8,11 @@
  */
 
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
-import { Type, type Static } from "typebox";
+import { Type, type Static, type TLiteral } from "typebox";
 import { Text } from "@earendil-works/pi-tui";
 import { renderOutputPreview, renderToolError, reportLines, splitReport } from "./render.ts";
 import { createAnchorFormatter } from "./anchor-format.ts";
-import { grepOutput } from "./grep-output.ts";
+import { GREP_OUTPUT_MODES, grepOutput, type GrepOutputMode } from "./grep-output.ts";
 import { filterExplicitFilesByGlob, resolveSearchPaths, type SearchScope } from "./grep-scope.ts";
 import { searchFiles } from "./grep-search.ts";
 import { toDisplayLines } from "./grep-render.ts";
@@ -82,18 +82,23 @@ function createGrepSchema({ defaultLimit, defaultContext }: HashlineEditConfig["
         }),
       ),
       outputMode: Type.Optional(
-        Type.Union([Type.Literal("content"), Type.Literal("files"), Type.Literal("count")], {
-          description:
-            '"content" (default): matches/context with anchors for valid UTF-8 or plain previews otherwise; "files": paths; "count": matching lines per file and total. Use files or count when only paths or counts are needed. limit counts matching lines in every mode, so files and count stop at the same cutoff as content.',
-        }),
+        // TypeBox infers a union's static type only from a tuple.
+        Type.Union(
+          GREP_OUTPUT_MODES.map((mode) => Type.Literal(mode)) as [
+            TLiteral<GrepOutputMode>,
+            ...TLiteral<GrepOutputMode>[],
+          ],
+          {
+            description:
+              '"content" (default): matches/context with anchors for valid UTF-8 or plain previews otherwise; "files": paths; "count": matching lines per file and total. Use files or count when only paths or counts are needed. limit counts matching lines in every mode, so files and count stop at the same cutoff as content.',
+          },
+        ),
       ),
     },
     { additionalProperties: false },
   );
 }
 type GrepSchema = ReturnType<typeof createGrepSchema>;
-/** How grep presents matches; grep-output formats each mode. */
-export type GrepOutputMode = NonNullable<Static<GrepSchema>["outputMode"]>;
 type GrepTool = ToolDefinition<GrepSchema, Partial<ReportDetails> | undefined>;
 /** A list field as the call header sees it: streamed before Pi wraps a lone string. */
 function streamedList(value: string | readonly string[] | null | undefined): readonly string[] {

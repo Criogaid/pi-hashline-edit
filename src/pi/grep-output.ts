@@ -14,7 +14,10 @@ import { formatByteSize, type OutputBudgets } from "./budgets.ts";
 import { HashlineError } from "../core/errors.ts";
 import { serializePath } from "./path.ts";
 import type { Report, SuccessFacts } from "./report-schema.ts";
-import type { GrepOutputMode } from "./grep-tool.ts";
+
+/** How grep presents matches; the tool's schema offers these and this module formats each. */
+export const GREP_OUTPUT_MODES = ["content", "files", "count"] as const;
+export type GrepOutputMode = (typeof GREP_OUTPUT_MODES)[number];
 
 /** UTF-16 units kept before the match column when a preview window is cut. */
 const GREP_PREVIEW_LEAD = 100;
