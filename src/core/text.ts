@@ -47,14 +47,12 @@ export function createUtf8Decoder(mode: Utf8Decoding = "strict") {
 
 const decode = createUtf8Decoder();
 
-/** Decode UTF-8 without replacing malformed bytes; preserve a leading BOM for byte-stable rewrites. */
-export function decodeUtf8(bytes: Uint8Array): string {
-  return decode(bytes);
-}
-
-/** Reject byte-oriented/binary content before entering a text mutation pipeline. */
+/**
+ * Reject byte-oriented/binary content before entering a text mutation pipeline; malformed bytes
+ * are not replaced and a leading BOM stays for byte-stable rewrites.
+ */
 export function decodeEditableText(bytes: Uint8Array): string {
   if (bytes.includes(0))
     throw new HashlineError("UNSUPPORTED_TEXT", TEXT_ERROR_MESSAGES.UNSUPPORTED_TEXT);
-  return decodeUtf8(bytes);
+  return decode(bytes);
 }
