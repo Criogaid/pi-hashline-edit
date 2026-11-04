@@ -5,7 +5,6 @@
  *
  * @module pi-hashline-edit/pi
  */
-import { stat } from "node:fs/promises";
 import { availableParallelism } from "node:os";
 import { countLines } from "../core/lines.ts";
 import type { GrepQuery, LineSearchInput, SearchInput } from "../core/search.ts";
@@ -105,8 +104,6 @@ async function searchFile(
   run: Run,
   signal: AbortSignal,
 ): Promise<{ rows: Rows; snapshot: SearchFileSnapshot } | undefined> {
-  if (query.multiline && (await stat(filePath)).size > MAX_MULTILINE_SEARCH_BYTES)
-    throw new SearchFileLimitError(true);
   const rows: Rows = [];
   let lineOffset = 0;
   let nextWanted = 0;
@@ -154,17 +151,25 @@ async function searchFile(
   /** Length of pending through its last line feed. */
   let complete = 0;
   let lineUnits = 0;
+  /** Past a search limit, which counts only if the rest of the scan finds no NUL. */
+  let oversized = false;
   const stats = await scanTextFile(filePath, {
     onChunk: async (text, bytesRead) => {
+      if (oversized) return;
       if (query.multiline) {
-        if (bytesRead <= MAX_MULTILINE_SEARCH_BYTES) pending += text;
+        oversized = bytesRead > MAX_MULTILINE_SEARCH_BYTES;
+        pending = oversized ? "" : pending + text;
         return;
       }
       let start = 0;
       for (;;) {
         const lf = text.indexOf("\n", start);
         lineUnits += (lf === -1 ? text.length : lf) - start;
-        if (lineUnits > MAX_SEARCH_LINE_UNITS) throw new SearchFileLimitError(false);
+        if (lineUnits > MAX_SEARCH_LINE_UNITS) {
+          oversized = true;
+          pending = "";
+          return;
+        }
         if (lf === -1) break;
         lineUnits = 0;
         complete = pending.length + lf + 1;
@@ -182,8 +187,7 @@ async function searchFile(
     decoding: "lossy",
   });
   if (stats.hasNul) return undefined;
-  if (stats.byteLength > MAX_MULTILINE_SEARCH_BYTES && query.multiline)
-    throw new SearchFileLimitError(true);
+  if (oversized) throw new SearchFileLimitError(query.multiline);
   await send(pending);
   return {
     rows,
