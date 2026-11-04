@@ -18,7 +18,7 @@ import {
   type GrepBackend,
   type RgRunResult,
 } from "./rg-process.ts";
-import { lineCandidatePatterns } from "./rg-regex.ts";
+import { lineCandidatePatterns, rgCodePoint } from "./rg-regex.ts";
 
 /** Beyond this many candidate lines, a file's every line is checked instead. */
 const MAX_CANDIDATE_LINES = 64 * 1024;
@@ -36,10 +36,9 @@ export interface Candidate {
   readonly lines?: readonly number[];
 }
 
-/** A literal's characters as one rg pattern; every non-word character is a code point escape. */
+/** A literal's characters as one rg pattern. */
 function literalPattern(literal: Literal): string {
-  const escape = (char: string) =>
-    /^[0-9A-Za-z_]$/.test(char) ? char : `\\x{${char.codePointAt(0)!.toString(16)}}`;
+  const escape = (char: string) => rgCodePoint(char.codePointAt(0)!);
   return literal
     .map((chars) => (chars.length === 1 ? escape(chars[0]) : `[${chars.map(escape).join("")}]`))
     .join("");

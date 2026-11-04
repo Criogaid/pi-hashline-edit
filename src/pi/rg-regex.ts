@@ -72,14 +72,15 @@ const intersects = (ranges: Ranges, other: Ranges) => intersect(ranges, other).l
 const folded = (ranges: Ranges, ctx: Context): Ranges =>
   ctx.ignoreCase ? foldRanges(ranges, ctx.unicode) : ranges;
 
-const escape = (point: number) =>
+/** One code point in an rg pattern; every non-word character is a code point escape. */
+export const rgCodePoint = (point: number) =>
   /^[0-9A-Za-z_]$/.test(String.fromCodePoint(point))
     ? String.fromCodePoint(point)
     : `\\x{${point.toString(16)}}`;
 
 function classPattern(ranges: Ranges): string {
-  if (ranges.length === 1 && ranges[0][0] === ranges[0][1]) return escape(ranges[0][0]);
-  return `[${ranges.map(([low, high]) => (low === high ? escape(low) : `${escape(low)}-${escape(high)}`)).join("")}]`;
+  if (ranges.length === 1 && ranges[0][0] === ranges[0][1]) return rgCodePoint(ranges[0][0]);
+  return `[${ranges.map(([low, high]) => (low === high ? rgCodePoint(low) : `${rgCodePoint(low)}-${rgCodePoint(high)}`)).join("")}]`;
 }
 
 /**
@@ -100,19 +101,21 @@ function unit(ranges: Ranges, ctx: Context): string {
   return halves ? `(?:${body})?` : body;
 }
 
+/** A flag where a node appears: the innermost modifier group that sets it decides. */
+function flagAt(node: AST.Node, flag: "ignoreCase" | "dotAll", patternFlag: boolean): boolean {
+  for (let parent = node.parent; parent; parent = parent.parent)
+    if (parent.type === "Group" && parent.modifiers) {
+      if (parent.modifiers.add[flag]) return true;
+      if (parent.modifiers.remove?.[flag]) return false;
+    }
+  return patternFlag;
+}
+
+const ignoreCaseAt = (node: AST.Node, ctx: Context) =>
+  flagAt(node, "ignoreCase", ctx.flagIgnoreCase);
+
 function nativeFlags(node: AST.Node, ctx: Context): string {
-  let dotAll = ctx.flagDotAll;
-  for (let parent = node.parent; parent; parent = parent.parent) {
-    if (parent.type !== "Group" || !parent.modifiers) continue;
-    if (parent.modifiers.add.dotAll) {
-      dotAll = true;
-      break;
-    }
-    if (parent.modifiers.remove?.dotAll) {
-      dotAll = false;
-      break;
-    }
-  }
+  const dotAll = flagAt(node, "dotAll", ctx.flagDotAll);
   return `${ignoreCaseAt(node, ctx) ? "i" : ""}${dotAll ? "s" : ""}${ctx.unicodeSets ? "v" : ctx.unicode ? "u" : ""}`;
 }
 
@@ -216,16 +219,6 @@ function modified(node: AST.Group, ctx: Context): Context {
     ignoreCase: add.ignoreCase || ((ctx.repeated || !remove?.ignoreCase) && ctx.ignoreCase),
     multilineAnchors: add.multiline || (!remove?.multiline && ctx.multilineAnchors),
   };
-}
-
-/** ignoreCase where a node appears: the innermost modifier group that sets it decides. */
-function ignoreCaseAt(node: AST.Node, ctx: Context): boolean {
-  for (let parent = node.parent; parent; parent = parent.parent)
-    if (parent.type === "Group" && parent.modifiers) {
-      if (parent.modifiers.add.ignoreCase) return true;
-      if (parent.modifiers.remove?.ignoreCase) return false;
-    }
-  return ctx.flagIgnoreCase;
 }
 
 /**
