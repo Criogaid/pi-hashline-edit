@@ -47,7 +47,7 @@ import type {
 const MILLISECONDS_PER_SECOND = 1_000;
 
 // Pi's built-in Bash rejects timeouts above the setTimeout millisecond limit.
-const MAX_BASH_TIMEOUT_SECONDS = 2_147_483_647 / 1_000;
+const MAX_BASH_TIMEOUT_SECONDS = 2_147_483_647 / MILLISECONDS_PER_SECOND;
 
 // Pi's Bash runs on this host, and Pi's prompt does not name the OS; only Windows needs the path note.
 const COMMAND_DESCRIPTION =

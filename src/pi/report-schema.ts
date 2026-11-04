@@ -25,10 +25,10 @@ export const CAUSE_SCHEMA = Type.Cyclic(
   {
     Cause: Type.Object(
       {
-        error: Type.Optional(Type.String({ description: "Error code of a classified cause." })),
-        code: Type.Optional(Type.String({ description: "Node errno code, such as EACCES." })),
+        error: opt(Type.String({ description: "Error code of a classified cause." })),
+        code: opt(Type.String({ description: "Node errno code, such as EACCES." })),
         message: Type.String(),
-        cause: Type.Optional(Type.Ref("Cause")),
+        cause: opt(Type.Ref("Cause")),
       },
       { additionalProperties: false },
     ),
@@ -238,7 +238,7 @@ function facts<const R extends readonly FactName[], const O extends readonly Fac
 ) {
   const properties: TProperties = {};
   for (const name of required) properties[name] = FACT_FIELDS[name];
-  for (const name of optional ?? []) properties[name] = Type.Optional(FACT_FIELDS[name]);
+  for (const name of optional ?? []) properties[name] = opt(FACT_FIELDS[name]);
   // A single mapped property set preserves required keys in TypeBox's static inference.
   return Type.Object(
     properties as {
@@ -257,9 +257,7 @@ const NONE = facts([]);
  * Once a mutation reached or may have reached the file, PUBLICATION_NEXT replaces them.
  */
 export const ERROR_DEFINITIONS = {
-  INVALID_ARGUMENTS: {
-    facts: facts(["issues"], ["omittedIssues", "schemaLimited"]),
-  },
+  INVALID_ARGUMENTS: { facts: facts(["issues"], ["omittedIssues", "schemaLimited"]) },
   OPERATION_ABORTED: { facts: NONE },
   PATH_NOT_FOUND: {
     facts: facts([], ["missing"]),
@@ -308,12 +306,8 @@ export const ERROR_DEFINITIONS = {
         "Change the conflicting rules so their matches do not overlap, or merge them into one rule.",
     },
   },
-  REGEX_TIMEOUT: {
-    facts: facts(["timeoutMs"]),
-  },
-  REGEX_WORKER_FAILED: {
-    facts: facts([], ["exitCode"]),
-  },
+  REGEX_TIMEOUT: { facts: facts(["timeoutMs"]) },
+  REGEX_WORKER_FAILED: { facts: facts([], ["exitCode"]) },
   TARGET_EXISTS: {
     facts: NONE,
     next: {
@@ -327,21 +321,11 @@ export const ERROR_DEFINITIONS = {
   },
   MULTIPLE_HARD_LINKS: { facts: NONE },
   SYMLINK_UNRESOLVED: { facts: NONE },
-  PUBLISH_FAILED: {
-    facts: NONE,
-  },
-  POST_PROCESS_FAILED: {
-    facts: NONE,
-  },
-  SEARCH_INCOMPLETE: {
-    facts: facts(["diagnostics"], ["scanned", "scanLimit"]),
-  },
-  RIPGREP_FAILED: {
-    facts: NONE,
-  },
-  UNSUPPORTED_PATH: {
-    facts: NONE,
-  },
+  PUBLISH_FAILED: { facts: NONE },
+  POST_PROCESS_FAILED: { facts: NONE },
+  SEARCH_INCOMPLETE: { facts: facts(["diagnostics"], ["scanned", "scanLimit"]) },
+  RIPGREP_FAILED: { facts: NONE },
+  UNSUPPORTED_PATH: { facts: NONE },
   UNCLASSIFIED: { facts: NONE },
 } as const satisfies Record<
   string,
@@ -411,7 +395,7 @@ export const REPORT_SCHEMA = Type.Object({
   message: opt(Type.String()),
   cause: opt(CAUSE_SCHEMA),
   ...(Object.fromEntries(
-    Object.entries(FACT_FIELDS).map(([name, schema]) => [name, Type.Optional(schema)]),
+    Object.entries(FACT_FIELDS).map(([name, schema]) => [name, opt(schema)]),
   ) as { [K in FactName]: ReturnType<typeof Type.Optional<(typeof FACT_FIELDS)[K]>> }),
   next: opt(Type.String()),
 });
