@@ -8,10 +8,11 @@
  *
  * Owns the sequencing every mutation tool must keep identical once Pi has
  * prepared and validated the arguments: separating then_run, path resolution,
- * the shared file mutation queue, and the hand-off to Action Fusion or plain
+ * the shared file mutation queue, the hand-off to Action Fusion, and
  * finalization. Each tool
  * returns a typed `MutationOutcome` (commit facts, details, outcome facts);
- * `finalizeMutation` alone turns it into the result, so nothing
+ * Action Fusion returns facts too, and this module's single `finalizeMutation`
+ * call turns them into the result, so nothing
  * downstream reads publication or revisions back from result details. Every
  * failure leaves as one report with the call's path and publication.
  *
@@ -31,12 +32,14 @@ import {
   withThenRunDescription,
   withThenRunSchema,
   type createActionFusionExecutor,
+  type FusedMutation,
   type ThenRunInput,
 } from "./action-fusion.ts";
 import { createArgumentPreparer, type CheckArguments } from "./argument-validation.ts";
 import type { MutationToolName } from "./report-schema.ts";
 import { commitFile, commitFreshness, readEditableSnapshot } from "./file-commit.ts";
 import {
+  describeMutationFailure,
   finalizeMutation,
   generateMutationDetails,
   postProcessMutation,
@@ -123,35 +126,34 @@ export function mutationToolBase<
       const { then_run, ...mutationParams } = params;
       const displayPath = mutationParams.path;
       const budget = budgets();
-      return runTool(tool, { path: displayPath, signal, budget }, async () => {
-        const absolutePath = canonicalPath(cwd, displayPath);
-        const target: MutationTarget = { absolutePath, signal, budget };
-        const mutate = (): Promise<MutationOutcome<TDetails, TTool>> =>
-          withFileMutationQueue(absolutePath, () => spec.run(mutationParams, target));
-        if (!fusion) {
-          const outcome = await mutate();
-          return finalizeMutation(
-            tool,
-            displayPath,
-            outcome,
-            commitFreshness(outcome.commit),
-            undefined,
-            budget,
-          );
-        }
-        return fusion({
-          toolCallId,
-          tool,
-          displayPath,
-          absolutePath,
-          thenRun: then_run,
-          budget,
-          mutate,
-          signal,
-          ctx,
-          onUpdate,
-        });
-      });
+      return runTool(
+        tool,
+        { path: displayPath, signal, budget },
+        async () => {
+          const absolutePath = canonicalPath(cwd, displayPath);
+          const target: MutationTarget = { absolutePath, signal, budget };
+          const mutate = (): Promise<MutationOutcome<TDetails, TTool>> =>
+            withFileMutationQueue(absolutePath, () => spec.run(mutationParams, target));
+          const settled: FusedMutation<TDetails, TTool> = fusion
+            ? await fusion({
+                toolCallId,
+                absolutePath,
+                thenRun: then_run,
+                mutate,
+                signal,
+                ctx,
+                onUpdate,
+              })
+            : await mutate().then((outcome) => ({
+                outcome,
+                observation: commitFreshness(outcome.commit),
+              }));
+          const { outcome, observation, command, terminate } = settled;
+          const result = finalizeMutation(tool, displayPath, outcome, observation, command, budget);
+          return terminate === undefined ? result : { ...result, terminate };
+        },
+        describeMutationFailure,
+      );
     },
   };
 }

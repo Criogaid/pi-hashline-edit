@@ -23,29 +23,25 @@
 
 import { realpath } from "node:fs/promises";
 import { basename, dirname, resolve } from "node:path";
-import type { AgentToolResult, AgentToolUpdateCallback } from "@earendil-works/pi-agent-core";
+import type { AgentToolUpdateCallback } from "@earendil-works/pi-agent-core";
 import type { ExtensionToolContext } from "@earendil-works/pi-coding-agent";
 import { Type, type Static, type TObject, type TProperties } from "typebox";
 import { commitFreshness, observeFreshness, type FreshnessObservation } from "./file-commit.ts";
 import {
+  CommandNotRun,
   commandText,
-  finalizeMutation,
   type CommandFacts,
   type MutationOutcome,
   type MutationResultDetails,
 } from "./mutation-result.ts";
 import { errnoCode, errorMessage } from "../core/errors.ts";
 import { throwIfCancelled } from "./error-text.ts";
-import { CommandNotRun, type ReportDetails } from "./report.ts";
-import { causeOf } from "./report-cause.ts";
-import type { OutputBudgets } from "./budgets.ts";
 import type {
   ActionFusionProgress,
   CommandResult,
   CommandStatus,
   Freshness,
   MutationToolName,
-  SuccessReport,
 } from "./report-schema.ts";
 export type { ActionFusionProgress } from "./report-schema.ts";
 
@@ -106,6 +102,16 @@ export function withThenRunDescription(description: string, actionFusion: boolea
   return actionFusion
     ? `${description} Set the then_run parameter for checks that can run immediately after this change. Use a separate bash call when the command requires approval, needs information from this tool's result, must wait for reload, or checks several changes from one response.`
     : description;
+}
+
+/** What a fused call leaves for the mutation runner to report; Fusion builds no result itself. */
+export interface FusedMutation<TDetails, TTool extends MutationToolName> {
+  readonly outcome: MutationOutcome<TDetails, TTool>;
+  readonly observation: FreshnessObservation;
+  /** Absent when the call has no then_run. */
+  readonly command?: CommandFacts;
+  /** Preserve the session tool's request to stop after this tool batch. */
+  readonly terminate?: boolean;
 }
 
 /** Keep command state independent of its diagnostic text and of file publication. */
@@ -205,41 +211,27 @@ export function createActionFusionExecutor(
 
   return async function execute<TDetails extends object, TTool extends MutationToolName>({
     toolCallId,
-    tool,
-    displayPath,
     absolutePath,
     thenRun,
-    budget,
     mutate,
     signal,
     ctx,
     onUpdate,
   }: {
     toolCallId: string;
-    tool: TTool;
-    /** The caller-supplied path, as the report states it. */
-    displayPath: string;
     absolutePath: string;
     thenRun: ThenRunInput | undefined;
-    budget: OutputBudgets;
-    mutate: () => Promise<MutationOutcome<TDetails, NoInfer<TTool>>>;
+    mutate: () => Promise<MutationOutcome<TDetails, TTool>>;
     signal: AbortSignal | undefined;
     ctx: ExtensionToolContext;
     onUpdate?: AgentToolUpdateCallback<MutationResultDetails<TDetails>>;
-  }): Promise<AgentToolResult<TDetails & ReportDetails<SuccessReport>>> {
+  }): Promise<FusedMutation<TDetails, TTool>> {
     // Without a command, the mutation still waits for a fused call on the same file.
     if (thenRun === undefined) {
       return withQueue(absolutePath, async () => {
         throwIfCancelled(signal);
         const outcome = await mutate();
-        return finalizeMutation(
-          tool,
-          displayPath,
-          outcome,
-          commitFreshness(outcome.commit),
-          undefined,
-          budget,
-        );
+        return { outcome, observation: commitFreshness(outcome.commit) };
       });
     }
 
@@ -286,11 +278,10 @@ export function createActionFusionExecutor(
     /** A mutation that did not complete keeps its own failure; Fusion adds only the command status. */
     const notRun = (error: unknown, command: "skipped" | "cancelled") => {
       report(command, "unknown");
-      return new CommandNotRun(error, command, causeOf(progressFailure, budget.fieldBytes));
+      return new CommandNotRun(error, command, progressFailure);
     };
     report("waiting", "unknown");
-    let terminate: boolean | undefined;
-    const result = await withQueue(absolutePath, async () => {
+    return withQueue(absolutePath, async () => {
       try {
         throwIfCancelled(signal);
       } catch (error) {
@@ -308,15 +299,11 @@ export function createActionFusionExecutor(
       report("waiting", "unknown");
       const settle = (observation: FreshnessObservation, command: CommandFacts) => {
         report(command.status, observation.freshness);
-        // The report states publication, freshness, and the command status once.
-        return finalizeMutation(
-          tool,
-          displayPath,
+        return {
           outcome,
           observation,
-          { ...command, progressError: progressFailure },
-          budget,
-        );
+          command: { ...command, progressError: progressFailure },
+        };
       };
 
       // A completed mutation remains successful; the command is only started on a fresh target.
@@ -354,16 +341,17 @@ export function createActionFusionExecutor(
         if (heartbeat) clearInterval(heartbeat);
       }
       commandResult = command.result;
-      terminate = command.terminate;
-      return settle(await observeFreshness(absolutePath, publishedRevision), {
+      const settled = settle(await observeFreshness(absolutePath, publishedRevision), {
         status: command.status,
         result: command.result,
       });
+      return command.terminate === undefined
+        ? settled
+        : { ...settled, terminate: command.terminate };
     }).catch((error: unknown) => {
       // Failures before the mutation started (such as resolving the queue key) also skip the command.
       if (error instanceof CommandNotRun) throw error;
       throw notRun(error, "skipped");
     });
-    return terminate === undefined ? result : { ...result, terminate };
   };
 }

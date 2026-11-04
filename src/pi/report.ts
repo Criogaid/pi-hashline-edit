@@ -28,16 +28,12 @@ import {
 import { boundedText, causeOf } from "./report-cause.ts";
 import type { OutputBudgets } from "./budgets.ts";
 import { cancellationError } from "./error-text.ts";
-import { FileMutationError } from "./file-commit.ts";
 import {
   ERROR_DEFINITIONS,
-  MUTATION_TOOLS,
   OUTCOME_NEXT,
   PUBLICATION_NEXT,
   REPORT_SCHEMA,
   WIRE_REPORT_SCHEMA,
-  type Cause,
-  type CommandStatus,
   type ErrorCode,
   type FailureReport,
   type Report,
@@ -161,34 +157,15 @@ export function failureResult(
 }
 
 /** Where a failure happened, as the caller knows it. */
-interface FailureContext {
+export interface FailureContext {
   /** The path or paths the call names, as supplied. */
   readonly path?: string | readonly string[];
   readonly signal?: AbortSignal;
   readonly budget: OutputBudgets;
 }
 
-/**
- * A mutation that did not complete, so its then_run command never ran. Action
- * Fusion owns the command status; the mutation's own failure stays unchanged.
- * It lives here because describeFailure unwraps it, and action-fusion.ts already
- * imports this module.
- */
-export class CommandNotRun extends Error {
-  readonly status: Extract<CommandStatus, "skipped" | "cancelled">;
-  readonly progressError: Cause | undefined;
-
-  constructor(
-    error: unknown,
-    status: Extract<CommandStatus, "skipped" | "cancelled">,
-    progressError?: Cause,
-  ) {
-    super(errorMessage(error), { cause: error });
-    this.name = "CommandNotRun";
-    this.status = status;
-    this.progressError = progressError;
-  }
-}
+/** What a mutation tool states about its failure beside the classified error. */
+type MutationFailureFacts = Pick<FailureReport, "publication" | "then_run" | "progressError">;
 
 function classify(error: unknown, signal: AbortSignal | undefined): HashlineError {
   if (error instanceof HashlineError) return error;
@@ -220,34 +197,22 @@ export function describeFailure(
   tool: ReportTool,
   caught: unknown,
   context: FailureContext,
+  mutation?: MutationFailureFacts,
 ): FailureReport {
-  let error = caught;
-  let command: CommandNotRun | undefined;
-  if (error instanceof CommandNotRun) {
-    command = error;
-    // The mutation's own failure, unchanged.
-    error = error.cause;
-  }
-  const failure = classify(error, context.signal);
+  const failure = classify(caught, context.signal);
   const budget = context.budget;
-  const mutation = MUTATION_TOOLS.some((name) => name === tool);
-  const publication = mutation
-    ? failure instanceof FileMutationError
-      ? failure.publication
-      : ("NOT_PUBLISHED" as const)
-    : undefined;
   // HashlineError's constructor ties its facts to its code; the union cannot carry that link.
   return {
     error: failure.errorCode,
     tool,
     path: context.path as Report["path"],
-    publication,
+    publication: mutation?.publication,
     message: boundedText(failure.message, budget.fieldBytes),
     cause: causeOf(failure.cause, budget.fieldBytes),
     ...failure.facts,
-    then_run: command ? { status: command.status } : undefined,
-    progressError: command?.progressError,
-    next: failureNext(failure, publication),
+    then_run: mutation?.then_run,
+    progressError: mutation?.progressError,
+    next: failureNext(failure, mutation?.publication),
   } as FailureReport;
 }
 
@@ -256,11 +221,12 @@ export async function runTool<T>(
   tool: ReportTool,
   context: FailureContext,
   run: () => Promise<T>,
+  describe: typeof describeFailure = describeFailure,
 ): Promise<T | AgentToolResult<ReportDetails<FailureReport>>> {
   try {
     return await run();
   } catch (error) {
-    return failureResult(describeFailure(tool, error, context));
+    return failureResult(describe(tool, error, context));
   }
 }
 

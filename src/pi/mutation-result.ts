@@ -9,20 +9,27 @@ import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import { FileMutationError, type CommitResult, type FreshnessObservation } from "./file-commit.ts";
 import { generateDiffString } from "@earendil-works/pi-coding-agent";
 import { displayCarriageReturns } from "./anchor-format.ts";
+import { errorMessage } from "../core/errors.ts";
 import { normalizeLineEndings } from "../core/lines.ts";
 import type {
+  ActionFusionProgress,
   CommandResult,
   CommandStatus,
   FailureReport,
   MutationToolName,
   PublicationStatus,
+  ReportTool,
   SuccessFacts,
   SuccessReport,
 } from "./report-schema.ts";
-import { reportResult, type ReportDetails } from "./report.ts";
+import {
+  describeFailure,
+  reportResult,
+  type FailureContext,
+  type ReportDetails,
+} from "./report.ts";
 import { causeOf } from "./report-cause.ts";
 import type { OutputBudgets } from "./budgets.ts";
-import type { ActionFusionProgress } from "./action-fusion.ts";
 
 /** Final success carries tool details; final failure carries only its report; neither carries progress. */
 export type MutationFinalDetails<TDetails> =
@@ -81,6 +88,46 @@ export interface CommandFacts {
   readonly result?: CommandResult;
   /** A progress observer failed; command and file outcomes are unaffected. */
   readonly progressError?: unknown;
+}
+
+/**
+ * A mutation that did not complete, so its then_run command never ran. Action
+ * Fusion owns the command status; the mutation's own failure stays unchanged.
+ */
+export class CommandNotRun extends Error {
+  readonly status: Extract<CommandStatus, "skipped" | "cancelled">;
+  /** A progress observer failed; the mutation's failure is unaffected. */
+  readonly progressError: unknown;
+
+  constructor(
+    error: unknown,
+    status: Extract<CommandStatus, "skipped" | "cancelled">,
+    progressError?: unknown,
+  ) {
+    super(errorMessage(error), { cause: error });
+    this.name = "CommandNotRun";
+    this.status = status;
+    this.progressError = progressError;
+  }
+}
+
+/**
+ * Classify a mutation tool's failure with what only a mutation states: what it published and,
+ * when the call was fused, why its command never ran.
+ */
+export function describeMutationFailure(
+  tool: ReportTool,
+  caught: unknown,
+  context: FailureContext,
+): FailureReport {
+  const command = caught instanceof CommandNotRun ? caught : undefined;
+  // The mutation's own failure, unchanged.
+  const error = command ? command.cause : caught;
+  return describeFailure(tool, error, context, {
+    publication: error instanceof FileMutationError ? error.publication : "NOT_PUBLISHED",
+    then_run: command ? { status: command.status } : undefined,
+    progressError: causeOf(command?.progressError, context.budget.fieldBytes),
+  });
 }
 
 /** Build the mutation report from commit, freshness, and command facts; the TUI uses its diff details. */
