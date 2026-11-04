@@ -13,7 +13,7 @@ import { Text } from "@earendil-works/pi-tui";
 import { renderOutputPreview, renderToolError, reportLines, splitReport } from "./render.ts";
 import { createAnchorFormatter } from "./anchor-format.ts";
 import { GREP_OUTPUT_MODES, grepOutput, type GrepOutputMode } from "./grep-output.ts";
-import { filterExplicitFilesByGlob, resolveSearchPaths, type SearchScope } from "./grep-scope.ts";
+import { filterExplicitFilesByGlob, resolveSearchPaths } from "./grep-scope.ts";
 import { searchFiles } from "./grep-search.ts";
 import { toDisplayLines } from "./grep-render.ts";
 import { runRgLines, runRgPaths, type GrepBackend } from "./rg-process.ts";
@@ -217,16 +217,12 @@ export function makeGrepOverrideWithBackend(
           flags: [...flags].join(""),
           multiline: params.multiline ?? false,
         };
-        const { searchPaths, pathInfo } = await resolveSearchPaths(cwd, params.path);
-        const unfiltered: SearchScope = {
-          globs: params.glob ?? [],
-          searchPaths,
-        };
-        const admitted = await filterExplicitFilesByGlob(backend, unfiltered, pathInfo, signal);
-        const scope: SearchScope = { ...unfiltered, searchPaths: admitted.searchPaths };
+        const globs = params.glob ?? [];
+        const paths = await resolveSearchPaths(cwd, params.path);
+        const admitted = await filterExplicitFilesByGlob(backend, globs, paths, signal);
         const { warnings: searchWarnings, ...search } = await searchFiles({
           backend,
-          scope,
+          scope: { globs, searchPaths: admitted.searchPaths },
           query,
           limit: effectiveLimit,
           timeoutMs: config.grep.regexTimeoutMs,

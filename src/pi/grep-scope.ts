@@ -33,10 +33,10 @@ interface SearchPathInfo {
 
 /** Canonical search paths, the working directory when none is given; any missing one fails, all reported. */
 export async function resolveSearchPaths(cwd: string, path: readonly string[] | undefined) {
-  const searchPaths = (path ?? ["."]).map((value) => canonicalPath(cwd, value));
   const pathInfo: SearchPathInfo[] = [];
   const missing: string[] = [];
-  for (const searchPath of searchPaths) {
+  for (const value of path ?? ["."]) {
+    const searchPath = canonicalPath(cwd, value);
     try {
       pathInfo.push({ path: searchPath, isFile: (await stat(searchPath)).isFile() });
     } catch (error) {
@@ -50,7 +50,7 @@ export async function resolveSearchPaths(cwd: string, path: readonly string[] | 
       facts: { missing },
       ...(missing.some((path) => /[*?]/.test(path)) ? { next: "useGlob" as const } : {}),
     });
-  return { searchPaths, pathInfo };
+  return pathInfo;
 }
 
 /** Groups spellings that a case-insensitive filesystem may treat as one file. */
@@ -79,12 +79,12 @@ async function isListed(path: string, listed: ReadonlyMap<string, readonly strin
  */
 export async function filterExplicitFilesByGlob(
   backend: GrepBackend,
-  scope: SearchScope,
+  globs: readonly string[],
   paths: readonly SearchPathInfo[],
   signal: AbortSignal | undefined,
 ): Promise<{ readonly searchPaths: string[]; readonly warnings: readonly string[] }> {
   const explicitFiles = paths.filter(({ isFile }) => isFile);
-  if (scope.globs.length === 0 || explicitFiles.length === 0)
+  if (globs.length === 0 || explicitFiles.length === 0)
     return { searchPaths: paths.map(({ path }) => path), warnings: [] };
 
   const parents = [...new Set(explicitFiles.map(({ path }) => dirname(path)))];
@@ -95,7 +95,7 @@ export async function filterExplicitFilesByGlob(
     "--hidden",
     "--no-ignore",
     "--follow",
-    ...globArgs(scope.globs),
+    ...globArgs(globs),
     "--files",
     "--null",
     "--max-depth=1",
