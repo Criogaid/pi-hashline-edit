@@ -15,11 +15,7 @@
  * @module pi-hashline-edit/pi
  */
 
-import {
-  type Theme,
-  type ToolDefinition,
-  type ToolRenderResultOptions,
-} from "@earendil-works/pi-coding-agent";
+import type { Theme } from "@earendil-works/pi-coding-agent";
 import { Type, type Static, type TLiteral } from "typebox";
 import type { ThenRunInput } from "./action-fusion.ts";
 import { applyEdits } from "../core/apply.ts";
@@ -28,10 +24,9 @@ import { EDIT_ANCHOR_FIELDS, type Anchor, type Edit } from "../core/types.ts";
 import type { HashlineEditConfig } from "./config.ts";
 import { anchorPattern, createAnchorFormatter, parseAnchorToken } from "./anchor-format.ts";
 import {
+  diffCardRenderers,
   formatDiffCounts,
   formatHeaderPath,
-  renderMutationCall,
-  renderMutationResult,
   type DiffCounts,
 } from "./render.ts";
 import { describeEditFailure } from "./failure-context.ts";
@@ -43,7 +38,6 @@ import {
   type MutationTarget,
 } from "./mutation-runner.ts";
 import { argumentItems, type ReportArgumentIssue } from "./argument-validation.ts";
-type EditRenderContext = Parameters<NonNullable<ToolDefinition<EditSchema>["renderCall"]>>[2];
 
 /** Split a validated anchor token; prepareArguments and the schema already checked it. */
 function parseAnchor(value: string): Anchor;
@@ -373,19 +367,7 @@ export function makeEditOverride(
         checkEditArguments(args, hashLen, schema.properties.edits.items, report),
       run: (params, target) => runEdit(target, params.edits, hashLen, shiftRadius),
     }),
-
-    renderCall(args: EditParams, theme: Theme, context: EditRenderContext) {
-      return renderMutationCall(args, theme, context, editHeader);
-    },
-
-    renderResult(
-      result: Parameters<typeof renderMutationResult>[0],
-      options: ToolRenderResultOptions,
-      theme: Theme,
-      context: EditRenderContext,
-    ) {
-      return renderMutationResult(result, options, theme, context, "Editing…", editHeader, "edit");
-    },
+    ...diffCardRenderers("edit", "Editing…", editHeader),
   };
 }
 

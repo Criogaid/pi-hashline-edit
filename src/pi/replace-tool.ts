@@ -24,11 +24,7 @@
  * @module pi-hashline-edit/pi
  */
 
-import {
-  type Theme,
-  type ToolDefinition,
-  type ToolRenderResultOptions,
-} from "@earendil-works/pi-coding-agent";
+import type { Theme } from "@earendil-works/pi-coding-agent";
 import { Type, type Static } from "typebox";
 import { applyReplacements } from "../core/replace.ts";
 import { checkRegexArguments } from "../core/regex.ts";
@@ -38,10 +34,9 @@ import { unwritableTextError } from "../core/text.ts";
 import type { ThenRunInput } from "./action-fusion.ts";
 import type { HashlineEditConfig } from "./config.ts";
 import {
+  diffCardRenderers,
   formatDiffCounts,
   formatHeaderPath,
-  renderMutationCall,
-  renderMutationResult,
   type DiffCounts,
 } from "./render.ts";
 import {
@@ -52,9 +47,6 @@ import {
 } from "./mutation-runner.ts";
 import { defaultOutputBudgets, type OutputBudgetProvider } from "./budgets.ts";
 import { argumentItems, type ReportArgumentIssue } from "./argument-validation.ts";
-type ReplaceRenderContext = Parameters<
-  NonNullable<ToolDefinition<typeof replaceSchema>["renderCall"]>
->[2];
 
 const replaceSchema = Type.Object(
   {
@@ -117,27 +109,7 @@ export function makeReplaceTool(
       check: checkReplaceArguments,
       run: (params, target) => runReplace(target, params.replacements, config),
     }),
-
-    renderCall(args: ReplaceParams, theme: Theme, context: ReplaceRenderContext) {
-      return renderMutationCall(args, theme, context, replaceHeader);
-    },
-
-    renderResult(
-      result: Parameters<typeof renderMutationResult>[0],
-      options: ToolRenderResultOptions,
-      theme: Theme,
-      context: ReplaceRenderContext,
-    ) {
-      return renderMutationResult(
-        result,
-        options,
-        theme,
-        context,
-        "Replacing…",
-        replaceHeader,
-        "replace",
-      );
-    },
+    ...diffCardRenderers("replace", "Replacing…", replaceHeader),
   };
 }
 

@@ -17,7 +17,6 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import { Text, type Component } from "@earendil-works/pi-tui";
-import type { ActionFusionProgress } from "./action-fusion.ts";
 import type { MutationToolName, ReportTool } from "./report-schema.ts";
 import { renderReport, reportEntries, reportOf, type Report, detailsReport } from "./report.ts";
 
@@ -112,7 +111,7 @@ function publishDiffCounts(
 }
 
 /** Reuse the call component and retain it for the result's in-place count refresh. */
-export function renderMutationCall<TArgs>(
+function renderMutationCall<TArgs>(
   args: TArgs,
   theme: Theme,
   context: { lastComponent?: Component; state: MutationRenderState },
@@ -262,14 +261,7 @@ const MUTATION_CARD_SHOWN = new Set(["then_run", "progressError"]);
 
 /** Render mutation status or a diff, refreshing the call header's counts in place. */
 export function renderMutationResult<TArgs>(
-  result: AgentToolResult<
-    | {
-        diff?: string;
-        report?: Report;
-        actionFusion?: Partial<Pick<ActionFusionProgress, "mutationCompleted">>;
-      }
-    | undefined
-  >,
+  result: AgentToolResult<{ diff?: string; report?: Report } | undefined>,
   { isPartial, expanded }: ToolRenderResultOptions,
   theme: Theme,
   context: { isError: boolean; args: TArgs; state: MutationRenderState },
@@ -277,8 +269,8 @@ export function renderMutationResult<TArgs>(
   header: (args: TArgs, theme: Theme, counts?: DiffCounts) => string,
   tool: MutationToolName,
 ): Text {
-  if (isPartial && result.details?.actionFusion?.mutationCompleted !== true)
-    return new Text(theme.fg("warning", pending), 0, 0);
+  // withMutationStatus has already cleared isPartial once a fused mutation completed.
+  if (isPartial) return new Text(theme.fg("warning", pending), 0, 0);
   if (context.isError) return renderToolError(result, tool, theme, expanded);
   const diff = result.details?.diff;
   // Refresh in place: invalidation inside a renderer re-enters updateDisplay.
@@ -295,4 +287,29 @@ export function renderMutationResult<TArgs>(
         : "No diff available";
   const body = diff ? renderDiffPreview(diff, expanded, theme) : theme.fg("success", emptyDiff);
   return new Text([body, ...facts].join("\n"), 0, 0);
+}
+
+/** The cards of a tool that shows a diff (edit, replace); each supplies only its header and pending text. */
+export function diffCardRenderers<TArgs>(
+  tool: MutationToolName,
+  pending: string,
+  header: (args: TArgs, theme: Theme, counts?: DiffCounts) => string,
+) {
+  return {
+    renderCall(
+      args: TArgs,
+      theme: Theme,
+      context: { lastComponent?: Component; state: MutationRenderState },
+    ) {
+      return renderMutationCall(args, theme, context, header);
+    },
+    renderResult(
+      result: Parameters<typeof renderMutationResult>[0],
+      options: ToolRenderResultOptions,
+      theme: Theme,
+      context: { isError: boolean; args: TArgs; state: MutationRenderState },
+    ) {
+      return renderMutationResult(result, options, theme, context, pending, header, tool);
+    },
+  };
 }
