@@ -121,7 +121,7 @@ const RESULT = { found: "shifted", ambiguous: "ambiguous", none: "unresolved" } 
 /** One failure entry: what was cited, then what the search found or what the cited line holds. */
 function failureEntry(
   f: AnchorFailure,
-  snapshot: Snapshot,
+  anchors: AnchorFormatter,
   currentLines: readonly string[],
   budget: OutputBudgets,
 ): AnchorFailureFact {
@@ -129,16 +129,16 @@ function failureEntry(
   const entry: { -readonly [K in keyof AnchorFailureFact]: AnchorFailureFact[K] } = {
     field: `edits[${f.opIndex}].${f.which}`,
     action: f.op,
-    cited: snapshot.anchors.reference(f.cited.line, f.cited.hash),
+    cited: anchors.reference(f.cited.line, f.cited.hash),
     result: RESULT[f.recovery.kind],
   };
   switch (f.recovery.kind) {
     case "found": {
       const { newLine, newHash } = f.recovery;
-      entry.candidate = snapshot.anchors.reference(newLine, newHash);
+      entry.candidate = anchors.reference(newLine, newHash);
       const content = currentLines[newLine - 1];
       // The row budget matches the neighborhoods'; the anchor itself is already `candidate`.
-      if (Buffer.byteLength(snapshot.anchors.row(newLine, content), "utf8") <= budget.fieldBytes) {
+      if (Buffer.byteLength(anchors.row(newLine, content), "utf8") <= budget.fieldBytes) {
         entry.content = displayCarriageReturns(content);
       } else {
         entry.notShown = rowTooLarge;
@@ -148,7 +148,7 @@ function failureEntry(
     case "ambiguous": {
       const candidates = selectAmbiguousCandidates(f.recovery.candidates);
       entry.candidates = candidates.map((candidate) =>
-        snapshot.anchors.reference(candidate.line, candidate.hash),
+        anchors.reference(candidate.line, candidate.hash),
       );
       const omitted = f.recovery.candidates.length - candidates.length;
       if (omitted) entry.omittedCandidates = omitted;
@@ -160,7 +160,7 @@ function failureEntry(
         entry.notShown = "cited line is out of range";
         break;
       }
-      const row = snapshot.anchors.row(f.cited.line, content);
+      const row = anchors.row(f.cited.line, content);
       if (Buffer.byteLength(row, "utf8") <= budget.fieldBytes) entry.observed = row;
       else entry.notShown = rowTooLarge;
       break;
@@ -180,7 +180,7 @@ export function describeEditFailure(
   const kept: AnchorFailureFact[] = [];
   let bytes = 0;
   for (const failure of failures) {
-    const entry = failureEntry(failure, snapshot, currentLines, budget);
+    const entry = failureEntry(failure, snapshot.anchors, currentLines, budget);
     bytes += Buffer.byteLength(JSON.stringify(entry)) + 1;
     if (bytes > budget.blockBytes) break;
     kept.push(entry);

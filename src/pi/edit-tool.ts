@@ -309,17 +309,9 @@ function editHeader(args: EditParams, theme: Theme, counts?: DiffCounts): string
   const edits = Array.isArray(args.edits) ? args.edits : [];
   const n = edits.length;
   if (n) {
-    const opCounts: Record<EditOpName | "unknown", number> = {
-      replace: 0,
-      delete: 0,
-      copy: 0,
-      move: 0,
-      insert_before: 0,
-      insert_after: 0,
-      append: 0,
-      prepend: 0,
-      unknown: 0,
-    };
+    const opCounts: Record<string, number> = Object.fromEntries(
+      [...EDIT_OP_NAMES, "unknown"].map((kind) => [kind, 0]),
+    );
     // Renderers receive partial arguments; fixed buckets keep one-pass counting O(1) in space.
     for (const edit of edits) {
       const kind = edit?.action;
