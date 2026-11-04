@@ -11,7 +11,7 @@ import { mutationToolBase, type ActionFusionExecutor } from "./mutation-runner.t
 import { throwIfCancelled } from "./error-text.ts";
 import { defaultOutputBudgets, type OutputBudgetProvider } from "./budgets.ts";
 import { unwritableTextError } from "../core/text.ts";
-import { reportLines, renderToolError, splitReport } from "./render.ts";
+import { MUTATION_CARD_SHOWN, reportLines, renderToolError, splitReport } from "./render.ts";
 import type { MutationOutcome } from "./mutation-result.ts";
 import type { ReportDetails } from "./report.ts";
 
@@ -32,8 +32,8 @@ const writeSchema = Type.Object(
 type WriteParams = Static<typeof writeSchema>;
 /** write shows the built-in card; its report states every fact. */
 type WriteMutationDetails = object;
-/** The write card's call line shows the content; the command card owns then_run. */
-const WRITE_CARD_SHOWN = new Set(["publication", "created", "then_run", "progressError"]);
+/** The write card's call line shows the content. */
+const WRITE_CARD_SHOWN = new Set([...MUTATION_CARD_SHOWN, "publication", "created"]);
 type WriteRenderContext = Parameters<
   NonNullable<ReturnType<typeof createWriteToolDefinition>["renderCall"]>
 >[2];
