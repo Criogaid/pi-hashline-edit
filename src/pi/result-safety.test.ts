@@ -54,18 +54,16 @@ test("edit and replace commands change or remove the file → withhold anchors a
           const path = join(dir, `${toolName}-${state}-${fails}.txt`);
           await writeFile(path, "before\n");
           const updates: AgentToolResult<unknown>[] = [];
-          const fusion = createActionFusionExecutor(
-            async (_id, _input, _signal, _ctx, onUpdate) => {
-              if (state === "changed") await writeFile(path, "command output\n");
-              else {
-                await rm(path);
-                if (state === "unknown") await mkdir(path);
-              }
-              onUpdate?.({ content: [{ type: "text", text: "progress" }], details: undefined });
-              if (fails) throw new Error("command failed");
-              return { status: "succeeded", result: { content: [{ type: "text", text: "done" }] } };
-            },
-          );
+          const fusion = createActionFusionExecutor(async (_input, _signal, _ctx, onUpdate) => {
+            if (state === "changed") await writeFile(path, "command output\n");
+            else {
+              await rm(path);
+              if (state === "unknown") await mkdir(path);
+            }
+            onUpdate?.({ content: [{ type: "text", text: "progress" }], details: undefined });
+            if (fails) throw new Error("command failed");
+            return { status: "succeeded", result: { content: [{ type: "text", text: "done" }] } };
+          });
           const tool =
             toolName === "edit"
               ? makeEditOverride(dir, DEFAULT_CONFIG, fusion)

@@ -579,7 +579,7 @@ test("successful batches run one command against the complete result", async () 
     const tool = makeReplaceTool(
       dir,
       DEFAULT_CONFIG,
-      createActionFusionExecutor(async (_toolCallId, input) => {
+      createActionFusionExecutor(async (input) => {
         assert.equal(input.command, "check");
         commands++;
         assert.equal(await readFile(file, "utf8"), "bar baz");

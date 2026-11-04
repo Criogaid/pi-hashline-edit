@@ -93,7 +93,7 @@ test("edit and replace share one embedded executor and preserve mutation results
   const dir = await tempDir();
   try {
     const calls: string[] = [];
-    const fusion = createActionFusionExecutor(async (_id, input) => {
+    const fusion = createActionFusionExecutor(async (input) => {
       calls.push(input.command);
       return { status: "succeeded", result: { content: [{ type: "text", text: "checked" }] } };
     });
@@ -227,7 +227,7 @@ test("all mutation tools forward command progress before completion in RPC mode"
     const events: ActionFusionProgress[] = [];
     const updates: ProgressUpdate[] = [];
     const fusion = createActionFusionExecutor(
-      async (_id, _input, _signal, _ctx, onUpdate) => {
+      async (_input, _signal, _ctx, onUpdate) => {
         assert.equal(events.at(-1)?.command, "running");
         onUpdate?.({ content: [{ type: "text", text: "live output" }], details: undefined });
         assert.deepEqual(updates.at(-1)?.details.actionFusion?.result?.content, [
@@ -464,7 +464,7 @@ test("timed command stays silent → heartbeat preserves output and stops after 
       const updates: unknown[] = [];
       try {
         const fusion = createActionFusionExecutor(
-          async (_id, input, _signal, _ctx, onUpdate) => {
+          async (input, _signal, _ctx, onUpdate) => {
             assert.equal(input.timeout, 10);
             started.resolve();
             onUpdate?.({ content: [{ type: "text", text: "latest output" }], details: undefined });
@@ -532,7 +532,7 @@ test("command omits timeout → no countdown events occur while it waits", async
   const events: ActionFusionProgress[] = [];
   try {
     const fusion = createActionFusionExecutor(
-      async (_id, input) => {
+      async (input) => {
         assert.equal(input.timeout, undefined);
         started.resolve();
         return finished.promise;
