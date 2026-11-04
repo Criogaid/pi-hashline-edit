@@ -106,14 +106,15 @@ function pointerParts(pointer: string): readonly string[] {
 }
 
 /**
- * The projection path of the value at `pointer`; the root is "". Pi's TypeBox leaves `/` and
- * `~` in property names unescaped, so a name spans the fewest segments that form an own key,
- * read escaped or as is.
+ * The projection paths of the value at `pointer` and of its parent; the root is "". Pi's TypeBox
+ * leaves `/` and `~` in property names unescaped, so a name spans the fewest segments that form
+ * an own key, read escaped or as is.
  */
-function valuePath(pointer: string, prepared: unknown): string {
+function valuePaths(pointer: string, prepared: unknown): { path: string; parent: string } {
   const segments = pointer.split("/").slice(1);
   let value = prepared;
   let path = "";
+  let parent = "";
   for (let index = 0; index < segments.length; index++) {
     let part = unescapePointer(segments[index]);
     if (typeof value === "object" && value !== null && !Array.isArray(value)) {
@@ -128,14 +129,15 @@ function valuePath(pointer: string, prepared: unknown): string {
         }
       }
     }
+    parent = path;
     path = Array.isArray(value) ? `${path}[${part}]` : propertyPath(path, part);
     value = typeof value === "object" && value !== null ? Reflect.get(value, part) : undefined;
   }
-  return path;
+  return { path, parent };
 }
 
 function fieldPath(pointer: string, prepared: unknown, key?: string): string {
-  const path = valuePath(pointer, prepared);
+  const { path } = valuePaths(pointer, prepared);
   return (key === undefined ? path : propertyPath(path, key)) || "$";
 }
 
@@ -168,8 +170,8 @@ function fieldExplanation(schema: TSchema, parts: readonly string[]): string | u
 }
 
 /** Why a field is not allowed: the fields its object declares. */
-function shapeExplanation(object: TObject): string {
-  return `Accepted fields: ${Object.keys(object.properties).join(", ")}.`;
+function shapeExplanation(object: TObject | undefined): string | undefined {
+  return object && `Accepted fields: ${Object.keys(object.properties).join(", ")}.`;
 }
 
 /** One issue per field: distinct reasons joined, and distinct fixes joined, each in report order. */
@@ -216,8 +218,8 @@ function aggregateErrors(
         break;
       }
       case "additionalProperties": {
-        const shape = objects.get(valuePath(error.instancePath, prepared));
-        const fix = shape && shapeExplanation(shape);
+        const { path } = valuePaths(error.instancePath, prepared);
+        const fix = shapeExplanation(objects.get(path));
         for (const key of error.params.additionalProperties)
           add(fieldPath(error.instancePath, prepared, key), "is not allowed", fix);
         break;
@@ -229,9 +231,16 @@ function aggregateErrors(
           fieldExplanation(parameters, pointerParts(error.instancePath)),
         );
         break;
-      case "boolean":
-        add(fieldPath(error.instancePath, prepared), "is not allowed");
+      case "boolean": {
+        // Once TypeBox's error capacity ends before `additionalProperties`, this is the only report.
+        const { parent } = valuePaths(error.instancePath, prepared);
+        add(
+          fieldPath(error.instancePath, prepared),
+          "is not allowed",
+          shapeExplanation(objects.get(parent)),
+        );
         break;
+      }
       case "enum":
         add(
           fieldPath(error.instancePath, prepared),
