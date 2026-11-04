@@ -91,7 +91,7 @@ async function readRegularFile(path: string, signal?: AbortSignal): Promise<Buff
   });
 }
 
-export async function fileRevision(path: string): Promise<string> {
+async function fileRevision(path: string): Promise<string> {
   return byteRevision(await readRegularFile(path));
 }
 
@@ -117,6 +117,24 @@ function stepError(step: string, error: unknown): HashlineError {
       ? error.errorCode
       : (filesystemErrorCode(error) ?? "FILESYSTEM_ERROR");
   return pathError(error) ?? new HashlineError(code, step, { cause: error });
+}
+
+/** The target must still hold the bytes a mutation read; cancellation wins over what this read finds. */
+async function requireBaseRevision(
+  path: string,
+  baseRevision: string,
+  signal: AbortSignal | undefined,
+): Promise<void> {
+  let currentRevision: string;
+  try {
+    currentRevision = await fileRevision(path);
+  } catch (error) {
+    throwIfCancelled(signal);
+    throw stepError("Unable to recheck target revision.", error);
+  }
+  throwIfCancelled(signal);
+  if (currentRevision !== baseRevision)
+    throw new HashlineError("FILE_CHANGED", "File changed after it was read.");
 }
 
 type TargetInfo = { readonly publishPath: string } & (
@@ -282,19 +300,9 @@ export async function commitFile(
   const publishedRevision = byteRevision(bytes);
   // Mode, revision, target safety, and cancellation checks still apply to no-ops.
   if (target.beforeRevision === publishedRevision) {
-    // A base revision was not hashed from the target here; confirm the target still holds it.
-    if (baseRevision !== undefined) {
-      let currentRevision: string;
-      try {
-        currentRevision = await fileRevision(target.publishPath);
-        throwIfCancelled(options.signal);
-      } catch (error) {
-        if (options.signal?.aborted) throw cancellationError();
-        throw stepError("Unable to read target revision.", error);
-      }
-      if (currentRevision !== baseRevision)
-        throw new HashlineError("FILE_CHANGED", "File changed after it was read.");
-    }
+    // A base revision was not hashed from the target here.
+    if (baseRevision !== undefined)
+      await requireBaseRevision(target.publishPath, baseRevision, options.signal);
     return {
       created: false,
       publishedRevision,
@@ -317,16 +325,8 @@ export async function commitFile(
   let published = false;
   try {
     await writeAndSyncTemp(tempPath, bytes, target.modeBits, options.signal);
-    if (baseRevision !== undefined) {
-      let currentRevision: string;
-      try {
-        currentRevision = await fileRevision(publishPath);
-      } catch (error) {
-        throw stepError("Unable to recheck target revision.", error);
-      }
-      if (currentRevision !== baseRevision)
-        throw new HashlineError("FILE_CHANGED", "File changed before publication.");
-    }
+    if (baseRevision !== undefined)
+      await requireBaseRevision(publishPath, baseRevision, options.signal);
     if (mode === "create") await publishCreate(tempPath, publishPath, options.signal);
     else await publishReplace(tempPath, publishPath, options.signal);
     published = true;
