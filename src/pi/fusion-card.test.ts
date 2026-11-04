@@ -24,8 +24,6 @@ after(() => {
 });
 
 function harness(entries: any[] = []) {
-  // The progress reporter only reads cwd from this harness context.
-  const ctx = { cwd: process.cwd() } as ExtensionContext;
   const renderers = new Map<string, any>();
   const handlers = new Map<string, any>();
   const tui = new TuiMainScreen(new ProcessTerminal());
@@ -48,7 +46,7 @@ function harness(entries: any[] = []) {
     handlers.get(event)(
       {},
       {
-        cwd: ctx.cwd,
+        cwd: process.cwd(),
         mode: "tui",
         ui: {
           setWidget(_key: string, content: Parameters<ExtensionContext["ui"]["setWidget"]>[1]) {
@@ -62,7 +60,7 @@ function harness(entries: any[] = []) {
   const card = (entry: any, expanded = false) =>
     renderers.get(entry.customType)(entry, { expanded }, activeTheme);
   restore();
-  return { entries, report, restore, card, ctx };
+  return { entries, report, restore, card };
 }
 
 const waiting: ActionFusionProgress = {
@@ -75,30 +73,24 @@ const waiting: ActionFusionProgress = {
 
 test("one independent card updates live and only persists its endpoints", () => {
   const h = harness();
-  h.report(waiting, h.ctx);
+  h.report(waiting);
   const card = h.card(h.entries[0]);
   assert.match(card.render(100).join("\n"), /waiting/);
   assert.ok(card.render(100).join("\n").includes(activeTheme.getBgAnsi("toolPendingBg")));
-  h.report(
-    {
-      ...waiting,
-      command: "running",
-      result: { content: [{ type: "text", text: "first test passed" }] },
-    },
-    h.ctx,
-  );
+  h.report({
+    ...waiting,
+    command: "running",
+    result: { content: [{ type: "text", text: "first test passed" }] },
+  });
   assert.match(card.render(100).join("\n"), /running[\s\S]*first test passed/);
   assert.equal(h.entries.length, 1);
   const output = Array.from({ length: 20 }, (_, i) => `output line ${i}`).join("\n");
-  h.report(
-    {
-      ...waiting,
-      command: "succeeded",
-      freshness: "changed",
-      result: { content: [{ type: "text", text: output }] },
-    },
-    h.ctx,
-  );
+  h.report({
+    ...waiting,
+    command: "succeeded",
+    freshness: "changed",
+    result: { content: [{ type: "text", text: output }] },
+  });
   assert.equal(h.entries.length, 2);
   assert.equal(h.entries[0].data.command, "waiting");
   const collapsed = card.render(100).join("\n");
@@ -146,6 +138,7 @@ test("Fusion command outcomes → progress, cards, and reports preserve command 
       const dir = await mkdtemp(join(tmpdir(), "hashline-fusion-card-"));
       t.after(() => rm(dir, { recursive: true, force: true }));
       const h = harness();
+      h.restore("session_start", h.entries, { cwd: dir });
       const events: ActionFusionProgress[] = [];
       const controller = new AbortController();
       if (scenario === "cancelled") controller.abort();
@@ -159,9 +152,9 @@ test("Fusion command outcomes → progress, cards, and reports preserve command 
             ? { status: "cancelled", result: { content: [] } }
             : { status: "succeeded", result: success };
         },
-        (progress, ctx) => {
+        (progress) => {
           events.push(progress);
-          h.report(progress, ctx);
+          h.report(progress);
         },
       );
       const result = await callTool(
@@ -203,18 +196,15 @@ test("Fusion command outcomes → progress, cards, and reports preserve command 
 
 test("session restore uses final snapshots and marks unfinished calls unknown", () => {
   const h = harness();
-  h.report(waiting, h.ctx);
-  h.report(
-    {
-      ...waiting,
-      command: "failed",
-      result: {
-        content: [{ type: "text", text: "Command exited with code 7" }],
-        details: { fullOutputPath: "/tmp/command-output.log" },
-      },
+  h.report(waiting);
+  h.report({
+    ...waiting,
+    command: "failed",
+    result: {
+      content: [{ type: "text", text: "Command exited with code 7" }],
+      details: { fullOutputPath: "/tmp/command-output.log" },
     },
-    h.ctx,
-  );
+  });
   const resumed = harness(h.entries);
   resumed.restore();
   assert.match(
@@ -259,7 +249,7 @@ test("session restore accepts optional command results", async (t) => {
     await t.test(name, () => {
       for (const event of ["session_start", "session_tree"]) {
         const original = harness();
-        original.report(waiting, original.ctx);
+        original.report(waiting);
         const initial = original.entries[0];
         const snapshot = {
           ...initial,
@@ -284,8 +274,8 @@ test("session restore accepts optional command results", async (t) => {
 test("skips and cancellations stay neutral and restore their own reason", () => {
   for (const command of ["skipped", "cancelled"] as const) {
     const h = harness();
-    h.report(waiting, h.ctx);
-    h.report({ ...waiting, command, mutationCompleted: false }, h.ctx);
+    h.report(waiting);
+    h.report({ ...waiting, command, mutationCompleted: false });
     for (const restored of [false, true]) {
       const view = restored ? harness(h.entries) : h;
       if (restored) view.restore();
@@ -304,7 +294,7 @@ test("skips and cancellations stay neutral and restore their own reason", () => 
 
 test("timed command cards show remaining seconds only while actively running", () => {
   const h = harness();
-  h.report(waiting, h.ctx);
+  h.report(waiting);
   const card = h.card(h.entries[0]);
   assert.doesNotMatch(card.render(160).join("\n"), /remaining/);
   const running: ActionFusionProgress = {
@@ -313,21 +303,18 @@ test("timed command cards show remaining seconds only while actively running", (
     mutationCompleted: true,
     timing: { timeoutSeconds: 10, remainingSeconds: 10 },
   };
-  h.report(running, h.ctx);
+  h.report(running);
   assert.match(card.render(160).join("\n"), /10s remaining/);
-  h.report({ ...running, timing: { timeoutSeconds: 10, remainingSeconds: 7 } }, h.ctx);
+  h.report({ ...running, timing: { timeoutSeconds: 10, remainingSeconds: 7 } });
   assert.match(card.render(160).join("\n"), /7s remaining/);
   assert.equal(h.entries.length, 1);
-  h.report({ ...running, timing: { timeoutSeconds: 10, remainingSeconds: 0 } }, h.ctx);
+  h.report({ ...running, timing: { timeoutSeconds: 10, remainingSeconds: 0 } });
   assert.match(card.render(160).join("\n"), /0s remaining/);
-  h.report(
-    {
-      ...running,
-      command: "timeout",
-      result: { content: [{ type: "text", text: "Command timed out after 10 seconds" }] },
-    },
-    h.ctx,
-  );
+  h.report({
+    ...running,
+    command: "timeout",
+    result: { content: [{ type: "text", text: "Command timed out after 10 seconds" }] },
+  });
   assert.doesNotMatch(card.render(160).join("\n"), /remaining/);
   const restored = harness(h.entries);
   restored.restore();
@@ -336,7 +323,7 @@ test("timed command cards show remaining seconds only while actively running", (
 
 test("invalid persisted command snapshots → do not replace valid progress or become executable cards", () => {
   const original = harness();
-  original.report(waiting, original.ctx);
+  original.report(waiting);
   const initial = original.entries[0];
   for (const invalid of [
     ...["mutationCompleted", "freshness"].map((missing) =>

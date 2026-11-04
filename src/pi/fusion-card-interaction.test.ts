@@ -34,7 +34,6 @@ test("command cards share native mouse behavior and preserve independent expansi
   });
   await bindTui(session);
   assert.ok(report);
-  const ctx = session.extensionRunner.createContext();
   const progress = {
     toolCallId: "first",
     commandText: "check",
@@ -43,8 +42,8 @@ test("command cards share native mouse behavior and preserve independent expansi
     result: { content: [{ type: "text" as const, text: output }] },
     mutationCompleted: true,
   };
-  report(progress, ctx);
-  report({ ...progress, toolCallId: "second" }, ctx);
+  report(progress);
+  report({ ...progress, toolCallId: "second" });
   const renderer = session.extensionRunner.getEntryRenderer("hashline-then-run");
   assert.ok(renderer);
   const hosts = sessionManager
@@ -81,14 +80,11 @@ test("command cards share native mouse behavior and preserve independent expansi
   assert.equal(first.handleMouse(event)?.handled, true);
   assert.match(first.render(100).join("\n"), /command output 0\b/);
   assert.doesNotMatch(second.render(100).join("\n"), /command output 0\b/);
-  report(
-    {
-      ...progress,
-      command: "succeeded",
-      result: { content: [{ type: "text", text: `${output}\nfinished` }] },
-    },
-    ctx,
-  );
+  report({
+    ...progress,
+    command: "succeeded",
+    result: { content: [{ type: "text", text: `${output}\nfinished` }] },
+  });
   first.invalidate();
   assert.match(first.render(40).join("\n"), /command output 0\b/);
   assert.match(first.render(100).join("\n"), /finished/);
@@ -109,17 +105,14 @@ test("command entries rebuilt before session_start → remain visible and become
     },
   });
   assert.ok(report);
-  report(
-    {
-      toolCallId: "restored",
-      commandText: "check",
-      command: "succeeded",
-      freshness: "unchanged",
-      result: { content: [{ type: "text", text: output }] },
-      mutationCompleted: true,
-    },
-    session.extensionRunner.createContext(),
-  );
+  report({
+    toolCallId: "restored",
+    commandText: "check",
+    command: "succeeded",
+    freshness: "unchanged",
+    result: { content: [{ type: "text", text: output }] },
+    mutationCompleted: true,
+  });
   const entry = sessionManager
     .getBranch()
     .find((entry) => entry.type === "custom" && entry.customType === "hashline-then-run");

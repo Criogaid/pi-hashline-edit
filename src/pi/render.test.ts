@@ -260,12 +260,20 @@ test("unfused write errors retain the native full diagnostic", () => {
   initTheme("dark");
   const tool = withMutationStatus(makeWriteOverride(process.cwd()));
   const args = { path: "a.txt", content: "new", mode: "overwrite" as const };
+  const diagnostic = "write failed\nimportant detail";
   const context: any = { args, state: {}, isPartial: false, isError: true, invalidate() {} };
   const card = tool.renderCall!(args, theme, context);
   tool.renderResult!(
     {
-      content: [{ type: "text", text: "write failed\nimportant detail" }],
-      details: {},
+      content: [{ type: "text", text: diagnostic }],
+      details: {
+        report: {
+          tool: "write",
+          error: "FILESYSTEM_ERROR",
+          publication: "NOT_PUBLISHED",
+          message: diagnostic,
+        },
+      },
     },
     { isPartial: false, expanded: false },
     theme,
