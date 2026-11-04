@@ -110,19 +110,6 @@ function publishDiffCounts(
     refreshHeader(counts);
 }
 
-/** Reuse the call component and retain it for the result's in-place count refresh. */
-function renderMutationCall<TArgs>(
-  args: TArgs,
-  theme: Theme,
-  context: { lastComponent?: Component; state: MutationRenderState },
-  header: (args: TArgs, theme: Theme, counts?: DiffCounts) => string,
-): Text {
-  const text = (context.lastComponent as Text | undefined) ?? new Text("", 0, 0);
-  context.state.callText = text;
-  text.setText(header(args, theme, context.state.diffCounts));
-  return text;
-}
-
 /** Render a bounded preview; expanding reveals every supplied line. */
 export function renderOutputPreview(
   lines: readonly string[],
@@ -259,36 +246,6 @@ export function renderToolError(
 /** Facts a mutation card presents another way: the command card owns then_run. */
 const MUTATION_CARD_SHOWN = new Set(["then_run", "progressError"]);
 
-/** Render mutation status or a diff, refreshing the call header's counts in place. */
-function renderMutationResult<TArgs>(
-  result: AgentToolResult<{ diff?: string; report?: Report } | undefined>,
-  { isPartial, expanded }: ToolRenderResultOptions,
-  theme: Theme,
-  context: { isError: boolean; args: TArgs; state: MutationRenderState },
-  pending: string,
-  header: (args: TArgs, theme: Theme, counts?: DiffCounts) => string,
-  tool: MutationToolName,
-): Text {
-  // withMutationStatus has already cleared isPartial once a fused mutation completed.
-  if (isPartial) return new Text(theme.fg("warning", pending), 0, 0);
-  if (context.isError) return renderToolError(result, tool, theme, expanded);
-  const diff = result.details?.diff;
-  // Refresh in place: invalidation inside a renderer re-enters updateDisplay.
-  publishDiffCounts(diff, context, (counts) => {
-    context.state.callText?.setText(header(context.args, theme, counts));
-  });
-  const { report } = splitReport(result);
-  const facts = report ? reportLines(report, theme, MUTATION_CARD_SHOWN) : [];
-  const emptyDiff =
-    report?.publication === "NOT_PUBLISHED"
-      ? "No net change"
-      : report?.publication === "PUBLISHED"
-        ? "Updated; no logical line diff"
-        : "No diff available";
-  const body = diff ? renderDiffPreview(diff, expanded, theme) : theme.fg("success", emptyDiff);
-  return new Text([body, ...facts].join("\n"), 0, 0);
-}
-
 /** The cards of a tool that shows a diff (edit, replace); each supplies only its header and pending text. */
 export function diffCardRenderers<TArgs>(
   tool: MutationToolName,
@@ -296,20 +253,42 @@ export function diffCardRenderers<TArgs>(
   header: (args: TArgs, theme: Theme, counts?: DiffCounts) => string,
 ) {
   return {
+    /** Reuse the call component and retain it for the result's in-place count refresh. */
     renderCall(
       args: TArgs,
       theme: Theme,
       context: { lastComponent?: Component; state: MutationRenderState },
     ) {
-      return renderMutationCall(args, theme, context, header);
+      const text = (context.lastComponent as Text | undefined) ?? new Text("", 0, 0);
+      context.state.callText = text;
+      text.setText(header(args, theme, context.state.diffCounts));
+      return text;
     },
+    /** Render mutation status or a diff, refreshing the call header's counts in place. */
     renderResult(
-      result: Parameters<typeof renderMutationResult>[0],
-      options: ToolRenderResultOptions,
+      result: AgentToolResult<{ diff?: string; report?: Report } | undefined>,
+      { isPartial, expanded }: ToolRenderResultOptions,
       theme: Theme,
       context: { isError: boolean; args: TArgs; state: MutationRenderState },
     ) {
-      return renderMutationResult(result, options, theme, context, pending, header, tool);
+      // withMutationStatus has already cleared isPartial once a fused mutation completed.
+      if (isPartial) return new Text(theme.fg("warning", pending), 0, 0);
+      if (context.isError) return renderToolError(result, tool, theme, expanded);
+      const diff = result.details?.diff;
+      // Refresh in place: invalidation inside a renderer re-enters updateDisplay.
+      publishDiffCounts(diff, context, (counts) => {
+        context.state.callText?.setText(header(context.args, theme, counts));
+      });
+      const { report } = splitReport(result);
+      const facts = report ? reportLines(report, theme, MUTATION_CARD_SHOWN) : [];
+      const emptyDiff =
+        report?.publication === "NOT_PUBLISHED"
+          ? "No net change"
+          : report?.publication === "PUBLISHED"
+            ? "Updated; no logical line diff"
+            : "No diff available";
+      const body = diff ? renderDiffPreview(diff, expanded, theme) : theme.fg("success", emptyDiff);
+      return new Text([body, ...facts].join("\n"), 0, 0);
     },
   };
 }
