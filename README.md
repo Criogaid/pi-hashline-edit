@@ -141,7 +141,7 @@ The selected model's declared context capacity sets the output budgets; remainin
 
 When model capacity is unknown or invalid, the defaults are 256 KiB for read rows, 50 KiB for grep payloads, 16 KiB per diagnostic block, 4 KiB per free-text field, and 500 UTF-16 code units per grep preview. An explicit `read.maxKiB` overrides only the read cap. Each execution keeps the budget snapshot it started with.
 
-Read reports pagination when the extension cuts a window or its byte budget; a caller-supplied `limit` alone does not add a pagination report. A first row that cannot fit gets a `lineTooLong` fact. Grep reports payload and preview truncation separately, and plain previews for invalid UTF-8 never carry edit anchors.
+Read reports pagination when its default line limit or byte budget cuts a window; a caller-supplied `limit` alone does not add a pagination report. A first row that cannot fit gets a `lineTooLong` fact. Grep reports payload and preview truncation separately, and plain previews for invalid UTF-8 never carry edit anchors.
 
 ## Limits
 

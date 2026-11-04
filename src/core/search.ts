@@ -3,7 +3,7 @@ import { countLines, normalizeLineEndings } from "./lines.ts";
 import { buildRegex } from "./regex.ts";
 import type { SearchResult } from "./search-schema.ts";
 
-/** README's grep flags default links here; explicit flags replace this default. */
+/** Explicit flags replace this default. */
 export const DEFAULT_GREP_FLAGS = "m";
 
 export interface GrepQuery {

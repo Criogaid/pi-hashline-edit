@@ -11,7 +11,7 @@ Internal pure engine: no Pi imports and no public API. It trusts input already f
 - `search.ts` evaluates native JavaScript queries on the LF view and returns bounded physical rows; `search-schema.ts` defines its result.
 - `search-analysis.ts` parses patterns with regexpp (V8 has already accepted them at tool entry), decides smart case, and derives the literals every match must contain; `case-fold.ts` supplies JavaScript's case equivalence; `character-set.ts` owns character-class sets and shared AST surrogate-pair decoding for both candidate strategies.
 - `errors.ts` holds the classified `HashlineError`, typed by code so its facts and `next` alternative must match the code's schema, and errno classification.
-- `ranges.ts` provides overlap detection for both engines and range merging for grep and failure neighborhoods.
+- `ranges.ts` provides overlap detection for both engines and range merging for failure neighborhoods.
 
 ## Constraints
 

@@ -24,7 +24,6 @@ function integerSetting(
 }
 
 // The floor exceeds measured worker startup+handshake on slower Windows hosts.
-// README's regex timeout settings link to this shared definition.
 const regexTimeoutSetting = integerSetting(
   integerRange(3_000, 300_000),
   5_000,
