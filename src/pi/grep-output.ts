@@ -6,7 +6,7 @@
  */
 import { truncateHead } from "@earendil-works/pi-coding-agent";
 import { DiagnosticBuffer } from "./diagnostic-buffer.ts";
-import { createAnchorFormatter, plainRow } from "./anchor-format.ts";
+import { plainRow, type AnchorFormatter } from "./anchor-format.ts";
 import type { GrepFileMatch, searchFiles } from "./grep-search.ts";
 import { MAX_UNNARROWED_SCAN_BYTES } from "./grep-candidates.ts";
 import { scanTextLines } from "./text-stream.ts";
@@ -77,7 +77,7 @@ interface FormatMatchesOptions {
   readonly files: readonly GrepFileMatch[];
   readonly outputMode: GrepOutputMode;
   readonly context: number;
-  readonly anchors: ReturnType<typeof createAnchorFormatter>;
+  readonly anchors: AnchorFormatter;
   readonly signal?: AbortSignal;
   readonly budget: OutputBudgets;
 }

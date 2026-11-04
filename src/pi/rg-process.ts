@@ -147,17 +147,17 @@ async function runRg(
   signal: AbortSignal | undefined,
   read: (stdout: Readable) => Promise<boolean>,
 ): Promise<RgRunResult> {
-  const process = startRg(rgPath, args, signal);
+  const rg = startRg(rgPath, args, signal);
   try {
-    const stopped = !(await read(process.child.stdout));
-    if (stopped) process.kill();
-    const result = await process.done;
+    const stopped = !(await read(rg.child.stdout));
+    if (stopped) rg.kill();
+    const result = await rg.done;
     throwIfCancelled(signal);
     if (result.error) throw startFailure(result.error);
     return { code: result.code, stderr: result.stderr, stopped };
   } finally {
-    process.kill();
-    await process.done;
+    rg.kill();
+    await rg.done;
   }
 }
 
