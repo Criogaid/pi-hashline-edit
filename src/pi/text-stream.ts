@@ -84,7 +84,6 @@ export async function scanTextFile(
     }
     return {
       revision: revision.digest(),
-      byteLength,
       totalLines: lineFeeds + (lastByte !== -1 && lastByte !== 10 ? 1 : 0),
       finalNewline: lastByte === -1 || lastByte === 10,
       hasNul,
@@ -112,7 +111,7 @@ export async function scanTextLines(
     readonly decoding?: Utf8Decoding;
   } = {},
 ) {
-  const maxBytes = options.maxLineBytes ?? Infinity;
+  const { signal, decoding, maxLineBytes: maxBytes = Infinity } = options;
   let number = 1;
   let byteLength = 0;
   let carriageReturns = 0;
@@ -139,7 +138,6 @@ export async function scanTextLines(
     number++;
     selected = select(number);
   };
-  const { signal, decoding } = options;
   const stats = await scanTextFile(path, {
     signal,
     decoding,
