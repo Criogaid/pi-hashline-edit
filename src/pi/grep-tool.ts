@@ -196,7 +196,6 @@ export function makeGrepOverrideWithBackend(
       _toolCallId: string,
       params: Static<GrepSchema>,
       signal: AbortSignal | undefined,
-      _onUpdate: Parameters<GrepTool["execute"]>[3],
     ) {
       const budget = budgets();
       return runTool("grep", { path: params.path, signal, budget }, async () => {

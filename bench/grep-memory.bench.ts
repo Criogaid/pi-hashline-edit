@@ -36,7 +36,6 @@ try {
     "bench",
     { path: [directory], pattern: ["needle"], literal: true },
     undefined,
-    undefined,
   );
   sample();
   const text = result.content[0];
