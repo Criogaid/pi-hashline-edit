@@ -58,8 +58,3 @@ export function decodeEditableText(bytes: Uint8Array): string {
     throw new HashlineError("UNSUPPORTED_TEXT", TEXT_ERROR_MESSAGES.UNSUPPORTED_TEXT);
   return decodeUtf8(bytes);
 }
-
-/** Escape regex metacharacters for a standalone literal pattern in JS or ripgrep. */
-export function escapeRegex(text: string): string {
-  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}

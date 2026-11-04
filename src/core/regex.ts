@@ -1,12 +1,11 @@
 /** JavaScript regex construction on the shared LF view, used by both grep and replace. */
 import { errorMessage } from "./errors.ts";
 import { normalizeLineEndings } from "./lines.ts";
-import { escapeRegex } from "./text.ts";
 
 /** JavaScript regex source on the shared LF view; literal text matches exactly. */
 export function regexSource(find: string, literal: boolean): string {
   const logical = normalizeLineEndings(find);
-  return literal ? escapeRegex(logical) : logical;
+  return literal ? logical.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") : logical;
 }
 
 /**
