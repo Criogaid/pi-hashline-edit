@@ -65,15 +65,25 @@ export function searchDiagnostic(result: RgRunResult): string | undefined {
   );
 }
 
+/** spawn reports a failure to start by throwing or by an error event, depending on the errno. */
+function startFailure(cause: unknown): HashlineError {
+  return new HashlineError("RIPGREP_FAILED", "Failed to run ripgrep.", { cause });
+}
+
 function startRg(rgPath: string, args: readonly string[], signal?: AbortSignal): RunningProcess {
   throwIfCancelled(signal);
   const env = { ...process.env };
   delete env.RIPGREP_CONFIG_PATH;
-  const child = spawn(rgPath, [...args], {
-    stdio: ["ignore", "pipe", "pipe"],
-    shell: false,
-    env,
-  });
+  let child: ChildProcessByStdio<null, Readable, Readable>;
+  try {
+    child = spawn(rgPath, [...args], {
+      stdio: ["ignore", "pipe", "pipe"],
+      shell: false,
+      env,
+    });
+  } catch (cause) {
+    throw startFailure(cause);
+  }
   const stderr = new DiagnosticBuffer(MAX_RG_STDERR_BYTES);
   const stderrDecoder = new StringDecoder("utf8");
   let error: Error | undefined;
@@ -141,8 +151,7 @@ async function runRg(
     if (stopped) process.kill();
     const result = await process.done;
     throwIfCancelled(signal);
-    if (result.error)
-      throw new HashlineError("RIPGREP_FAILED", "Failed to run ripgrep.", { cause: result.error });
+    if (result.error) throw startFailure(result.error);
     return { code: result.code, stderr: result.stderr, stopped };
   } finally {
     process.kill();
