@@ -199,14 +199,13 @@ async function searchFile(
  */
 export async function searchFiles(options: {
   readonly backend: GrepBackend;
-  readonly rgPath: string;
   readonly scope: SearchScope;
   readonly query: GrepQuery;
   readonly limit: number;
   readonly timeoutMs: number;
   readonly signal?: AbortSignal;
 }) {
-  const { backend, rgPath, scope, query, limit, timeoutMs, signal } = options;
+  const { backend, scope, query, limit, timeoutMs, signal } = options;
   const files: GrepFileMatch[] = [];
   /** File warnings in listing order, then the listing's own diagnostic. */
   const warnings: string[] = [];
@@ -311,7 +310,6 @@ export async function searchFiles(options: {
   try {
     selection = await listCandidates({
       backend,
-      rgPath,
       scope,
       query,
       signal: poolSignal,

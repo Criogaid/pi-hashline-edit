@@ -8,7 +8,6 @@
  */
 
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
-import { rgPath as bundledRgPath } from "@vscode/ripgrep";
 import { Type, type Static } from "typebox";
 import { Text } from "@earendil-works/pi-tui";
 import { renderOutputPreview, renderToolError, reportLines, splitReport } from "./render.ts";
@@ -218,17 +217,10 @@ export function makeGrepOverrideWithBackend(
           globs: params.glob ?? [],
           searchPaths,
         };
-        const admitted = await filterExplicitFilesByGlob(
-          backend,
-          bundledRgPath,
-          unfiltered,
-          pathInfo,
-          signal,
-        );
+        const admitted = await filterExplicitFilesByGlob(backend, unfiltered, pathInfo, signal);
         const scope: SearchScope = { ...unfiltered, searchPaths: admitted.searchPaths };
         const { warnings: searchWarnings, ...search } = await searchFiles({
           backend,
-          rgPath: bundledRgPath,
           scope,
           query,
           limit: effectiveLimit,

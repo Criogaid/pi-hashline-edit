@@ -79,7 +79,6 @@ async function isListed(path: string, listed: ReadonlyMap<string, readonly strin
  */
 export async function filterExplicitFilesByGlob(
   backend: GrepBackend,
-  rgPath: string,
   scope: SearchScope,
   paths: readonly SearchPathInfo[],
   signal: AbortSignal | undefined,
@@ -103,7 +102,7 @@ export async function filterExplicitFilesByGlob(
     "--",
     ...parents,
   ];
-  const listed = await backend.runRgPaths(rgPath, args, signal, async (path) => {
+  const listed = await backend.runRgPaths(args, signal, async (path) => {
     const key = foldedKey(path);
     allowed.set(key, [...(allowed.get(key) ?? []), path]);
     return true;

@@ -7,6 +7,7 @@
  */
 
 import { StringDecoder } from "node:string_decoder";
+import { rgPath } from "@vscode/ripgrep";
 import { DiagnosticBuffer } from "./diagnostic-buffer.ts";
 import { spawn, type ChildProcessByStdio } from "node:child_process";
 import type { Readable } from "node:stream";
@@ -72,7 +73,7 @@ function startFailure(cause: unknown): HashlineError {
   return new HashlineError("RIPGREP_FAILED", "Failed to run ripgrep.", { cause });
 }
 
-function startRg(rgPath: string, args: readonly string[], signal?: AbortSignal): RunningProcess {
+function startRg(args: readonly string[], signal?: AbortSignal): RunningProcess {
   throwIfCancelled(signal);
   const env = { ...process.env };
   delete env.RIPGREP_CONFIG_PATH;
@@ -142,12 +143,11 @@ async function* nulDelimitedRecords(stream: Readable): AsyncGenerator<Buffer> {
 
 /** Run rg while read consumes its stdout; read returns false to stop rg early. */
 async function runRg(
-  rgPath: string,
   args: readonly string[],
   signal: AbortSignal | undefined,
   read: (stdout: Readable) => Promise<boolean>,
 ): Promise<RgRunResult> {
-  const rg = startRg(rgPath, args, signal);
+  const rg = startRg(args, signal);
   try {
     const stopped = !(await read(rg.child.stdout));
     if (stopped) rg.kill();
@@ -163,12 +163,11 @@ async function runRg(
 
 /** @internal — read NUL-delimited UTF-8 paths from an owned rg process. */
 export function runRgPaths(
-  rgPath: string,
   args: string[],
   signal: AbortSignal | undefined,
   onPath: (path: string) => boolean | Promise<boolean>,
 ): Promise<RgRunResult> {
-  return runRg(rgPath, args, signal, async (stdout) => {
+  return runRg(args, signal, async (stdout) => {
     for await (const record of nulDelimitedRecords(stdout)) {
       throwIfCancelled(signal);
       if (!(await onPath(decodePath(record)))) return false;
@@ -200,13 +199,12 @@ export const LINE_LISTING_ARGS = [
  * numbers, or undefined once there are more than maxLines.
  */
 export function runRgLines(
-  rgPath: string,
   args: string[],
   signal: AbortSignal | undefined,
   maxLines: number,
   onFile: (path: string, lines: readonly number[] | undefined) => boolean | Promise<boolean>,
 ): Promise<RgRunResult> {
-  return runRg(rgPath, args, signal, async (stdout) => {
+  return runRg(args, signal, async (stdout) => {
     let path: string | undefined;
     let lines: number[] | undefined = [];
     let pending: Buffer = Buffer.alloc(0);

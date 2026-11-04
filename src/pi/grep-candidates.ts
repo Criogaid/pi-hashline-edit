@@ -80,7 +80,6 @@ type CandidateSource = "lines" | "files" | "all";
  */
 export async function listCandidates(options: {
   readonly backend: GrepBackend;
-  readonly rgPath: string;
   readonly scope: SearchScope;
   readonly query: GrepQuery;
   readonly signal: AbortSignal;
@@ -91,7 +90,7 @@ export async function listCandidates(options: {
   readonly candidates: CandidateSource;
   readonly scanLimitReached: boolean;
 }> {
-  const { backend, rgPath, scope, query, signal, stopped, onCandidate } = options;
+  const { backend, scope, query, signal, stopped, onCandidate } = options;
   if (scope.searchPaths.length === 0) return { candidates: "lines", scanLimitReached: false };
   let candidates: CandidateSource = "lines";
   let listedAny = false;
@@ -121,7 +120,6 @@ export async function listCandidates(options: {
   const patterns = query.multiline ? undefined : lineCandidatePatterns(query);
   let listing = patterns
     ? await backend.runRgLines(
-        rgPath,
         [
           ...COMMON_RG_ARGS,
           ...BYTE_PATTERN_ARGS,
@@ -139,7 +137,6 @@ export async function listCandidates(options: {
     const prefilter = boundedPrefilter(extractPrefilter(query));
     candidates = prefilter.kind === "all" ? "all" : "files";
     listing = await backend.runRgPaths(
-      rgPath,
       [...candidateArgs(prefilter), "--null", ...scoped],
       signal,
       offer,
