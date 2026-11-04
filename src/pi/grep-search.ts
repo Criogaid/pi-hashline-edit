@@ -53,14 +53,6 @@ class SearchFileLimitError extends Error {
   }
 }
 
-/** A worker failure inside a file scan; never classify it as a file-read warning. */
-class ScanWorkerFailure {
-  readonly error: unknown;
-  constructor(error: unknown) {
-    this.error = error;
-  }
-}
-
 const decodeReply = workerReplyDecoder(SEARCH_RESULT_SCHEMA);
 type Rows = SearchResult["lines"];
 type Run = (input: SearchInput | LineSearchInput) => Promise<SearchResult>;
@@ -119,12 +111,7 @@ async function searchFile(
   let lineOffset = 0;
   let nextWanted = 0;
   const check = async (input: SearchInput | LineSearchInput, lines: number) => {
-    let result: SearchResult;
-    try {
-      result = await run(input);
-    } catch (error) {
-      throw new ScanWorkerFailure(error);
-    }
+    const result = await run(input);
     if (result.totalLines !== lines || result.lines.length > input.limit)
       throw invalidWorkerResult();
     let previous = 0;
@@ -282,9 +269,7 @@ export async function searchFiles(options: {
         error instanceof SearchFileLimitError
           ? `${filePath}: ${error.message}`
           : fileReadWarning(filePath, error);
-      result = warning
-        ? { warning }
-        : { error: error instanceof ScanWorkerFailure ? error.error : error };
+      result = warning ? { warning } : { error };
     }
     settled.set(position, result);
     commit();
