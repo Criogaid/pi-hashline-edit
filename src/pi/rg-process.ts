@@ -20,6 +20,8 @@ import { formatByteSize } from "./budgets.ts";
  * matching stays parallel in grep-search's workers.
  */
 export const COMMON_RG_ARGS = ["--no-config", "--color=never", "--sort=path"];
+/** Leave room for rg's arguments and paths on hosts with small command-line limits. */
+export const MAX_RG_PATTERN_UNITS = 24 * 1024;
 export const MAX_RG_RECORD_BYTES = 16 * 1024 * 1024;
 const RG_RECORD_LIMIT_MESSAGE = `ripgrep output record exceeds ${formatByteSize(MAX_RG_RECORD_BYTES)}.`;
 

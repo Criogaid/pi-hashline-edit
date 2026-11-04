@@ -14,6 +14,7 @@ import { scopeArgs, type SearchScope } from "./grep-scope.ts";
 import {
   COMMON_RG_ARGS,
   LINE_LISTING_ARGS,
+  MAX_RG_PATTERN_UNITS,
   type GrepBackend,
   type RgRunResult,
 } from "./rg-process.ts";
@@ -44,6 +45,17 @@ function literalPattern(literal: Literal): string {
     .join("");
 }
 
+const literalAlternation = (literals: readonly Literal[]): string =>
+  literals.map(literalPattern).join("|");
+
+/** Necessary literals too long for rg's command line widen to every file in scope. */
+function boundedPrefilter(prefilter: Prefilter): Prefilter {
+  return prefilter.kind === "literals" &&
+    literalAlternation(prefilter.literals).length > MAX_RG_PATTERN_UNITS
+    ? { kind: "all" }
+    : prefilter;
+}
+
 /**
  * List candidate files: those whose original bytes contain a prefilter literal, or every
  * file in scope. Literals never contain a line break, so line-oriented matching finds them.
@@ -55,7 +67,7 @@ export function candidateArgs(prefilter: Prefilter): string[] {
     "--files-with-matches",
     ...BYTE_PATTERN_ARGS,
     "-e",
-    prefilter.literals.map(literalPattern).join("|"),
+    literalAlternation(prefilter.literals),
   ];
 }
 
@@ -124,7 +136,7 @@ export async function listCandidates(options: {
     : undefined;
   // rg reports a pattern it cannot compile, such as one beyond its size limit, before any file.
   if (!listing || (listing.code === 2 && !listedAny)) {
-    const prefilter = extractPrefilter(query);
+    const prefilter = boundedPrefilter(extractPrefilter(query));
     candidates = prefilter.kind === "all" ? "all" : "files";
     listing = await backend.runRgPaths(
       rgPath,

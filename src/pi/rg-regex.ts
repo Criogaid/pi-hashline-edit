@@ -28,6 +28,7 @@ import {
 } from "../core/character-set.ts";
 import { analyzeQueryPattern } from "../core/search-analysis.ts";
 import type { GrepQuery } from "../core/search.ts";
+import { MAX_RG_PATTERN_UNITS } from "./rg-process.ts";
 
 const LF = 0x0a;
 const REPLACEMENT = 0xfffd;
@@ -37,8 +38,6 @@ const SUPPLEMENTARY: Ranges = [[0x10000, MAX_SCALAR]];
 const MAX_EXACT_REPEAT = 16;
 /** Bound expanded class strings by total code points, counting an empty string as one. */
 const MAX_EXPANDED_STRING_POINTS = 256;
-/** Leave room for rg's arguments and paths on hosts with small command-line limits. */
-const MAX_LINE_PATTERN_UNITS = 24 * 1024;
 
 /** The bytes a lossy decoder shows as U+FFFD: every byte of a malformed sequence is 0x80–0xFF. */
 const MALFORMED = "(?-u:[\\x80-\\xff])+";
@@ -353,7 +352,7 @@ export function lineCandidatePatterns(query: GrepQuery): string[] | undefined {
     if (translated === undefined) return undefined;
     if (
       translated.length + patterns.reduce((sum, value) => sum + value.length, 0) >
-      MAX_LINE_PATTERN_UNITS
+      MAX_RG_PATTERN_UNITS
     )
       return undefined;
     // A sticky match starts where the line starts.
