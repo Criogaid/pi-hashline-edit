@@ -102,6 +102,7 @@ test("model budget grows → grep payload and diagnostics use that call's allowa
         files: 1,
       },
       warnings: [warning],
+      searchFacts: {},
       outputMode: "content",
       matchLimitReached: false,
       effectiveLimit: 3_000,

@@ -29,7 +29,7 @@ export const REGEX_TRANSLATION_CORPUS: readonly RegexWitness[] = [
     flags: "",
     hits: ["b", "z"],
     misses: ["a", "A"],
-    rejectCandidates: true,
+    rejectCandidates: false,
     source: local,
   },
   {
@@ -37,7 +37,7 @@ export const REGEX_TRANSLATION_CORPUS: readonly RegexWitness[] = [
     flags: "",
     hits: ["ab"],
     misses: ["ac", "ad"],
-    rejectCandidates: true,
+    rejectCandidates: false,
     source: local,
   },
   {
@@ -45,7 +45,7 @@ export const REGEX_TRANSLATION_CORPUS: readonly RegexWitness[] = [
     flags: "",
     hits: ["b"],
     misses: ["a", "c"],
-    rejectCandidates: true,
+    rejectCandidates: false,
     source: local,
   },
   {
@@ -53,7 +53,7 @@ export const REGEX_TRANSLATION_CORPUS: readonly RegexWitness[] = [
     flags: "",
     hits: ["ac", "ba"],
     misses: ["ab"],
-    rejectCandidates: true,
+    rejectCandidates: false,
     source: local,
   },
   {
@@ -61,7 +61,7 @@ export const REGEX_TRANSLATION_CORPUS: readonly RegexWitness[] = [
     flags: "",
     hits: ["ac", "ba"],
     misses: ["ab"],
-    rejectCandidates: true,
+    rejectCandidates: false,
     source: local,
   },
   {
@@ -69,7 +69,7 @@ export const REGEX_TRANSLATION_CORPUS: readonly RegexWitness[] = [
     flags: "u",
     hits: ["a", "ſ"],
     misses: ["k", "K", "K"],
-    rejectCandidates: true,
+    rejectCandidates: false,
     source: local,
   },
   {
@@ -85,7 +85,7 @@ export const REGEX_TRANSLATION_CORPUS: readonly RegexWitness[] = [
     flags: "iu",
     hits: ["k ", "K "],
     misses: ["kk", "Kk"],
-    rejectCandidates: true,
+    rejectCandidates: false,
     source: local,
   },
   {
@@ -93,7 +93,7 @@ export const REGEX_TRANSLATION_CORPUS: readonly RegexWitness[] = [
     flags: "",
     hits: ["\rb"],
     misses: ["ab"],
-    rejectCandidates: true,
+    rejectCandidates: false,
     source: local,
   },
   {
@@ -141,7 +141,7 @@ export const REGEX_TRANSLATION_CORPUS: readonly RegexWitness[] = [
     flags: "",
     hits: ["catcat", "dogdog"],
     misses: ["catdog", "dogcat"],
-    rejectCandidates: true,
+    rejectCandidates: false,
     source: local,
   },
   {
@@ -149,7 +149,7 @@ export const REGEX_TRANSLATION_CORPUS: readonly RegexWitness[] = [
     flags: "",
     hits: ["aa", "bcbc"],
     misses: ["abc", "bca"],
-    rejectCandidates: true,
+    rejectCandidates: false,
     source: local,
   },
   {
@@ -165,7 +165,7 @@ export const REGEX_TRANSLATION_CORPUS: readonly RegexWitness[] = [
     flags: "v",
     hits: ["KsKs", "abab"],
     misses: ["Ksks", "abAB"],
-    rejectCandidates: true,
+    rejectCandidates: false,
     source: local,
   },
   {
@@ -214,7 +214,7 @@ export const REGEX_TRANSLATION_CORPUS: readonly RegexWitness[] = [
     flags: "v",
     hits: [`prefix${"a".repeat(300)}suffix`, `prefix${"b".repeat(300)}suffix`],
     misses: ["wrong", "prefixwrong", "wrongsuffix"],
-    rejectCandidates: true,
+    rejectCandidates: false,
     source: local,
   },
   {
