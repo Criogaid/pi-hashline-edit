@@ -294,7 +294,8 @@ export async function commitFile(
   if (mode === "overwrite" && !target.existed)
     throw new HashlineError("PATH_NOT_FOUND", PATH_ERROR_MESSAGES.PATH_NOT_FOUND, {
       facts: { missing: [path] },
-      next: "useCreate",
+      // A read-modify-write target vanished after its read; those tools have no mode to change.
+      next: baseRevision === undefined ? "useCreate" : undefined,
     });
   throwIfCancelled(options.signal);
   const publishedRevision = byteRevision(bytes);
