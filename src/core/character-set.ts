@@ -154,7 +154,7 @@ export function acceptedClassStrings(
 }
 
 /** String representatives of a class; undefined means a string property is not enumerable here. */
-export function classStrings(node: ClassNode): readonly string[] | undefined {
+function classStrings(node: ClassNode): readonly string[] | undefined {
   switch (node.type) {
     case "ExpressionCharacterClass":
       return node.negate ? [] : classStrings(node.expression);

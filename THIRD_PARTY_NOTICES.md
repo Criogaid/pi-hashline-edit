@@ -6,8 +6,6 @@ The JS-to-ripgrep candidate translator adapts the following analysis techniques 
 | --- | --- | --- |
 | [regexpu-core](https://github.com/mathiasbynens/regexpu-core) | Separate scalar sets from class strings; apply scoped flags before lowering a set | MIT |
 | [refa](https://github.com/RunDevelopment/refa/tree/8d20d94232b1adb043c29810046c060ca1664bf1) | Normalized character intervals and bounded finite languages | MIT |
-| [regexp-ast-analysis](https://github.com/RunDevelopment/regexp-ast-analysis/tree/6f0dbfc42ccc4a3fd22da6e3917f4e8cef07bee8) | Track exactness and fixed-width neighbouring characters across assertions | MIT |
-| [eslint-plugin-regexp](https://github.com/ota-meshi/eslint-plugin-regexp/tree/4700804dba99bed531e727f09c72a69a1dc939a4) | Character constraints for lookarounds and word boundaries | MIT |
 | [regex-syntax](https://github.com/rust-lang/regex/blob/master/regex-syntax/src/hir/literal.rs) | Budget literal expansion; retain necessary prefixes and suffixes without dropping alternatives | MIT OR Apache-2.0 |
 | [RE2](https://github.com/google/re2/blob/main/re2/prefilter.cc) | Necessary AND/OR literal conditions for file prefiltering | BSD-3-Clause |
 | [Vectorscan](https://github.com/VectorCamp/vectorscan/blob/develop/src/parser/prefilter.cpp) | Widen unsupported assertions and backreferences while retaining regular constraints | BSD-3-Clause |
@@ -19,10 +17,6 @@ Production implementations live in `src/core/character-set.ts`, `src/core/search
 regexpu-core: Copyright Mathias Bynens <https://mathiasbynens.be/>
 
 refa: Copyright (c) 2020 Michael Schmidt
-
-regexp-ast-analysis: Copyright (c) 2021 Michael Schmidt
-
-eslint-plugin-regexp: Copyright (c) 2020 Yosuke Ota
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal

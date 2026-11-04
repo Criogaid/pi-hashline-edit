@@ -17,7 +17,6 @@ import {
   MAX_UNIT,
   MAX_SCALAR,
   normalize,
-  complement,
   subtract,
   intersect,
   total,
@@ -26,7 +25,6 @@ import {
   foldRanges,
   type Ranges,
   acceptedClassStrings,
-  classStrings,
   type CharacterNode,
   surrogatePair,
 } from "../core/character-set.ts";
@@ -77,200 +75,11 @@ interface Position {
 }
 const INNER: Position = { first: false, last: false };
 
-/** Bound assertion alternatives and correlated capture expansion. */
+/** Bound correlated capture expansion. */
 const MAX_ANALYSIS_BRANCHES = 16;
 const MAX_FIXED_UNITS = 64;
-interface FixedSequence {
-  readonly positions: readonly Ranges[];
-  readonly exact: boolean;
-}
-type Constraints = ReadonlyMap<AST.Element, readonly Ranges[]>;
-
-function fixedAlternatives(
-  nodes: readonly AST.Alternative[],
-  ctx: Context,
-): FixedSequence | undefined {
-  const branches: FixedSequence[] = [];
-  for (const node of nodes) {
-    const positions: Ranges[] = [];
-    let exact = true;
-    for (const child of node.elements) {
-      const fixed = fixedSequence(child, ctx);
-      if (!fixed) return undefined;
-      positions.push(...fixed.positions);
-      exact &&= fixed.exact;
-      if (positions.length > MAX_FIXED_UNITS) return undefined;
-    }
-    branches.push({ positions, exact });
-  }
-  if (!branches.every((branch) => branch.positions.length === branches[0].positions.length))
-    return undefined;
-  return {
-    positions: branches[0].positions.map((_, index) =>
-      normalize(branches.flatMap((branch) => branch.positions[index])),
-    ),
-    exact:
-      branches.every((branch) => branch.exact) &&
-      (branches.length === 1 || branches[0].positions.length <= 1),
-  };
-}
-
-function fixedSequence(node: AST.Element, ctx: Context): FixedSequence | undefined {
-  switch (node.type) {
-    case "Character":
-    case "CharacterClass":
-    case "ExpressionCharacterClass":
-    case "CharacterSet":
-      if (classStrings(node)?.length !== 0) return undefined;
-      return { positions: [scalarRanges(node, ctx)], exact: true };
-    case "Assertion":
-      return { positions: [], exact: false };
-    case "Backreference":
-      return undefined;
-    case "Group":
-      return fixedAlternatives(node.alternatives, modified(node, ctx));
-    case "CapturingGroup": {
-      const bound = ctx.bindings.get(node);
-      if (bound !== undefined)
-        return {
-          positions: [...(ctx.unicode ? [...bound] : bound.split(""))].map((char) => [
-            [char.codePointAt(0)!, char.codePointAt(0)!],
-          ]),
-          exact: true,
-        };
-      return fixedAlternatives(node.alternatives, ctx);
-    }
-    case "Quantifier": {
-      if (node.max === 0) return { positions: [], exact: true };
-      if (node.min !== node.max || node.max > MAX_FIXED_UNITS) return undefined;
-      const inner = fixedSequence(node.element, ctx);
-      if (!inner || inner.positions.length * node.max > MAX_FIXED_UNITS) return undefined;
-      return {
-        positions: Array.from({ length: node.max }, () => inner.positions).flat(),
-        exact: inner.exact,
-      };
-    }
-  }
-}
-
-interface Neighbour {
-  readonly node: AST.Element;
-  readonly index: number;
-  readonly ranges: Ranges;
-}
-function neighbours(
-  elements: readonly AST.Element[],
-  from: number,
-  direction: number,
-  count: number,
-  ctx: Context,
-  plan: Constraints,
-): Neighbour[] {
-  const result: Neighbour[] = [];
-  for (
-    let index = from + direction;
-    index >= 0 && index < elements.length && result.length < count;
-    index += direction
-  ) {
-    const node = elements[index];
-    const fixed = fixedSequence(node, ctx);
-    if (!fixed) break;
-    const positions = plan.get(node) ?? fixed.positions;
-    for (
-      let at = direction > 0 ? 0 : positions.length - 1;
-      at >= 0 && at < positions.length && result.length < count;
-      at += direction
-    )
-      result.push({ node, index: at, ranges: positions[at] });
-  }
-  return result;
-}
-
-function restrict(
-  plan: Constraints,
-  neighbour: Neighbour,
-  allowed: Ranges,
-  ctx: Context,
-): Constraints {
-  const result = new Map(plan);
-  const positions = [
-    ...(result.get(neighbour.node) ?? fixedSequence(neighbour.node, ctx)!.positions),
-  ];
-  positions[neighbour.index] = intersect(positions[neighbour.index], allowed);
-  result.set(neighbour.node, positions);
-  return result;
-}
-
-/** Apply only proved constraints; a negative test needs an exact forbidden set. */
-function assertionPlans(elements: readonly AST.Element[], ctx: Context): readonly Constraints[] {
-  let plans: readonly Constraints[] = [new Map()];
-  if (ctx.repeated) return plans;
-  for (const [index, node] of elements.entries()) {
-    if (node.type !== "Assertion") continue;
-    if (node.kind === "lookahead" || node.kind === "lookbehind") {
-      const fixed = fixedAlternatives(node.alternatives, ctx);
-      if (!fixed) continue;
-      const direction = node.kind === "lookahead" ? 1 : -1;
-      const asserted = direction > 0 ? fixed.positions : [...fixed.positions].reverse();
-      if (node.negate && (!fixed.exact || plans.length * asserted.length > MAX_ANALYSIS_BRANCHES))
-        continue;
-      plans = plans.flatMap((plan) => {
-        const adjacent = neighbours(elements, index, direction, asserted.length, ctx, plan);
-        if (node.negate) {
-          if (adjacent.length !== asserted.length) return [plan];
-          return adjacent.map((item, at) =>
-            restrict(plan, item, complement(asserted[at], maxElement(ctx)), ctx),
-          );
-        }
-        let constrained = plan;
-        for (const [at, item] of adjacent.entries())
-          constrained = restrict(constrained, item, asserted[at], ctx);
-        return [constrained];
-      });
-    } else if (node.kind === "word") {
-      const word = nativeCharacterRanges("\\w", nativeFlags(node, ctx));
-      plans = plans.map((plan) => {
-        const left = neighbours(elements, index, -1, 1, ctx, plan)[0];
-        const right = neighbours(elements, index, 1, 1, ctx, plan)[0];
-        if (!left || !right) return plan;
-        for (const [known, other] of [
-          [left, right],
-          [right, left],
-        ]) {
-          const isWord = subtract(known.ranges, word).length === 0;
-          const isNonWord = intersect(known.ranges, word).length === 0;
-          if (isWord || isNonWord)
-            plan = restrict(
-              plan,
-              other,
-              isWord === node.negate ? word : complement(word, maxElement(ctx)),
-              ctx,
-            );
-        }
-        return plan;
-      });
-    } else {
-      const direction = node.kind === "start" ? -1 : 1;
-      plans = plans.map((plan) => {
-        const neighbour = neighbours(elements, index, direction, 1, ctx, plan)[0];
-        if (!neighbour) return plan;
-        const terminators = nativeCharacterRanges("[\\n\\r\\u2028\\u2029]", ctx.unicode ? "u" : "");
-        return restrict(
-          plan,
-          neighbour,
-          node.kind === "start" && !ctx.multilineAnchors ? [] : terminators,
-          ctx,
-        );
-      });
-    }
-  }
-  return plans;
-}
 
 const intersects = (ranges: Ranges, other: Ranges) => intersect(ranges, other).length !== 0;
-
-/** The largest value one element can consume: a code point with u, a UTF-16 unit without. */
-const maxElement = (ctx: Context): number => (ctx.unicode ? MAX_SCALAR : MAX_UNIT);
 
 const folded = (ranges: Ranges, ctx: Context): Ranges =>
   ctx.ignoreCase ? foldRanges(ranges, ctx.unicode) : ranges;
@@ -543,32 +352,22 @@ function element(node: AST.Element, ctx: Context, position: Position): string {
 
 function alternatives(nodes: readonly AST.Alternative[], ctx: Context, position: Position): string {
   return choice(
-    nodes.flatMap(({ elements }) =>
-      assertionPlans(elements, ctx).map((plan) => {
-        let pattern = "";
-        for (let index = 0; index < elements.length; index++) {
-          const constrained = plan.get(elements[index]);
-          if (constrained) {
-            pattern += constrained.map((ranges) => unit(ranges, ctx)).join("");
-            continue;
-          }
-          const pair =
-            ctx.unicode || plan.has(elements[index + 1])
-              ? undefined
-              : surrogatePair(elements[index], elements[index + 1]);
-          if (pair !== undefined) {
-            pattern += classPattern([[pair, pair]]);
-            index++;
-            continue;
-          }
-          pattern += element(elements[index], ctx, {
-            first: position.first && index === 0,
-            last: position.last && index === elements.length - 1,
-          });
+    nodes.map(({ elements }) => {
+      let pattern = "";
+      for (let index = 0; index < elements.length; index++) {
+        const pair = ctx.unicode ? undefined : surrogatePair(elements[index], elements[index + 1]);
+        if (pair !== undefined) {
+          pattern += classPattern([[pair, pair]]);
+          index++;
+          continue;
         }
-        return pattern;
-      }),
-    ),
+        pattern += element(elements[index], ctx, {
+          first: position.first && index === 0,
+          last: position.last && index === elements.length - 1,
+        });
+      }
+      return pattern;
+    }),
   );
 }
 
