@@ -115,7 +115,7 @@ export interface FusedMutation<TDetails, TTool extends MutationToolName> {
 }
 
 /** Keep command state independent of its diagnostic text and of file publication. */
-export interface CommandOutcome {
+interface CommandOutcome {
   readonly status: Exclude<CommandStatus, "skipped">;
   readonly result: CommandResult;
   /** Preserve the session tool's request to stop after this tool batch. */
