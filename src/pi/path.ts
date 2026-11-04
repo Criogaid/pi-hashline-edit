@@ -23,7 +23,7 @@ export function canonicalPath(cwd: string, path: string): string {
     !normalized.includes("\\")
   ) {
     const match = WINDOWS_SHELL_DRIVE.exec(normalized);
-    if (match) normalized = `${match[1]!.toUpperCase()}:\\${match[2]?.replaceAll("/", "\\") ?? ""}`;
+    if (match) normalized = `${match[1].toUpperCase()}:\\${match[2]?.replaceAll("/", "\\") ?? ""}`;
   }
   if (normalized === "~") normalized = homedir();
   else if (

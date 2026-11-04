@@ -34,7 +34,7 @@ const HASHLINE_ROW = new RegExp(
 /** Split a `LINE#HASH` token of any hash length; undefined when the shape is wrong. */
 export function parseAnchorToken(value: string): { line: number; hash: string } | undefined {
   const match = ANCHOR_TOKEN.exec(value);
-  return match ? { line: Number(match[1]), hash: match[2]! } : undefined;
+  return match ? { line: Number(match[1]), hash: match[2] } : undefined;
 }
 
 interface HashlineRow {
