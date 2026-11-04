@@ -19,7 +19,6 @@ import { findSortedRangeConflict } from "./ranges.ts";
 import { HashlineError } from "./errors.ts";
 
 import type { Replacement, ReplacementResult } from "./replace-schema.ts";
-export type { Replacement } from "./replace-schema.ts";
 
 /** Expand JS replacement tokens against the original match, including prefix/suffix context. */
 function expandReplacement(template: string, match: RegExpMatchArray, source: string): string {

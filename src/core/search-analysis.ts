@@ -312,7 +312,7 @@ export function analyzeQueryPattern<T>(
 export function smartIgnoreCase(
   patterns: readonly string[],
   literal: boolean,
-  flags = "",
+  flags: string,
 ): boolean {
   return !patterns.some((pattern) => {
     const uppercase = analyzeQueryPattern(pattern, literal, flags, (parsed) => {

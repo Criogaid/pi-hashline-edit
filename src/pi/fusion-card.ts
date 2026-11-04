@@ -95,7 +95,7 @@ export function registerFusionCards(pi: ExtensionAPI) {
   let tui: TUI | undefined;
 
   const restore = (ctx: ExtensionContext) => {
-    if (ctx.cwd) currentCwd = ctx.cwd;
+    currentCwd = ctx.cwd;
     states.clear();
     active.clear();
     cards.clear();
