@@ -374,11 +374,7 @@ function runEdit(
     // candidates and resubmit with fresh anchors.
     const result = applyEdits(currentText, toCoreEdits(editOps), hashLen, shiftRadius);
     if (!result.ok) {
-      throw describeEditFailure(
-        result.failures,
-        { currentText, anchors: anchorFormatter },
-        target.budget,
-      );
+      throw describeEditFailure(currentText, result.failures, anchorFormatter, target.budget);
     }
     return { text: result.text, facts: {} };
   });

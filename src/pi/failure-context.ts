@@ -24,8 +24,6 @@ type MismatchFacts = ErrorFacts<"ANCHOR_MISMATCH">;
 const CONTEXT_RADIUS = 3;
 const MAX_AMBIGUOUS_CANDIDATES = 8;
 
-type Snapshot = Readonly<{ currentText: string; anchors: AnchorFormatter }>;
-
 /** Select the shared candidate prefix for detail lists and observation neighborhoods. */
 function selectAmbiguousCandidates(candidates: readonly Anchor[]): readonly Anchor[] {
   return candidates.slice(0, MAX_AMBIGUOUS_CANDIDATES);
@@ -171,16 +169,17 @@ function failureEntry(
 
 /** Classify a batch's anchor failures with their bounded facts. */
 export function describeEditFailure(
+  currentText: string,
   failures: readonly AnchorFailure[],
-  snapshot: Snapshot,
+  anchors: AnchorFormatter,
   budget: OutputBudgets,
 ): HashlineError<"ANCHOR_MISMATCH"> {
-  const currentLines = splitLines(snapshot.currentText);
+  const currentLines = splitLines(currentText);
   // Leading entries whose compact JSON fits the block; whole entries are omitted, never cut.
   const kept: AnchorFailureFact[] = [];
   let bytes = 0;
   for (const failure of failures) {
-    const entry = failureEntry(failure, snapshot.anchors, currentLines, budget);
+    const entry = failureEntry(failure, anchors, currentLines, budget);
     bytes += Buffer.byteLength(JSON.stringify(entry)) + 1;
     if (bytes > budget.blockBytes) break;
     kept.push(entry);
@@ -190,7 +189,7 @@ export function describeEditFailure(
     facts: {
       failures: kept,
       ...(omitted ? { omittedFailures: omitted } : {}),
-      ...ambiguousCandidateNeighborhoods(snapshot.currentText, failures, snapshot.anchors, budget),
+      ...ambiguousCandidateNeighborhoods(currentText, failures, anchors, budget),
     },
   });
 }
