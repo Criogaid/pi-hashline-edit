@@ -67,7 +67,7 @@ The `src/pi/grep-order.test.ts` suite controls worker and file-read completion o
 TypeScript runs directly through Node's type stripping, without a build step. CI runs Node 24 on Linux, macOS, and Windows, plus Node 22.19.0 and 26 on Linux. Local formatting, type checks, tests, and benchmarks need no confirmation.
 
 - `npm run format:check` / `npm run format`：Biome，只管格式，范围为 `src/` 与 `bench/`。
-- `npm run typecheck`：`tsc --noEmit`，覆盖源码与测试。
+- `npm run typecheck`：`tsc --noEmit`，覆盖源码、测试与基准。
 - `npm test`：经 `src/testing/run-tests.ts` 在隔离的 Node 环境和临时 Pi agent 目录中运行 core 与工具测试，排除继承的 Node loader 和个人 Pi 设置。
 - 单个用例：`npm test -- --test-name-pattern "<regex>"`，`npm run test:integration` 同样适用。不要直接运行 `node --test`，它绕过环境隔离。
 - `npm run test:integration`：bundled ripgrep、已安装包的 worker、超过 100 MiB 的文件。`npm run test:all` 运行两套隔离测试，与 CI 和发布一致。
