@@ -3,7 +3,7 @@ import { mkdtemp, open, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { performance } from "node:perf_hooks";
-import { makeGrepOverrideWithBackend } from "../src/pi/grep-tool.ts";
+import { makeGrepOverride } from "../src/pi/grep-tool.ts";
 import { DEFAULT_CONFIG } from "../src/pi/config.ts";
 
 const directory = await mkdtemp(join(tmpdir(), "hashline-grep-memory-"));
@@ -32,7 +32,7 @@ try {
   };
   timer = setInterval(sample, 5);
   const start = performance.now();
-  const result = await makeGrepOverrideWithBackend(directory, DEFAULT_CONFIG, {}).execute(
+  const result = await makeGrepOverride(directory, DEFAULT_CONFIG).execute(
     "bench",
     { path: [directory], pattern: ["needle"], literal: true },
     undefined,
