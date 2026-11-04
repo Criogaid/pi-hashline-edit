@@ -183,7 +183,8 @@ async function writeAndSyncTemp(
   signal: AbortSignal | undefined,
 ): Promise<void> {
   throwIfCancelled(signal);
-  const handle = await open(tempPath, "w", modeBits === undefined ? 0o600 : modeBits & 0o7777);
+  // A new file takes the umask's default mode; its private temp directory hides it until publication.
+  const handle = await open(tempPath, "w", modeBits === undefined ? 0o666 : modeBits & 0o7777);
   try {
     await handle.writeFile(content);
     await handle.sync();
