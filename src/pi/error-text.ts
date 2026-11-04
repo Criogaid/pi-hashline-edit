@@ -26,7 +26,7 @@ export class FileChangedDuringReadError extends HashlineError<"FILE_CHANGED"> {
 
 /**
  * A searched file no longer matches what grep matched. grep binds matches to the
- * revision grep-search hashed while matching, and grep-output re-reads the file
+ * revision grep-search hashed while matching, and grep-reread reads the file again
  * against it.
  */
 export function searchChangedError(): HashlineError<"FILE_CHANGED"> {
