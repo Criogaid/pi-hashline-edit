@@ -50,7 +50,7 @@ export const defaultOutputBudgets: OutputBudgetProvider = () => DEFAULT_OUTPUT_B
 
 const MIB = 1024 * 1024;
 
-/** Size wording for every model-facing limit: whole MiB as `256 MiB`, otherwise `16 KiB`. */
+/** Size wording for every model-facing limit: whole MiB as `256 MiB`, otherwise `195.3 KiB`. */
 export function formatByteSize(bytes: number): string {
-  return bytes % MIB === 0 ? `${bytes / MIB} MiB` : `${bytes / 1024} KiB`;
+  return bytes % MIB === 0 ? `${bytes / MIB} MiB` : `${Number((bytes / 1024).toFixed(1))} KiB`;
 }
