@@ -373,6 +373,8 @@ export const OUTCOME_NEXT = [
     "Inspect the line in chunks with bash, or use replace for a known literal or regex change; a smaller limit cannot split a line.",
   ],
   ["pagination", "If you need more lines, set offset to pagination.nextOffset."],
+  // Ahead of matchLimit: once the byte budget cuts the output, raising limit shows nothing more.
+  ["outputLimit", "Narrow path, glob, or pattern to see the omitted output."],
   ["matchLimit", "If you need more matches, raise limit to include rows after the last one shown."],
   [
     "literalPipe",
@@ -382,7 +384,6 @@ export const OUTCOME_NEXT = [
     "scanLimit",
     "Narrow path or glob, or add text every match must contain, to search the remaining files.",
   ],
-  ["outputLimit", "Narrow path, glob, or pattern to see the omitted output."],
   ["linePreviewLimit", "Read the full line before rewriting it from a partial preview."],
 ] as const satisfies readonly (readonly [FactName, string])[];
 

@@ -357,6 +357,35 @@ test("match and scan limits → recovery prioritizes the match limit", () => {
   assert.equal(reportOf(result, "grep")?.next, next);
 });
 
+for (const { name, report, fact } of [
+  {
+    name: "output limit with grep match limit → recovery prioritizes the output limit",
+    report: {
+      tool: "grep",
+      matches: 1,
+      matchLimit: 1,
+      outputLimit: formatByteSize(DEFAULT_OUTPUT_BUDGETS.grepBytes),
+    },
+    fact: "outputLimit",
+  },
+  {
+    name: "output limit with read pagination → recovery prioritizes pagination",
+    report: {
+      tool: "read",
+      pagination: { start: 1, end: 1, totalLines: 2, nextOffset: 2 },
+      outputLimit: formatByteSize(DEFAULT_OUTPUT_BUDGETS.readBytes),
+    },
+    fact: "pagination",
+  },
+] satisfies { name: string; report: SuccessReport; fact: "outputLimit" | "pagination" }[]) {
+  test(name, () => {
+    const next = OUTCOME_NEXT.find(([key]) => key === fact)?.[1];
+    assert.ok(next);
+    const result = reportResult(report);
+    assert.equal(reportOf(result, report.tool)?.next, next);
+  });
+}
+
 test("text-only error contains facts invalid for the originating tool → preserves the raw diagnostic", () => {
   const diagnostic = '{"publication":"PUBLISHED"}';
   const result = { content: [text(diagnostic)] };
