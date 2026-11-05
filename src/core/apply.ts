@@ -122,15 +122,17 @@ function translateEdit(
   hashLen: number,
   radius: number,
 ): TranslateResult {
+  const verify = (cited: Anchor, which: AnchorFailure["which"]) =>
+    verifyAnchor(lines, cited, which, opIndex, edit.op, hashLen, radius);
   switch (edit.op) {
     case "replace":
     case "delete": {
       const failures: AnchorFailure[] = [];
-      const anchorF = verifyAnchor(lines, edit.anchor, "anchor", opIndex, edit.op, hashLen, radius);
+      const anchorF = verify(edit.anchor, "anchor");
       if (anchorF) failures.push(anchorF);
       let endLine = edit.anchor.line;
       if (edit.end) {
-        const endF = verifyAnchor(lines, edit.end, "end", opIndex, edit.op, hashLen, radius);
+        const endF = verify(edit.end, "end");
         if (endF) failures.push(endF);
         endLine = edit.end.line;
       }
@@ -146,7 +148,7 @@ function translateEdit(
     }
     case "insert_after":
     case "insert_before": {
-      const failure = verifyAnchor(lines, edit.anchor, "anchor", opIndex, edit.op, hashLen, radius);
+      const failure = verify(edit.anchor, "anchor");
       if (failure) return { ok: false, anchorFailures: [failure] };
       const line = edit.anchor.line - (edit.op === "insert_before" ? 1 : 0);
       return { ok: true, op: { lo: line, hi: line, newLines: edit.body } };

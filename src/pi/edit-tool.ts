@@ -193,18 +193,22 @@ function checkEditArguments(
         if (unwritable) report(`${path}.body[${lineIndex}]`, unwritable.message);
       });
     }
+    const cited: { anchor?: number; end?: number } = {};
     for (const field of EDIT_ANCHOR_FIELDS) {
       const anchor = edit[field];
       if (!accepted.has(field) || typeof anchor !== "string") continue;
       const token = parseAnchorToken(anchor);
-      if (token && !Number.isSafeInteger(token.line)) {
+      if (!token) continue;
+      if (Number.isSafeInteger(token.line)) {
+        cited[field] = token.line;
+      } else {
         report(
           `${path}.${field}`,
           "line number exceeds the safe integer range",
           EDIT_ISSUE_FIX.unsafeLine,
         );
       }
-      if (token && token.hash.length !== hashLen) {
+      if (token.hash.length !== hashLen) {
         report(
           `${path}.${field}`,
           `has ${token.hash.length} hash characters; hashLen is ${hashLen}`,
@@ -215,16 +219,9 @@ function checkEditArguments(
 
     // The cited line numbers alone decide this, whatever the file holds. An
     // unsafe line number was reported above, and comparing it would add a false issue.
-    const lineOf = (field: EditItemField) => {
-      const anchor = edit[field];
-      if (!accepted.has(field) || typeof anchor !== "string") return undefined;
-      const line = parseAnchorToken(anchor)?.line;
-      return Number.isSafeInteger(line) ? line : undefined;
-    };
-    const first = lineOf("anchor");
-    if (first === undefined) return;
-    const last = lineOf("end") ?? first;
-    if (last < first) report(`${path}.end`, `line ${last} is before anchor line ${first}`);
+    if (cited.anchor !== undefined && cited.end !== undefined && cited.end < cited.anchor) {
+      report(`${path}.end`, `line ${cited.end} is before anchor line ${cited.anchor}`);
+    }
   });
 }
 
