@@ -114,7 +114,7 @@ Add `hashlineEdit` to Pi's global settings (`~/.pi/agent/settings.json`) or a pr
     "actionFusion": true,
     "hashLen": 4,
     "shiftRadius": 15,
-    "read": { "defaultLimit": 500 },
+    "read": { "defaultLimit": 2000 },
     "grep": { "defaultLimit": 100, "defaultContext": 0, "regexTimeoutMs": 5000 },
     "replace": { "regexTimeoutMs": 5000 }
   }
@@ -127,7 +127,7 @@ Add `hashlineEdit` to Pi's global settings (`~/.pi/agent/settings.json`) or a pr
 | `actionFusion` | `true` | Allow `then_run` on mutation tools. |
 | `hashLen` | `4` | Anchor hash length, 2–8. |
 | `shiftRadius` | `15` | Lines searched around a stale anchor before the whole file, 0–100; `0` disables recovery search. |
-| `read.defaultLimit` | `500` | Lines returned when the call gives no limit. |
+| `read.defaultLimit` | `2000` | Lines returned when the call gives no limit, matching Pi's built-in read. |
 | `read.maxKiB` | Model-based | Fixed cap on read output, 1–4096 KiB. |
 | `grep.defaultLimit` | `100` | Matching lines returned when the call gives no limit. |
 | `grep.defaultContext` | `0` | Context lines around each match, 0–20. |

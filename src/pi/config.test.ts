@@ -1,3 +1,4 @@
+import { DEFAULT_MAX_LINES } from "@earendil-works/pi-coding-agent";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -34,7 +35,7 @@ test("defaults come from the settings schema", () => {
     actionFusion: true,
     hashLen: 4,
     shiftRadius: 15,
-    read: { defaultLimit: 500, maxKiB: undefined },
+    read: { defaultLimit: DEFAULT_MAX_LINES, maxKiB: undefined },
     grep: { ...DEFAULT_CONFIG.grep, defaultLimit: 100, defaultContext: 0 },
     replace: { regexTimeoutMs: 5_000 },
   });

@@ -6,7 +6,7 @@
  * @module pi-hashline-edit/pi
  */
 
-import { getAgentDir } from "@earendil-works/pi-coding-agent";
+import { DEFAULT_MAX_LINES, getAgentDir } from "@earendil-works/pi-coding-agent";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { Type, type Static, type TSchema } from "typebox";
@@ -54,7 +54,7 @@ const configSchema = Type.Object({
   read: Type.Object({
     defaultLimit: integerSetting(
       POSITIVE_SAFE_INTEGER,
-      500,
+      DEFAULT_MAX_LINES,
       "Lines returned when limit is omitted.",
     ),
     maxKiB: Type.Optional(

@@ -114,7 +114,7 @@ Grep 用原生 JavaScript 正则匹配 LF 视图。不设 `multiline` 时逐物�
     "actionFusion": true,
     "hashLen": 4,
     "shiftRadius": 15,
-    "read": { "defaultLimit": 500 },
+    "read": { "defaultLimit": 2000 },
     "grep": { "defaultLimit": 100, "defaultContext": 0, "regexTimeoutMs": 5000 },
     "replace": { "regexTimeoutMs": 5000 }
   }
@@ -127,7 +127,7 @@ Grep 用原生 JavaScript 正则匹配 LF 视图。不设 `multiline` 时逐物�
 | `actionFusion` | `true` | 允许修改类工具使用 `then_run`。 |
 | `hashLen` | `4` | 锚点哈希长度，2–8。 |
 | `shiftRadius` | `15` | 锚点过期时先在附近多少行内查找，再查全文件，0–100；`0` 关闭恢复查找。 |
-| `read.defaultLimit` | `500` | 调用未指定时返回的行数。 |
+| `read.defaultLimit` | `2000` | 调用未指定时返回的行数，与 Pi 内置 read 一致。 |
 | `read.maxKiB` | 按模型 | read 输出的固定上限，1–4096 KiB。 |
 | `grep.defaultLimit` | `100` | 调用未指定时返回的匹配行数。 |
 | `grep.defaultContext` | `0` | 每个匹配前后的上下文行数，0–20。 |
