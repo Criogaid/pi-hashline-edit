@@ -415,6 +415,33 @@ test("directory searches respect ignores but explicit files and hidden files rem
   }
 });
 
+test("gitignored directory → root traversal skips it and an explicit directory path searches it", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "hl-grep-ignore-scope-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const ignored = join(directory, "ignored");
+  await mkdir(join(directory, ".git"));
+  await mkdir(ignored);
+  await writeFile(join(directory, ".gitignore"), "ignored/\n");
+  await writeFile(join(ignored, "x.txt"), "needle\n");
+  await writeFile(join(directory, "a.txt"), "needle\n");
+  const tool = makeGrepOverrideWithBackend(directory, DEFAULT_CONFIG, {});
+  for (const [path, expected] of [
+    [directory, "a.txt"],
+    [ignored, "ignored/x.txt"],
+  ]) {
+    const result = await callTool(tool, {
+      path,
+      literal: true,
+      pattern: "needle",
+      outputMode: "files",
+    });
+    assert.equal(result.isError, undefined, JSON.stringify(reportOf(result, "grep")));
+    assert.equal(grepCounts(result).matches, 1);
+    assert.equal(result.content[0].type, "text");
+    assert.equal(result.content[0].text.replace(/\\/g, "/"), expected);
+  }
+});
+
 test("directory traversal with caller globs → excludes .git while an explicit .git path remains searchable", async (t) => {
   const directory = await mkdtemp(join(tmpdir(), "hl-grep-git-scope-"));
   t.after(() => rm(directory, { recursive: true, force: true }));
@@ -559,7 +586,7 @@ test("explicit file paths obey ordered glob filters without inheriting ignore ru
   }
 });
 
-test("directory traversal skips symlinks but explicitly named linked files remain searchable", async (t) => {
+test("directory traversal skips symlinks but explicit linked directories and files remain searchable", async (t) => {
   const directory = await mkdtemp(join(tmpdir(), "hl-grep-follow-"));
   try {
     const root = join(directory, "root");
@@ -587,6 +614,20 @@ test("directory traversal skips symlinks but explicitly named linked files remai
       undefined,
     );
     assert.equal(grepCounts(hidden).matches, 0);
+    const linkedDirectory = await callTool(grep, {
+      path: link,
+      literal: true,
+      pattern: "needle",
+      outputMode: "files",
+    });
+    assert.equal(
+      linkedDirectory.isError,
+      undefined,
+      JSON.stringify(reportOf(linkedDirectory, "grep")),
+    );
+    assert.equal(grepCounts(linkedDirectory).matches, 1);
+    assert.equal(linkedDirectory.content[0].type, "text");
+    assert.equal(linkedDirectory.content[0].text.replace(/\\/g, "/"), "link/linked.txt");
     const found: any = await invoke(
       grep,
       "0",

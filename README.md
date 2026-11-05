@@ -53,8 +53,8 @@ The extension replaces Pi's `read`, `grep`, `edit`, and `write`, and adds `repla
 | Tool | What it does |
 | --- | --- |
 | `read` | Shows UTF-8 text with anchors, paginated within the model's output budget. Images and files containing NUL bytes go to Pi's built-in read. |
-| `grep` | Searches files and directories with JavaScript regex or literal text; returns anchored matches, file paths, or counts in traversal order; a limit keeps the first matches in that order. Respects ignore rules. |
-| `edit` | Replaces, inserts, deletes, copies, or moves whole lines by anchor. All operations in one call apply to the same snapshot, or none apply. |
+| `grep` | Searches files and directories with JavaScript regex or literal text; returns anchored matches, file paths, or counts in traversal order; a limit keeps the first matches in that order. Directory searches respect ignore rules and skip `.git` and linked directories; naming one of those in `path` searches it. |
+| `edit` | Replaces, inserts, or deletes whole lines by anchor. All operations in one call apply to the same snapshot, or none apply. |
 | `replace` | Applies literal or regex substitutions across one file. Every rule must match, and overlapping matches reject the batch. |
 | `write` | Creates a file (`mode: "create"`) or overwrites one (`mode: "overwrite"`), using the content exactly as given. |
 
@@ -69,15 +69,14 @@ Edit operations:
 | `replace` / `delete` | Replace or remove a line, or an inclusive range with `end`. |
 | `insert_before` / `insert_after` | Insert lines next to an anchor. |
 | `prepend` / `append` | Insert lines at the start or end of the file. |
-| `copy` / `move` | Copy or move a line range to before or after another anchor. |
 
-One call takes at most [64 operations](src/pi/edit-tool.ts). Ranges in one call must not overlap, and each gap between lines takes at most one insertion, copy and move destinations included. An insertion at the start of a replaced or deleted range goes before it.
+One call takes at most [64 operations](src/pi/edit-tool.ts). Ranges in one call must not overlap, and each gap between lines takes at most one insertion. An insertion at the start of a replaced or deleted range goes before it.
 
 Every tool asks for constrained sampling (Pi's `constrainedSampling`, a strict JSON schema) where the provider supports it, so the model cannot emit fields or values the schema does not declare, or exceed edit's operation limit. Optional fields the call does not use are then written as `null`, including each edit operation's fields that its `action` does not take. For the same reason, grep's `pattern`, `path`, and `glob` take arrays only; on other providers Pi wraps a single string into an array.
 
 The model sees each tool's full parameter schema; the definitions live in the tool files under [`src/pi/`](src/pi/).
 
-Range operations verify the cited `anchor` and `end`, plus the destination for copy/move. Interior lines have no individual anchor check. Changes elsewhere before the call do not invalidate unchanged anchors; publication rechecks the bytes read while applying the call and rejects a detected change.
+Range operations verify the cited `anchor` and `end`. Interior lines have no individual anchor check. Changes elsewhere before the call do not invalidate unchanged anchors; publication rechecks the bytes read while applying the call and rejects a detected change.
 
 ## When an edit is rejected
 
@@ -85,7 +84,7 @@ Argument and anchor validation failures leave the file untouched. The report nam
 
 A failure during or after publication states `NOT_PUBLISHED`, `PUBLISHED`, or `UNKNOWN`. Follow the report's `next` before retrying: an error after publication can leave the requested change on disk.
 
-Argument mistakes, including a reversed range or a move into its own range, are reported per field, with what the field means and how to fix it, before any file is touched.
+Argument mistakes, including a reversed range, are reported per field, with what the field means and how to fix it, before any file is touched.
 
 ## Action Fusion
 

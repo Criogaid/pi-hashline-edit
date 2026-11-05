@@ -36,7 +36,7 @@ function createGrepSchema({ defaultLimit, defaultContext }: HashlineEditConfig["
   return Type.Object(
     {
       pattern: nonEmptyStrings(
-        "Patterns; a line matches if any of them matches, so give alternatives as separate items instead of joining them with |. Regex syntax is JavaScript, as in replace.",
+        "Patterns; a line matches if any of them matches. With literal true, | is an ordinary character, so give alternatives as separate items. Regex syntax is JavaScript, as in replace.",
       ),
       path: Type.Optional(
         nonEmptyStrings(
@@ -142,7 +142,7 @@ export function makeGrepOverrideWithBackend(
     name: "grep" as const,
     label: "grep",
     description:
-      "Search file contents. Content mode returns LINE#HASH edit anchors for valid UTF-8 and plain line numbers without anchors otherwise; files/count modes return paths or matching-line counts. NUL-containing files are skipped. Directory searches respect ignore rules and skip .git and linked directories. Use grep instead of rg or grep in a shell to search files; use the shell only for ignored, .git, or linked directories, or to filter another command's output.",
+      "Search file contents. Content mode returns LINE#HASH edit anchors for valid UTF-8 and plain line numbers without anchors otherwise; files/count modes return paths or matching-line counts. NUL-containing files are skipped. Directory searches respect ignore rules and skip .git and linked directories; to search one of those, name it in path. Use grep instead of rg or grep in a shell to search files; use the shell only to filter another command's output.",
     promptSnippet: "Search file contents",
     promptGuidelines: [
       "When you need several independent searches, send them as separate grep calls in one response; they run in parallel.",

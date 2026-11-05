@@ -289,20 +289,13 @@ test("overlapping edits → ordered conflict and shared recovery", () => {
         { op: "delete", anchor: anchor(1, "a"), end: anchor(2, "b") },
       ],
     },
-    ...(["copy", "move"] as const).map((op) => ({
+    {
       edits: [
-        { op: "replace", anchor: anchor(2, "b"), body: ["changed"] },
-        { op, anchor: anchor(4, "d"), after: anchor(5, "e") },
-        { op: "delete", anchor: anchor(1, "a"), end: anchor(2, "b") },
-      ] satisfies Edit[],
-    })),
-    ...(["copy", "move"] as const).map((op) => ({
-      edits: [
-        { op, anchor: anchor(5, "e"), after: anchor(2, "b") },
+        { op: "insert_after", anchor: anchor(2, "b"), body: ["first"] },
         { op: "delete", anchor: anchor(4, "d") },
-        { op: "insert_before", anchor: anchor(3, "c"), body: ["changed"] },
-      ] satisfies Edit[],
-    })),
+        { op: "insert_before", anchor: anchor(3, "c"), body: ["second"] },
+      ],
+    },
   ];
   for (const { edits } of cases) {
     assert.throws(
@@ -317,10 +310,7 @@ test("overlapping edits → ordered conflict and shared recovery", () => {
         assert.deepEqual(report.conflict, ["edits[0]", "edits[2]"]);
         assert.equal(report.message, error.message);
         assert.equal(report.publication, "NOT_PUBLISHED");
-        assert.equal(
-          report.next,
-          "Merge them into one edit per range or position; rewrite a copy or move as body edits first.",
-        );
+        assert.match(report.next ?? "", /one edit per range or position/);
         return true;
       },
     );

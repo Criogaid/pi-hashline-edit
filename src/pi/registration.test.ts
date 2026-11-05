@@ -65,13 +65,11 @@ test("registered tools with or without Fusion → request strict sampling with c
                     items: {
                       type: "object",
                       additionalProperties: false,
-                      required: ["action", "anchor", "end", "body", "before", "after"],
+                      required: ["action", "anchor", "end", "body"],
                       properties: {
                         anchor: { anyOf: [{ type: "string" }, { type: "null" }] },
                         end: { anyOf: [{ type: "string" }, { type: "null" }] },
                         body: { anyOf: [{ type: "array" }, { type: "null" }] },
-                        before: { anyOf: [{ type: "string" }, { type: "null" }] },
-                        after: { anyOf: [{ type: "string" }, { type: "null" }] },
                       },
                     },
                   },

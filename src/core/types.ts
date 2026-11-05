@@ -11,7 +11,7 @@ export interface Anchor {
 }
 
 /** Public anchor field names shared by preparation, verification, and recovery. */
-export const EDIT_ANCHOR_FIELDS = ["anchor", "end", "before", "after"] as const;
+export const EDIT_ANCHOR_FIELDS = ["anchor", "end"] as const;
 type AnchorField = (typeof EDIT_ANCHOR_FIELDS)[number];
 
 /**
@@ -27,10 +27,6 @@ export type Edit =
       readonly body: string[];
     }
   | { readonly op: "delete"; readonly anchor: Anchor; readonly end?: Anchor }
-  | ({ readonly op: "copy" | "move"; readonly anchor: Anchor; readonly end?: Anchor } & (
-      | { readonly before: Anchor; readonly after?: never }
-      | { readonly after: Anchor; readonly before?: never }
-    ))
   | { readonly op: "insert_after"; readonly anchor: Anchor; readonly body: string[] }
   | { readonly op: "insert_before"; readonly anchor: Anchor; readonly body: string[] }
   | { readonly op: "append"; readonly body: string[] }
@@ -66,7 +62,7 @@ export type AnchorRecovery =
  * A single anchor that failed verification, with its recovery attempt.
  *
  * `opIndex` is the 0-based position in the input `edits[]`; `which` names the
- * op's source/insertion anchor, range end, or before/after destination; `op` is the op kind.
+ * op's target or insertion anchor, or its range end; `op` is the op kind.
  */
 export interface AnchorFailure {
   readonly opIndex: number;

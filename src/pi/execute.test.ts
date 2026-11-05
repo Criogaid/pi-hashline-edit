@@ -56,16 +56,13 @@ function failureReport(result: AgentToolResult<unknown> & { isError?: boolean })
   return report;
 }
 
-test("edit guidance → refreshes anchors after content changes and line shifts", () => {
+test("edit guidance → refreshes mutation anchors with an edit-only exception above changes", () => {
   const guidance = makeEditOverride(process.cwd(), DEFAULT_CONFIG).promptGuidelines.join("\n");
-  assert.match(guidance, /after edit or replace.*before citing any line it changed/i);
+  assert.match(guidance, /before citing a line after write, edit, or replace/i);
+  assert.match(guidance, /anchor from a new read or grep/i);
   assert.match(
     guidance,
-    /added or removed lines.*refresh anchors below the earliest affected line/i,
-  );
-  assert.match(
-    guidance,
-    /affected positions are unknown.*read or grep the lines you intend to cite/i,
+    /only after edit, lines above the earliest changed line keep their anchors/i,
   );
 });
 
@@ -1236,104 +1233,4 @@ test("edit verification → uses the supplied hash length", async () =>
     });
     assert.equal(result.isError, undefined);
     assert.equal(await readFile(join(dir, "registered.txt"), "utf8"), "after\n");
-  }));
-
-test("copy/move through read anchors → publishes captured bytes with BOM and mixed endings intact", async () =>
-  withDir(async (dir) => {
-    const path = "transfer.txt";
-    const file = join(dir, path);
-    const source = "\uFEFFA\r\nB\nC\r\nD\n";
-    const read = makeReadOverride(dir, DEFAULT_CONFIG);
-    const edit = makeEditOverride(dir, DEFAULT_CONFIG);
-    for (const op of ["copy", "move"] as const) {
-      await writeFile(file, source);
-      const observed: Awaited<ReturnType<typeof read.execute>> = await callTool(read, { path });
-      const rows = observed.content
-        .filter((block) => block.type === "text")
-        .map((block) => block.text)
-        .join("\n");
-      const result: Awaited<ReturnType<typeof edit.execute>> = await callTool(edit, {
-        path,
-        edits: [
-          {
-            action: op,
-            anchor: anchorLine(rows, 1),
-            end: anchorLine(rows, 2),
-            after: anchorLine(rows, 4),
-          },
-        ],
-      });
-      const expected = op === "copy" ? source + "A\r\nB\n" : "\uFEFFC\r\nD\nA\r\nB\n";
-      const bytes = Buffer.from(expected, "utf8");
-      assert.deepEqual(await readFile(file), bytes);
-      assert.equal(result.isError, undefined);
-      assert.equal(reportOf(result, "edit")?.publication, "PUBLISHED");
-    }
-  }));
-
-test("copy/move stale destination → report its field and skip publication and fused commands", async () =>
-  withDir(async (dir) => {
-    const original = "A\nB\nC\n";
-    const current = "A\nB\nNEW\n";
-    const file = join(dir, "stale-transfer.txt");
-    await writeFile(file, current);
-    let commands = 0;
-    const fusion = createActionFusionExecutor(async () => {
-      commands++;
-      return { status: "succeeded", result: { content: [{ type: "text", text: "ran" }] } };
-    });
-    const edit = makeEditOverride(dir, DEFAULT_CONFIG, fusion);
-    for (const op of ["copy", "move"] as const) {
-      const report = failureReport(
-        await callTool(edit, {
-          path: file,
-          edits: [
-            { action: op, anchor: h(current, 1), after: h(original, 3) },
-            { action: "replace", anchor: h(current, 2), body: ["changed"] },
-          ],
-          then_run: { command: "check" },
-        }),
-      );
-      assert.equal(report.failures?.[0].field, "edits[0].after");
-      assert.equal(report.failures?.[0].cited, h(original, 3));
-      assert.equal(report.then_run?.status, "skipped");
-      assert.equal(report.publication, "NOT_PUBLISHED");
-      assert.equal(await readFile(file, "utf8"), current);
-      assert.equal(commands, 0);
-    }
-  }));
-
-test("copy/move with fused command → execute after the complete transfer and preserve it on failure", async () =>
-  withDir(async (dir) => {
-    const source = "A\nB\nC\n";
-    const file = join(dir, "fused-transfer.txt");
-    for (const op of ["copy", "move"] as const) {
-      await writeFile(file, source);
-      const expected = op === "copy" ? "A\nB\nC\nA\n" : "B\nC\nA\n";
-      let commands = 0;
-      let commandBytes: string | undefined;
-      const commandFailure = new Error("Command exited with code 7");
-      const fusion = createActionFusionExecutor(async () => {
-        commands++;
-        commandBytes = await readFile(file, "utf8");
-        throw commandFailure;
-      });
-      const edit = makeEditOverride(dir, DEFAULT_CONFIG, fusion);
-      const result: Awaited<ReturnType<typeof edit.execute>> = await callTool(
-        edit,
-        {
-          path: file,
-          edits: [{ action: op, anchor: h(source, 1), after: h(source, 3) }],
-          then_run: { command: "check" },
-        },
-        { ctx: { cwd: dir } },
-      );
-      assert.equal(reportOf(result, "edit")?.then_run?.status, "failed");
-      assert.equal(reportOf(result, "edit")?.then_run?.output, commandFailure.message);
-      assert.equal(commandBytes, expected);
-      assert.equal(reportOf(result, "edit")?.publication, "PUBLISHED");
-      assert.equal(reportOf(result, "edit")?.freshness, undefined);
-      assert.equal(await readFile(file, "utf8"), expected);
-      assert.equal(commands, 1);
-    }
   }));

@@ -124,11 +124,6 @@ test("overlapping edit spans → report conflicting operations in input order", 
     [range, { op: "replace", anchor: at(text, 3), body: ["y"] }],
     [range, { op: "delete", anchor: at(text, 2) }],
     [range, { op: "insert_after", anchor: at(text, 2), body: ["y"] }],
-    [range, { op: "copy", anchor: at(text, 5), after: at(text, 2) }],
-    [
-      { op: "move", anchor: at(text, 1), end: at(text, 2), after: at(text, 5) },
-      { op: "move", anchor: at(text, 2), end: at(text, 3), before: at(text, 1) },
-    ],
   ];
   for (const edits of cases) {
     for (const pair of [edits, [...edits].reverse()]) {
@@ -174,14 +169,6 @@ test("insertions sharing a gap → reject the batch", () => {
     ],
     [
       { op: "insert_before", anchor: at(text, 3), body: ["x"] },
-      { op: "insert_before", anchor: at(text, 3), body: ["y"] },
-    ],
-    [
-      { op: "copy", anchor: at(text, 1), after: at(text, 2) },
-      { op: "insert_before", anchor: at(text, 3), body: ["y"] },
-    ],
-    [
-      { op: "move", anchor: at(text, 1), after: at(text, 2) },
       { op: "insert_before", anchor: at(text, 3), body: ["y"] },
     ],
     [
@@ -577,153 +564,68 @@ test("BOM stays at byte zero through first-line edits while anchors retain their
   assert.equal(result.text, "\uFEFFchanged\ninside\uFEFFcontent\n");
 });
 
-test("copy/move original ranges → retain captured text and order", () => {
-  const text = "A\nB\nC\nD\n";
-  const cases: { edit: Edit; expected: string }[] = [
-    {
-      edit: { op: "copy", anchor: at(text, 2), end: at(text, 3), after: at(text, 4) },
-      expected: "A\nB\nC\nD\nB\nC\n",
-    },
-    {
-      edit: { op: "move", anchor: at(text, 1), end: at(text, 2), after: at(text, 4) },
-      expected: "C\nD\nA\nB\n",
-    },
-    {
-      edit: { op: "move", anchor: at(text, 3), end: at(text, 4), before: at(text, 1) },
-      expected: "C\nD\nA\nB\n",
-    },
-    {
-      edit: { op: "copy", anchor: at(text, 1), end: at(text, 3), after: at(text, 1) },
-      expected: "A\nA\nB\nC\nB\nC\nD\n",
-    },
-  ];
-  for (const { edit, expected } of cases) {
-    const result = applyEdits(text, [edit], 4, 0);
-    assert(result.ok);
-    assert.equal(result.text, expected);
-  }
-});
-
-test("copy source also replaced or deleted → capture original text regardless of batch order", () => {
-  const text = "A\nB\nC\nD\n";
-  const copy: Edit = { op: "copy", anchor: at(text, 1), end: at(text, 2), after: at(text, 4) };
-  for (const edit of [
-    { op: "replace", anchor: at(text, 1), end: at(text, 2), body: ["NEW"] },
-    { op: "delete", anchor: at(text, 1), end: at(text, 2) },
-  ] satisfies Edit[]) {
-    for (const edits of [
-      [copy, edit],
-      [edit, copy],
-    ]) {
-      const result = applyEdits(text, edits, 4, 0);
-      assert(result.ok);
-      assert.equal(result.text, edit.op === "replace" ? "NEW\nC\nD\nA\nB\n" : "C\nD\nA\nB\n");
-    }
-  }
-});
-
-test("copy/move first-line mixed-ending range → preserve source gaps and keep one file BOM", () => {
+test("replacing a first-line mixed-ending range → preserve gaps and keep one file BOM", () => {
   const text = "\uFEFFA\r\nB\nC\r\nD\n";
-  for (const op of ["copy", "move"] as const) {
-    const result = applyEdits(
-      text,
-      [{ op, anchor: at(text, 1), end: at(text, 3), after: at(text, 4) }],
-      4,
-      0,
-    );
-    assert(result.ok);
-    assert.equal(result.text, op === "copy" ? text + "A\r\nB\nC\r\n" : "\uFEFFD\nA\r\nB\nC\r\n");
-  }
-});
-
-test("copy/move unterminated final line → add interior connectors and preserve final-newline state", () => {
-  for (const ending of ["\n", "\r\n"]) {
-    const text = `A${ending}B`;
-    for (const op of ["copy", "move"] as const) {
-      const result = applyEdits(text, [{ op, anchor: at(text, 2), before: at(text, 1) }], 4, 0);
-      assert(result.ok);
-      assert.equal(result.text, op === "copy" ? `B${ending}A${ending}B` : `B${ending}A`);
-    }
-  }
-});
-
-test("copy/move line ending in standalone CR → connector retains the CR as line content", () => {
-  const text = "A\nB\r";
-  for (const op of ["copy", "move"] as const) {
-    const result = applyEdits(text, [{ op, anchor: at(text, 2), before: at(text, 1) }], 4, 0);
-    assert(result.ok);
-    assert.equal(result.text, op === "copy" ? "B\r\r\nA\nB\r" : "B\r\r\nA");
-    assert.equal(splitLines(result.text)[0], "B\r");
-  }
-});
-
-test("copy Unicode and standalone-CR content → preserve every source code unit", () => {
-  const text = "🙂中文 e\u0301\nkeep\rcontent\n";
   const result = applyEdits(
     text,
-    [{ op: "copy", anchor: at(text, 1), end: at(text, 2), after: at(text, 2) }],
+    [{ op: "replace", anchor: at(text, 1), end: at(text, 3), body: ["X", "Y", "Z"] }],
     4,
     0,
   );
   assert(result.ok);
-  assert.equal(result.text, text + text);
+  assert.equal(result.text, "\uFEFFX\r\nY\nZ\r\nD\n");
 });
 
-test("copy blank or BOM-only line → retain the added logical blank line", () => {
-  for (const [text, line, expected] of [
-    ["A\n\n", 2, "A\n\n\n"],
-    ["\uFEFF", 1, "\uFEFF\n\n"],
-  ] as const) {
-    const result = applyEdits(
-      text,
-      [{ op: "copy", anchor: at(text, line), after: at(text, line) }],
-      4,
-      0,
-    );
+test("inserting beside a line ending in standalone CR → connector retains the CR as content", () => {
+  const text = "A\nB\r";
+  const cases: [Edit, string][] = [
+    [{ op: "append", body: ["C"] }, "A\nB\r\r\nC"],
+    [{ op: "prepend", body: ["B\r"] }, "B\r\r\nA\nB\r"],
+  ];
+  for (const [edit, expected] of cases) {
+    const result = applyEdits(text, [edit], 4, 0);
     assert(result.ok);
     assert.equal(result.text, expected);
-    assert.equal(splitLines(result.text).length, splitLines(text).length + 1);
+    assert.equal(splitLines(result.text)[edit.op === "append" ? 1 : 0], "B\r");
   }
 });
 
-test("move to either adjacent gap → byte-identical no-op", () => {
-  const text = "A\r\nB\nC\r\nD";
-  for (const destination of [{ before: at(text, 2) }, { after: at(text, 3) }]) {
-    const result = applyEdits(
-      text,
-      [{ op: "move", anchor: at(text, 2), end: at(text, 3), ...destination }],
-      4,
-      0,
-    );
-    assert(result.ok);
-    assert.equal(result.text, text);
-  }
+test("editing beside Unicode and standalone-CR content → preserve every untouched code unit", () => {
+  const text = "🙂中文 e\u0301\nkeep\rcontent\n";
+  const result = applyEdits(text, [{ op: "append", body: ["tail"] }], 4, 0);
+  assert(result.ok);
+  assert.equal(result.text, text + "tail\n");
 });
 
-test("copy/move bad source and destination anchors → aggregate every supplied field", () => {
+test("appending a blank line to a terminated blank line → retain the added logical line", () => {
+  const text = "A\n\n";
+  const result = applyEdits(text, [{ op: "append", body: [""] }], 4, 0);
+  assert(result.ok);
+  assert.equal(result.text, "A\n\n\n");
+  assert.equal(splitLines(result.text).length, splitLines(text).length + 1);
+});
+
+test("bad range anchors → aggregate anchor and end failures for every operation", () => {
   const text = "A\nB\nC\nD\n";
-  for (const op of ["copy", "move"] as const)
-    for (const destination of [
-      { before: { line: 4, hash: "XXXX" } },
-      { after: { line: 4, hash: "XXXX" } },
-    ]) {
-      const result = applyEdits(
-        text,
-        [
-          {
-            op,
-            anchor: { line: 1, hash: "XXXX" },
-            end: { line: 2, hash: "XXXX" },
-            ...destination,
-          },
-        ],
-        4,
-        0,
-      );
-      assert(!result.ok);
-      assert.deepEqual(
-        result.failures.map((failure) => failure.which),
-        ["anchor", "end", Object.keys(destination)[0]],
-      );
-    }
+  const anchor = { line: 1, hash: "XXXX" };
+  const end = { line: 2, hash: "XXXX" };
+  const result = applyEdits(
+    text,
+    [
+      { op: "replace", anchor, end, body: ["new"] },
+      { op: "delete", anchor, end },
+    ],
+    4,
+    0,
+  );
+  assert(!result.ok);
+  assert.deepEqual(
+    result.failures.map(({ opIndex, op, which }) => ({ opIndex, op, which })),
+    [
+      { opIndex: 0, op: "replace", which: "anchor" },
+      { opIndex: 0, op: "replace", which: "end" },
+      { opIndex: 1, op: "delete", which: "anchor" },
+      { opIndex: 1, op: "delete", which: "end" },
+    ],
+  );
 });

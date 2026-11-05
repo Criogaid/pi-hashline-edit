@@ -92,7 +92,7 @@ test("edit and replace commands change or remove the file → withhold anchors a
           const report = reportOf(result, toolName);
           assert.equal(report?.freshness, state);
           assert.equal(report?.publication, "PUBLISHED");
-          assert.equal(report?.next, REREAD);
+          assert.equal(report?.next, state === "missing" ? undefined : REREAD);
           assert.equal(report?.then_run?.status, fails ? "failed" : "succeeded");
           if (fails) assert.equal(report?.then_run?.output, "command failed");
           assert.equal(result.content.length, 1);
@@ -473,7 +473,7 @@ test("all mutation tools succeed without rewriting on no-op, with and without Fu
   }
 });
 
-test("line movement changes only line endings → publishes with an empty diff and still checks Fusion freshness", async (t) => {
+test("delete and append change only line endings → publishes with an empty diff and still checks Fusion freshness", async (t) => {
   const dir = await mkdtemp(join(tmpdir(), "hashline-empty-diff-"));
   try {
     const context = await ctx(dir, t);
@@ -498,10 +498,10 @@ test("line movement changes only line endings → publishes with an empty diff a
           path,
           edits: [
             {
-              action: "move",
+              action: "delete",
               anchor: `1#${computeLineHash(1, "same", DEFAULT_CONFIG.hashLen)}`,
-              after: `2#${computeLineHash(2, "same", DEFAULT_CONFIG.hashLen)}`,
             },
+            { action: "append", body: ["same"] },
           ],
           ...(["command", "stale"].includes(mode) ? { then_run: { command: "check" } } : {}),
         },

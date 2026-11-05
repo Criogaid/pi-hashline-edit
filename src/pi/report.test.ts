@@ -19,7 +19,13 @@ import {
 } from "./report.ts";
 import { DEFAULT_OUTPUT_BUDGETS, formatByteSize } from "./budgets.ts";
 import { MAX_UNNARROWED_SCAN_BYTES } from "./grep-candidates.ts";
-import { OUTCOME_NEXT, type Report, type ReportTool, type SuccessReport } from "./report-schema.ts";
+import {
+  OUTCOME_NEXT,
+  REREAD,
+  type Report,
+  type ReportTool,
+  type SuccessReport,
+} from "./report-schema.ts";
 
 // npm run typecheck checks these invalid callers; they must never run.
 function invalidReportConstruction(report: NonNullable<ReturnType<typeof decodeReport>>) {
@@ -462,5 +468,22 @@ test("failure classification without mutation facts → omits mutation state for
     assert.ok(typeof serialized === "object" && serialized !== null);
     for (const field of ["publication", "then_run", "progressError", "next"])
       assert.equal(Object.hasOwn(serialized, field), false);
+  }
+});
+
+test("mutation freshness → retains the fact and requests reread only for an existing or unknown target", () => {
+  for (const [freshness, next] of [
+    ["missing", undefined],
+    ["changed", REREAD],
+    ["unknown", REREAD],
+  ] as const) {
+    const result = reportResult({ tool: "edit", publication: "PUBLISHED", freshness });
+    const report = reportOf(result, "edit");
+    assert.equal(report?.freshness, freshness);
+    assert.equal(report?.next, next);
+    const block = result.content.at(-1);
+    assert.ok(block?.type === "text");
+    assert.deepEqual(decodeReport(block.text, "edit"), report);
+    assert.equal(Object.hasOwn(JSON.parse(block.text), "next"), next !== undefined);
   }
 });

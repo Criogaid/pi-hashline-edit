@@ -117,7 +117,9 @@ export function reportOf(
 
 /** The recovery a successful result's facts call for: the first in OUTCOME_NEXT order. */
 function outcomeNext(report: Report): string | undefined {
-  return OUTCOME_NEXT.find(([fact]) => report[fact] !== undefined)?.[1];
+  return OUTCOME_NEXT.find(
+    ([fact, , except]) => report[fact] !== undefined && report[fact] !== except,
+  )?.[1];
 }
 
 /**

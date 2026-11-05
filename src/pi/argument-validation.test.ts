@@ -48,30 +48,6 @@ const cases = [
         { action: "append", body: [] },
         { action: "replace", anchor: `3#${anchorHash}`, end: `1#${anchorHash}`, body: ["text"] },
         { action: "delete", anchor: `4#${anchorHash}`, end: `2#${anchorHash}` },
-        {
-          action: "copy",
-          anchor: `5#${anchorHash}`,
-          end: `3#${anchorHash}`,
-          before: `1#${anchorHash}`,
-        },
-        {
-          action: "move",
-          anchor: `2#${anchorHash}`,
-          end: `4#${anchorHash}`,
-          before: `3#${anchorHash}`,
-        },
-        {
-          action: "move",
-          anchor: `2#${anchorHash}`,
-          end: `4#${anchorHash}`,
-          after: `3#${anchorHash}`,
-        },
-        {
-          action: "move",
-          anchor: `4#${anchorHash}`,
-          end: `2#${anchorHash}`,
-          before: `1#${anchorHash}`,
-        },
       ],
       then_run: invalidCommand,
     },
@@ -84,20 +60,12 @@ const cases = [
       "edits[3].body",
       "edits[4].end",
       "edits[5].end",
-      "edits[6].end",
-      "edits[7].before",
-      "edits[8].after",
-      "edits[9].end",
       "then_run.command",
       "then_run.timeout",
     ],
     reasons: [
       { field: "edits[4].end", reason: /line 1 is before anchor line 3/ },
       { field: "edits[5].end", reason: /line 2 is before anchor line 4/ },
-      { field: "edits[6].end", reason: /line 3 is before anchor line 5/ },
-      { field: "edits[7].before", reason: /lies inside the moved range 2\.\.4/ },
-      { field: "edits[8].after", reason: /lies inside the moved range 2\.\.4/ },
-      { field: "edits[9].end", reason: /line 2 is before anchor line 4/ },
     ],
   },
   {
@@ -217,20 +185,17 @@ test("grep and replace flags → accept V8 modes and reject invalid flags before
   }
 });
 
-const editFields = ["anchor", "end", "body", "before", "after"] as const;
+const editFields = ["anchor", "end", "body"] as const;
 type EditField = (typeof editFields)[number];
 const fieldValues = {
   anchor: `1#${anchorHash}`,
   end: `2#${anchorHash}`,
   body: ["text"],
-  before: `3#${anchorHash}`,
-  after: `3#${anchorHash}`,
 };
 const actionCases: readonly {
   action: string;
   required: readonly EditField[];
   optional: readonly EditField[];
-  transfer?: boolean;
   expected: string;
 }[] = [
   {
@@ -252,20 +217,6 @@ const actionCases: readonly {
     optional: [],
     expected: "text\nalpha\nbeta\ngamma\n",
   },
-  {
-    action: "copy",
-    required: ["anchor"],
-    optional: ["end", "before", "after"],
-    transfer: true,
-    expected: "alpha\nbeta\nalpha\ngamma\n",
-  },
-  {
-    action: "move",
-    required: ["anchor"],
-    optional: ["end", "before", "after"],
-    transfer: true,
-    expected: "beta\nalpha\ngamma\n",
-  },
   { action: "append", required: ["body"], optional: [], expected: "alpha\nbeta\ngamma\ntext\n" },
   { action: "prepend", required: ["body"], optional: [], expected: "text\nalpha\nbeta\ngamma\n" },
 ];
@@ -280,7 +231,6 @@ for (const scenario of actionCases) {
     const valid = {
       action: scenario.action,
       ...Object.fromEntries(scenario.required.map((field) => [field, fieldValues[field]])),
-      ...(scenario.transfer ? { before: fieldValues.before } : {}),
     };
     for (const field of scenario.required) {
       for (const value of [undefined, null]) {
@@ -335,7 +285,10 @@ for (const scenario of actionCases) {
 test("edit action is missing or invalid → reports choices without guessing field permissions", async () => {
   const tool = makeEditOverride(process.cwd(), DEFAULT_CONFIG);
   const choices = schemaProperties(tool).edits?.items?.properties?.action?.anyOf ?? [];
-  assert.equal(choices.length, actionCases.length);
+  assert.deepEqual(
+    choices.map((choice) => choice.const),
+    actionCases.map(({ action }) => action),
+  );
   for (const action of [undefined, "unknown", null, 42, {}]) {
     await assert.rejects(
       callTool(tool, {
@@ -383,37 +336,27 @@ test("optional edit fields and then_run are null with Fusion → publishes bytes
   });
   const tool = makeEditOverride(cwd, DEFAULT_CONFIG, fusion);
   for (const scenario of actionCases) {
-    for (const side of scenario.transfer ? ["before", "after"] : [undefined]) {
-      await t.test(
-        `${scenario.action}${side ? `/${side}` : ""} → accepts null optional fields`,
-        async () => {
-          await writeFile(path, "alpha\nbeta\ngamma\n");
-          const edit = {
-            action: scenario.action,
-            ...Object.fromEntries(editFields.map((field) => [field, null])),
-            ...Object.fromEntries(
-              scenario.required.map((field) => [
-                field,
-                field === "body" ? ["text"] : token(1, "alpha"),
-              ]),
-            ),
-            ...(side
-              ? {
-                  [side]: token(side === "before" ? 3 : 2, side === "before" ? "gamma" : "beta"),
-                }
-              : {}),
-          };
-          const args = { path, edits: [edit], then_run: null };
-          const snapshot = structuredClone(args);
-          const result = await callTool(tool, args);
-          assert.equal(result.isError, undefined);
-          assert.equal(reportOf(result, "edit")?.publication, "PUBLISHED");
-          assert.equal(reportOf(result, "edit")?.then_run, undefined);
-          assert.deepEqual(await readFile(path), Buffer.from(scenario.expected));
-          assert.deepEqual(args, snapshot);
-        },
-      );
-    }
+    await t.test(`${scenario.action} → accepts null optional fields`, async () => {
+      await writeFile(path, "alpha\nbeta\ngamma\n");
+      const edit = {
+        action: scenario.action,
+        ...Object.fromEntries(editFields.map((field) => [field, null])),
+        ...Object.fromEntries(
+          scenario.required.map((field) => [
+            field,
+            field === "body" ? ["text"] : token(1, "alpha"),
+          ]),
+        ),
+      };
+      const args = { path, edits: [edit], then_run: null };
+      const snapshot = structuredClone(args);
+      const result = await callTool(tool, args);
+      assert.equal(result.isError, undefined);
+      assert.equal(reportOf(result, "edit")?.publication, "PUBLISHED");
+      assert.equal(reportOf(result, "edit")?.then_run, undefined);
+      assert.deepEqual(await readFile(path), Buffer.from(scenario.expected));
+      assert.deepEqual(args, snapshot);
+    });
   }
   assert.equal(commandRuns, 0);
 });
@@ -610,7 +553,6 @@ test("edit fields contain semantic errors → checks only fields accepted by the
     const valid = {
       action: scenario.action,
       ...Object.fromEntries(scenario.required.map((field) => [field, fieldValues[field]])),
-      ...(scenario.transfer ? { end: fieldValues.end, before: fieldValues.before } : {}),
     };
     for (const field of editFields) {
       const accepted = scenario.required.includes(field) || scenario.optional.includes(field);
@@ -629,14 +571,7 @@ test("edit fields contain semantic errors → checks only fields accepted by the
         await t.test(
           `${scenario.action}/${field}/${reason.source} → ${accepted ? "reports value error" : "reports only forbidden field"}`,
           async () => {
-            const edit = {
-              ...Object.fromEntries(
-                Object.entries(valid).filter(
-                  ([key]) => !(scenario.transfer && field === "after" && key === "before"),
-                ),
-              ),
-              [field]: value,
-            };
+            const edit = { ...valid, [field]: value };
             await assert.rejects(
               callTool(tool, { path: "unused.txt", edits: [edit] }),
               (error: unknown) => {
@@ -667,101 +602,6 @@ test("edit fields contain semantic errors → checks only fields accepted by the
           },
         );
       }
-    }
-  }
-});
-
-test("copy/move destination count and field errors coexist → retains object and field diagnostics", async (t) => {
-  const cwd = await mkdtemp(join(tmpdir(), "hashline-object-diagnostics-"));
-  t.after(() => rm(cwd, { recursive: true, force: true }));
-  const tool = makeEditOverride(cwd, DEFAULT_CONFIG);
-  for (const scenario of [
-    {
-      edit: { action: "copy", anchor: "abc" },
-      field: "anchor",
-      reason: /must match pattern/,
-      fix: /LINE#HASH/,
-    },
-    {
-      edit: { action: "copy", anchor: `1#${anchorHash}`, extra: 1 },
-      field: "extra",
-      reason: /^is not allowed$/,
-      fix: /^Accepted fields:/,
-    },
-    {
-      edit: {
-        action: "move",
-        anchor: `1#${anchorHash}`,
-        end: "x",
-        before: `3#${anchorHash}`,
-        after: `4#${anchorHash}`,
-      },
-      field: "end",
-      reason: /must match pattern/,
-      fix: /LINE#HASH/,
-    },
-  ]) {
-    await t.test(`${scenario.edit.action}/${scenario.field} → retains both issues`, async () => {
-      await assert.rejects(
-        callTool(tool, { path: "missing.txt", edits: [scenario.edit] }),
-        (error: unknown) => {
-          const { issues } = argumentError(error);
-          assert.deepEqual(
-            issues.map((issue) => issue.field).sort(),
-            ["edits[0]", `edits[0].${scenario.field}`].sort(),
-          );
-          const item = issues.find((issue) => issue.field === "edits[0]");
-          assert.equal(item?.reason, "expected exactly one of: before, after");
-          assert.equal(item?.fix, undefined);
-          const field = issues.find((issue) => issue.field === `edits[0].${scenario.field}`);
-          assert.ok(field);
-          assert.match(field.reason, scenario.reason);
-          assert.match(field.fix ?? "", scenario.fix);
-          return true;
-        },
-      );
-    });
-  }
-});
-
-test("copy/move destination shapes → rejects invalid counts and accepts adjacent or copy-interior gaps", async (t) => {
-  const cwd = await mkdtemp(join(tmpdir(), "hashline-destinations-"));
-  t.after(() => rm(cwd, { recursive: true, force: true }));
-  const tool = makeEditOverride(cwd, DEFAULT_CONFIG);
-  for (const action of ["copy", "move"]) {
-    for (const scenario of [
-      { name: "no destination", fields: {}, valid: false },
-      {
-        name: "two destinations",
-        fields: { before: fieldValues.before, after: fieldValues.after },
-        valid: false,
-      },
-      { name: "before source", fields: { before: fieldValues.anchor }, valid: true },
-      { name: "after source", fields: { after: fieldValues.end }, valid: true },
-      ...(action === "copy"
-        ? [
-            { name: "before interior line", fields: { before: fieldValues.end }, valid: true },
-            { name: "after interior line", fields: { after: fieldValues.anchor }, valid: true },
-          ]
-        : []),
-    ]) {
-      await t.test(`${action}/${scenario.name}`, async () => {
-        const args = {
-          path: "missing.txt",
-          edits: [{ action, anchor: fieldValues.anchor, end: fieldValues.end, ...scenario.fields }],
-        };
-        if (scenario.valid) {
-          const result = await callTool(tool, args);
-          assert.equal(reportOf(result, "edit")?.error, "PATH_NOT_FOUND");
-        } else {
-          await assert.rejects(callTool(tool, args), (error: unknown) => {
-            assert.deepEqual(argumentError(error).issues, [
-              { field: "edits[0]", reason: "expected exactly one of: before, after" },
-            ]);
-            return true;
-          });
-        }
-      });
     }
   }
 });
@@ -884,7 +724,7 @@ test("unknown field is supplied → fix lists only the flat object's accepted fi
       tool: edit,
       args: { path: "unused.txt", edits: [{ action: "append", body: ["text"], op: "append" }] },
       field: "edits[0].op",
-      fix: "Accepted fields: action, anchor, end, body, before, after.",
+      fix: "Accepted fields: action, anchor, end, body.",
     },
     {
       tool: grep,

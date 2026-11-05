@@ -234,7 +234,7 @@ test("write reports missing freshness when then_run removes the target", async (
       context(dir),
     );
     assert.equal(reportOf(result, "write")?.freshness, "missing");
-    assert.equal(reportOf(result, "write")?.next, REREAD);
+    assert.equal(reportOf(result, "write")?.next, undefined);
   }));
 
 test("write preserves command failure and changed freshness", async () =>

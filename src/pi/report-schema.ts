@@ -288,8 +288,7 @@ export const ERROR_DEFINITIONS = {
   OVERLAPPING_EDITS: {
     facts: facts(["conflict"]),
     next: {
-      default:
-        "Merge them into one edit per range or position; rewrite a copy or move as body edits first.",
+      default: "Merge them into one edit per range or position.",
     },
   },
   NO_MATCH: {
@@ -364,10 +363,11 @@ export const PUBLICATION_NEXT = {
 
 /**
  * Recovery after a successful result, by the first fact present in this order.
- * A fact absent from this list needs no recovery beyond itself.
+ * A fact absent from this list, or holding the value its rule excepts, needs no recovery beyond itself.
  */
-export const OUTCOME_NEXT = [
-  ["freshness", REREAD],
+export const OUTCOME_NEXT: readonly (readonly [fact: FactName, next: string, except?: string])[] = [
+  // A file that no longer exists has no anchors to refresh.
+  ["freshness", REREAD, "missing"],
   [
     "lineTooLong",
     "Inspect the line in chunks with bash, or use replace for a known literal or regex change; a smaller limit cannot split a line.",
@@ -385,7 +385,7 @@ export const OUTCOME_NEXT = [
     "Narrow path or glob, or add text every match must contain, to search the remaining files.",
   ],
   ["linePreviewLimit", "Read the full line before rewriting it from a partial preview."],
-] as const satisfies readonly (readonly [FactName, string])[];
+];
 
 /** The report envelope and facts, in output order; `next` is always last. */
 export const REPORT_SCHEMA = Type.Object({

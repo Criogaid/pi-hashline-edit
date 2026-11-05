@@ -19,12 +19,11 @@
  * file in sync: a partial write would shift lines and invalidate the very
  * recovery info we just returned. Overlaps among the surviving ops are deferred
  * until anchors are corrected. The tool layer has already rejected reversed
- * ranges and moves into their own range.
+ * ranges.
  *
  * Other strict semantics:
- * - Operation ranges must not overlap, and each position takes at most one insertion,
- *   copy/move destinations included. An insertion at the start of a replaced or deleted
- *   range applies before that range.
+ * - Operation ranges must not overlap, and each position takes at most one insertion.
+ *   An insertion at the start of a replaced or deleted range applies before that range.
  * - Byte-identical output is a success; the commit layer reports it as a no-op.
  *
  * @module pi-hashline-edit/core
@@ -43,11 +42,12 @@ import type { Anchor, AnchorFailure, AnchorRecovery, ApplyResult, Edit } from ".
 import { HashlineError } from "./errors.ts";
 import { findSortedRangeConflict } from "./ranges.ts";
 
-/** Replace `[lo, hi)` with caller text or a range captured from the verified original lines. */
-type SpanOp = { readonly lo: number; readonly hi: number } & (
-  | { readonly kind: "body"; readonly newLines: readonly string[] }
-  | { readonly kind: "capture"; readonly sourceLo: number; readonly sourceHi: number }
-);
+/** Replace `[lo, hi)` with caller text. */
+interface SpanOp {
+  readonly lo: number;
+  readonly hi: number;
+  readonly newLines: readonly string[];
+}
 
 /**
  * Verify an anchor against the live content; on mismatch, attempt shifted
@@ -111,10 +111,10 @@ function verifyAnchor(
 }
 
 type TranslateResult =
-  | { readonly ok: true; readonly ops: readonly SpanOp[] }
+  | { readonly ok: true; readonly op: SpanOp }
   | { readonly ok: false; readonly anchorFailures: AnchorFailure[] };
 
-/** Verify an Edit against the snapshot and plan its mutation spans and captured source. */
+/** Verify an Edit against the snapshot and plan its mutation span. */
 function translateEdit(
   edit: Edit,
   opIndex: number,
@@ -124,9 +124,7 @@ function translateEdit(
 ): TranslateResult {
   switch (edit.op) {
     case "replace":
-    case "delete":
-    case "copy":
-    case "move": {
+    case "delete": {
       const failures: AnchorFailure[] = [];
       const anchorF = verifyAnchor(lines, edit.anchor, "anchor", opIndex, edit.op, hashLen, radius);
       if (anchorF) failures.push(anchorF);
@@ -136,56 +134,14 @@ function translateEdit(
         if (endF) failures.push(endF);
         endLine = edit.end.line;
       }
-      const destination =
-        edit.op === "copy" || edit.op === "move"
-          ? edit.before !== undefined
-            ? { which: "before" as const, cited: edit.before }
-            : { which: "after" as const, cited: edit.after }
-          : undefined;
-      if (destination) {
-        const failure = verifyAnchor(
-          lines,
-          destination.cited,
-          destination.which,
-          opIndex,
-          edit.op,
-          hashLen,
-          radius,
-        );
-        if (failure) failures.push(failure);
-      }
       if (failures.length > 0) return { ok: false, anchorFailures: failures };
-      if (destination) {
-        const sourceLo = edit.anchor.line - 1;
-        const gap = destination.cited.line - (destination.which === "before" ? 1 : 0);
-        if (edit.op === "move" && (gap === sourceLo || gap === endLine)) {
-          return { ok: true, ops: [] };
-        }
-        const insertion: SpanOp = {
-          lo: gap,
-          hi: gap,
-          kind: "capture",
-          sourceLo,
-          sourceHi: endLine,
-        };
-        return {
-          ok: true,
-          ops:
-            edit.op === "move"
-              ? [insertion, { lo: sourceLo, hi: endLine, kind: "body", newLines: [] }]
-              : [insertion],
-        };
-      }
       return {
         ok: true,
-        ops: [
-          {
-            lo: edit.anchor.line - 1,
-            hi: endLine,
-            kind: "body",
-            newLines: edit.op === "replace" ? edit.body : [],
-          },
-        ],
+        op: {
+          lo: edit.anchor.line - 1,
+          hi: endLine,
+          newLines: edit.op === "replace" ? edit.body : [],
+        },
       };
     }
     case "insert_after":
@@ -193,15 +149,12 @@ function translateEdit(
       const failure = verifyAnchor(lines, edit.anchor, "anchor", opIndex, edit.op, hashLen, radius);
       if (failure) return { ok: false, anchorFailures: [failure] };
       const line = edit.anchor.line - (edit.op === "insert_before" ? 1 : 0);
-      return { ok: true, ops: [{ lo: line, hi: line, kind: "body", newLines: edit.body }] };
+      return { ok: true, op: { lo: line, hi: line, newLines: edit.body } };
     }
     case "append":
-      return {
-        ok: true,
-        ops: [{ lo: lines.length, hi: lines.length, kind: "body", newLines: edit.body }],
-      };
+      return { ok: true, op: { lo: lines.length, hi: lines.length, newLines: edit.body } };
     case "prepend":
-      return { ok: true, ops: [{ lo: 0, hi: 0, kind: "body", newLines: edit.body }] };
+      return { ok: true, op: { lo: 0, hi: 0, newLines: edit.body } };
   }
 }
 
@@ -231,7 +184,7 @@ export function applyEdits(
   for (let i = 0; i < edits.length; i++) {
     const t = translateEdit(edits[i], i, lines, hashLen, shiftRadius);
     if (t.ok) {
-      for (const op of t.ops) ops.push({ ...op, opIndex: i });
+      ops.push({ ...t.op, opIndex: i });
     } else {
       anchorFailures.push(...t.anchorFailures);
     }
@@ -284,7 +237,7 @@ export function applyEdits(
   const appendSource = (start: number, end: number) => {
     for (let index = start; index < end; index++) {
       const content = lines[index];
-      // Keep the verified first-line BOM at byte zero, including for captured ranges.
+      // Keep the verified first-line BOM at byte zero.
       result.push({
         content: bom && index === 0 ? content.slice(1) : content,
         separator: separators?.[index] ?? "",
@@ -293,11 +246,6 @@ export function applyEdits(
   };
   for (const op of sorted) {
     appendSource(cursor, op.lo);
-    if (op.kind === "capture") {
-      appendSource(op.sourceLo, op.sourceHi);
-      cursor = op.hi;
-      continue;
-    }
     // The trailing gap is outside the logical replacement, just as in substring replacement.
     const removedSeparators = separators?.slice(op.lo, Math.max(op.lo, op.hi - 1)) ?? [];
     for (let i = 0; i < op.newLines.length; i++) {

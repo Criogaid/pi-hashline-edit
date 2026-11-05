@@ -117,8 +117,6 @@ test("partial edit actions → refresh per-action counts", () => {
     { action: "insert_before", anchor: "7#GH", body: ["before"] },
     { action: "insert_after", anchor: "9#JK", body: ["after"] },
     { action: "prepend", body: ["first"] },
-    { action: "copy", anchor: "1#AB", before: "3#CD" },
-    { action: "move", anchor: "3#CD", after: "5#EF" },
   ];
   let header: ReturnType<typeof tool.renderCall> | undefined;
   const context = { state: {} } as Parameters<typeof tool.renderCall>[2];
@@ -133,12 +131,10 @@ test("partial edit actions → refresh per-action counts", () => {
   };
   assert.match(render([edits[0], {}]), /unknown ×1/);
   const mixed = render(edits);
-  assert.match(mixed, /9 ops:/);
+  assert.match(mixed, /7 ops:/);
   for (const [kind, count] of [
     ["replace", 2],
     ["delete", 1],
-    ["copy", 1],
-    ["move", 1],
     ["insert_before", 1],
     ["insert_after", 1],
     ["append", 1],
@@ -149,7 +145,7 @@ test("partial edit actions → refresh per-action counts", () => {
   assert.doesNotMatch(mixed, /unknown/);
   const single = render([edits[0]]);
   assert.match(single, /1 op: replace ×1/);
-  assert.doesNotMatch(single, /append|copy|delete|insert_before|insert_after|move|prepend/);
+  assert.doesNotMatch(single, /append|delete|insert_before|insert_after|prepend/);
   assert.match(
     render([null, { action: "rep" }, { action: "__proto__" }, { action: { toString: null } }]),
     /4 ops: unknown ×4/,

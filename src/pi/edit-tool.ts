@@ -51,11 +51,7 @@ interface EditOpSpec {
   readonly meaning: string;
   readonly required: readonly EditItemField[];
   readonly optional?: readonly EditItemField[];
-  /** Destinations, of which exactly one is required. */
-  readonly destination?: readonly EditItemField[];
 }
-
-const TRANSFER_DESTINATION = ["before", "after"] as const;
 
 /** Every op and its fields; the schema states them, and argument checks enforce them. */
 const EDIT_OPS = {
@@ -73,20 +69,6 @@ const EDIT_OPS = {
     meaning: "Insert body before the anchor line, which is kept; do not repeat it in body.",
     required: ["anchor", "body"],
   },
-  copy: {
-    meaning:
-      "Copy the cited line(s), text and indentation unchanged, before or after another original line; use a body edit when either changes.",
-    required: ["anchor"],
-    optional: ["end"],
-    destination: TRANSFER_DESTINATION,
-  },
-  move: {
-    meaning:
-      "Move the cited line(s), text and indentation unchanged, before or after another original line, removing the source; use a body edit when either changes.",
-    required: ["anchor"],
-    optional: ["end"],
-    destination: TRANSFER_DESTINATION,
-  },
   append: { meaning: "Add body at the end of the file.", required: ["body"] },
   prepend: { meaning: "Add body at the start of the file.", required: ["body"] },
 } as const satisfies Record<string, EditOpSpec>;
@@ -97,12 +79,8 @@ const EDIT_OP_NAMES = Object.keys(EDIT_OPS) as EditOpName[];
 const MAX_EDIT_OPS = 64;
 
 /** An op's meaning followed by the fields it takes. */
-function describeEditOp({ meaning, required, optional = [], destination }: EditOpSpec): string {
-  const takes = [
-    ...required,
-    ...(destination ? [`exactly one of ${destination.join(" or ")}`] : []),
-  ].join(" and ");
-  return `${meaning} Takes ${takes}${optional.length ? `; ${optional.join(", ")} is optional` : ""}.`;
+function describeEditOp({ meaning, required, optional = [] }: EditOpSpec): string {
+  return `${meaning} Takes ${required.join(" and ")}${optional.length ? `; ${optional.join(", ")} is optional` : ""}.`;
 }
 
 /**
@@ -132,8 +110,6 @@ function buildEditSchema(hashLen: number) {
             'New lines, one per element, without CR/LF. At least one; [""] is one blank line.',
         }),
       ),
-      before: anchorField("Insert captured lines before this original line."),
-      after: anchorField("Insert captured lines after this original line."),
     },
     {
       additionalProperties: false,
@@ -149,7 +125,7 @@ function buildEditSchema(hashLen: number) {
       edits: Type.Array(editOpSchema, {
         minItems: 1,
         maxItems: MAX_EDIT_OPS,
-        description: `Operations on one snapshot; ranges must not overlap. Each gap between lines takes at most one insertion, copy/move destinations included; insert_after N and insert_before N+1 target the same gap, so put all new lines for a gap in one body. An insertion at the start of a replaced or deleted range goes before it. Anchors are LINE#HASH with exactly ${hashLen} hash characters. Copy each anchor from read, grep, or edit failure diagnostics; never write a hash you have not seen there. Shell output such as sed, head, or cat has no anchors, so read or grep those lines first.`,
+        description: `Operations on one snapshot; ranges must not overlap. Each gap between lines takes at most one insertion; insert_after N and insert_before N+1 target the same gap, so put all new lines for a gap in one body. An insertion at the start of a replaced or deleted range goes before it. Anchors are LINE#HASH with exactly ${hashLen} hash characters. Copy each anchor from read, grep, or edit failure diagnostics; never write a hash you have not seen there. Shell output such as sed, head, or cat has no anchors, so read or grep those lines first.`,
       }),
     },
     { additionalProperties: false },
@@ -189,11 +165,7 @@ function checkEditArguments(
     const name = edit.action as EditOpName;
     const spec: EditOpSpec = EDIT_OPS[name];
     const path = `edits[${index}]`;
-    const accepted = new Set([
-      ...spec.required,
-      ...(spec.optional ?? []),
-      ...(spec.destination ?? []),
-    ]);
+    const accepted = new Set([...spec.required, ...(spec.optional ?? [])]);
     for (const [field, declaration] of Object.entries(item.properties)) {
       if (field === "action") continue;
       const given = edit[field] !== undefined;
@@ -206,11 +178,6 @@ function checkEditArguments(
           Reflect.get(declaration, "description"),
         );
     }
-    if (
-      spec.destination &&
-      spec.destination.filter((field) => edit[field] !== undefined).length !== 1
-    )
-      report(path, `expected exactly one of: ${spec.destination.join(", ")}`);
 
     const body = edit.body;
     if (accepted.has("body") && Array.isArray(body)) {
@@ -246,7 +213,7 @@ function checkEditArguments(
       }
     }
 
-    // The cited line numbers alone decide these, whatever the file holds. An
+    // The cited line numbers alone decide this, whatever the file holds. An
     // unsafe line number was reported above, and comparing it would add a false issue.
     const lineOf = (field: EditItemField) => {
       const anchor = edit[field];
@@ -258,14 +225,6 @@ function checkEditArguments(
     if (first === undefined) return;
     const last = lineOf("end") ?? first;
     if (last < first) report(`${path}.end`, `line ${last} is before anchor line ${first}`);
-    if (name !== "move") return;
-    for (const field of TRANSFER_DESTINATION) {
-      const line = lineOf(field);
-      if (line === undefined) continue;
-      const gap = field === "before" ? line - 1 : line;
-      if (first - 1 < gap && gap < last)
-        report(`${path}.${field}`, `lies inside the moved range ${first}..${last}`);
-    }
   });
 }
 
@@ -285,13 +244,6 @@ function toCoreEdits(ops: readonly EditOpInput[]): Edit[] {
         };
       case "delete":
         return { op: "delete", anchor: parseAnchor(op.anchor!), end: parseAnchor(op.end) };
-      case "copy":
-      case "move": {
-        const source = { op: op.action, anchor: parseAnchor(op.anchor!), end: parseAnchor(op.end) };
-        return op.before !== undefined
-          ? { ...source, before: parseAnchor(op.before) }
-          : { ...source, after: parseAnchor(op.after!) };
-      }
       case "insert_after":
       case "insert_before":
         return { op: op.action, anchor: parseAnchor(op.anchor!), body: op.body! };
@@ -350,7 +302,7 @@ export function makeEditOverride(
       promptSnippet: "Edit file lines using verified anchors",
       promptGuidelines: [
         "Batch all edits to one file into a single edit call.",
-        "After edit or replace, get fresh anchors with read or grep before citing any line it changed. If it added or removed lines, also refresh anchors below the earliest affected line; anchors above it remain valid. If the affected positions are unknown, read or grep the lines you intend to cite.",
+        "Before citing a line after write, edit, or replace, get its anchor from a new read or grep. Only after edit, lines above the earliest changed line keep their anchors.",
       ],
       check: (args, report) =>
         checkEditArguments(args, hashLen, schema.properties.edits.items, report),

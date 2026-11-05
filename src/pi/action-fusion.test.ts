@@ -211,7 +211,7 @@ test("target changes after publication → skips then_run and reports freshness 
       assert.equal(report?.publication, "PUBLISHED");
       assert.equal(report?.freshness, state);
       assert.equal(report?.then_run?.status, "skipped");
-      assert.equal(report?.next, REREAD);
+      assert.equal(report?.next, state === "missing" ? undefined : REREAD);
       assert.equal(result.content.length, 1);
       if (state === "unknown") assert.ok(report?.freshnessError);
       if (state === "changed") assert.equal(await readFile(target, "utf8"), "external\n");
