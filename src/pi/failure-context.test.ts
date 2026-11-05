@@ -7,7 +7,7 @@ import type { AnchorFailure, Edit } from "../core/types.ts";
 import { formatByteSize, DEFAULT_OUTPUT_BUDGETS, outputBudgetsFor } from "./budgets.ts";
 import { DEFAULT_CONFIG } from "./config.ts";
 import { createAnchorFormatter } from "./anchor-format.ts";
-import { ambiguousCandidateNeighborhoods, describeEditFailure } from "./failure-context.ts";
+import { describeEditFailure } from "./failure-context.ts";
 import { describeMutationFailure } from "./mutation-result.ts";
 import { renderReport } from "./report.ts";
 
@@ -30,24 +30,33 @@ function ambiguous(lines: readonly string[], positions: number[], hashLen = 4): 
   });
 }
 function neighborhoods(text: string, failures: readonly AnchorFailure[], hashLen = 4) {
-  return ambiguousCandidateNeighborhoods(
+  const error = describeEditFailure(
     text,
     failures,
     createAnchorFormatter(hashLen),
     DEFAULT_OUTPUT_BUDGETS,
   );
+  assert.equal(error.errorCode, "ANCHOR_MISMATCH");
+  assert.ok(error.facts);
+  assert.equal(error.facts.failures.length, failures.length);
+  assert.equal(error.facts.omittedFailures, undefined);
+  return error.facts;
 }
 function rows(result: ReturnType<typeof neighborhoods>) {
   return result.candidateNeighborhoods?.flatMap((group) => group.rows) ?? [];
 }
 
 test("unique and unresolved failures → no ambiguous neighborhoods", () => {
-  const failures = [
-    failure({ kind: "found", newLine: 2, newHash: "NEW" }),
-    failure({ kind: "none" }),
-  ];
-  for (const text of ["a\nb\nc\n", ""]) {
-    assert.deepEqual(neighborhoods(text, failures), {});
+  for (const { text, failures } of [
+    {
+      text: "a\nb\nc\n",
+      failures: [failure({ kind: "found", newLine: 2, newHash: "NEW" }), failure({ kind: "none" })],
+    },
+    { text: "", failures: [failure({ kind: "none" })] },
+  ]) {
+    const facts = neighborhoods(text, failures);
+    assert.equal(facts.candidateNeighborhoods, undefined);
+    assert.equal(facts.omittedNeighborhoodRows, undefined);
   }
 });
 

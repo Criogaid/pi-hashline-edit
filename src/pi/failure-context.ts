@@ -84,7 +84,7 @@ function groupContextRows(rows: readonly ContextRow[]) {
 }
 
 /** Observation rows around listed ambiguous candidates, lowest lines first. */
-export function ambiguousCandidateNeighborhoods(
+function ambiguousCandidateNeighborhoods(
   currentText: string,
   failures: readonly AnchorFailure[],
   anchors: AnchorFormatter,
