@@ -361,11 +361,16 @@ export const PUBLICATION_NEXT = {
     "The change may or may not be saved. Read the file, and repeat the change only if it is missing.",
 } as const satisfies Record<Exclude<PublicationStatus, "NOT_PUBLISHED">, string>;
 
+/** One fact's recovery; `except` is a value of that fact which needs none. */
+type OutcomeRule = {
+  [F in FactName]: readonly [fact: F, next: string, except?: Static<(typeof FACT_FIELDS)[F]>];
+}[FactName];
+
 /**
  * Recovery after a successful result, by the first fact present in this order.
  * A fact absent from this list, or holding the value its rule excepts, needs no recovery beyond itself.
  */
-export const OUTCOME_NEXT: readonly (readonly [fact: FactName, next: string, except?: string])[] = [
+export const OUTCOME_NEXT: readonly OutcomeRule[] = [
   // A file that no longer exists has no anchors to refresh.
   ["freshness", REREAD, "missing"],
   [
