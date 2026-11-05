@@ -53,7 +53,7 @@ The extension replaces Pi's `read`, `grep`, `edit`, and `write`, and adds `repla
 | Tool | What it does |
 | --- | --- |
 | `read` | Shows UTF-8 text with anchors, paginated within the model's output budget. Images and files containing NUL bytes go to Pi's built-in read. |
-| `grep` | Searches files and directories with JavaScript regex or literal text; returns anchored matches, file paths, or counts in traversal order; a limit keeps the first matches in that order. Directory searches respect ignore rules and skip `.git` and linked directories; naming one of those in `path` searches it. |
+| `grep` | Searches files and directories with JavaScript regex or literal text; returns anchored matches, file paths, or counts in traversal order; a limit keeps the first matches in that order. Directory searches respect ignore rules and skip `.git` and linked directories, even beneath a directory named in `path`; naming an ignored file or one of those directories itself searches it. |
 | `edit` | Replaces, inserts, or deletes whole lines by anchor. All operations in one call apply to the same snapshot, or none apply. |
 | `replace` | Applies literal or regex substitutions across one file. Every rule must match, and overlapping matches reject the batch. |
 | `write` | Creates a file (`mode: "create"`) or overwrites one (`mode: "overwrite"`), using the content exactly as given. |
