@@ -442,6 +442,64 @@ test("gitignored directory → root traversal skips it and an explicit directory
   }
 });
 
+test("named directory → nested ignores, .git and links still limit traversal", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "hl-grep-nested-scope-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  await mkdir(join(directory, ".git"));
+  await writeFile(join(directory, ".gitignore"), "node_modules/\ndist/\n*.map\n");
+  for (const file of [
+    "node_modules/foo/index.js",
+    "node_modules/foo/dist/bundle.js",
+    "node_modules/foo/index.js.map",
+    "named/index.js",
+    "named/nested/.git/config",
+    "target/linked.js",
+  ]) {
+    await mkdir(dirname(join(directory, file)), { recursive: true });
+    await writeFile(join(directory, file), "needle\n");
+  }
+  const tool = makeGrepOverrideWithBackend(directory, DEFAULT_CONFIG, {});
+  for (const { path, expected, linked } of [
+    { path: "node_modules/foo", expected: "node_modules/foo/index.js" },
+    { path: "node_modules/foo/dist", expected: "node_modules/foo/dist/bundle.js" },
+    { path: "node_modules/foo/index.js.map", expected: "node_modules/foo/index.js.map" },
+    { path: "named", expected: "named/index.js" },
+    { path: "named", expected: "named/index.js", linked: true },
+  ]) {
+    await t.test(`${path}${linked ? " with nested link" : ""}`, async (t) => {
+      if (linked) {
+        try {
+          await symlink(
+            join(directory, "target"),
+            join(directory, "named/nested/link"),
+            process.platform === "win32" ? "junction" : "dir",
+          );
+        } catch (error) {
+          if (
+            error instanceof Error &&
+            "code" in error &&
+            ["EPERM", "EACCES", "ENOTSUP"].includes(String(error.code))
+          ) {
+            t.skip("symbolic link creation unavailable");
+            return;
+          }
+          throw error;
+        }
+      }
+      const result = await callTool(tool, {
+        path: [path],
+        literal: true,
+        pattern: ["needle"],
+        outputMode: "files",
+      });
+      assert.equal(result.isError, undefined, JSON.stringify(reportOf(result, "grep")));
+      assert.equal(grepCounts(result).matches, 1);
+      assert.equal(result.content[0].type, "text");
+      assert.equal(result.content[0].text.replace(/\\/g, "/"), expected);
+    });
+  }
+});
+
 test("directory traversal with caller globs → excludes .git while an explicit .git path remains searchable", async (t) => {
   const directory = await mkdtemp(join(tmpdir(), "hl-grep-git-scope-"));
   t.after(() => rm(directory, { recursive: true, force: true }));
