@@ -16,6 +16,7 @@ import {
   rm,
   stat,
   link,
+  type FileHandle,
 } from "node:fs/promises";
 import type { BigIntStats, Stats } from "node:fs";
 import { dirname, join } from "node:path";
@@ -83,11 +84,43 @@ function requireRegularFile(target: Stats | BigIntStats): void {
     throw new HashlineError("NOT_REGULAR_FILE", PATH_ERROR_MESSAGES.NOT_REGULAR_FILE);
 }
 
+const REGULAR_FILE_READ_CHUNK_BYTES = 64 * 1024;
+
+/** 完整读取常规文件，即使底层文件系统返回短读。 */
+async function readRegularFileBytes(
+  handle: FileHandle,
+  size: bigint,
+  signal: AbortSignal | undefined,
+): Promise<Buffer> {
+  const chunks: Buffer[] = [];
+  let position = 0n;
+  while (position < size) {
+    throwIfCancelled(signal);
+    const remaining = size - position;
+    const length = Number(
+      remaining < BigInt(REGULAR_FILE_READ_CHUNK_BYTES)
+        ? remaining
+        : BigInt(REGULAR_FILE_READ_CHUNK_BYTES),
+    );
+    const buffer = Buffer.allocUnsafe(length);
+    const result = await handle.read({
+      buffer,
+      offset: 0,
+      length,
+      position: Number(position),
+    });
+    if (result.bytesRead <= 0 || result.bytesRead > length) throw new FileChangedDuringReadError();
+    chunks.push(buffer.subarray(0, result.bytesRead));
+    position += BigInt(result.bytesRead);
+  }
+  return Buffer.concat(chunks);
+}
+
 /** Check the opened object before reading; a FIFO must not block even if the path changed. */
 async function readRegularFile(path: string, signal?: AbortSignal): Promise<Buffer> {
   return withFileRead(path, signal, async (handle, before) => {
     requireRegularFile(before);
-    return handle.readFile({ signal });
+    return readRegularFileBytes(handle, before.size, signal);
   });
 }
 

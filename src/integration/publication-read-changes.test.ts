@@ -41,22 +41,25 @@ async function withDisturbedRead<T>(
   run: () => Promise<T>,
 ): Promise<T> {
   const nativeOpen = fs.promises.open;
+  const expectedBytes = Buffer.from(expected);
   let disturbed = false;
   t.mock.method(fs.promises, "open", async (...args: Parameters<typeof nativeOpen>) => {
     const handle = await nativeOpen(...args);
     if (args[0] === path) {
-      const nativeRead = handle.readFile;
-      t.mock.method(handle, "readFile", async (...readArgs: Parameters<typeof nativeRead>) => {
-        const bytes = await nativeRead.apply(handle, readArgs);
-        assert.ok(Buffer.isBuffer(bytes));
-        if (!disturbed && ready(bytes)) {
+      const nativeRead = handle.read.bind(handle);
+      const chunks: Buffer[] = [];
+      t.mock.method(handle, "read", async (...readArgs: Parameters<typeof nativeRead>) => {
+        const result = await nativeRead(...readArgs);
+        chunks.push(Buffer.from(result.buffer as Uint8Array).subarray(0, result.bytesRead));
+        const bytes = Buffer.concat(chunks);
+        if (!disturbed && bytes.length >= expectedBytes.length && ready(bytes)) {
           disturbed = true;
-          assert.deepEqual(bytes, Buffer.from(expected));
+          assert.deepEqual(bytes, expectedBytes);
           if (disturbance === "I/O failure") throw READ_FAILURE;
           if (disturbance === "delete") fs.unlinkSync(path);
           else fs.appendFileSync(path, CONCURRENT_APPEND);
         }
-        return bytes;
+        return result;
       });
     }
     return handle;

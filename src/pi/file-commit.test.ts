@@ -141,6 +141,42 @@ test("create never overwrites an existing target", async () =>
     assert.equal(await readFile(target, "utf8"), "original\n");
   }));
 
+test("short low-level reads → complete mutation snapshots before revision binding", async (t) =>
+  withTemp(async (dir) => {
+    const target = join(dir, "short-read.txt");
+    const expected = Buffer.from("x".repeat(66_722));
+    const shortRead = 65_512;
+    await writeFile(target, expected);
+    const nativeOpen = fsPromises.open;
+    let lowLevelReads = 0;
+    t.mock.method(fsPromises, "open", async (...args: Parameters<typeof nativeOpen>) => {
+      const handle = await nativeOpen(...args);
+      if (args[0] !== target) return handle;
+      const nativeReadFile = handle.readFile.bind(handle);
+      t.mock.method(handle, "readFile", async () =>
+        (await nativeReadFile()).subarray(0, shortRead),
+      );
+      const nativeRead = handle.read.bind(handle);
+      t.mock.method(handle, "read", async (...readArgs: Parameters<typeof nativeRead>) => {
+        const result = await nativeRead(...readArgs);
+        return lowLevelReads++ === 0
+          ? { ...result, bytesRead: Math.min(result.bytesRead, shortRead) }
+          : result;
+      });
+      return handle;
+    });
+    syncBuiltinESMExports();
+    try {
+      const snapshot = await readEditableSnapshot(target);
+      assert.equal(snapshot.text, expected.toString("utf8"));
+      assert.equal(snapshot.baseRevision, byteRevision(expected));
+      assert.ok(lowLevelReads >= 2);
+    } finally {
+      t.mock.restoreAll();
+      syncBuiltinESMExports();
+    }
+  }));
+
 test("replacement exposes complete old or new content during concurrent reads", async (t) =>
   withTemp(async (dir) => {
     if (process.platform === "win32")
