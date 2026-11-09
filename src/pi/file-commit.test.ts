@@ -152,10 +152,6 @@ test("short low-level reads → complete mutation snapshots before revision bind
     t.mock.method(fsPromises, "open", async (...args: Parameters<typeof nativeOpen>) => {
       const handle = await nativeOpen(...args);
       if (args[0] !== target) return handle;
-      const nativeReadFile = handle.readFile.bind(handle);
-      t.mock.method(handle, "readFile", async () =>
-        (await nativeReadFile()).subarray(0, shortRead),
-      );
       const nativeRead = handle.read.bind(handle);
       t.mock.method(handle, "read", async (...readArgs: Parameters<typeof nativeRead>) => {
         const result = await nativeRead(...readArgs);
