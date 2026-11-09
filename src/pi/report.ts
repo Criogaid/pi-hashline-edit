@@ -75,8 +75,13 @@ export function decodeReport(text: string, contextTool: ReportTool): Report | un
   if (!text.startsWith("{")) return undefined;
   try {
     let value: unknown = JSON.parse(text);
-    if (typeof value === "object" && value !== null && !Array.isArray(value) && !("tool" in value))
-      value = { tool: contextTool, ...value };
+    if (typeof value === "object" && value !== null && !Array.isArray(value)) {
+      if ("tool" in value) {
+        if (value.tool !== contextTool) return undefined;
+      } else {
+        value = { tool: contextTool, ...value };
+      }
+    }
     return Value.Check(WIRE_REPORT_SCHEMA, value) ? (value as Report) : undefined;
   } catch (error) {
     if (error instanceof SyntaxError || error instanceof RangeError || error instanceof TypeError)
@@ -89,15 +94,15 @@ export function decodeReport(text: string, contextTool: ReportTool): Report | un
  * The report a result's details carry, checked once against the wire schema: details also
  * come from saved sessions and other extensions' result hooks, so their shape is unknown.
  */
-export function detailsReport(details: unknown): Report | undefined {
+export function detailsReport(details: unknown, contextTool?: ReportTool): Report | undefined {
   const report: unknown =
     typeof details === "object" && details !== null ? Reflect.get(details, "report") : undefined;
   try {
     // Hooks can introduce cycles; reject non-JSON reports before recursive schema validation.
     JSON.stringify(report);
-    return report !== undefined && Value.Check(WIRE_REPORT_SCHEMA, report)
-      ? (report as Report)
-      : undefined;
+    if (report === undefined || !Value.Check(WIRE_REPORT_SCHEMA, report)) return undefined;
+    const checked = report as Report;
+    return contextTool === undefined || checked.tool === contextTool ? checked : undefined;
   } catch (error) {
     if (error instanceof TypeError || error instanceof RangeError) return undefined;
     throw error;
@@ -109,7 +114,7 @@ export function reportOf(
   result: { readonly content: Content; readonly details?: unknown },
   tool: ReportTool,
 ): Report | undefined {
-  const report = detailsReport(result.details);
+  const report = detailsReport(result.details, tool);
   if (report) return report;
   const last = result.content.at(-1);
   return last?.type === "text" ? decodeReport(last.text, tool) : undefined;

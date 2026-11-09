@@ -180,7 +180,7 @@ export function makeGrepOverrideWithBackend(
     ) {
       if (isPartial) return new Text(theme.fg("warning", "Searching…"), 0, 0);
       if (context.isError) return renderToolError(result, "grep", theme, expanded);
-      const { content, report } = splitReport(result);
+      const { content, report } = splitReport(result, "grep");
       const payload = content[0];
       return renderOutputPreview(
         [

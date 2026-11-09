@@ -214,11 +214,14 @@ export function reportLines(
  * read reports only here or through renderToolError, so the facts a card shows and the
  * block it strips come from one check; content that is not our report stays.
  */
-export function splitReport(result: Pick<AgentToolResult<unknown>, "content" | "details">): {
+export function splitReport(
+  result: Pick<AgentToolResult<unknown>, "content" | "details">,
+  tool: ReportTool,
+): {
   content: AgentToolResult<unknown>["content"];
   report: Report | undefined;
 } {
-  const report = detailsReport(result.details);
+  const report = detailsReport(result.details, tool);
   const last = result.content.at(-1);
   const ours = report !== undefined && last?.type === "text" && last.text === renderReport(report);
   return { content: ours ? result.content.slice(0, -1) : result.content, report };
@@ -279,7 +282,7 @@ export function diffCardRenderers<TArgs>(
       publishDiffCounts(diff, context, (counts) => {
         context.state.callText?.setText(header(context.args, theme, counts));
       });
-      const { report } = splitReport(result);
+      const { report } = splitReport(result, tool);
       const facts = report ? reportLines(report, theme, MUTATION_CARD_SHOWN) : [];
       const emptyDiff =
         report?.publication === "NOT_PUBLISHED"

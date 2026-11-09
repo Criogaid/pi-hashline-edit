@@ -258,7 +258,7 @@ test("success reports → omit repeated call fields while retaining details and 
   assert.ok(last?.type === "text");
   assert.deepEqual(JSON.parse(last.text), { publication: "PUBLISHED", created: true });
   assert.deepEqual(result.details.report, report);
-  assert.deepEqual(splitReport(result), { content: payload, report });
+  assert.deepEqual(splitReport(result, "write"), { content: payload, report });
   assert.equal(result.content.length, 2);
 });
 
@@ -276,6 +276,12 @@ test("success facts without a tool → use call context and enforce tool-specifi
     "null",
   ])
     assert.equal(decodeReport(invalid, "write"), undefined);
+  const foreign: Report = { tool: "grep", matches: 1 };
+  const foreignText = JSON.stringify(foreign);
+  const hooked = { content: [text(foreignText)], details: { report: foreign } };
+  assert.equal(decodeReport(foreignText, "read"), undefined);
+  assert.equal(reportOf(hooked, "read"), undefined);
+  assert.deepEqual(splitReport(hooked, "read"), { content: hooked.content, report: undefined });
 });
 
 test("checked report with a different trailing block → preserves the entire payload", () => {
@@ -288,8 +294,8 @@ test("checked report with a different trailing block → preserves the entire pa
   ]) {
     const content = [text("saved payload"), last];
     const result: Parameters<typeof splitReport>[0] = { content, details: { report } };
-    assert.deepEqual(splitReport(result), { content, report });
-    assert.equal(splitReport(result).content, content);
+    assert.deepEqual(splitReport(result, "write"), { content, report });
+    assert.equal(splitReport(result, "write").content, content);
   }
 });
 
@@ -406,7 +412,7 @@ test("invalid details report → falls back to valid text and leaves content int
     const last = expected ? renderReport(expected) : JSON.stringify({ matches: "x" }, null, 2);
     const result = { details, content: [text("payload"), text(last)] };
     assert.deepEqual(reportOf(result, "grep"), expected);
-    assert.deepEqual(splitReport(result), { content: result.content, report: undefined });
+    assert.deepEqual(splitReport(result, "grep"), { content: result.content, report: undefined });
     assert.equal(result.content.length, 2);
   }
 });
@@ -437,7 +443,7 @@ test("hooked details contain a cyclic report cause → preserves payload and dec
   const content = [text(renderReport(fallback))];
   const result = { details: { report: { ...fallback, cause } }, content };
   assert.deepEqual(reportOf(result, "read"), fallback);
-  assert.deepEqual(splitReport(result), { content, report: undefined });
+  assert.deepEqual(splitReport(result, "read"), { content, report: undefined });
 });
 
 test("native mutation failure before commit → retains publication", () => {
