@@ -147,7 +147,7 @@ test("write returns only a summary for empty, short, and long content", async ()
       assert.equal(result.content.length, 1);
       const block = result.content[0];
       assert.equal(block.type, "text");
-      assert.deepEqual(JSON.parse(block.text), { publication: "PUBLISHED", created: true });
+      assert.deepEqual(JSON.parse(block.text), { publication: "PUBLISHED" });
       assert.equal(await readFile(join(dir, path), "utf8"), content);
     }
   }));

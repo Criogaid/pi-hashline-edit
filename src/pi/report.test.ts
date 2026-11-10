@@ -258,7 +258,7 @@ test("success reports → omit repeated call fields while retaining details and 
   const result = reportResult(report, payload);
   const last = result.content.at(-1);
   assert.ok(last?.type === "text");
-  assert.deepEqual(JSON.parse(last.text), { publication: "PUBLISHED", created: true });
+  assert.deepEqual(JSON.parse(last.text), { publication: "PUBLISHED" });
   assert.deepEqual(result.details.report, report);
   assert.deepEqual(splitReport(result, "write"), { content: payload, report });
   assert.equal(result.content.length, 2);
@@ -267,9 +267,14 @@ test("success reports → omit repeated call fields while retaining details and 
 test("success facts without a tool → use call context and enforce tool-specific fields", () => {
   const report: Report = { tool: "write", publication: "PUBLISHED", created: true };
   const serialized = renderReport(report);
-  assert.deepEqual(reportFromText(serialized, "write"), report);
-  for (const tool of ["read", "grep", "edit", "replace"] as const)
+  assert.deepEqual(reportFromText(serialized, "write"), {
+    tool: "write",
+    publication: "PUBLISHED",
+  });
+  for (const tool of ["read", "grep"] as const)
     assert.equal(reportFromText(serialized, tool), undefined);
+  for (const tool of ["edit", "replace"] as const)
+    assert.deepEqual(reportFromText(serialized, tool), { tool, publication: "PUBLISHED" });
   for (const invalid of [
     '{"created":true,"foreign":true}',
     '{"error":"INVALID_ARGUMENTS","message":"missing issues"}',
@@ -333,7 +338,7 @@ test("replacement failure facts → survive report serialization", () => {
   }
 });
 
-test("grep success and incomplete candidate facts → survive report serialization", () => {
+test("TUI-only facts survive details but stay out of model report text", () => {
   for (const report of [
     { tool: "grep", matches: 1 },
     { tool: "grep", matches: 1, scanned: "files" },
@@ -353,8 +358,15 @@ test("grep success and incomplete candidate facts → survive report serializati
     },
   ] satisfies Report[]) {
     const serialized = renderReport(report);
-    assert.deepEqual(reportFromText(serialized, report.tool), report);
-    assert.deepEqual(reportOf({ content: [text(serialized)] }, report.tool), report);
+    const { scanned: _scanned, tool, ...modelReport } = report;
+    assert.deepEqual(reportFromText(serialized, report.tool), {
+      ...modelReport,
+      tool,
+    });
+    assert.deepEqual(
+      reportOf({ content: [text(serialized)], details: { report } }, report.tool),
+      report,
+    );
   }
 });
 
@@ -427,7 +439,6 @@ test("output byte limit → follows the scan limit and precedes the line preview
     linePreviewLimit: DEFAULT_OUTPUT_BUDGETS.grepPreviewUnits,
   });
   assert.deepEqual(Object.keys(JSON.parse(serialized)), [
-    "scanned",
     "scanLimit",
     "outputLimit",
     "linePreviewLimit",

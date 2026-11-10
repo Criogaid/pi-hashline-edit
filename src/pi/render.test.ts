@@ -12,7 +12,7 @@ import type { TSchema } from "typebox";
 import { theme } from "../../node_modules/@earendil-works/pi-coding-agent/dist/modes/interactive/theme/theme.js";
 import { makeEditOverride } from "./tool-factories.testing.ts";
 import { makeReplaceTool } from "./tool-factories.testing.ts";
-import { diffCardRenderers, reportLines } from "./render.ts";
+import { MUTATION_CARD_SHOWN, diffCardRenderers, reportLines } from "./render.ts";
 import { withMutationStatus } from "./fusion-card.ts";
 import { makeWriteOverride } from "./tool-factories.testing.ts";
 import { generateMutationDetails } from "./mutation-result.ts";
@@ -725,4 +725,20 @@ test("report text has many short lines within the byte budget → renders every 
       assert.equal(lines.at(-1)?.trim(), "last");
     });
   }
+});
+
+test("TUI-only mutation facts render on the card while model serialization omits them", () => {
+  initTheme("dark");
+  const report: Report = {
+    tool: "edit",
+    path: "a.txt",
+    publication: "PUBLISHED",
+    progressError: { message: "display unavailable" },
+  };
+  const output = stripVTControlCharacters(
+    reportLines(report, theme, MUTATION_CARD_SHOWN).join("\n"),
+  );
+  assert.match(output, /progressError/);
+  assert.match(output, /display unavailable/);
+  assert.doesNotMatch(renderReport(report), /progressError|display unavailable/);
 });

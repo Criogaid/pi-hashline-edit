@@ -30,17 +30,18 @@ import type { OutputBudgets } from "./budgets.ts";
 import { cancellationError } from "./error-text.ts";
 import {
   ERROR_DEFINITIONS,
+  MODEL_OMITTED_FIELDS,
   OUTCOME_NEXT,
   PUBLICATION_NEXT,
   REPORT_SCHEMA,
   WIRE_REPORT_SCHEMA,
   type ErrorCode,
   type FailureReport,
+  type ModelOmittedField,
   type Report,
   type ReportTool,
   type SuccessReport,
 } from "./report-schema.ts";
-
 /** Every result's details carry its report for the TUI; Pi does not send details to the model. */
 export interface ReportDetails<TReport extends Report = Report> {
   readonly report: TReport;
@@ -50,11 +51,10 @@ type Content = AgentToolResult<unknown>["content"];
 
 /** What a report's text states: the originating call supplies its tool and path. */
 export type ReportText<R extends Report = Report> = R extends unknown
-  ? Omit<R, "tool" | "path">
+  ? Omit<R, ModelOmittedField>
   : never;
 
-/** Fields the originating call supplies, which a result's text never repeats. */
-const CALL_FIELDS = new Set(["tool", "path"]);
+/** Fields whose values are supplied by the call or reserved for TUI/host audiences. */
 
 /** The fields a report states, in schema order; both renderers list them in this order. */
 export function reportEntries(report: ReportText): [string, unknown][] {
@@ -66,7 +66,9 @@ export function reportEntries(report: ReportText): [string, unknown][] {
 
 /** Serialize facts in schema order; a result never repeats its call's tool and path. */
 export function renderReport(report: ReportText): string {
-  const entries = reportEntries(report).filter(([key]) => !CALL_FIELDS.has(key));
+  const entries = reportEntries(report).filter(
+    ([key]) => !MODEL_OMITTED_FIELDS.has(key as ModelOmittedField),
+  );
   return JSON.stringify(Object.fromEntries(entries), null, 2);
 }
 
@@ -139,7 +141,9 @@ export function reportResult<TDetails extends object | undefined>(
   const complete = Object.fromEntries(
     reportEntries({ ...report, next: outcomeNext(report) }),
   ) as SuccessReport;
-  const stated = Object.keys(complete).some((key) => !CALL_FIELDS.has(key));
+  const stated = Object.keys(complete).some(
+    (key) => !MODEL_OMITTED_FIELDS.has(key as ModelOmittedField),
+  );
   return {
     content:
       stated || payload.length === 0

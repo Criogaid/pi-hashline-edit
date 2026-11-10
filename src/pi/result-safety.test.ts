@@ -149,9 +149,11 @@ test("progress callback failures → preserve publication and allow the command"
       );
       assert.equal(commands, 1);
       assert.equal(await readFile(path, "utf8"), "saved\n");
-      assert.equal(reportOf(result, "write")?.publication, "PUBLISHED");
-      assert.equal(reportOf(result, "write")?.then_run?.status, "succeeded");
-      assert.match(text(result), /display unavailable/);
+      const report = reportOf(result, "write");
+      assert.equal(report?.publication, "PUBLISHED");
+      assert.equal(report?.then_run?.status, "succeeded");
+      assert.equal(report?.progressError?.message, "display unavailable");
+      assert.doesNotMatch(text(result), /display unavailable/);
     }
   } finally {
     await rm(dir, { recursive: true, force: true });

@@ -247,7 +247,7 @@ export function renderToolError(
 }
 
 /** Facts a mutation card presents another way: the command card owns then_run. */
-export const MUTATION_CARD_SHOWN = new Set(["then_run", "progressError"]);
+export const MUTATION_CARD_SHOWN = new Set(["then_run"]);
 
 /** The cards of a tool that shows a diff (edit, replace); each supplies only its header and pending text. */
 export function diffCardRenderers<TArgs>(

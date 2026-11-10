@@ -15,7 +15,7 @@
  * @module pi-hashline-edit/pi
  */
 
-import { Type, type Static, type TObject, type TProperties } from "typebox";
+import { Type, type Static, type TObject, type TProperties, type TSchema } from "typebox";
 
 const count = (description: string) => Type.Integer({ minimum: 1, description });
 const opt = Type.Optional;
@@ -148,88 +148,208 @@ const ARGUMENT_ISSUE_SCHEMA = Type.Object(
 export type ArgumentIssue = Static<typeof ARGUMENT_ISSUE_SCHEMA>;
 
 /**
+ * Every fact carries its schema and its audience contract here. Model-visible
+ * facts must also state the decision their value changes; TUI-only facts omit it.
+ */
+type FactAudience = "model" | "tui";
+type FactDefinition<T extends TSchema = TSchema> = {
+  schema: T;
+  audience: FactAudience;
+  decision?: string;
+};
+
+function modelFact<T extends TSchema>(schema: T, decision: string): FactDefinition<T> {
+  if (decision.trim().length === 0) throw new Error("Model facts require a decision statement.");
+  return { schema, audience: "model", decision };
+}
+
+function tuiFact<T extends TSchema>(schema: T): FactDefinition<T> {
+  return { schema, audience: "tui" };
+}
+
+/**
  * Every fact a report can carry beside the envelope, in output order: failure
  * facts first, then each tool's outcome, freshness, and the command.
  */
 const FACT_FIELDS = {
   // Argument rejection (argument-error.ts).
-  issues: Type.Array(ARGUMENT_ISSUE_SCHEMA),
-  omittedIssues: count("Issues omitted from the byte budget."),
-  schemaLimited: Type.Literal(true, {
-    description: "A native diagnostic allowance was reached; more issues may exist.",
-  }),
-  missing: Type.Array(Type.String(), {
-    description: "Resolved paths that do not exist; shows where a relative path led.",
-  }),
+  issues: modelFact(
+    Type.Array(ARGUMENT_ISSUE_SCHEMA),
+    "Correct the reported argument issues before retrying.",
+  ),
+  omittedIssues: modelFact(
+    count("Issues omitted from the byte budget."),
+    "Know that the bounded argument report is incomplete.",
+  ),
+  schemaLimited: modelFact(
+    Type.Literal(true, {
+      description: "A native diagnostic allowance was reached; more issues may exist.",
+    }),
+    "Know that native validation may have omitted additional issues.",
+  ),
+  missing: modelFact(
+    Type.Array(Type.String(), {
+      description: "Resolved paths that do not exist; shows where a relative path led.",
+    }),
+    "Use the resolved missing paths to correct the target or choose create mode.",
+  ),
+
   // Anchor verification (failure-context.ts).
-  failures: Type.Array(ANCHOR_FAILURE_SCHEMA),
-  omittedFailures: count("Failures omitted from the byte budget."),
-  candidateNeighborhoods: Type.Array(
+  failures: modelFact(
+    Type.Array(ANCHOR_FAILURE_SCHEMA),
+    "Choose a verified anchor or reread before retrying.",
+  ),
+  omittedFailures: modelFact(
+    count("Failures omitted from the byte budget."),
+    "Know that anchor evidence is incomplete.",
+  ),
+  candidateNeighborhoods: modelFact(
+    Type.Array(
+      Type.Object(
+        { lines: Type.String(), rows: Type.Array(Type.String()) },
+        { additionalProperties: false },
+      ),
+    ),
+    "Inspect the observed neighborhoods before selecting an ambiguous anchor.",
+  ),
+  omittedNeighborhoodRows: modelFact(
+    count("Neighborhood rows omitted from the byte budget."),
+    "Know that candidate context is incomplete.",
+  ),
+
+  // Overlap (core/apply.ts, core/replace.ts).
+  conflict: modelFact(
+    Type.Array(Type.String(), {
+      description: "The first conflicting pair of inputs found; more conflicts may exist.",
+    }),
+    "Merge or separate the conflicting edits or rules before retrying.",
+  ),
+
+  // Replacement rules (core/replace.ts).
+  unmatched: modelFact(
+    Type.Array(Type.String(), { description: "Rules that match nothing." }),
+    "Correct the target rules using read or grep before retrying.",
+  ),
+  line: modelFact(
+    Type.Integer({ minimum: 1, description: "Line where the conflicting match starts." }),
+    "Locate the first conflicting match when correcting the request.",
+  ),
+
+  // Regex workers (regex-worker.ts).
+  timeoutMs: modelFact(
+    Type.Integer({ minimum: 1 }),
+    "Narrow or simplify the timed-out pattern before retrying.",
+  ),
+  exitCode: tuiFact(Type.Union([Type.Integer(), Type.Null()])),
+
+  // read outcome; outputLimit below is shared with grep.
+  pagination: modelFact(
     Type.Object(
-      { lines: Type.String(), rows: Type.Array(Type.String()) },
+      {
+        start: Type.Integer(),
+        end: Type.Integer(),
+        totalLines: Type.Integer(),
+        nextOffset: Type.Integer(),
+      },
       { additionalProperties: false },
     ),
+    "Use pagination.nextOffset to continue reading.",
   ),
-  omittedNeighborhoodRows: count("Neighborhood rows omitted from the byte budget."),
-  // Overlap (core/apply.ts, core/replace.ts).
-  conflict: Type.Array(Type.String(), {
-    description: "The first conflicting pair of inputs found; more conflicts may exist.",
-  }),
-  // Replacement rules (core/replace.ts).
-  unmatched: Type.Array(Type.String(), { description: "Rules that match nothing." }),
-  line: Type.Integer({ minimum: 1, description: "Line where the conflicting match starts." }),
-  // Regex workers (regex-worker.ts).
-  timeoutMs: Type.Integer({ minimum: 1 }),
-  exitCode: Type.Union([Type.Integer(), Type.Null()]),
-  // read outcome; `outputLimit` below is shared with grep.
-  pagination: Type.Object(
-    {
-      start: Type.Integer(),
-      end: Type.Integer(),
-      totalLines: Type.Integer(),
-      nextOffset: Type.Integer(),
-    },
-    { additionalProperties: false },
+  lineTooLong: modelFact(
+    Type.Object({ line: Type.Integer(), limit: Type.String() }, { additionalProperties: false }),
+    "Inspect the oversized line with an appropriate tool before editing it.",
   ),
-  lineTooLong: Type.Object(
-    { line: Type.Integer(), limit: Type.String() },
-    { additionalProperties: false },
+
+  // grep outcome; matches is also replace's match count.
+  matches: modelFact(
+    Type.Integer({ minimum: 0 }),
+    "Use the match count to decide whether more search or replacement work is needed.",
   ),
-  // grep outcome; `matches` is also replace's match count.
-  matches: Type.Integer({ minimum: 0 }),
-  files: Type.Integer({ minimum: 0 }),
-  scanned: Type.Union([Type.Literal("files"), Type.Literal("all")], {
-    description:
-      "Without line candidates, the files searched whole: those containing text every match needs, or every file in scope.",
-  }),
-  matchLimit: Type.Integer({ minimum: 1, description: "The match limit that stopped the search." }),
-  scanLimit: Type.String({
-    description:
-      "Bytes of files read when every file was a candidate; later files were not searched.",
-  }),
-  outputLimit: Type.String({ description: "The output byte budget that cut the result." }),
-  linePreviewLimit: Type.Integer({ description: "UTF-16 units kept in a cut line preview." }),
-  invalidUtf8: Type.Array(Type.String(), {
-    description: "Files shown as plain previews; their rows are not edit anchors.",
-  }),
-  diagnostics: Type.String({ description: "Search diagnostics; results cover confirmed matches." }),
-  literalPipe: Type.Literal(true, {
-    description: "A literal pattern contains |, which matches only the | character.",
-  }),
+  files: modelFact(
+    Type.Integer({ minimum: 0 }),
+    "Use the file count to decide whether the search scope is appropriate.",
+  ),
+  scanned: tuiFact(
+    Type.Union([Type.Literal("files"), Type.Literal("all")], {
+      description:
+        "Without line candidates, the files searched whole: those containing text every match needs, or every file in scope.",
+    }),
+  ),
+  matchLimit: modelFact(
+    Type.Integer({ minimum: 1, description: "The match limit that stopped the search." }),
+    "Raise the limit when more matches are needed.",
+  ),
+  scanLimit: modelFact(
+    Type.String({
+      description:
+        "Bytes of files read when every file was a candidate; later files were not searched.",
+    }),
+    "Narrow the search or add text every match must contain to search the remaining files.",
+  ),
+  outputLimit: modelFact(
+    Type.String({ description: "The output byte budget that cut the result." }),
+    "Narrow the scope to see omitted output.",
+  ),
+  linePreviewLimit: modelFact(
+    Type.Integer({ description: "UTF-16 units kept in a cut line preview." }),
+    "Read the full line before rewriting it from a partial preview.",
+  ),
+  invalidUtf8: modelFact(
+    Type.Array(Type.String(), {
+      description: "Files shown as plain previews; their rows are not edit anchors.",
+    }),
+    "Do not use malformed preview rows as edit anchors.",
+  ),
+  diagnostics: modelFact(
+    Type.String({ description: "Search diagnostics; results cover confirmed matches." }),
+    "Account for the diagnostics before relying on the search result.",
+  ),
+  literalPipe: modelFact(
+    Type.Literal(true, {
+      description: "A literal pattern contains |, which matches only the | character.",
+    }),
+    "Separate pattern alternatives or keep the pattern literal.",
+  ),
+
   // Mutation outcome.
-  created: Type.Literal(true),
+  created: tuiFact(Type.Literal(true)),
+
   // Commit-layer observation after publication.
-  freshness: FRESHNESS_SCHEMA,
-  freshnessError: CAUSE_SCHEMA,
-  // Action Fusion.
-  then_run: Type.Object(
-    { status: COMMAND_STATUS_SCHEMA, output: opt(Type.String()) },
-    { additionalProperties: false },
+  freshness: modelFact(
+    FRESHNESS_SCHEMA,
+    "Read the file before further edits when the current content is not known to be unchanged.",
   ),
-  progressError: CAUSE_SCHEMA,
-} satisfies TProperties;
+  freshnessError: modelFact(
+    CAUSE_SCHEMA,
+    "Use the freshness recovery instruction when the post-commit observation failed.",
+  ),
+
+  // Action Fusion.
+  then_run: modelFact(
+    Type.Object(
+      { status: COMMAND_STATUS_SCHEMA, output: opt(Type.String()) },
+      { additionalProperties: false },
+    ),
+    "Use the command status and output to decide whether a follow-up action is needed.",
+  ),
+  progressError: tuiFact(CAUSE_SCHEMA),
+} as const satisfies Record<string, FactDefinition>;
 
 type FactName = keyof typeof FACT_FIELDS;
+type FactSchema<Name extends FactName> = (typeof FACT_FIELDS)[Name]["schema"];
+type TuiOnlyFactName = {
+  [Name in FactName]: (typeof FACT_FIELDS)[Name]["audience"] extends "tui" ? Name : never;
+}[FactName];
+export type ModelOmittedField = "tool" | "path" | TuiOnlyFactName;
+
+/** Fields whose values are kept for TUI/host but omitted from model text. */
+export const MODEL_OMITTED_FIELDS: ReadonlySet<ModelOmittedField> = new Set<ModelOmittedField>([
+  "tool",
+  "path",
+  ...Object.entries(FACT_FIELDS)
+    .filter(([, definition]) => definition.audience === "tui")
+    .map(([name]) => name as TuiOnlyFactName),
+]);
 
 /** Facts of one code: the named fields, each optional unless listed as required. */
 function facts<const R extends readonly FactName[], const O extends readonly FactName[] = []>(
@@ -237,14 +357,14 @@ function facts<const R extends readonly FactName[], const O extends readonly Fac
   optional?: O,
 ) {
   const properties: TProperties = {};
-  for (const name of required) properties[name] = FACT_FIELDS[name];
-  for (const name of optional ?? []) properties[name] = opt(FACT_FIELDS[name]);
+  for (const name of required) properties[name] = FACT_FIELDS[name].schema;
+  for (const name of optional ?? []) properties[name] = opt(FACT_FIELDS[name].schema);
   // A single mapped property set preserves required keys in TypeBox's static inference.
   return Type.Object(
     properties as {
       [K in R[number] | O[number]]: K extends R[number]
-        ? (typeof FACT_FIELDS)[K]
-        : ReturnType<typeof Type.Optional<(typeof FACT_FIELDS)[K]>>;
+        ? FactSchema<K>
+        : ReturnType<typeof Type.Optional<FactSchema<K>>>;
     },
     { additionalProperties: false },
   );
@@ -363,7 +483,7 @@ export const PUBLICATION_NEXT = {
 
 /** One fact's recovery; `except` is a value of that fact which needs none. */
 type OutcomeRule = {
-  [F in FactName]: readonly [fact: F, next: string, except?: Static<(typeof FACT_FIELDS)[F]>];
+  [F in FactName]: readonly [fact: F, next: string, except?: Static<FactSchema<F>>];
 }[FactName];
 
 /**
@@ -401,11 +521,12 @@ export const REPORT_SCHEMA = Type.Object({
   message: opt(Type.String()),
   cause: opt(CAUSE_SCHEMA),
   ...(Object.fromEntries(
-    Object.entries(FACT_FIELDS).map(([name, schema]) => [name, opt(schema)]),
-  ) as { [K in FactName]: ReturnType<typeof Type.Optional<(typeof FACT_FIELDS)[K]>> }),
+    Object.entries(FACT_FIELDS).map(([name, definition]) => [name, opt(definition.schema)]),
+  ) as { [K in FactName]: ReturnType<typeof Type.Optional<FactSchema<K>>> }),
   next: opt(Type.String()),
 });
-type ReportFields = Omit<Static<typeof REPORT_SCHEMA>, "error"> & { error?: ErrorCode };
+type ReportFields = (Omit<Static<typeof REPORT_SCHEMA>, "error"> & { error?: ErrorCode }) &
+  (AllFactsAreCarried extends true ? unknown : never);
 
 const SUCCESS_DEFINITIONS = {
   read: facts([], ["pagination", "outputLimit", "lineTooLong"]),
@@ -474,6 +595,19 @@ const SUCCESS_SCHEMAS = Object.entries(SUCCESS_DEFINITIONS).map(([tool, schema])
 );
 /** Closed records after the originating call supplies the tool; failure facts remain code-specific. */
 export const WIRE_REPORT_SCHEMA = Type.Union([...FAILURE_SCHEMAS, ...SUCCESS_SCHEMAS]);
+
+type SuccessFactNames = {
+  [Tool in ReportTool]: keyof Static<(typeof SUCCESS_DEFINITIONS)[Tool]>;
+}[ReportTool] &
+  string;
+type ErrorFactNames = {
+  [Code in ErrorCode]: keyof Static<(typeof ERROR_DEFINITIONS)[Code]["facts"]>;
+}[ErrorCode] &
+  string;
+type MutationWireFactNames = keyof Fields<typeof MUTATION_WIRE_FIELDS> & string;
+type UnusedFactNames = Exclude<FactName, SuccessFactNames | ErrorFactNames | MutationWireFactNames>;
+type AssertTrue<T extends true> = T;
+type AllFactsAreCarried = AssertTrue<UnusedFactNames extends never ? true : false>;
 
 // Static counterparts of the per-tool and per-code wire schemas above, built from the same fields.
 type Fields<P extends TProperties> = Static<TObject<P>>;
