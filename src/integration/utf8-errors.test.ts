@@ -32,7 +32,7 @@ test("valid UTF-8 exceeding the runtime string limit → mutations retain the si
     await t.test(tool.name, async () => {
       const args =
         tool.name === "edit"
-          ? { path, edits: [{ action: "append", body: ["tail"] }] }
+          ? { path, steps: [{ action: "append", lines: ["tail"] }] }
           : { path, replacements: [{ literal: true, find: "中文", replace: "汉字" }] };
       await expectToolFailure(callTool(tool, args), "FILESYSTEM_ERROR", (report) => {
         assert.doesNotMatch(JSON.stringify(report), /UNSUPPORTED_ENCODING/);

@@ -52,7 +52,7 @@ test("byte budget sizes include fractional KiB → round to one decimal and pres
 
 test("model budget grows → argument issues remain complete JSON with counted omissions", () => {
   const issues = Array.from({ length: 100 }, (_, index) => ({
-    field: `edits[${index}].body`,
+    field: `steps[${index}].lines`,
     reason: "中文🙂".repeat(100),
     fix: "Supply a line.",
   }));
@@ -194,7 +194,7 @@ test("model switches while a mutation waits → failure uses its starting budget
   try {
     const running = callTool(makeEditOverride(dir, DEFAULT_CONFIG, undefined, budgets), {
       path,
-      edits: [{ action: "delete", anchor: `1#${wrongHash(text)}` }],
+      steps: [{ action: "delete", anchor: `1#${wrongHash(text)}` }],
     });
     await session.setModel({ ...model, id: "large", contextWindow: 1_048_576 });
     assert.equal(budgets().readBytes, large.readBytes);
@@ -205,7 +205,7 @@ test("model switches while a mutation waits → failure uses its starting budget
     const next = reportOf(
       await callTool(makeEditOverride(dir, DEFAULT_CONFIG, undefined, budgets), {
         path,
-        edits: [{ action: "delete", anchor: `1#${wrongHash(text)}` }],
+        steps: [{ action: "delete", anchor: `1#${wrongHash(text)}` }],
       }),
       "edit",
     );

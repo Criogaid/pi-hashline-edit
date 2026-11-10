@@ -58,18 +58,18 @@ test("registered tools with or without Fusion → request strict sampling with c
               assert.partialDeepStrictEqual(strict, {
                 type: "object",
                 additionalProperties: false,
-                required: actionFusion ? ["path", "edits", "then_run"] : ["path", "edits"],
+                required: actionFusion ? ["path", "steps", "then_run"] : ["path", "steps"],
                 properties: {
-                  edits: {
+                  steps: {
                     type: "array",
                     items: {
                       type: "object",
                       additionalProperties: false,
-                      required: ["action", "anchor", "end", "body"],
+                      required: ["action", "anchor", "end", "lines"],
                       properties: {
                         anchor: { anyOf: [{ type: "string" }, { type: "null" }] },
                         end: { anyOf: [{ type: "string" }, { type: "null" }] },
-                        body: { anyOf: [{ type: "array" }, { type: "null" }] },
+                        lines: { anyOf: [{ type: "array" }, { type: "null" }] },
                       },
                     },
                   },
@@ -78,6 +78,17 @@ test("registered tools with or without Fusion → request strict sampling with c
                     : {}),
                 },
               });
+              const properties = strict.properties as Record<
+                string,
+                { items?: { properties?: Record<string, unknown> } }
+              >;
+              assert.deepEqual(
+                Object.keys(properties),
+                actionFusion ? ["path", "steps", "then_run"] : ["path", "steps"],
+              );
+              const stepProperties = properties.steps.items?.properties;
+              assert.ok(stepProperties);
+              assert.deepEqual(Object.keys(stepProperties), ["action", "anchor", "end", "lines"]);
             }
           });
         }
@@ -171,7 +182,7 @@ test("mutation cards use Fusion by default and explicit false removes command su
     );
     const cases = [
       { name: "write", args: { content: "published\n", mode: "create" } },
-      { name: "edit", args: { edits: [{ action: "append", body: ["appended"] }] } },
+      { name: "edit", args: { steps: [{ action: "append", lines: ["appended"] }] } },
       {
         name: "replace",
         args: { replacements: [{ literal: true, find: "published", replace: "published" }] },
@@ -312,8 +323,8 @@ test("mutation cards use Fusion by default and explicit false removes command su
     const edit = tools.find((tool) => tool.name === "edit");
     const stale = {
       path: "stale.txt",
-      edits: [
-        { action: "replace", anchor: `1#${computeLineHash(1, "target", 4)}`, body: ["changed"] },
+      steps: [
+        { action: "replace", anchor: `1#${computeLineHash(1, "target", 4)}`, lines: ["changed"] },
       ],
       then_run: { command: "exit 99" },
     };
@@ -447,7 +458,7 @@ test("loaded configuration controls hash length and recovery radius", async () =
       await expectToolFailure(
         call(makeEditOverride(dir, config), {
           path: "configured.txt",
-          edits: [{ action: "delete", anchor: `1#${computeLineHash(1, "target", hashLen)}` }],
+          steps: [{ action: "delete", anchor: `1#${computeLineHash(1, "target", hashLen)}` }],
         }),
         "ANCHOR_MISMATCH",
         (report) => {

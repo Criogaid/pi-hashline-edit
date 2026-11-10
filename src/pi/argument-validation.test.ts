@@ -48,31 +48,31 @@ const cases = [
     make: (cwd: string, fusion: ReturnType<typeof createActionFusionExecutor>) =>
       makeEditOverride(cwd, DEFAULT_CONFIG, fusion),
     args: {
-      edits: [
-        { action: "replace", anchor: `1#${anchorHash}`, body: [] },
-        { action: "append", body: ["bad\0", "bad\ud800"] },
+      steps: [
+        { action: "replace", anchor: `1#${anchorHash}`, lines: [] },
+        { action: "append", lines: ["bad\0", "bad\ud800"] },
         { action: "delete", anchor: `${Number.MAX_SAFE_INTEGER + 1}#${anchorHash}`, end: "1#A" },
-        { action: "append", body: [] },
-        { action: "replace", anchor: `3#${anchorHash}`, end: `1#${anchorHash}`, body: ["text"] },
+        { action: "append", lines: [] },
+        { action: "replace", anchor: `3#${anchorHash}`, end: `1#${anchorHash}`, lines: ["text"] },
         { action: "delete", anchor: `4#${anchorHash}`, end: `2#${anchorHash}` },
       ],
       then_run: invalidCommand,
     },
     fields: [
-      "edits[0].body",
-      "edits[1].body[0]",
-      "edits[1].body[1]",
-      "edits[2].anchor",
-      "edits[2].end",
-      "edits[3].body",
-      "edits[4].end",
-      "edits[5].end",
+      "steps[0].lines",
+      "steps[1].lines[0]",
+      "steps[1].lines[1]",
+      "steps[2].anchor",
+      "steps[2].end",
+      "steps[3].lines",
+      "steps[4].end",
+      "steps[5].end",
       "then_run.command",
       "then_run.timeout",
     ],
     reasons: [
-      { field: "edits[4].end", reason: /line 1 is before anchor line 3/ },
-      { field: "edits[5].end", reason: /line 2 is before anchor line 4/ },
+      { field: "steps[4].end", reason: /line 1 is before anchor line 3/ },
+      { field: "steps[5].end", reason: /line 2 is before anchor line 4/ },
     ],
   },
   {
@@ -196,12 +196,12 @@ test("grep and replace flags → accept V8 modes and reject invalid flags before
   }
 });
 
-const editFields = ["anchor", "end", "body"] as const;
+const editFields = ["anchor", "end", "lines"] as const;
 type EditField = (typeof editFields)[number];
 const fieldValues = {
   anchor: `1#${anchorHash}`,
   end: `2#${anchorHash}`,
-  body: ["text"],
+  lines: ["text"],
 };
 const actionCases: readonly {
   action: string;
@@ -211,31 +211,31 @@ const actionCases: readonly {
 }[] = [
   {
     action: "replace",
-    required: ["anchor", "body"],
+    required: ["anchor", "lines"],
     optional: ["end"],
     expected: "text\nbeta\ngamma\n",
   },
   { action: "delete", required: ["anchor"], optional: ["end"], expected: "beta\ngamma\n" },
   {
     action: "insert_after",
-    required: ["anchor", "body"],
+    required: ["anchor", "lines"],
     optional: [],
     expected: "alpha\ntext\nbeta\ngamma\n",
   },
   {
     action: "insert_before",
-    required: ["anchor", "body"],
+    required: ["anchor", "lines"],
     optional: [],
     expected: "text\nalpha\nbeta\ngamma\n",
   },
-  { action: "append", required: ["body"], optional: [], expected: "alpha\nbeta\ngamma\ntext\n" },
-  { action: "prepend", required: ["body"], optional: [], expected: "text\nalpha\nbeta\ngamma\n" },
+  { action: "append", required: ["lines"], optional: [], expected: "alpha\nbeta\ngamma\ntext\n" },
+  { action: "prepend", required: ["lines"], optional: [], expected: "text\nalpha\nbeta\ngamma\n" },
 ];
 
 for (const scenario of actionCases) {
   test(`${scenario.action} field matrix → requires its fields and rejects fields it does not take`, async (t) => {
     const tool = makeEditOverride(process.cwd(), DEFAULT_CONFIG);
-    const fields = schemaProperties(tool).edits?.items?.properties;
+    const fields = schemaProperties(tool).steps?.items?.properties;
     const choice = fields?.action?.anyOf?.find((option) => option.const === scenario.action);
     assert.ok(choice?.description);
     const description = choice.description;
@@ -252,11 +252,11 @@ for (const scenario of actionCases) {
               Object.entries(valid).filter(([key]) => key !== field),
             );
             if (value === null) edit[field] = null;
-            const args = { path: "unused.txt", edits: [edit] };
+            const args = { path: "unused.txt", steps: [edit] };
             await assert.rejects(callTool(tool, args), (error: unknown) => {
               assert.deepEqual(argumentError(error).issues, [
                 {
-                  field: `edits[0].${field}`,
+                  field: `steps[0].${field}`,
                   reason: `is required for "${scenario.action}"`,
                   fix: fields?.[field]?.description,
                 },
@@ -274,12 +274,12 @@ for (const scenario of actionCases) {
         await assert.rejects(
           callTool(tool, {
             path: "unused.txt",
-            edits: [{ ...valid, [field]: fieldValues[field] }],
+            steps: [{ ...valid, [field]: fieldValues[field] }],
           }),
           (error: unknown) => {
             assert.deepEqual(argumentError(error).issues, [
               {
-                field: `edits[0].${field}`,
+                field: `steps[0].${field}`,
                 reason: "is not allowed",
                 fix: `"${scenario.action}": ${description}`,
               },
@@ -295,7 +295,7 @@ for (const scenario of actionCases) {
 
 test("edit action is missing or invalid → reports choices without guessing field permissions", async () => {
   const tool = makeEditOverride(process.cwd(), DEFAULT_CONFIG);
-  const choices = schemaProperties(tool).edits?.items?.properties?.action?.anyOf ?? [];
+  const choices = schemaProperties(tool).steps?.items?.properties?.action?.anyOf ?? [];
   assert.deepEqual(
     choices.map((choice) => choice.const),
     actionCases.map(({ action }) => action),
@@ -304,11 +304,11 @@ test("edit action is missing or invalid → reports choices without guessing fie
     await assert.rejects(
       callTool(tool, {
         path: "unused.txt",
-        edits: [
+        steps: [
           {
             ...(action === undefined ? {} : { action }),
             anchor: `1#${anchorHash}`,
-            body: ["valid"],
+            lines: ["valid"],
           },
         ],
       }),
@@ -316,7 +316,7 @@ test("edit action is missing or invalid → reports choices without guessing fie
         const { issues } = argumentError(error);
         assert.equal(issues.length, 1);
         const issue = issues[0];
-        assert.equal(issue.field, "edits[0].action");
+        assert.equal(issue.field, "steps[0].action");
         if (action === undefined) {
           assert.equal(issue.reason, "is required");
           for (const choice of choices) {
@@ -359,11 +359,11 @@ test("optional edit fields and then_run are null with Fusion → publishes bytes
         ...Object.fromEntries(
           scenario.required.map((field) => [
             field,
-            field === "body" ? ["text"] : token(1, "alpha"),
+            field === "lines" ? ["text"] : token(1, "alpha"),
           ]),
         ),
       };
-      const args = { path, edits: [edit], then_run: null };
+      const args = { path, steps: [edit], then_run: null };
       const snapshot = structuredClone(args);
       const result = await callTool(tool, args, { ctx });
       assert.equal(result.isError, undefined);
@@ -419,19 +419,19 @@ test("edit batch has 64 or 65 operations → publishes the maximum or rejects th
   t.after(() => rm(cwd, { recursive: true, force: true }));
   const path = join(cwd, "target.txt");
   const tool = makeEditOverride(cwd, DEFAULT_CONFIG);
-  const maxEdits: unknown = Reflect.get(tool.parameters.properties.edits, "maxItems");
+  const maxEdits: unknown = Reflect.get(tool.parameters.properties.steps, "maxItems");
   assert.ok(typeof maxEdits === "number");
   assert.equal(maxEdits, 64);
   const lines = Array.from({ length: maxEdits + 2 }, (_, i) => `line ${i + 1}`);
   const original = Buffer.from(`${lines.join("\n")}\n`);
   for (const count of [maxEdits, maxEdits + 1]) {
     await t.test(
-      `${count} edits → ${count === maxEdits ? "publishes distinct deletions" : `rejects edits above max${maxEdits}`}`,
+      `${count} steps → ${count === maxEdits ? "publishes distinct deletions" : `rejects steps above max${maxEdits}`}`,
       async () => {
         await writeFile(path, original);
         const args = {
           path,
-          edits: lines
+          steps: lines
             .slice(0, count)
             .map((line, i) => ({ action: "delete", anchor: token(i + 1, line) })),
         };
@@ -445,7 +445,7 @@ test("edit batch has 64 or 65 operations → publishes the maximum or rejects th
           await assert.rejects(callTool(tool, args), (error: unknown) => {
             const report = argumentError(error);
             assert.equal(report.issues.length, 1);
-            assert.equal(report.issues[0].field, "edits");
+            assert.equal(report.issues[0].field, "steps");
             assert.match(
               report.issues[0].reason,
               new RegExp(`must not have more than ${maxEdits} items`),
@@ -465,12 +465,12 @@ test("edit item is not an object → report the item type once", async () => {
     await assert.rejects(
       callTool(makeEditOverride(process.cwd(), DEFAULT_CONFIG), {
         path: "unused.txt",
-        edits: [item],
+        steps: [item],
       }),
       (error: unknown) => {
         const result = argumentError(error);
         assert.equal(result.issues.length, 1);
-        return rejectsArgument("edits[0]", /object/)(error);
+        return rejectsArgument("steps[0]", /object/)(error);
       },
     );
   }
@@ -523,12 +523,12 @@ test("one field exhausts native diagnostics → label the limit and retain anoth
   await assert.rejects(
     callTool(makeEditOverride(process.cwd(), DEFAULT_CONFIG), {
       path: "",
-      edits: Array.from({ length: 30 }, () => ({ action: "unknown" })),
+      steps: Array.from({ length: 30 }, () => ({ action: "unknown" })),
     }),
     (error: unknown) => {
       const result = argumentError(error);
       assert.ok(result.issues.some((issue) => issue.field === "path"));
-      assert.ok(result.issues.some((issue) => issue.field === "edits[0].action"));
+      assert.ok(result.issues.some((issue) => issue.field === "steps[0].action"));
       assert.equal(result.schemaLimited, true);
       return true;
     },
@@ -539,12 +539,12 @@ test("one field violates independent constraints → combine its reasons without
   await assert.rejects(
     callTool(makeEditOverride(process.cwd(), DEFAULT_CONFIG), {
       path: "unused.txt",
-      edits: [{ action: "delete", anchor: `${Number.MAX_SAFE_INTEGER + 1}#A` }],
+      steps: [{ action: "delete", anchor: `${Number.MAX_SAFE_INTEGER + 1}#A` }],
     }),
     (error: unknown) => {
       const result = argumentError(error);
       assert.equal(result.issues.length, 1);
-      return rejectsArgument("edits[0].anchor", /safe integer[\s\S]*hash characters/)(error);
+      return rejectsArgument("steps[0].anchor", /safe integer[\s\S]*hash characters/)(error);
     },
   );
   await assert.rejects(
@@ -572,7 +572,7 @@ test("edit fields contain semantic errors → checks only fields accepted by the
     for (const field of editFields) {
       const accepted = scenario.required.includes(field) || scenario.optional.includes(field);
       const values: readonly (readonly [unknown, RegExp])[] =
-        field === "body"
+        field === "lines"
           ? [
               [[], /empty/],
               [["bad\0"], /NUL/],
@@ -588,18 +588,18 @@ test("edit fields contain semantic errors → checks only fields accepted by the
           async () => {
             const edit = { ...valid, [field]: value };
             await assert.rejects(
-              callTool(tool, { path: "unused.txt", edits: [edit] }),
+              callTool(tool, { path: "unused.txt", steps: [edit] }),
               (error: unknown) => {
                 const report = argumentError(error);
                 assert.equal(report.issues.length, 1, JSON.stringify(report));
                 const issue = report.issues[0];
                 assert.equal(
                   issue.field,
-                  `edits[0].${field}${accepted && field === "body" && Array.isArray(value) && value.length ? "[0]" : ""}`,
+                  `steps[0].${field}${accepted && field === "lines" && Array.isArray(value) && value.length ? "[0]" : ""}`,
                 );
                 if (accepted) {
                   assert.match(issue.reason, reason);
-                  if (field === "body" && Array.isArray(value) && value.length === 0) {
+                  if (field === "lines" && Array.isArray(value) && value.length === 0) {
                     assert.match(
                       issue.fix ?? "",
                       scenario.action === "replace"
@@ -693,7 +693,7 @@ test("missing required parameter → fix states the parameter's role from its sc
 test("two operations miss the same required field → the shared fix appears once", async () => {
   const tool = makeEditOverride(process.cwd(), DEFAULT_CONFIG);
   await assert.rejects(
-    callTool(tool, { path: "unused.txt", edits: [{ action: "replace" }, { action: "replace" }] }),
+    callTool(tool, { path: "unused.txt", steps: [{ action: "replace" }, { action: "replace" }] }),
     (error: unknown) => {
       const result = argumentError(error);
       const anchors = result.issues.filter((issue) => issue.field.endsWith(".anchor"));
@@ -701,7 +701,7 @@ test("two operations miss the same required field → the shared fix appears onc
       assert.equal(anchors.filter((issue) => issue.fix).length, 1);
       const fixes = result.issues.flatMap((issue) => (issue.fix ? [issue.fix] : []));
       assert.equal(new Set(fixes).size, fixes.length, JSON.stringify(fixes));
-      const description = schemaProperties(tool).edits?.items?.properties?.anchor?.description;
+      const description = schemaProperties(tool).steps?.items?.properties?.anchor?.description;
       assert.ok(description);
       assert.ok(fixes.includes(description));
       return true;
@@ -737,9 +737,9 @@ test("unknown field is supplied → fix lists only the flat object's accepted fi
   for (const scenario of [
     {
       tool: edit,
-      args: { path: "unused.txt", edits: [{ action: "append", body: ["text"], op: "append" }] },
-      field: "edits[0].op",
-      fix: "Accepted fields: action, anchor, end, body.",
+      args: { path: "unused.txt", steps: [{ action: "append", lines: ["text"], op: "append" }] },
+      field: "steps[0].op",
+      fix: "Accepted fields: action, anchor, end, lines.",
     },
     {
       tool: grep,
@@ -759,18 +759,18 @@ test("unknown field is supplied → fix lists only the flat object's accepted fi
 
 test("value mismatches the field pattern → fix states the field description from the schema", async () => {
   const edit = makeEditOverride(process.cwd(), DEFAULT_CONFIG);
-  const fields = schemaProperties(edit).edits?.items?.properties;
+  const fields = schemaProperties(edit).steps?.items?.properties;
   const cases = [
     {
-      name: "body element with a newline",
-      args: { path: "unused.txt", edits: [{ action: "append", body: ["a\nb"] }] },
-      field: "edits[0].body[0]",
-      fix: fields?.body?.description,
+      name: "line element with a newline",
+      args: { path: "unused.txt", steps: [{ action: "append", lines: ["a\nb"] }] },
+      field: "steps[0].lines[0]",
+      fix: fields?.lines?.description,
     },
     {
       name: "anchor without the line-hash shape",
-      args: { path: "unused.txt", edits: [{ action: "replace", anchor: "abc", body: ["text"] }] },
-      field: "edits[0].anchor",
+      args: { path: "unused.txt", steps: [{ action: "replace", anchor: "abc", lines: ["text"] }] },
+      field: "steps[0].anchor",
       fix: fields?.anchor?.description,
     },
   ] as const;
@@ -791,7 +791,7 @@ test("two unknown fields in one object → the shared fix appears once", async (
   await assert.rejects(
     callTool(edit, {
       path: "unused.txt",
-      edits: [{ action: "append", body: ["text"], zzz: 1, yyy: 2 }],
+      steps: [{ action: "append", lines: ["text"], zzz: 1, yyy: 2 }],
     }),
     (error: unknown) => {
       const result = argumentError(error);

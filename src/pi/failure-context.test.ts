@@ -317,7 +317,7 @@ test("overlapping edits → ordered conflict and shared recovery", () => {
           budget: DEFAULT_OUTPUT_BUDGETS,
         });
         assert.equal(report.error, "OVERLAPPING_EDITS");
-        assert.deepEqual(report.conflict, ["edits[0]", "edits[2]"]);
+        assert.deepEqual(report.conflict, ["steps[0]", "steps[2]"]);
         assert.equal(report.message, error.message);
         assert.equal(report.publication, "NOT_PUBLISHED");
         assert.match(report.next ?? "", /one edit per range or position/);

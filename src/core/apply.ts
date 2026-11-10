@@ -215,8 +215,8 @@ export function applyEdits(
         // The first conflicting pair found, ascending.
         facts: {
           conflict: [
-            `edits[${Math.min(previous.opIndex, current.opIndex)}]`,
-            `edits[${Math.max(previous.opIndex, current.opIndex)}]`,
+            `steps[${Math.min(previous.opIndex, current.opIndex)}]`,
+            `steps[${Math.max(previous.opIndex, current.opIndex)}]`,
           ],
         },
       },

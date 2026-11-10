@@ -92,7 +92,7 @@ const mutationCases = [
     name: "edit",
     make: (cwd: string, fusion?: ReturnType<typeof createActionFusionExecutor>) =>
       makeEditOverride(cwd, DEFAULT_CONFIG, fusion),
-    args: { edits: [{ action: "append", body: ["after"] }] },
+    args: { steps: [{ action: "append", lines: ["after"] }] },
   },
   {
     name: "replace",
@@ -435,7 +435,7 @@ test("concurrent change during editable snapshot read → skips Fusion with NOT_
           makeEditOverride(directory, DEFAULT_CONFIG, fusion),
           {
             path,
-            edits: [{ action: "append", body: ["after"] }],
+            steps: [{ action: "append", lines: ["after"] }],
             then_run: { command: "check" },
           },
           { ctx: { ...ctx, executeTool } },

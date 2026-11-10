@@ -66,7 +66,7 @@ test("then_run schemas reject invalid commands, unknown keys, and excessive time
       await writeFile(join(dir, path), "old\n");
       const mutation =
         tool.name === "edit"
-          ? { edits: [{ action: "append", body: ["new"] }] }
+          ? { steps: [{ action: "append", lines: ["new"] }] }
           : tool.name === "replace"
             ? { replacements: [{ literal: true, find: "old", replace: "new" }] }
             : { content: "new\n", mode: "overwrite" };
@@ -110,7 +110,7 @@ test("edit and replace share one embedded executor and preserve mutation results
       edit,
       {
         path: "edit.txt",
-        edits: [{ action: "append", body: ["after"] }],
+        steps: [{ action: "append", lines: ["after"] }],
         then_run: { command: "check edit" },
       },
       { ctx: context },
@@ -156,7 +156,7 @@ test("then_run returns a termination flag → parent results preserve its value 
         await writeFile(join(dir, path), "before\n");
         const mutation =
           tool.name === "edit"
-            ? { edits: [{ action: "append", body: ["after"] }] }
+            ? { steps: [{ action: "append", lines: ["after"] }] }
             : tool.name === "replace"
               ? { replacements: [{ literal: true, find: "before", replace: "after" }] }
               : { content: "after\n", mode: "overwrite" };
@@ -201,7 +201,7 @@ test("target changes after publication → skips then_run and reports freshness 
         makeEditOverride(dir, loadConfig(dir), fusion),
         {
           path: target,
-          edits: [{ action: "append", body: ["mutation"] }],
+          steps: [{ action: "append", lines: ["mutation"] }],
           then_run: { command: "check" },
         },
         { ctx: context },
@@ -263,7 +263,7 @@ test("all mutation tools forward command progress before completion in RPC mode"
           makeEditOverride(dir, loadConfig(dir), fusion),
           {
             path: "progress.txt",
-            edits: [{ action: "append", body: ["after"] }],
+            steps: [{ action: "append", lines: ["after"] }],
             then_run: { command: "check" },
           },
           {
@@ -343,7 +343,7 @@ test("progress reports skipped mutations and failed commands without rolling bac
       makeEditOverride(dir, loadConfig(dir), fusion),
       {
         path: "missing.txt",
-        edits: [{ action: "append", body: ["after"] }],
+        steps: [{ action: "append", lines: ["after"] }],
         then_run: { command: "check" },
       },
       { ctx: context },

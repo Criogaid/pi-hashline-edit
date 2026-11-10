@@ -704,7 +704,7 @@ test("directory traversal skips symlinks but explicit linked directories and fil
     await invoke(
       edit,
       "0",
-      { path: resultPath, edits: [{ action: "replace", anchor, body: ["updated"] }] },
+      { path: resultPath, steps: [{ action: "replace", anchor, lines: ["updated"] }] },
       undefined,
       undefined,
     );
@@ -845,7 +845,7 @@ test("multiline grep anchors CRLF spans and counts overlapping physical lines on
     await invoke(
       edit,
       "0",
-      { path: file, edits: [{ action: "replace", anchor, body: ["updated"] }] },
+      { path: file, steps: [{ action: "replace", anchor, lines: ["updated"] }] },
       undefined,
       undefined,
     );
@@ -1066,7 +1066,7 @@ test("tools share physical lines and anchors across text representations", async
       const anchor = rows(grep)[1].split("│")[0];
       const edit = await call(makeEditOverride(directory, DEFAULT_CONFIG), {
         path: file,
-        edits: [{ action: "replace", anchor, body: ["new"] }],
+        steps: [{ action: "replace", anchor, lines: ["new"] }],
       });
       assert.equal(await readFile(file, "utf8"), before.replace("old", "new"));
       assert.match(edit.details.diff, /^-2 old/m);
@@ -1195,12 +1195,12 @@ test("all text tools share logical CRLF matching, anchors, and mutation separato
           "edit",
           {
             path,
-            edits: [
+            steps: [
               {
                 action: "replace",
                 anchor: rows[1].split("│")[0],
                 end: rows[2].split("│")[0],
-                body: ["A", "B", "C"],
+                lines: ["A", "B", "C"],
               },
             ],
           },
@@ -1478,7 +1478,7 @@ test("grep paths with input shorthand or literal separators still edit the searc
         assert.ok(anchor);
         await invoke(makeEditOverride(directory, DEFAULT_CONFIG), "edit", {
           path: returnedPath,
-          edits: [{ action: "replace", anchor, body: ["updated"] }],
+          steps: [{ action: "replace", anchor, lines: ["updated"] }],
         });
         assert.equal(await readFile(file, "utf8"), "updated\n");
         assert.equal(await readFile(otherFile, "utf8"), "needle\n");

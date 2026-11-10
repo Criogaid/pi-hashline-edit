@@ -77,7 +77,7 @@ test("mutation headers refresh in place and retain isolated per-call counts", ()
   ]) {
     const args = {
       path: "a.txt",
-      edits: [{ action: "append" as const, body: ["new"] }],
+      steps: [{ action: "append" as const, lines: ["new"] }],
       replacements: [{ literal: true, find: "old", replace: "new" }],
     };
     const context: any = {
@@ -111,28 +111,28 @@ test("mutation headers refresh in place and retain isolated per-call counts", ()
 test("partial edit actions → refresh per-action counts", () => {
   initTheme("dark");
   const tool = makeEditOverride(process.cwd(), DEFAULT_CONFIG);
-  const edits = [
-    { action: "replace", anchor: "1#AB", body: ["new"] },
-    { action: "append", body: ["more"] },
-    { action: "replace", anchor: "3#CD", body: ["changed"] },
+  const steps = [
+    { action: "replace", anchor: "1#AB", lines: ["new"] },
+    { action: "append", lines: ["more"] },
+    { action: "replace", anchor: "3#CD", lines: ["changed"] },
     { action: "delete", anchor: "5#EF" },
-    { action: "insert_before", anchor: "7#GH", body: ["before"] },
-    { action: "insert_after", anchor: "9#JK", body: ["after"] },
-    { action: "prepend", body: ["first"] },
+    { action: "insert_before", anchor: "7#GH", lines: ["before"] },
+    { action: "insert_after", anchor: "9#JK", lines: ["after"] },
+    { action: "prepend", lines: ["first"] },
   ];
   let header: ReturnType<typeof tool.renderCall> | undefined;
   const context = { state: {} } as Parameters<typeof tool.renderCall>[2];
   const render = (value: unknown) => {
     header = tool.renderCall(
       // Streaming arguments reach the renderer before schema validation.
-      { path: "f.txt", edits: value } as Parameters<typeof tool.renderCall>[0],
+      { path: "f.txt", steps: value } as Parameters<typeof tool.renderCall>[0],
       theme,
       { ...context, lastComponent: header },
     );
     return header.render(240).join("\n");
   };
-  assert.match(render([edits[0], {}]), /unknown ×1/);
-  const mixed = render(edits);
+  assert.match(render([steps[0], {}]), /unknown ×1/);
+  const mixed = render(steps);
   assert.match(mixed, /7 ops:/);
   for (const [kind, count] of [
     ["replace", 2],
@@ -145,14 +145,14 @@ test("partial edit actions → refresh per-action counts", () => {
     assert.ok(mixed.includes(`${kind} ×${count}`), mixed);
   }
   assert.doesNotMatch(mixed, /unknown/);
-  const single = render([edits[0]]);
+  const single = render([steps[0]]);
   assert.match(single, /1 op: replace ×1/);
   assert.doesNotMatch(single, /append|delete|insert_before|insert_after|prepend/);
   assert.match(
     render([null, { action: "rep" }, { action: "__proto__" }, { action: { toString: null } }]),
     /4 ops: unknown ×4/,
   );
-  for (const invalid of [[], undefined, JSON.stringify(edits), "[{bad"]) {
+  for (const invalid of [[], undefined, JSON.stringify(steps), "[{bad"]) {
     assert.doesNotMatch(render(invalid), /ops?:/);
   }
 });
@@ -170,7 +170,7 @@ test("missing or empty mutation path → show a themed placeholder until the pat
     let header: ReturnType<typeof tool.renderCall> | undefined;
     for (const path of [undefined, "", "f.txt"]) {
       // Streaming arguments may contain operations before the path arrives.
-      const args = { path, edits: [], replacements: [] } as Parameters<
+      const args = { path, steps: [], replacements: [] } as Parameters<
         ReturnType<typeof makeEditOverride>["renderCall"]
       >[0] &
         Parameters<ReturnType<typeof makeReplaceTool>["renderCall"]>[0];
@@ -187,7 +187,7 @@ test("missing or empty mutation path → show a themed placeholder until the pat
 test("mutation card owns stale-anchor notices without internal status", () => {
   initTheme("dark");
   const tool = withMutationStatus(makeEditOverride(process.cwd(), DEFAULT_CONFIG));
-  const args = { path: "a.txt", edits: [{ action: "append" as const, body: ["new"] }] };
+  const args = { path: "a.txt", steps: [{ action: "append" as const, lines: ["new"] }] };
   const context: any = { args, state: {}, isPartial: false, isError: false, invalidate() {} };
   const card = tool.renderCall!(args, theme, context);
   tool.renderResult!(
@@ -217,7 +217,7 @@ test("mutation card owns stale-anchor notices without internal status", () => {
 test("mutation card omits status when then_run was not requested", () => {
   initTheme("dark");
   const tool = withMutationStatus(makeEditOverride(process.cwd(), DEFAULT_CONFIG));
-  const args = { path: "a.txt", edits: [{ action: "append" as const, body: ["new"] }] };
+  const args = { path: "a.txt", steps: [{ action: "append" as const, lines: ["new"] }] };
   const context: any = { args, state: {}, isPartial: false, isError: false, invalidate() {} };
   const card = tool.renderCall!(args, theme, context);
   tool.renderResult!(
@@ -313,7 +313,7 @@ test("diff previews retain standalone CR and literal control-picture characters"
       { expanded: true, isPartial: false },
       theme,
       {
-        args: { path: "a.txt", edits: [{ action: "append", body: ["new"] }] },
+        args: { path: "a.txt", steps: [{ action: "append", lines: ["new"] }] },
         state: {},
         isError: false,
       } as Parameters<typeof tool.renderResult>[3],
@@ -406,7 +406,7 @@ test("all tools render argument issues as field diagnostics while preserving mod
         path: tool.name === "grep" ? ["unused.txt"] : "unused.txt",
         content: "unused",
         mode: "create" as const,
-        edits: [{ action: "append" as const, body: ["unused"] }],
+        steps: [{ action: "append" as const, lines: ["unused"] }],
         replacements: [{ literal: true, find: "unused", replace: "unused" }],
         pattern: ["unused"],
         literal: true,
@@ -488,7 +488,7 @@ test("expanded errors retain every text block while collapsed errors stay bounde
 test("argument cards preserve omission notices and all expanded issues", () => {
   initTheme("dark");
   const issues = Array.from({ length: 200 }, (_, index) => ({
-    field: `edits[${index}].body`,
+    field: `steps[${index}].lines`,
     reason: `中文🙂 ${index}: supply a line.\n${"context ".repeat(50)}\nFinal cause: empty body.`,
   }));
   const diagnostic = formatArgumentError(issues, true, DEFAULT_OUTPUT_BUDGETS);
@@ -534,7 +534,7 @@ test("unrecognized or malformed JSON errors retain their original diagnostic", (
 });
 
 test("argument diagnostics wrap Unicode and multiline reasons at narrow terminal widths", () => {
-  const field = "edits[0].body";
+  const field = "steps[0].lines";
   const reason = '中文🙂: supply at least one line.\nUse ["空行"] for this example.';
   const diagnostic = formatArgumentError([{ field, reason }], false, DEFAULT_OUTPUT_BUDGETS);
   const result = { content: [{ type: "text" as const, text: diagnostic }] };

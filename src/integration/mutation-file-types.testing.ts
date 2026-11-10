@@ -12,7 +12,7 @@ assert.ok(directory);
 const cases = [
   {
     tool: makeEditOverride(directory, DEFAULT_CONFIG),
-    args: { edits: [{ action: "append", body: ["after"] }] },
+    args: { steps: [{ action: "append", lines: ["after"] }] },
   },
   {
     tool: makeReplaceTool(directory, DEFAULT_CONFIG),

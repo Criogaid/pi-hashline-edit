@@ -111,15 +111,15 @@ test("model switches before argument preparation → rejection uses the new budg
   assert.ok(prepare);
   const properties: unknown = Reflect.get(tool.parameters, "properties");
   assert.ok(properties && typeof properties === "object");
-  const edits: unknown = Reflect.get(properties, "edits");
-  assert.ok(edits && typeof edits === "object");
-  const maxEdits: unknown = Reflect.get(edits, "maxItems");
+  const steps: unknown = Reflect.get(properties, "steps");
+  assert.ok(steps && typeof steps === "object");
+  const maxEdits: unknown = Reflect.get(steps, "maxItems");
   assert.ok(typeof maxEdits === "number");
   const args = {
     path: "never-opened.txt",
-    edits: Array.from({ length: maxEdits }, () => ({
+    steps: Array.from({ length: maxEdits }, () => ({
       action: "append",
-      body: Array(4).fill("\ud800"),
+      lines: Array(4).fill("\ud800"),
     })),
   };
   const reports: Report[] = [];
@@ -136,7 +136,7 @@ test("model switches before argument preparation → rejection uses the new budg
         assert.ok(Buffer.byteLength(error.message) <= budget.blockBytes);
         const report = reportOf({ content: [{ type: "text", text: error.message }] }, "edit");
         assert.ok(report?.issues);
-        assert.equal(report.issues.length + (report.omittedIssues ?? 0), args.edits.length * 4);
+        assert.equal(report.issues.length + (report.omittedIssues ?? 0), args.steps.length * 4);
         reports.push(report);
         return true;
       },

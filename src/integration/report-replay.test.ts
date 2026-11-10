@@ -10,7 +10,7 @@ import { DEFAULT_CONFIG, makeEditOverride } from "../pi/tool-factories.testing.t
 import { reportOf } from "../pi/report.ts";
 import { openTestSession, responseStream } from "../testing/session.testing.ts";
 
-const args = { path: "target.txt", edits: [{ action: "append", body: [] }] };
+const args = { path: "target.txt", steps: [{ action: "append", lines: [] }] };
 
 test("live preparation failure → replays diagnostic after fresh registration", async (t) => {
   initTheme("dark");
@@ -51,7 +51,7 @@ test("live preparation failure → replays diagnostic after fresh registration",
   const replay = { content: structuredClone(live.content), details: undefined };
   const serialized = JSON.stringify(replay);
   const report = reportOf(replay, "edit");
-  assert.equal(report?.issues?.[0].field, "edits[0].body");
+  assert.equal(report?.issues?.[0].field, "steps[0].lines");
   assert.equal(report?.issues?.[0].reason, "is empty");
 
   const second = await openTestSession(t, {
@@ -79,8 +79,8 @@ test("live preparation failure → replays diagnostic after fresh registration",
       isError: true,
     });
     const shown = stripVTControlCharacters(component.render(240).join("\n"));
-    assert.match(shown, /edits\[0\]\.body: is empty/);
-    assert.equal(shown.split("edits[0].body: is empty").length - 1, 1);
+    assert.match(shown, /steps\[0\]\.lines: is empty/);
+    assert.equal(shown.split("steps[0].lines: is empty").length - 1, 1);
     assert.doesNotMatch(shown, /"issues":/);
     assert.equal(JSON.stringify(decoded), serialized);
   }

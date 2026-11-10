@@ -24,7 +24,7 @@ const text = (result: Pick<AgentToolResult<unknown>, "content">): string =>
 
 const anchorBudget = outputBudgetsFor(4096);
 const anchorBatchSize: unknown = Reflect.get(
-  makeEditOverride(process.cwd(), DEFAULT_CONFIG).parameters.properties.edits,
+  makeEditOverride(process.cwd(), DEFAULT_CONFIG).parameters.properties.steps,
   "maxItems",
 );
 assert.ok(typeof anchorBatchSize === "number");
@@ -80,11 +80,11 @@ test("edit and replace commands change or remove the file → withhold anchors a
           const args =
             toolName === "edit"
               ? {
-                  edits: [
+                  steps: [
                     {
                       action: "replace",
                       anchor: `1#${computeLineHash(1, "before", DEFAULT_CONFIG.hashLen)}`,
-                      body: ["after"],
+                      lines: ["after"],
                     },
                   ],
                 }
@@ -167,7 +167,7 @@ test("aggregate anchor diagnostics → respect their byte budgets", async (t) =>
       makeEditOverride(dir, DEFAULT_CONFIG, undefined, () => anchorBudget),
       {
         path,
-        edits: Array.from({ length: anchorBatchSize }, () => ({
+        steps: Array.from({ length: anchorBatchSize }, () => ({
           action: "delete",
           anchor: "1#XXXX",
         })),
@@ -198,10 +198,10 @@ test("unpaired surrogate arguments are rejected before Fusion", async (t) => {
         tool: makeEditOverride(dir, DEFAULT_CONFIG, fusion),
         args: {
           path,
-          edits: [{ action: "append", body: ["\ud800"] }],
+          steps: [{ action: "append", lines: ["\ud800"] }],
           then_run: { command: "check" },
         },
-        field: "edits[0].body[0]",
+        field: "steps[0].lines[0]",
       },
       {
         tool: makeReplaceTool(dir, DEFAULT_CONFIG, fusion),
@@ -246,7 +246,7 @@ test("ambiguous recovery bounds candidate lists and never claims content identit
       makeEditOverride(dir, DEFAULT_CONFIG, undefined, () => anchorBudget),
       {
         path,
-        edits: Array.from({ length: anchorBatchSize }, () => ({
+        steps: Array.from({ length: anchorBatchSize }, () => ({
           action: "delete",
           anchor: `50#${computeLineHash(50, "same", 4)}`,
         })),
@@ -280,8 +280,12 @@ test("NUL arguments are rejected before Fusion for all mutation tools", async (t
     const cases = [
       {
         tool: makeEditOverride(dir, DEFAULT_CONFIG, fusion),
-        args: { path, edits: [{ action: "append", body: ["\0"] }], then_run: { command: "check" } },
-        field: "edits[0].body[0]",
+        args: {
+          path,
+          steps: [{ action: "append", lines: ["\0"] }],
+          then_run: { command: "check" },
+        },
+        field: "steps[0].lines[0]",
       },
       {
         tool: makeReplaceTool(dir, DEFAULT_CONFIG, fusion),
@@ -421,11 +425,11 @@ const noOpCases = [
   {
     makeTool: (cwd: string, fusion?: Fusion) => makeEditOverride(cwd, DEFAULT_CONFIG, fusion),
     params: {
-      edits: [
+      steps: [
         {
           action: "replace",
           anchor: `1#${computeLineHash(1, "same", DEFAULT_CONFIG.hashLen)}`,
-          body: ["same"],
+          lines: ["same"],
         },
       ],
     },
@@ -501,12 +505,12 @@ test("delete and append change only line endings → publishes with an empty dif
         makeEditOverride(dir, DEFAULT_CONFIG, mode === "standalone" ? undefined : fusion),
         {
           path,
-          edits: [
+          steps: [
             {
               action: "delete",
               anchor: `1#${computeLineHash(1, "same", DEFAULT_CONFIG.hashLen)}`,
             },
-            { action: "append", body: ["same"] },
+            { action: "append", lines: ["same"] },
           ],
           ...(["command", "stale"].includes(mode) ? { then_run: { command: "check" } } : {}),
         },

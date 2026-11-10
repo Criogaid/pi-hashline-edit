@@ -61,7 +61,7 @@ export type AnchorRecovery =
 /**
  * A single anchor that failed verification, with its recovery attempt.
  *
- * `opIndex` is the 0-based position in the input `edits[]`; `which` names the
+ * `opIndex` is the 0-based position in the input `steps[]`; `which` names the
  * op's target or insertion anchor, or its range end; `op` is the op kind.
  */
 export interface AnchorFailure {

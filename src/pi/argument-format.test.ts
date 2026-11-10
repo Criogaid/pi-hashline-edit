@@ -17,7 +17,7 @@ test("all tools receive invalid arguments → return field diagnostics without a
   const cases = [
     {
       tool: makeEditOverride(cwd, DEFAULT_CONFIG),
-      args: { path: "unused", edits: [{ action: "append", body: [] }] },
+      args: { path: "unused", steps: [{ action: "append", lines: [] }] },
     },
     { tool: makeReadOverride(cwd, DEFAULT_CONFIG), args: { path: "unused", limit: 0 } },
     { tool: makeGrepOverride(cwd, DEFAULT_CONFIG), args: { pattern: "", literal: true } },
@@ -54,12 +54,12 @@ test("all tools receive invalid arguments → return field diagnostics without a
 test("Pi prepares a singleton operation → semantic and schema paths resolve to the prepared array", async () => {
   const tool = makeEditOverride(cwd, DEFAULT_CONFIG);
   await assert.rejects(
-    callTool(tool, { path: "unused", edits: { action: "insert_after", body: [] } }),
+    callTool(tool, { path: "unused", steps: { action: "insert_after", lines: [] } }),
     (error: unknown) => {
       const result = argumentError(error);
       assert.deepEqual(
         result.issues.map((issue) => issue.field),
-        ["edits[0].anchor", "edits[0].body"],
+        ["steps[0].anchor", "steps[0].lines"],
       );
       return true;
     },
@@ -81,19 +81,19 @@ test("Pi prepares a singleton operation → semantic and schema paths resolve to
 test("JSON diagnostics exceed the budget → retain whole opening and closing issues and label omissions", async () => {
   const budget = outputBudgetsFor(4096);
   const tool = makeEditOverride(cwd, DEFAULT_CONFIG, undefined, () => budget);
-  const maxItems: unknown = Reflect.get(tool.parameters.properties.edits, "maxItems");
+  const maxItems: unknown = Reflect.get(tool.parameters.properties.steps, "maxItems");
   assert.ok(typeof maxItems === "number");
-  const edits = Array.from({ length: maxItems }, () => ({
+  const steps = Array.from({ length: maxItems }, () => ({
     action: "append",
-    body: [],
+    lines: [],
   }));
-  await assert.rejects(callTool(tool, { path: "", edits }), (error: unknown) => {
+  await assert.rejects(callTool(tool, { path: "", steps }), (error: unknown) => {
     const result = argumentError(error);
     assert.ok(error instanceof Error && Buffer.byteLength(error.message) <= budget.blockBytes);
-    assert.equal(result.issues[0].field, "edits[0].body");
+    assert.equal(result.issues[0].field, "steps[0].lines");
     assert.equal(result.issues.at(-1)?.field, "path");
     assert.ok((result.omittedIssues ?? 0) > 0);
-    assert.equal(result.issues.length + (result.omittedIssues ?? 0), edits.length + 1);
+    assert.equal(result.issues.length + (result.omittedIssues ?? 0), steps.length + 1);
     return true;
   });
 });
@@ -103,7 +103,7 @@ test("a reason contains an oversized anchor → keep its cause and recovery inst
   await assert.rejects(
     callTool(makeEditOverride(cwd, DEFAULT_CONFIG), {
       path: "unused",
-      edits: [{ action: "delete", anchor }],
+      steps: [{ action: "delete", anchor }],
     }),
     (error: unknown) => {
       const result = argumentError(error);
@@ -112,7 +112,7 @@ test("a reason contains an oversized anchor → keep its cause and recovery inst
           Buffer.byteLength(error.message) <= DEFAULT_OUTPUT_BUDGETS.blockBytes,
       );
       assert.equal(result.issues.length, 1);
-      assert.equal(result.issues[0].field, "edits[0].anchor");
+      assert.equal(result.issues[0].field, "steps[0].anchor");
       assert.match(result.issues[0].reason, /^line number/);
       assert.match(result.issues[0].fix ?? "", /Copy a complete.*latest tool result/);
       assert.doesNotMatch(result.issues[0].reason, /Read|grep|Copy/);

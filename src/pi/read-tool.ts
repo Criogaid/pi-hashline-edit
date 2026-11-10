@@ -44,7 +44,7 @@ type ReadDetails = (ReadToolDetails & { nativeRead?: true }) & Partial<ReportDet
  * First result line: `<path> · <N> lines`, optionally ` (from line <offset>)` and
  * ` · no trailing newline`. A missing final newline is a byte-level fact the
  * numbered rows cannot show, so the header, which the model never copies into an
- * edit `body`, states it. READ_HEADER is the TUI's parser for this exact line.
+ * edit `lines`, states it. READ_HEADER is the TUI's parser for this exact line.
  */
 function formatReadHeader(
   path: string,

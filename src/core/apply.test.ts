@@ -134,7 +134,7 @@ test("overlapping edit spans → report conflicting operations in input order", 
           assert(error instanceof HashlineError);
           assert.equal(error.errorCode, "OVERLAPPING_EDITS");
           assert.equal(error.message, "Two edits overlap.");
-          assert.deepEqual(error.facts?.conflict, ["edits[1]", "edits[2]"]);
+          assert.deepEqual(error.facts?.conflict, ["steps[1]", "steps[2]"]);
           return true;
         },
       );
@@ -188,7 +188,7 @@ test("insertions sharing a gap → reject the batch", () => {
           assert(error instanceof HashlineError);
           assert.equal(error.errorCode, "OVERLAPPING_EDITS");
           assert.equal(error.message, "Two edits insert at one position.");
-          assert.deepEqual(error.facts?.conflict, ["edits[0]", "edits[1]"]);
+          assert.deepEqual(error.facts?.conflict, ["steps[0]", "steps[1]"]);
           return true;
         },
       );

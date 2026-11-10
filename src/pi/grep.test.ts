@@ -562,11 +562,11 @@ test("grep in a subdirectory returns a path that edits the matching file", async
     const edit: any = makeEditOverride(dir, DEFAULT_CONFIG);
     await call(edit, {
       path: displayPath,
-      edits: [
+      steps: [
         {
           action: "replace",
           anchor: contextAnchor,
-          body: ["export const context = 2;"],
+          lines: ["export const context = 2;"],
         },
       ],
     });

@@ -40,7 +40,7 @@ The model copies an anchor into `edit`:
 ```json
 {
   "path": "greet.ts",
-  "edits": [{ "action": "replace", "anchor": "2#GFYR", "body": ["  return \"hello, hashline\";"] }]
+  "steps": [{ "action": "replace", "anchor": "2#GFYR", "lines": ["  return \"hello, hashline\";"] }]
 }
 ```
 
@@ -62,6 +62,7 @@ Grep visits input paths in the order supplied and uses ripgrep's sorted director
 
 Grep matches the LF view with native JavaScript regexes. Without `multiline`, each physical line is searched separately; with it, the whole file is searched and every physical line touched by a match is returned. Context rows do not count toward `limit`. Content output re-reads matched files and omits any whose revision changed; `files` and `count` report the searched snapshot without a second read. Incomplete scans state their diagnostics or scan limit in the report.
 
+An `edit` call puts its small locator first: `path`, `steps`, then optional `then_run`. Each step puts the operation and range before the replacement payload: `action`, `anchor`, optional `end`, then `lines`. This keeps the file and target range visible while arguments stream.
 Edit operations:
 
 | `action` | Effect |
