@@ -7,9 +7,8 @@ import {
   type ToolRenderResultOptions,
 } from "@earendil-works/pi-coding-agent";
 import { commitFile } from "./file-commit.ts";
-import { mutationToolBase, type ActionFusionExecutor } from "./mutation-runner.ts";
+import { mutationToolBase, type MutationToolEnvironment } from "./mutation-runner.ts";
 import { throwIfCancelled } from "./error-text.ts";
-import type { OutputBudgetProvider } from "./budgets.ts";
 import { unwritableTextError } from "../core/text.ts";
 import { MUTATION_CARD_SHOWN, reportLines, renderToolError, splitReport } from "./render.ts";
 import type { MutationOutcome } from "./mutation-result.ts";
@@ -38,18 +37,12 @@ type WriteRenderContext = Parameters<
   NonNullable<ReturnType<typeof createWriteToolDefinition>["renderCall"]>
 >[2];
 
-export function makeWriteOverride(
-  cwd: string,
-  fusion: ActionFusionExecutor | undefined,
-  budgets: OutputBudgetProvider,
-) {
-  const builtin = createWriteToolDefinition(cwd);
+export function makeWriteOverride(env: MutationToolEnvironment) {
+  const builtin = createWriteToolDefinition(env.cwd);
   return {
     ...mutationToolBase({
+      ...env,
       tool: "write",
-      cwd,
-      fusion,
-      budgets,
       schema: writeSchema,
       description:
         "Write a whole file exactly as supplied, including its line endings. Do not use write for partial changes to an existing file; use edit or replace. Choose create for a new file or overwrite for an existing file. Creates missing parent directories.",

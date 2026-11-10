@@ -33,9 +33,11 @@ try {
   };
   timer = setInterval(sample, 5);
   const start = performance.now();
-  const result = await makeGrepOverride(directory, loadConfig(directory), () =>
-    outputBudgetsFor(undefined),
-  ).execute("bench", { path: [directory], pattern: ["needle"], literal: true }, undefined);
+  const result = await makeGrepOverride({
+    cwd: directory,
+    config: loadConfig(directory),
+    budgets: () => outputBudgetsFor(undefined),
+  }).execute("bench", { path: [directory], pattern: ["needle"], literal: true }, undefined);
   sample();
   const text = result.content[0];
   if (text.type !== "text" || (text.text.match(/ · 1 match\n/g) ?? []).length !== files)

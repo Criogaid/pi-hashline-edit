@@ -12,17 +12,21 @@ const warmupIterations = 100;
 const writeBytes = 1024 * 1024;
 const editOperations = 20;
 const cwd = process.cwd();
-const config = loadConfig(cwd);
-const budgets = () => outputBudgetsFor(undefined);
+const env = {
+  cwd,
+  config: loadConfig(cwd),
+  budgets: () => outputBudgetsFor(undefined),
+  fusion: undefined,
+};
 const scenarios: readonly {
   readonly label: string;
   readonly tool: Tool & { prepareArguments?(args: unknown): unknown };
   readonly args: ToolCall["arguments"];
 }[] = [
-  { label: "read", tool: makeReadOverride(cwd, config, budgets), args: { path: "file.txt" } },
+  { label: "read", tool: makeReadOverride(env), args: { path: "file.txt" } },
   {
     label: `edit (${editOperations} ops)`,
-    tool: makeEditOverride(cwd, config, undefined, budgets),
+    tool: makeEditOverride(env),
     args: {
       path: "file.txt",
       edits: Array.from({ length: editOperations }, () => ({
@@ -33,7 +37,7 @@ const scenarios: readonly {
   },
   {
     label: `write (${writeBytes} bytes)`,
-    tool: makeWriteOverride(cwd, undefined, budgets),
+    tool: makeWriteOverride(env),
     args: { path: "file.txt", content: "x".repeat(writeBytes), mode: "create" },
   },
 ];

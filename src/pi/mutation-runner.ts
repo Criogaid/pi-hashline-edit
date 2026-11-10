@@ -54,10 +54,16 @@ import {
 import { canonicalPath } from "./path.ts";
 import { throwIfCancelled } from "./error-text.ts";
 import { runTool } from "./report.ts";
-import type { OutputBudgetProvider, OutputBudgets } from "./budgets.ts";
+import type { OutputBudgets } from "./budgets.ts";
+import type { ToolEnvironment } from "./config.ts";
 import { STRICT_SAMPLING } from "./schema.ts";
 
 export type ActionFusionExecutor = ReturnType<typeof createActionFusionExecutor>;
+
+/** A mutation tool's registration environment; fusion is undefined when Action Fusion is off. */
+export interface MutationToolEnvironment extends ToolEnvironment {
+  readonly fusion: ActionFusionExecutor | undefined;
+}
 
 /** Result details shared by the read-modify-write tools. */
 type TextMutationDetails = ReturnType<typeof generateMutationDetails>;
@@ -73,11 +79,9 @@ export interface MutationTarget {
 type MutationParams<P extends TProperties> = Static<TObject<P>> & { readonly path: string };
 
 /** What a mutation tool supplies to the shared definition; renderers stay with the tool. */
-interface MutationToolSpec<P extends TProperties, TDetails, TTool extends MutationToolName> {
+interface MutationToolSpec<P extends TProperties, TDetails, TTool extends MutationToolName>
+  extends MutationToolEnvironment {
   readonly tool: TTool;
-  readonly cwd: string;
-  readonly fusion: ActionFusionExecutor | undefined;
-  readonly budgets: OutputBudgetProvider;
   /** Parameters without then_run, which Action Fusion adds. */
   readonly schema: TObject<P>;
   readonly description: string;

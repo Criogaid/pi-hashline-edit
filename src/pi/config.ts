@@ -13,7 +13,7 @@ import { Type, type Static, type TSchema } from "typebox";
 import { Value } from "typebox/value";
 import { HASH_LEN_MAX, HASH_LEN_MIN } from "../core/hash.ts";
 import { GREP_CONTEXT_RANGE, integerRange, POSITIVE_SAFE_INTEGER } from "./schema.ts";
-import { MAX_CONTENT_KIB } from "./budgets.ts";
+import { MAX_CONTENT_KIB, type OutputBudgetProvider } from "./budgets.ts";
 
 function integerSetting(
   range: ReturnType<typeof integerRange>,
@@ -84,6 +84,13 @@ const configSchema = Type.Object({
 });
 
 export type HashlineEditConfig = Static<typeof configSchema>;
+
+/** What a tool captures at registration and keeps for its lifetime. */
+export interface ToolEnvironment {
+  readonly cwd: string;
+  readonly config: HashlineEditConfig;
+  readonly budgets: OutputBudgetProvider;
+}
 
 function asRecord(value: unknown): Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value)

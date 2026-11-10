@@ -31,8 +31,8 @@ import { POSITIVE_SAFE_INTEGER, STRICT_SAMPLING } from "./schema.ts";
 import { errnoCode } from "../core/errors.ts";
 import { throwIfCancelled } from "./error-text.ts";
 import { reportResult, runTool, type ReportDetails } from "./report.ts";
-import { formatByteSize, type OutputBudgetProvider } from "./budgets.ts";
-import type { HashlineEditConfig } from "./config.ts";
+import { formatByteSize } from "./budgets.ts";
+import type { ToolEnvironment } from "./config.ts";
 import { createArgumentPreparer } from "./argument-validation.ts";
 
 const DEFAULT_OFFSET = 1;
@@ -106,11 +106,11 @@ function renderReadBody(raw: string, path: string, theme: Theme): string {
 }
 
 /** Build the read override (a ToolDefinition fragment for registerTool). */
-export function makeReadOverride(
-  cwd: string,
-  config: HashlineEditConfig,
-  budgets: OutputBudgetProvider,
-): ToolDefinition<
+export function makeReadOverride({
+  cwd,
+  config,
+  budgets,
+}: ToolEnvironment): ToolDefinition<
   ReturnType<typeof createReadToolDefinition>["parameters"],
   ReadDetails | undefined
 > {

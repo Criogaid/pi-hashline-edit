@@ -41,10 +41,9 @@ import {
 import {
   mutationToolBase,
   runTextMutation,
-  type ActionFusionExecutor,
   type MutationTarget,
+  type MutationToolEnvironment,
 } from "./mutation-runner.ts";
-import type { OutputBudgetProvider } from "./budgets.ts";
 import { argumentItems, type ReportArgumentIssue } from "./argument-validation.ts";
 
 const replaceSchema = Type.Object(
@@ -89,24 +88,17 @@ function checkReplaceArguments(args: unknown, report: ReportArgumentIssue): void
   });
 }
 
-export function makeReplaceTool(
-  cwd: string,
-  config: HashlineEditConfig,
-  fusion: ActionFusionExecutor | undefined,
-  budgets: OutputBudgetProvider,
-) {
+export function makeReplaceTool(env: MutationToolEnvironment) {
   return {
     ...mutationToolBase({
+      ...env,
       tool: "replace",
-      cwd,
-      fusion,
-      budgets,
       schema: replaceSchema,
       description:
         "Replace every match of one or more literal or JavaScript-regex rules in a file. Rules swap only their matched fragments in one call, without line anchors. Use edit instead for inserting, deleting, or rewriting whole lines. Overlapping matches or a rule with no match reject the whole call.",
       promptSnippet: "Replace matching text across a file",
       check: checkReplaceArguments,
-      run: (params, target) => runReplace(target, params.replacements, config),
+      run: (params, target) => runReplace(target, params.replacements, env.config),
     }),
     ...diffCardRenderers("replace", "Replacing…", replaceHeader),
   };

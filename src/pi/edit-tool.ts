@@ -18,7 +18,6 @@ import { Type, type Static, type TLiteral } from "typebox";
 import { applyEdits } from "../core/apply.ts";
 import { unwritableTextError } from "../core/text.ts";
 import { EDIT_ANCHOR_FIELDS, type Anchor, type Edit } from "../core/types.ts";
-import type { HashlineEditConfig } from "./config.ts";
 import { anchorPattern, createAnchorFormatter, parseAnchorToken } from "./anchor-format.ts";
 import {
   diffCardRenderers,
@@ -27,12 +26,11 @@ import {
   type DiffCounts,
 } from "./render.ts";
 import { describeEditFailure } from "./failure-context.ts";
-import type { OutputBudgetProvider } from "./budgets.ts";
 import {
   mutationToolBase,
   runTextMutation,
-  type ActionFusionExecutor,
   type MutationTarget,
+  type MutationToolEnvironment,
 } from "./mutation-runner.ts";
 import { argumentItems, type ReportArgumentIssue } from "./argument-validation.ts";
 
@@ -277,22 +275,15 @@ function editHeader(args: EditParams, theme: Theme, counts?: DiffCounts): string
   return t;
 }
 
-export function makeEditOverride(
-  cwd: string,
-  config: HashlineEditConfig,
-  fusion: ActionFusionExecutor | undefined,
-  budgets: OutputBudgetProvider,
-) {
+export function makeEditOverride(env: MutationToolEnvironment) {
   // Schema, verification, and recovery use the registered configuration.
-  const { hashLen, shiftRadius } = config;
+  const { hashLen, shiftRadius } = env.config;
   const schema = buildEditSchema(hashLen);
 
   return {
     ...mutationToolBase({
+      ...env,
       tool: "edit",
-      cwd,
-      fusion,
-      budgets,
       schema,
       description:
         "Edit whole lines using LINE#HASH anchors checked against the current file. Use replace instead when the same change repeats in several places, or when only a fragment of a long line changes.",

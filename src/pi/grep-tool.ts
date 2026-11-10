@@ -21,9 +21,8 @@ import { DEFAULT_GREP_FLAGS } from "../core/search.ts";
 import { GREP_CONTEXT_RANGE, POSITIVE_SAFE_INTEGER, STRICT_SAMPLING } from "./schema.ts";
 import { throwIfCancelled } from "./error-text.ts";
 import { reportResult, runTool, type ReportDetails } from "./report.ts";
-import type { HashlineEditConfig } from "./config.ts";
+import type { HashlineEditConfig, ToolEnvironment } from "./config.ts";
 import { createArgumentPreparer, type ReportArgumentIssue } from "./argument-validation.ts";
-import type { OutputBudgetProvider } from "./budgets.ts";
 
 /** A list field: arrays only, because strict sampling cannot take a string-or-array union. */
 const nonEmptyStrings = (description: string) =>
@@ -117,11 +116,7 @@ function checkGrepArguments(args: unknown, report: ReportArgumentIssue): void {
 }
 
 /** Build the grep override (a ToolDefinition fragment for registerTool). */
-export function makeGrepOverride(
-  cwd: string,
-  config: HashlineEditConfig,
-  budgets: OutputBudgetProvider,
-) {
+export function makeGrepOverride({ cwd, config, budgets }: ToolEnvironment) {
   const { hashLen } = config;
   const grepSchema = createGrepSchema(config.grep);
 

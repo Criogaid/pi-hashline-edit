@@ -47,11 +47,13 @@ export default function (pi: ExtensionAPI) {
     const registerMutation = <TParams extends TSchema, TDetails>(
       tool: ToolDefinition<TParams, TDetails>,
     ) => register(fusion ? withMutationStatus(tool) : tool);
-    registerMutation(makeWriteOverride(cwd, fusion, budgets));
-    registerMutation(makeEditOverride(cwd, config, fusion, budgets));
-    registerMutation(makeReplaceTool(cwd, config, fusion, budgets));
+    const env = { cwd, config, budgets };
+    const mutationEnv = { ...env, fusion };
+    registerMutation(makeWriteOverride(mutationEnv));
+    registerMutation(makeEditOverride(mutationEnv));
+    registerMutation(makeReplaceTool(mutationEnv));
 
-    register(makeReadOverride(cwd, config, budgets));
-    register(makeGrepOverride(cwd, config, budgets));
+    register(makeReadOverride(env));
+    register(makeGrepOverride(env));
   }
 }
