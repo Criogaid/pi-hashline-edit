@@ -1,3 +1,4 @@
+import { commandCompletion, type SessionCommand } from "./action-fusion.testing.ts";
 import { rejectsArgument, rejectsArguments } from "./argument-error.testing.ts";
 /** Tool-level replace contracts: byte preservation, matching, and failures. */
 import { test } from "node:test";
@@ -6,11 +7,11 @@ import { mkdtemp, rm, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { initTheme, type Theme } from "@earendil-works/pi-coding-agent";
-import { makeReplaceTool } from "./replace-tool.ts";
+import { makeReplaceTool } from "./tool-factories.testing.ts";
 import { validateToolArguments } from "@earendil-works/pi-ai";
 import { callTool } from "./tool-call.testing.ts";
 import { createActionFusionExecutor } from "./action-fusion.ts";
-import { DEFAULT_CONFIG } from "./config.ts";
+import { DEFAULT_CONFIG } from "./tool-factories.testing.ts";
 import { reportOf } from "./report.ts";
 
 async function withDir<T>(fn: (dir: string) => Promise<T>): Promise<T> {
@@ -35,10 +36,11 @@ test("replace rejects invalid rule shapes → precise fields and no publication 
     const path = join(dir, "f.txt");
     await writeFile(path, "old\n");
     let commands = 0;
-    const fusion = createActionFusionExecutor(async () => {
+    const executeTool: SessionCommand = async () => {
       commands++;
-      return { status: "succeeded", result: { content: [] } };
-    });
+      return commandCompletion({ content: [] });
+    };
+    const fusion = createActionFusionExecutor(() => {});
     const rule = { literal: true, find: "old", replace: "new" };
     for (const executor of [undefined, fusion]) {
       const tool = makeReplaceTool(dir, DEFAULT_CONFIG, executor);
@@ -59,11 +61,15 @@ test("replace rejects invalid rule shapes → precise fields and no publication 
         [{ replacements: [{ ...rule, find: "" }] }, "replacements[0].find", /./],
       ] as const) {
         await assert.rejects(
-          callTool(tool, {
-            path,
-            ...args,
-            ...(executor ? { then_run: { command: "check" } } : {}),
-          }),
+          callTool(
+            tool,
+            {
+              path,
+              ...args,
+              ...(executor ? { then_run: { command: "check" } } : {}),
+            },
+            { ctx: { cwd: dir, executeTool } },
+          ),
           rejectsArgument(field, reason),
         );
         assert.equal(await readFile(path, "utf8"), "old\n");
@@ -77,13 +83,14 @@ test("replace rules omit literal or retain regex → reject before publication a
     const path = join(dir, "f.txt");
     await writeFile(path, "old\n");
     let commands = 0;
+    const executeTool: SessionCommand = async () => {
+      commands++;
+      return commandCompletion({ content: [] });
+    };
     const tool = makeReplaceTool(
       dir,
       DEFAULT_CONFIG,
-      createActionFusionExecutor(async () => {
-        commands++;
-        return { status: "succeeded", result: { content: [] } };
-      }),
+      createActionFusionExecutor(() => {}),
     );
     for (const [rule, field, reason] of [
       [{ find: "old", replace: "new" }, "literal", /required/],
@@ -91,11 +98,15 @@ test("replace rules omit literal or retain regex → reject before publication a
       [{ find: "old", replace: "new", literal: true, regex: false }, "regex", /not allowed/],
     ] as const) {
       await assert.rejects(
-        callTool(tool, {
-          path,
-          replacements: [{ find: "old", literal: true, replace: "first" }, rule],
-          then_run: { command: "check" },
-        }),
+        callTool(
+          tool,
+          {
+            path,
+            replacements: [{ find: "old", literal: true, replace: "first" }, rule],
+            then_run: { command: "check" },
+          },
+          { ctx: { cwd: dir, executeTool } },
+        ),
         rejectsArgument(`replacements[1].${field}`, reason),
       );
       assert.equal(await readFile(path, "utf8"), "old\n");
@@ -419,13 +430,14 @@ test("invalid batches reject every change and never run a fused command", async 
     const before = "foo bar foo";
     await writeFile(file, before);
     let commands = 0;
+    const executeTool: SessionCommand = async () => {
+      commands++;
+      return commandCompletion({ content: [{ type: "text", text: "done" }] });
+    };
     const tool = makeReplaceTool(
       dir,
       DEFAULT_CONFIG,
-      createActionFusionExecutor(async () => {
-        commands++;
-        return { status: "succeeded", result: { content: [{ type: "text", text: "done" }] } };
-      }),
+      createActionFusionExecutor(() => {}),
     );
     const first = { literal: true, find: "bar", replace: "changed" };
     const cases = [
@@ -461,7 +473,7 @@ test("invalid batches reject every change and never run a fused command", async 
       const failed = await callTool(
         tool,
         { path: file, replacements: [first, rule], then_run: { command: "check" } },
-        { ctx: { cwd: dir } },
+        { ctx: { ...{ cwd: dir }, executeTool } },
       );
       assert.equal(failed.isError, true);
       assert.equal(reportOf(failed, "replace")?.error, code);
@@ -475,9 +487,7 @@ test("invalid batches reject every change and never run a fused command", async 
           callTool(
             tool,
             { path: file, ...args, then_run: { command: "check" } },
-            {
-              ctx: { cwd: dir },
-            },
+            { ctx: { ...{ cwd: dir }, executeTool } },
           ),
           expected,
         );
@@ -576,15 +586,16 @@ test("successful batches run one command against the complete result", async () 
     const file = join(dir, "batch.txt");
     await writeFile(file, "foo bar");
     let commands = 0;
+    const executeTool: SessionCommand = async (_name, input) => {
+      assert.deepEqual(input, { command: "check" });
+      commands++;
+      assert.equal(await readFile(file, "utf8"), "bar baz");
+      return commandCompletion({ content: [{ type: "text", text: "checked" }] });
+    };
     const tool = makeReplaceTool(
       dir,
       DEFAULT_CONFIG,
-      createActionFusionExecutor(async (input) => {
-        assert.equal(input.command, "check");
-        commands++;
-        assert.equal(await readFile(file, "utf8"), "bar baz");
-        return { status: "succeeded", result: { content: [{ type: "text", text: "checked" }] } };
-      }),
+      createActionFusionExecutor(() => {}),
     );
     const result = await tool.execute(
       "0",
@@ -598,7 +609,7 @@ test("successful batches run one command against the complete result", async () 
       },
       undefined,
       undefined,
-      { cwd: dir } as Parameters<typeof tool.execute>[4],
+      { ...({ cwd: dir } as Parameters<typeof tool.execute>[4]), executeTool },
     );
     assert.equal(commands, 1);
     assert.equal(reportOf(result, "replace")?.then_run?.status, "succeeded");

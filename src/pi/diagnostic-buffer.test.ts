@@ -3,9 +3,11 @@ import { test } from "node:test";
 import childProcess from "node:child_process";
 import { syncBuiltinESMExports } from "node:module";
 import { DiagnosticBuffer } from "./diagnostic-buffer.ts";
-import { DEFAULT_OUTPUT_BUDGETS } from "./budgets.ts";
-import { assembleGrepOutput } from "./grep-output.ts";
-import { MAX_RG_STDERR_BYTES, runRgPaths } from "./rg-process.ts";
+import { DEFAULT_OUTPUT_BUDGETS } from "./tool-factories.testing.ts";
+import { grepOutput } from "./grep-output.ts";
+import { createAnchorFormatter } from "./anchor-format.ts";
+import { runRgPaths } from "./rg-process.ts";
+const MAX_RG_STDERR_BYTES = 64 * 1024;
 import { mkdtemp, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -46,19 +48,28 @@ test("diagnostics within the budget are unchanged", () => {
   assert.equal(buffer.toString(), source);
 });
 
-test("search warning aggregation retains the final cause and labels truncation", () => {
-  const { facts, payload } = assembleGrepOutput({
+test("search warning aggregation retains the final cause and labels truncation", async () => {
+  const { facts, payload } = await grepOutput({
     budget: DEFAULT_OUTPUT_BUDGETS,
-    formatted: {
-      blocks: [{ lines: ["confirmed match"] }],
-      matches: 1,
-      files: 1,
+    cwd: process.cwd(),
+    anchors: createAnchorFormatter(4),
+    context: 0,
+    search: {
+      files: [
+        {
+          filePath: join(process.cwd(), "confirmed match"),
+          rows: [],
+          snapshot: { revision: "", validUtf8: true },
+        },
+      ],
+      candidates: "lines",
+      matchLimitReached: false,
+      scanLimitReached: false,
     },
     warnings: [diagnostic(DEFAULT_OUTPUT_BUDGETS.fieldBytes)],
-    searchFacts: {},
-    outputMode: "content",
-    matchLimitReached: false,
+    outputMode: "files",
     effectiveLimit: 100,
+    literalPipe: false,
   });
   assert.equal(payload, "confirmed match");
   assert.match(facts.diagnostics ?? "", /regex parse error:/);

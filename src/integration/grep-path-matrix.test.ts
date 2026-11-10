@@ -1,13 +1,14 @@
+import { makeMockGrep } from "../pi/grep-rg.testing.ts";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { DEFAULT_GREP_FLAGS, searchText } from "../core/search.ts";
-import { DEFAULT_CONFIG } from "../pi/config.ts";
-import { makeGrepOverrideWithBackend } from "../pi/grep-tool.ts";
+const { DEFAULT_CONFIG } = await import("../pi/tool-factories.testing.ts");
+
 import { reportOf } from "../pi/report.ts";
-import { grepCounts } from "../pi/grep-output.testing.ts";
+const { grepCounts } = await import("../pi/grep-output.testing.ts");
 import { runRgLines, runRgPaths } from "../pi/rg-process.ts";
 import { callTool } from "../pi/tool-call.testing.ts";
 import { acceptsNative } from "../core/search-matrix.testing.ts";
@@ -28,7 +29,7 @@ test("Cartesian literal mode × flags × case override × line mode × bytes →
   for (const input of inputs) await writeFile(join(directory, input.name), input.bytes);
   const limit = inputs.reduce((sum, input) => sum + input.bytes.length, 0);
   const candidates = new Map<string, readonly number[] | undefined>();
-  const tool = makeGrepOverrideWithBackend(directory, DEFAULT_CONFIG, {
+  const tool = makeMockGrep(directory, DEFAULT_CONFIG, {
     runRgPaths(args, signal, onPath) {
       return runRgPaths(args, signal, (path) => {
         candidates.set(basename(path), undefined);

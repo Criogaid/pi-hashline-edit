@@ -12,10 +12,11 @@ import {
   MATRIX_INPUTS,
 } from "../core/search-matrix.testing.ts";
 import { runRgPaths } from "../pi/rg-process.ts";
-import { candidateArgs } from "../pi/grep-candidates.ts";
+import { fileCandidateArgs } from "../pi/grep-rg.testing.ts";
 
 interface CandidateCase {
   readonly prefilter: Prefilter;
+  readonly query: GrepQuery;
   readonly required: Map<string, GrepQuery>;
 }
 
@@ -43,7 +44,7 @@ async function checkCandidates(t: TestContext, queries: Iterable<{ readonly quer
     const key = JSON.stringify(prefilter);
     let group = groups.get(key);
     if (!group) {
-      group = { prefilter, required: new Map() };
+      group = { prefilter, query, required: new Map() };
       groups.set(key, group);
     }
     for (const input of inputs) {
@@ -63,10 +64,10 @@ async function checkCandidates(t: TestContext, queries: Iterable<{ readonly quer
   const workers = await Promise.allSettled(
     Array.from({ length: concurrency }, async () => {
       while (next < cases.length) {
-        const { prefilter, required } = cases[next++];
+        const { prefilter, query, required } = cases[next++];
         const actual = new Set<string>();
         const result = await runRgPaths(
-          [...candidateArgs(prefilter), "--null", "--", directory],
+          [...(await fileCandidateArgs(query)), "--null", "--", directory],
           AbortSignal.timeout(processTimeoutMs),
           (path) => {
             actual.add(basename(path));

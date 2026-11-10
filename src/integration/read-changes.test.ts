@@ -6,9 +6,9 @@ import { syncBuiltinESMExports } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { DEFAULT_CONFIG } from "../pi/config.ts";
-import { makeGrepOverrideWithBackend } from "../pi/grep-tool.ts";
-import { makeReadOverride } from "../pi/read-tool.ts";
+import { DEFAULT_CONFIG } from "../pi/tool-factories.testing.ts";
+import { makeGrepOverride } from "../pi/tool-factories.testing.ts";
+import { makeReadOverride } from "../pi/tool-factories.testing.ts";
 import { callTool } from "../pi/tool-call.testing.ts";
 import { withFileRead } from "../pi/file-read.ts";
 import { expectToolFailure } from "../pi/report-failure.testing.ts";
@@ -30,7 +30,7 @@ test("read or grep scan truncated across a UTF-8 sequence → reports file chang
   assert.equal(isUtf8(source), true);
   const tools = [
     makeReadOverride(directory, DEFAULT_CONFIG),
-    makeGrepOverrideWithBackend(directory, DEFAULT_CONFIG, {}),
+    makeGrepOverride(directory, DEFAULT_CONFIG),
   ];
   for (const tool of tools) {
     await t.test(tool.name, async () => {

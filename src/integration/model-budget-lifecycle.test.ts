@@ -5,7 +5,7 @@ import { join } from "node:path";
 import hashlineEdit from "../index.ts";
 import { callTool } from "../pi/tool-call.testing.ts";
 import { outputBudgetsFor } from "../pi/budgets.ts";
-import { decodeReport, reportOf } from "../pi/report.ts";
+import { reportOf } from "../pi/report.ts";
 import type { Report } from "../pi/report-schema.ts";
 import { openTestSession } from "../testing/session.testing.ts";
 
@@ -134,7 +134,7 @@ test("model switches before argument preparation → rejection uses the new budg
         assert.ok(error instanceof Error);
         const budget = outputBudgetsFor(contextWindow);
         assert.ok(Buffer.byteLength(error.message) <= budget.blockBytes);
-        const report = decodeReport(error.message, "edit");
+        const report = reportOf({ content: [{ type: "text", text: error.message }] }, "edit");
         assert.ok(report?.issues);
         assert.equal(report.issues.length + (report.omittedIssues ?? 0), args.edits.length * 4);
         reports.push(report);

@@ -3,7 +3,7 @@ import { Worker } from "node:worker_threads";
 import { test } from "node:test";
 import { HashlineError } from "../core/errors.ts";
 import { runRegexReplacements } from "../pi/replace-regex.ts";
-import { DEFAULT_OUTPUT_BUDGETS } from "../pi/budgets.ts";
+import { DEFAULT_OUTPUT_BUDGETS } from "../pi/tool-factories.testing.ts";
 import { causeOf } from "../pi/report-cause.ts";
 import type { Cause } from "../pi/report-schema.ts";
 

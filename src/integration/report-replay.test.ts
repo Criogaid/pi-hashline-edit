@@ -6,8 +6,7 @@ import { test } from "node:test";
 import { stripVTControlCharacters } from "node:util";
 import { initTheme } from "@earendil-works/pi-coding-agent";
 import { theme } from "../../node_modules/@earendil-works/pi-coding-agent/dist/modes/interactive/theme/theme.js";
-import { DEFAULT_CONFIG } from "../pi/config.ts";
-import { makeEditOverride } from "../pi/edit-tool.ts";
+import { DEFAULT_CONFIG, makeEditOverride } from "../pi/tool-factories.testing.ts";
 import { reportOf } from "../pi/report.ts";
 import { openTestSession, responseStream } from "../testing/session.testing.ts";
 

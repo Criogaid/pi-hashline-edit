@@ -8,7 +8,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { openTestSession, responseStream } from "../testing/session.testing.ts";
 import type { ActionFusionProgress } from "../pi/report-schema.ts";
 import { createActionFusionExecutor, type ThenRunInput } from "../pi/action-fusion.ts";
-import { makeWriteOverride } from "../pi/write-tool.ts";
+import { makeWriteOverride } from "../pi/tool-factories.testing.ts";
 import { commandText } from "../pi/mutation-result.ts";
 import { reportOf } from "../pi/report.ts";
 import type { CommandStatus } from "../pi/report-schema.ts";
@@ -31,7 +31,7 @@ async function openSession(
       pi.registerTool(
         makeWriteOverride(
           cwd,
-          createActionFusionExecutor(undefined, (event) => {
+          createActionFusionExecutor((event) => {
             progress.push(event);
             onProgress?.(event);
           }),

@@ -1,3 +1,4 @@
+import { commandCompletion, type SessionCommand } from "./action-fusion.testing.ts";
 import fs, { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { syncBuiltinESMExports } from "node:module";
 import { tmpdir } from "node:os";
@@ -9,7 +10,7 @@ import type { ActionFusionProgress } from "./report-schema.ts";
 import { outputBudgetsFor } from "./budgets.ts";
 import { reportOf } from "./report.ts";
 import { callTool, createToolContext } from "./tool-call.testing.ts";
-import { makeWriteOverride } from "./write-tool.ts";
+import { makeWriteOverride } from "./tool-factories.testing.ts";
 
 async function withTemp<T>(run: (dir: string) => Promise<T>): Promise<T> {
   const dir = await mkdtemp(join(tmpdir(), "hashline-failure-"));
@@ -97,20 +98,18 @@ test("publication boundary and observer failures → preserve recovery and emit 
             published = true;
           });
           syncBuiltinESMExports();
-          const fusion = createActionFusionExecutor(
-            async () => {
-              commands++;
-              return { status: "succeeded", result: { content: [] } };
-            },
-            (update) => {
-              progress.push(update);
-              if (progressError !== undefined) throw progressError;
-            },
-          );
+          const executeTool: SessionCommand = async () => {
+            commands++;
+            return commandCompletion({ content: [] });
+          };
+          const fusion = createActionFusionExecutor((update) => {
+            progress.push(update);
+            if (progressError !== undefined) throw progressError;
+          });
           const result = await callTool(
             makeWriteOverride(dir, fusion, () => budget),
             { path: target, mode: "overwrite", content: "after\n", then_run: { command: "check" } },
-            { ctx: context },
+            { ctx: { ...context, executeTool } },
           );
           const report = reportOf(result, "write");
           assert.equal(result.isError, true);
@@ -173,16 +172,17 @@ test("cancellation after publication → does not rerun mutation and still inspe
     for (const state of ["changed", "missing"] as const) {
       const target = join(dir, `${state}.txt`);
       const controller = new AbortController();
-      const fusion = createActionFusionExecutor(async () => {
+      const executeTool: SessionCommand = async () => {
         if (state === "changed") await writeFile(target, "command changed\n");
         else await rm(target);
         controller.abort();
-        throw new Error("timed out");
-      });
+        return commandCompletion({ content: [{ type: "text", text: "timed out" }] }, true);
+      };
+      const fusion = createActionFusionExecutor(() => {});
       const result = await callTool(
         makeWriteOverride(dir, fusion),
         { path: target, mode: "create", content: "mutation\n", then_run: { command: "check" } },
-        { signal: controller.signal, ctx: await createToolContext(dir, t) },
+        { signal: controller.signal, ctx: { ...(await createToolContext(dir, t)), executeTool } },
       );
       const report = reportOf(result, "write");
       assert.equal(report?.publication, "PUBLISHED");
@@ -198,11 +198,16 @@ test("first command fails → releases the queue for the next mutation", async (
     const target = join(dir, "queue.txt");
     const ctx = await createToolContext(dir, t);
     let calls = 0;
-    const fusion = createActionFusionExecutor(async () => {
+    const executeTool: SessionCommand = async () => {
       calls++;
-      if (calls === 1) throw new Error("first command failed");
-      return { status: "succeeded", result: { content: [{ type: "text", text: "ok" }] } };
-    });
+      if (calls === 1)
+        return commandCompletion(
+          { content: [{ type: "text", text: "first command failed" }] },
+          true,
+        );
+      return commandCompletion({ content: [{ type: "text", text: "ok" }] });
+    };
+    const fusion = createActionFusionExecutor(() => {});
     for (const content of ["first\n", "second\n"]) {
       const result = await callTool(
         makeWriteOverride(dir, fusion),
@@ -212,7 +217,7 @@ test("first command fails → releases the queue for the next mutation", async (
           mode: calls === 0 ? "create" : "overwrite",
           then_run: { command: "check" },
         },
-        { toolCallId: content, ctx },
+        { toolCallId: content, ctx: { ...ctx, executeTool } },
       );
       assert.equal(
         reportOf(result, "write")?.then_run?.status,
@@ -227,17 +232,13 @@ test("command succeeds on an unchanged target → retains the result and complet
   withTemp(async (dir) => {
     const target = join(dir, "finalize.txt");
     const progress: ActionFusionProgress[] = [];
-    const fusion = createActionFusionExecutor(
-      async () => ({
-        status: "succeeded",
-        result: { content: [{ type: "text", text: "command finished" }] },
-      }),
-      (event) => progress.push(event),
-    );
+    const executeTool: SessionCommand = async () =>
+      commandCompletion({ content: [{ type: "text", text: "command finished" }] });
+    const fusion = createActionFusionExecutor((event) => progress.push(event));
     const completed = await callTool(
       makeWriteOverride(dir, fusion),
       { path: target, content: "saved\n", mode: "create", then_run: { command: "check" } },
-      { ctx: await createToolContext(dir, t) },
+      { ctx: { ...(await createToolContext(dir, t)), executeTool } },
     );
     assert.equal(completed.content.length, 1);
     assert.equal(reportOf(completed, "write")?.then_run?.status, "succeeded");
@@ -246,6 +247,7 @@ test("command succeeds on an unchanged target → retains the result and complet
     assert.equal(progress.at(-1)?.freshness, "unchanged");
     assert.deepEqual(progress.at(-1)?.result, {
       content: [{ type: "text", text: "command finished" }],
+      details: {},
     });
   }));
 
@@ -257,17 +259,15 @@ test("cancellation before mutation → reports a cancelled command without publi
     controller.abort();
     let commands = 0;
     const progress: ActionFusionProgress[] = [];
-    const fusion = createActionFusionExecutor(
-      async () => {
-        commands++;
-        return { status: "succeeded", result: { content: [] } };
-      },
-      (event) => progress.push(event),
-    );
+    const executeTool: SessionCommand = async () => {
+      commands++;
+      return commandCompletion({ content: [] });
+    };
+    const fusion = createActionFusionExecutor((event) => progress.push(event));
     const result = await callTool(
       makeWriteOverride(dir, fusion),
       { path: target, mode: "overwrite", content: "after\n", then_run: { command: "check" } },
-      { signal: controller.signal, ctx: await createToolContext(dir, t) },
+      { signal: controller.signal, ctx: { ...(await createToolContext(dir, t)), executeTool } },
     );
     const report = reportOf(result, "write");
     assert.equal(result.isError, true);

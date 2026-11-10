@@ -1,3 +1,4 @@
+import { commandCompletion, type SessionCommand } from "./action-fusion.testing.ts";
 import { argumentError, rejectsArgument, rejectsArguments } from "./argument-error.testing.ts";
 /** Tool-level edit and shared mutation workflow tests. */
 import { test } from "node:test";
@@ -8,17 +9,18 @@ import { join } from "node:path";
 import { initTheme } from "@earendil-works/pi-coding-agent";
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import { validateToolArguments } from "@earendil-works/pi-ai";
-import { makeEditOverride } from "./edit-tool.ts";
-import { makeReadOverride } from "./read-tool.ts";
-import { makeWriteOverride } from "./write-tool.ts";
-import { makeReplaceTool } from "./replace-tool.ts";
-import { makeGrepOverride } from "./grep-tool.ts";
+import { makeEditOverride } from "./tool-factories.testing.ts";
+import { makeReadOverride } from "./tool-factories.testing.ts";
+import { makeWriteOverride } from "./tool-factories.testing.ts";
+import { makeReplaceTool } from "./tool-factories.testing.ts";
+import { makeGrepOverride } from "./tool-factories.testing.ts";
 import { createActionFusionExecutor } from "./action-fusion.ts";
 import { computeLineHash } from "../core/hash.ts";
 import { splitLines } from "../core/lines.ts";
 import { callTool } from "./tool-call.testing.ts";
-import { DEFAULT_CONFIG } from "./config.ts";
-import { formatByteSize, DEFAULT_OUTPUT_BUDGETS } from "./budgets.ts";
+import { DEFAULT_CONFIG } from "./tool-factories.testing.ts";
+import { formatByteSize } from "./budgets.ts";
+import { DEFAULT_OUTPUT_BUDGETS } from "./tool-factories.testing.ts";
 import { detailsReport, reportOf } from "./report.ts";
 import type { Report } from "./report-schema.ts";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
@@ -49,9 +51,15 @@ function anchorLine(block: string, line: number) {
   return `${line}#${m[1]}`;
 }
 
-function failureReport(result: AgentToolResult<unknown> & { isError?: boolean }): Report {
+function failureReport(
+  result: AgentToolResult<unknown> & { isError?: boolean },
+  tool = "edit",
+): Report {
   assert.equal(result.isError, true);
-  const report = detailsReport(result.details);
+  assert.ok(
+    tool === "edit" || tool === "replace" || tool === "write" || tool === "read" || tool === "grep",
+  );
+  const report = detailsReport(result.details, tool);
   assert.ok(report?.error);
   return report;
 }
@@ -385,10 +393,11 @@ test("mixed empty-body batches name every rejected edit without publishing or ru
     const original = "a\nb\nc\nd\ne\n";
     await writeFile(file, original);
     let commandRuns = 0;
-    const fusion = createActionFusionExecutor(async () => {
+    const executeTool: SessionCommand = async () => {
       commandRuns++;
-      return { status: "succeeded", result: { content: [{ type: "text", text: "ran" }] } };
-    });
+      return commandCompletion({ content: [{ type: "text", text: "ran" }] });
+    };
+    const fusion = createActionFusionExecutor(() => {});
     const edit = makeEditOverride(dir, DEFAULT_CONFIG, fusion);
     await assert.rejects(
       callTool(
@@ -403,7 +412,7 @@ test("mixed empty-body batches name every rejected edit without publishing or ru
           ],
           then_run: { command: "must-not-run" },
         },
-        { ctx: { cwd: dir } },
+        { ctx: { ...{ cwd: dir }, executeTool } },
       ),
       (error: Error) => {
         const issues = argumentError(error).issues;
@@ -500,12 +509,15 @@ test("shifted-anchor recovery keeps the read fallback for oversized candidates",
 test("failed commands preserve mutation results and stay out of all main card renderers", async () =>
   withDir(async (dir) => {
     const commands: string[] = [];
-    const fusion = createActionFusionExecutor(
-      async () => {
-        throw new Error("command-only diagnostic\nCommand exited with code 7");
-      },
-      (event) => commands.push(event.command),
-    );
+    const executeTool: SessionCommand = async () => {
+      return commandCompletion(
+        {
+          content: [{ type: "text", text: "command-only diagnostic\nCommand exited with code 7" }],
+        },
+        true,
+      );
+    };
+    const fusion = createActionFusionExecutor((event) => commands.push(event.command));
     const cases = [
       {
         path: "edit.txt",
@@ -518,13 +530,11 @@ test("failed commands preserve mutation results and stay out of all main card re
           const result = await callTool(
             tool,
             { ...args, then_run: { command: "check" } },
-            {
-              toolCallId: args.path,
-              ctx: { cwd: dir },
-            },
+            { toolCallId: args.path, ctx: { ...{ cwd: dir }, executeTool } },
           );
           return {
             result,
+            tool: tool.name,
             rendered: tool
               .renderResult(
                 result,
@@ -551,13 +561,11 @@ test("failed commands preserve mutation results and stay out of all main card re
           const result = await callTool(
             tool,
             { ...args, then_run: { command: "check" } },
-            {
-              toolCallId: args.path,
-              ctx: { cwd: dir },
-            },
+            { toolCallId: args.path, ctx: { ...{ cwd: dir }, executeTool } },
           );
           return {
             result,
+            tool: tool.name,
             rendered: tool
               .renderResult(
                 result,
@@ -581,13 +589,11 @@ test("failed commands preserve mutation results and stay out of all main card re
           const result = await callTool(
             tool,
             { ...args, then_run: { command: "check" } },
-            {
-              toolCallId: args.path,
-              ctx: { cwd: dir },
-            },
+            { toolCallId: args.path, ctx: { ...{ cwd: dir }, executeTool } },
           );
           return {
             result,
+            tool: tool.name,
             rendered: tool
               .renderResult(result, { expanded: true, isPartial: false }, stubTheme as Theme, {
                 args,
@@ -612,9 +618,16 @@ test("failed commands preserve mutation results and stay out of all main card re
     ];
     for (const { path, run, expected } of cases) {
       await writeFile(join(dir, path), "before\n");
-      const { result, rendered } = await run();
+      const { result, rendered, tool } = await run();
       assert.equal("isError" in result, false);
-      const report = detailsReport(result.details);
+      assert.ok(
+        tool === "edit" ||
+          tool === "replace" ||
+          tool === "write" ||
+          tool === "read" ||
+          tool === "grep",
+      );
+      const report = detailsReport(result.details, tool);
       assert.equal(report?.publication, "PUBLISHED");
       const last = result.content.at(-1);
       assert.ok(last?.type === "text");
@@ -661,7 +674,7 @@ test("missing or directory targets → tools share path diagnostics without file
       ];
       for (const { tool, args } of cases) {
         await t.test(`${tool.name}/${target.name}`, async () => {
-          const report = failureReport(await callTool(tool, args));
+          const report = failureReport(await callTool(tool, args), tool.name);
           assert.equal(report.error, target.code);
           assert.equal(report.message, PATH_ERROR_MESSAGES[target.code]);
           if (target.code === "PATH_NOT_FOUND") {
@@ -699,7 +712,7 @@ test("text tools reject malformed UTF-8 and NUL bytes without rewriting source b
         { path: "invalid-utf8.txt", replacements: [{ literal: true, find: "a", replace: "b" }] },
       ],
     ] as const) {
-      assert.equal(failureReport(await call(tool, args)).error, "UNSUPPORTED_ENCODING");
+      assert.equal(failureReport(await call(tool, args), tool.name).error, "UNSUPPORTED_ENCODING");
     }
     assert.deepEqual(await readFile(target), original);
 
@@ -716,7 +729,7 @@ test("text tools reject malformed UTF-8 and NUL bytes without rewriting source b
         { path: "nul.txt", replacements: [{ literal: true, find: "a", replace: "b" }] },
       ],
     ] as const) {
-      assert.equal(failureReport(await call(tool, args)).error, "UNSUPPORTED_TEXT");
+      assert.equal(failureReport(await call(tool, args), tool.name).error, "UNSUPPORTED_TEXT");
     }
     assert.deepEqual(await readFile(nulTarget), nulOriginal);
 
@@ -726,7 +739,10 @@ test("text tools reject malformed UTF-8 and NUL bytes without rewriting source b
     const utf16Target = join(dir, "utf16.txt");
     await writeFile(utf16Target, Buffer.from([0xff, 0xfe, 0x49, 0x6c]));
     assert.equal(
-      failureReport(await call(makeReadOverride(dir, DEFAULT_CONFIG), { path: "utf16.txt" })).error,
+      failureReport(
+        await call(makeReadOverride(dir, DEFAULT_CONFIG), { path: "utf16.txt" }),
+        "read",
+      ).error,
       "UNSUPPORTED_ENCODING",
     );
   }));
@@ -815,10 +831,11 @@ test("failed edits return candidate code for a verified fused retry", async () =
     const file = join(dir, "candidate.txt");
     await writeFile(file, before);
     let commands = 0;
-    const fusion = createActionFusionExecutor(async () => {
+    const executeTool: SessionCommand = async () => {
       commands++;
-      return { status: "succeeded", result: { content: [{ type: "text", text: "checked" }] } };
-    });
+      return commandCompletion({ content: [{ type: "text", text: "checked" }] });
+    };
+    const fusion = createActionFusionExecutor(() => {});
     const edit = makeEditOverride(dir, DEFAULT_CONFIG, fusion);
     const stale = h(original.join("\n"), 5);
     const stable = h(before, 12);
@@ -834,7 +851,7 @@ test("failed edits return candidate code for a verified fused retry", async () =
           ],
           then_run: { command: "check" },
         },
-        { toolCallId: "failed", ctx: { cwd: dir } },
+        { toolCallId: "failed", ctx: { ...{ cwd: dir }, executeTool } },
       ),
     );
     assert.equal(report.then_run?.status, "skipped");
@@ -861,7 +878,7 @@ test("failed edits return candidate code for a verified fused retry", async () =
         ],
         then_run: { command: "check" },
       },
-      { toolCallId: "retry", ctx: { cwd: dir } },
+      { toolCallId: "retry", ctx: { ...{ cwd: dir }, executeTool } },
     );
     const expected = splitLines(before);
     expected[11] = "changed";

@@ -1,9 +1,9 @@
 /** Isolate a FIFO open so a regression cannot stall the parent runner's I/O threads. */
 import assert from "node:assert/strict";
 import { join } from "node:path";
-import { makeEditOverride } from "../pi/edit-tool.ts";
-import { makeReplaceTool } from "../pi/replace-tool.ts";
-import { DEFAULT_CONFIG } from "../pi/config.ts";
+import { makeEditOverride } from "../pi/tool-factories.testing.ts";
+import { makeReplaceTool } from "../pi/tool-factories.testing.ts";
+import { DEFAULT_CONFIG } from "../pi/tool-factories.testing.ts";
 import { callTool } from "../pi/tool-call.testing.ts";
 import { expectToolFailure } from "../pi/report-failure.testing.ts";
 

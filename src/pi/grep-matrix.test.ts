@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { MATRIX_FLAGS, MATRIX_SYNTAX } from "../core/search-matrix.testing.ts";
-import { makeGrepOverrideWithBackend } from "./grep-tool.ts";
-import { DEFAULT_CONFIG } from "./config.ts";
+import { makeMockGrep } from "./grep-rg.testing.ts";
+const { DEFAULT_CONFIG } = await import("./tool-factories.testing.ts");
 import { reportOf } from "./report.ts";
 import { rejectsArgument } from "./argument-error.testing.ts";
 import { callTool } from "./tool-call.testing.ts";
@@ -13,7 +13,7 @@ test("Cartesian JS syntax × all flag combinations → tool entry agrees with V8
     discoveries++;
     return { code: 1, stderr: "", stopped: false };
   };
-  const tool = makeGrepOverrideWithBackend(process.cwd(), DEFAULT_CONFIG, {
+  const tool = makeMockGrep(process.cwd(), DEFAULT_CONFIG, {
     runRgPaths: discover,
     runRgLines: discover,
   });

@@ -6,7 +6,7 @@ import { Type } from "typebox";
 import { createCodemodeToolDefinition } from "../../node_modules/@earendil-works/pi-coding-agent/dist/extensions/codemode/tool.js";
 import { openTestSession, responseStream, SESSION_TIMEOUT_MS } from "../testing/session.testing.ts";
 import { createActionFusionExecutor } from "./action-fusion.ts";
-import { makeWriteOverride } from "./write-tool.ts";
+import { makeWriteOverride } from "./tool-factories.testing.ts";
 
 for (const entry of ["direct", "codemode"] as const) {
   test(`${entry} mutation waits on then_run → the call and model continuation stay pending`, {
@@ -17,7 +17,12 @@ for (const entry of ["direct", "codemode"] as const) {
     const { cwd, session, model } = await openTestSession(t, {
       tools: ["write", "bash", "codemode"],
       configure(pi, cwd) {
-        pi.registerTool(makeWriteOverride(cwd, createActionFusionExecutor()));
+        pi.registerTool(
+          makeWriteOverride(
+            cwd,
+            createActionFusionExecutor(() => {}),
+          ),
+        );
         pi.registerTool(createCodemodeToolDefinition());
         pi.registerTool({
           name: "bash",

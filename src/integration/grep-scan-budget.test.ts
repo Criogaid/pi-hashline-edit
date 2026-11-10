@@ -1,16 +1,17 @@
+import { makeMockGrep } from "../pi/grep-rg.testing.ts";
 import assert from "node:assert/strict";
 import { mkdtemp, rm, truncate, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { formatByteSize } from "../pi/budgets.ts";
-import { DEFAULT_CONFIG } from "../pi/config.ts";
-import { MAX_MULTILINE_SEARCH_BYTES } from "../pi/grep-search.ts";
-import { MAX_UNNARROWED_SCAN_BYTES } from "../pi/grep-candidates.ts";
-import { makeGrepOverrideWithBackend } from "../pi/grep-tool.ts";
+const { DEFAULT_CONFIG, makeGrepOverride } = await import("../pi/tool-factories.testing.ts");
+const MAX_MULTILINE_SEARCH_BYTES = 64 * 1024 * 1024;
+const { MAX_UNNARROWED_SCAN_BYTES } = await import("../pi/grep-candidates.ts");
+
 import { OUTCOME_NEXT } from "../pi/report-schema.ts";
 import { reportOf } from "../pi/report.ts";
-import { grepCounts } from "../pi/grep-output.testing.ts";
+const { grepCounts } = await import("../pi/grep-output.testing.ts");
 import { callTool } from "../pi/tool-call.testing.ts";
 
 test("repeated all-file candidates → count each file once toward the scan budget", async (t) => {
@@ -22,7 +23,7 @@ test("repeated all-file candidates → count each file once toward the scan budg
   await truncate(padding, MAX_MULTILINE_SEARCH_BYTES);
   await writeFile(fixture, "ab\n");
   const repeats = Math.ceil(MAX_UNNARROWED_SCAN_BYTES / MAX_MULTILINE_SEARCH_BYTES);
-  const result = await callTool(makeGrepOverrideWithBackend(directory, DEFAULT_CONFIG, {}), {
+  const result = await callTool(makeGrepOverride(directory, DEFAULT_CONFIG), {
     path: [...Array<string>(repeats).fill(padding), fixture],
     pattern: ".",
     literal: false,
@@ -69,7 +70,7 @@ test("all-file candidates exceed the scan budget → stop listing and retain sca
       await writeFile(fixture, scenario.source);
       const offered: string[] = [];
       let stopped = false;
-      const tool = makeGrepOverrideWithBackend(directory, DEFAULT_CONFIG, {
+      const tool = makeMockGrep(directory, DEFAULT_CONFIG, {
         runRgLines: async () => assert.fail("multiline candidates must use file listing"),
         runRgPaths: async (_args, _signal, onFile) => {
           for (const path of paths) {

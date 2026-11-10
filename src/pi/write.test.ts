@@ -1,14 +1,14 @@
+import { commandCompletion, type SessionCommand } from "./action-fusion.testing.ts";
 import { rejectsArgument } from "./argument-error.testing.ts";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { makeWriteOverride } from "./write-tool.ts";
+import { makeWriteOverride } from "./tool-factories.testing.ts";
 import { createActionFusionExecutor } from "./action-fusion.ts";
 import { callTool } from "./tool-call.testing.ts";
 import { reportOf } from "./report.ts";
-import { REREAD } from "./report-schema.ts";
 import { initTheme } from "@earendil-works/pi-coding-agent";
 import { theme } from "../../node_modules/@earendil-works/pi-coding-agent/dist/modes/interactive/theme/theme.js";
 initTheme("dark");
@@ -28,7 +28,7 @@ test("write receives an unknown field → rejects without changing the file", as
   withTemp(async (dir) => {
     const file = join(dir, "file.txt");
     await writeFile(file, "original\n");
-    for (const fusion of [undefined, createActionFusionExecutor()]) {
+    for (const fusion of [undefined, createActionFusionExecutor(() => {})]) {
       const tool = makeWriteOverride(dir, fusion);
       const args = { path: "file.txt", content: "new\n", mode: "overwrite", unexpected: true };
       await assert.rejects(
@@ -62,10 +62,11 @@ test("write omits mode → rejects before changing files or running commands", a
     const missing = join(missingParent, "new.txt");
     await writeFile(existing, "original\n");
     let commandRuns = 0;
-    const fusion = createActionFusionExecutor(async () => {
+    const executeTool: SessionCommand = async () => {
       commandRuns++;
-      return { status: "succeeded", result: { content: [{ type: "text", text: "checked" }] } };
-    });
+      return commandCompletion({ content: [{ type: "text", text: "checked" }] });
+    };
+    const fusion = createActionFusionExecutor(() => {});
     for (const executor of [undefined, fusion]) {
       const tool = makeWriteOverride(dir, executor);
       for (const path of [existing, missing]) {
@@ -73,7 +74,7 @@ test("write omits mode → rejects before changing files or running commands", a
           callTool(
             tool,
             { path, content: "changed\n", ...(executor ? { then_run: { command: "check" } } : {}) },
-            { ctx: context(dir) },
+            { ctx: { ...context(dir), executeTool } },
           ),
           rejectsArgument("mode", /required/),
         );
@@ -153,10 +154,9 @@ test("write returns only a summary for empty, short, and long content", async ()
 
 test("write returns its summary and command output after an unchanged then_run", async () =>
   withTemp(async (dir) => {
-    const fusion = createActionFusionExecutor(async () => ({
-      status: "succeeded",
-      result: { content: [{ type: "text", text: "checked" }] },
-    }));
+    const executeTool: SessionCommand = async () =>
+      commandCompletion({ content: [{ type: "text", text: "checked" }] });
+    const fusion = createActionFusionExecutor(() => {});
     const write = makeWriteOverride(dir, fusion) as any;
     const result = await write.execute(
       "unchanged",
@@ -168,7 +168,7 @@ test("write returns its summary and command output after an unchanged then_run",
       },
       undefined,
       undefined,
-      context(dir),
+      { ...context(dir), executeTool },
     );
     assert.equal(reportOf(result, "write")?.created, true);
     assert.deepEqual(reportOf(result, "write")?.then_run, {
@@ -180,10 +180,11 @@ test("write returns its summary and command output after an unchanged then_run",
 test("write reports changed freshness when then_run changes the target", async () =>
   withTemp(async (dir) => {
     const target = join(dir, "changed.txt");
-    const fusion = createActionFusionExecutor(async () => {
+    const executeTool: SessionCommand = async () => {
       await writeFile(target, "command changed\n");
-      return { status: "succeeded", result: { content: [{ type: "text", text: "checked" }] } };
-    });
+      return commandCompletion({ content: [{ type: "text", text: "checked" }] });
+    };
+    const fusion = createActionFusionExecutor(() => {});
     const write = makeWriteOverride(dir, fusion) as any;
     const result = await callTool(
       write,
@@ -193,13 +194,13 @@ test("write reports changed freshness when then_run changes the target", async (
         mode: "create",
         then_run: { command: "check" },
       },
-      { toolCallId: "changed", ctx: context(dir) },
+      { toolCallId: "changed", ctx: { ...context(dir), executeTool } },
     );
     const text = result.content.map((block: any) => block.text).join("\n");
     assert.doesNotMatch(text, /revision:|[0-9a-f]{64}/i);
     assert.equal(reportOf(result, "write")?.created, true);
     assert.equal(reportOf(result, "write")?.freshness, "changed");
-    assert.equal(reportOf(result, "write")?.next, REREAD);
+    assert.match(reportOf(result, "write")?.next ?? "", /Read the file before further edits/);
     assert.deepEqual(reportOf(result, "write")?.then_run, {
       status: "succeeded",
       output: "checked",
@@ -217,10 +218,11 @@ test("write reports changed freshness when then_run changes the target", async (
 test("write reports missing freshness when then_run removes the target", async () =>
   withTemp(async (dir) => {
     const target = join(dir, "missing.txt");
-    const fusion = createActionFusionExecutor(async () => {
+    const executeTool: SessionCommand = async () => {
       await rm(target);
-      return { status: "succeeded", result: { content: [{ type: "text", text: "removed" }] } };
-    });
+      return commandCompletion({ content: [{ type: "text", text: "removed" }] });
+    };
+    const fusion = createActionFusionExecutor(() => {});
     const result = await makeWriteOverride(dir, fusion).execute(
       "missing",
       {
@@ -231,7 +233,7 @@ test("write reports missing freshness when then_run removes the target", async (
       },
       undefined,
       undefined,
-      context(dir),
+      { ...context(dir), executeTool },
     );
     assert.equal(reportOf(result, "write")?.freshness, "missing");
     assert.equal(reportOf(result, "write")?.next, undefined);
@@ -240,18 +242,19 @@ test("write reports missing freshness when then_run removes the target", async (
 test("write preserves command failure and changed freshness", async () =>
   withTemp(async (dir) => {
     const target = join(dir, "failed.txt");
-    const fusion = createActionFusionExecutor(async () => {
+    const executeTool: SessionCommand = async () => {
       await writeFile(target, "changed before failure\n");
-      throw new Error("command failed");
-    });
+      return commandCompletion({ content: [{ type: "text", text: "command failed" }] }, true);
+    };
+    const fusion = createActionFusionExecutor(() => {});
     const result = await makeWriteOverride(dir, fusion).execute(
       "failed",
       { path: "failed.txt", content: "mutation\n", mode: "create", then_run: { command: "fail" } },
       undefined,
       undefined,
-      context(dir),
+      { ...context(dir), executeTool },
     );
     assert.equal(reportOf(result, "write")?.freshness, "changed");
     assert.equal(reportOf(result, "write")?.then_run?.status, "failed");
-    assert.equal(reportOf(result, "write")?.next, REREAD);
+    assert.match(reportOf(result, "write")?.next ?? "", /Read the file before further edits/);
   }));

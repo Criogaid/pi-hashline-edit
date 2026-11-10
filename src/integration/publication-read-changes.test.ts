@@ -1,3 +1,4 @@
+import { commandCompletion, type SessionCommand } from "../pi/action-fusion.testing.ts";
 /** Real file-handle races at publication and Fusion observation boundaries. */
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -8,14 +9,14 @@ import { join } from "node:path";
 import { test, type TestContext } from "node:test";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import { createActionFusionExecutor } from "../pi/action-fusion.ts";
-import { DEFAULT_CONFIG } from "../pi/config.ts";
-import { makeEditOverride } from "../pi/edit-tool.ts";
+import { DEFAULT_CONFIG } from "../pi/tool-factories.testing.ts";
+import { makeEditOverride } from "../pi/tool-factories.testing.ts";
 import { reportOf } from "../pi/report.ts";
 import { expectToolFailure } from "../pi/report-failure.testing.ts";
-import { PUBLICATION_NEXT, REREAD } from "../pi/report-schema.ts";
-import { makeReplaceTool } from "../pi/replace-tool.ts";
+import { PUBLICATION_NEXT } from "../pi/report-schema.ts";
+import { makeReplaceTool } from "../pi/tool-factories.testing.ts";
 import { callTool, createToolContext } from "../pi/tool-call.testing.ts";
-import { makeWriteOverride } from "../pi/write-tool.ts";
+import { makeWriteOverride } from "../pi/tool-factories.testing.ts";
 
 const BEFORE = "before\n";
 const PUBLISHED = "before\nafter\n";
@@ -135,18 +136,21 @@ for (const fused of [false, true]) {
               t,
               mutation.name === "write create" ? undefined : BEFORE,
             );
-            const fusion = fused
-              ? createActionFusionExecutor(async () =>
-                  assert.fail("command must not run without then_run"),
-                )
-              : undefined;
+            const executeTool: SessionCommand = async () =>
+              assert.fail("command must not run without then_run");
+            const fusion = fused ? createActionFusionExecutor(() => {}) : undefined;
             const result = await withDisturbedRead(
               t,
               path,
               PUBLISHED,
               disturbance,
               (bytes) => bytes.equals(Buffer.from(PUBLISHED)),
-              () => callTool(mutation.make(directory, fusion), { path, ...mutation.args }),
+              () =>
+                callTool(
+                  mutation.make(directory, fusion),
+                  { path, ...mutation.args },
+                  { ctx: { cwd: directory, executeTool } },
+                ),
             );
             assert.equal(result.isError, undefined);
             const report = reportOf(
@@ -154,7 +158,7 @@ for (const fused of [false, true]) {
               mutation.name === "edit" ? "edit" : mutation.name === "replace" ? "replace" : "write",
             );
             assert.equal(report?.publication, "PUBLISHED");
-            assert.equal(report?.next, REREAD);
+            assert.match(report?.next ?? "", /Read the file before further edits/);
             assert.doesNotMatch(text(result), /Updated anchors|retry the tool/);
             assert.equal(report?.then_run, undefined);
             assert.equal(report?.freshness, "changed");
@@ -174,18 +178,13 @@ for (const observation of [1, 2]) {
         let mutationCompleted = false;
         let observations = 0;
         let commands = 0;
-        const fusion = createActionFusionExecutor(
-          async () => {
-            commands++;
-            return {
-              status: "succeeded",
-              result: { content: [{ type: "text", text: "checked" }] },
-            };
-          },
-          (progress) => {
-            if (progress.mutationCompleted) mutationCompleted = true;
-          },
-        );
+        const executeTool: SessionCommand = async () => {
+          commands++;
+          return commandCompletion({ content: [{ type: "text", text: "checked" }] });
+        };
+        const fusion = createActionFusionExecutor((progress) => {
+          if (progress.mutationCompleted) mutationCompleted = true;
+        });
         const ctx = await createToolContext(directory, t);
         const result = await withDisturbedRead(
           t,
@@ -202,7 +201,7 @@ for (const observation of [1, 2]) {
                 mode: "overwrite",
                 then_run: { command: "check" },
               },
-              { ctx },
+              { ctx: { ...ctx, executeTool } },
             ),
         );
         assert.equal(commands, 0);
@@ -214,7 +213,7 @@ for (const observation of [1, 2]) {
           assert.equal(report?.freshnessError?.message, READ_FAILURE.message);
           assert.equal(report?.freshnessError?.code, "EIO");
         }
-        assert.equal(report?.next, REREAD);
+        assert.match(report?.next ?? "", /Read the file before further edits/);
         assert.doesNotMatch(text(result), /retry the tool/);
         await assertTarget(path, PUBLISHED, disturbance);
       });
@@ -229,10 +228,11 @@ test("disturbance during post-command freshness read → retains publication and
       async (t) => {
         const { directory, path } = await targetFile(t, BEFORE);
         let commands = 0;
-        const fusion = createActionFusionExecutor(async () => {
+        const executeTool: SessionCommand = async () => {
           commands++;
-          return { status: "succeeded", result: { content: [{ type: "text", text: "checked" }] } };
-        });
+          return commandCompletion({ content: [{ type: "text", text: "checked" }] });
+        };
+        const fusion = createActionFusionExecutor(() => {});
         const ctx = await createToolContext(directory, t);
         const result = await withDisturbedRead(
           t,
@@ -249,7 +249,7 @@ test("disturbance during post-command freshness read → retains publication and
                 mode: "overwrite",
                 then_run: { command: "check" },
               },
-              { ctx },
+              { ctx: { ...ctx, executeTool } },
             ),
         );
         assert.equal(commands, 1);
@@ -259,7 +259,7 @@ test("disturbance during post-command freshness read → retains publication and
           reportOf(result, "write")?.freshness,
           disturbance === "I/O failure" ? "unknown" : "changed",
         );
-        assert.equal(reportOf(result, "write")?.next, REREAD);
+        assert.match(reportOf(result, "write")?.next ?? "", /Read the file before further edits/);
         assert.doesNotMatch(text(result), /Updated anchors|retry the tool/);
         await assertTarget(path, PUBLISHED, disturbance);
       },
@@ -272,15 +272,11 @@ test("other I/O failure during post-publication read → retains the published p
     await t.test(fused ? "Fusion enabled" : "plain", async (t) => {
       const { directory, path } = await targetFile(t, BEFORE);
       let commands = 0;
-      const fusion = fused
-        ? createActionFusionExecutor(async () => {
-            commands++;
-            return {
-              status: "succeeded",
-              result: { content: [{ type: "text", text: "checked" }] },
-            };
-          })
-        : undefined;
+      const executeTool: SessionCommand = async () => {
+        commands++;
+        return commandCompletion({ content: [{ type: "text", text: "checked" }] });
+      };
+      const fusion = fused ? createActionFusionExecutor(() => {}) : undefined;
       const ctx = await createToolContext(directory, t);
       await withDisturbedRead(
         t,
@@ -298,7 +294,7 @@ test("other I/O failure during post-publication read → retains the published p
                 mode: "overwrite",
                 ...(fused ? { then_run: { command: "check" } } : {}),
               },
-              { ctx },
+              { ctx: { ...ctx, executeTool } },
             ),
             "POST_PROCESS_FAILED",
             (report) => {
@@ -421,10 +417,11 @@ test("file changes after the editable snapshot → rejects publication against t
 test("concurrent change during editable snapshot read → skips Fusion with NOT_PUBLISHED and retry advice", async (t) => {
   const { directory, path } = await targetFile(t, BEFORE);
   let commands = 0;
-  const fusion = createActionFusionExecutor(async () => {
+  const executeTool: SessionCommand = async () => {
     commands++;
-    return { status: "succeeded", result: { content: [{ type: "text", text: "checked" }] } };
-  });
+    return commandCompletion({ content: [{ type: "text", text: "checked" }] });
+  };
+  const fusion = createActionFusionExecutor(() => {});
   const ctx = await createToolContext(directory, t);
   await withDisturbedRead(
     t,
@@ -441,7 +438,7 @@ test("concurrent change during editable snapshot read → skips Fusion with NOT_
             edits: [{ action: "append", body: ["after"] }],
             then_run: { command: "check" },
           },
-          { ctx },
+          { ctx: { ...ctx, executeTool } },
         ),
         "FILE_CHANGED",
         (report) => {

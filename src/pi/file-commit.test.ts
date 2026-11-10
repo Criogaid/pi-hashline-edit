@@ -29,11 +29,12 @@ import {
 import { byteRevision } from "./file-revision.ts";
 import { HashlineError, PATH_ERROR_MESSAGES } from "../core/errors.ts";
 import { createActionFusionExecutor } from "./action-fusion.ts";
-import { makeWriteOverride } from "./write-tool.ts";
+import { commandCompletion } from "./action-fusion.testing.ts";
+import { makeWriteOverride } from "./tool-factories.testing.ts";
 import { callTool } from "./tool-call.testing.ts";
 import { describeMutationFailure } from "./mutation-result.ts";
 import { reportOf } from "./report.ts";
-import { DEFAULT_OUTPUT_BUDGETS } from "./budgets.ts";
+import { DEFAULT_OUTPUT_BUDGETS } from "./tool-factories.testing.ts";
 
 // Checked by tsc; these states cannot be returned by the commit layer.
 function invalidCommitStates() {
@@ -283,12 +284,16 @@ test("Windows shared access failure preserves the target, skips then_run, and re
     await writeFile(target, "original\n");
     const holder = await holdWindowsExclusive(target);
     let commandRuns = 0;
+    const context = {
+      cwd: dir,
+      executeTool: async () => {
+        commandRuns++;
+        return commandCompletion({ content: [{ type: "text", text: "ok" }] });
+      },
+    };
     const tool = makeWriteOverride(
       dir,
-      createActionFusionExecutor(async () => {
-        commandRuns++;
-        return { status: "succeeded", result: { content: [{ type: "text", text: "ok" }] } };
-      }),
+      createActionFusionExecutor(() => {}),
     );
     try {
       const failed = await callTool(
@@ -299,7 +304,7 @@ test("Windows shared access failure preserves the target, skips then_run, and re
           mode: "overwrite",
           then_run: { command: "deterministic-command" },
         },
-        { toolCallId: "shared-failure", ctx: { cwd: dir } },
+        { toolCallId: "shared-failure", ctx: context },
       );
       assert.equal(failed.isError, true);
       const report = reportOf(failed, "write");
@@ -338,7 +343,7 @@ test("Windows shared access failure preserves the target, skips then_run, and re
         mode: "overwrite",
         then_run: { command: "deterministic-command" },
       },
-      { toolCallId: "shared-retry", ctx: { cwd: dir } },
+      { toolCallId: "shared-retry", ctx: context },
     );
     assert.equal(result.isError, undefined);
     assert.equal(reportOf(result, "write")?.then_run?.status, "succeeded");

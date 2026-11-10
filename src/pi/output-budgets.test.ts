@@ -1,3 +1,5 @@
+import { Worker } from "node:worker_threads";
+import { runRegexReplacements } from "./replace-regex.ts";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
@@ -11,15 +13,13 @@ import { openTestSession } from "../testing/session.testing.ts";
 import { createAnchorFormatter } from "./anchor-format.ts";
 import { formatArgumentError } from "./argument-error.ts";
 import { formatByteSize, outputBudgetsFor } from "./budgets.ts";
-import { DEFAULT_CONFIG } from "./config.ts";
-import { makeEditOverride } from "./edit-tool.ts";
+import { DEFAULT_CONFIG } from "./tool-factories.testing.ts";
+import { makeEditOverride } from "./tool-factories.testing.ts";
 import { describeEditFailure } from "./failure-context.ts";
-import { assembleGrepOutput } from "./grep-output.ts";
+import { grepOutput } from "./grep-output.ts";
 import { registerModelBudgets } from "./model-budgets.ts";
 import { describeMutationFailure } from "./mutation-result.ts";
-import { decodeReport, reportOf } from "./report.ts";
-import { decodeWorkerReply } from "./replace-regex.ts";
-import { restoreWorkerError } from "./regex-worker-contract.ts";
+import { reportOf } from "./report.ts";
 import { workerFailure } from "./report-cause.ts";
 import { callTool } from "./tool-call.testing.ts";
 
@@ -59,7 +59,7 @@ test("model budget grows → argument issues remain complete JSON with counted o
   const reports = [outputBudgetsFor(1), small, large].map((budget) => {
     const text = formatArgumentError(issues, false, budget);
     assert.ok(Buffer.byteLength(text) <= budget.blockBytes);
-    const report = decodeReport(text, "edit");
+    const report = reportOf({ content: [{ type: "text", text }] }, "edit");
     assert.ok(report);
     assert.equal((report.issues?.length ?? 0) + (report.omittedIssues ?? 0), issues.length);
     return report;
@@ -99,23 +99,33 @@ test("model row allowance grows → anchor failures return complete observations
   }
 });
 
-test("model budget grows → grep payload and diagnostics use that call's allowances", () => {
-  const payload = Array.from({ length: 3_000 }, () => "中文🙂".repeat(3)).join("\n");
+test("model budget grows → grep payload and diagnostics use that call's allowances", async () => {
+  const paths = Array.from({ length: 3_000 }, () => "中文🙂".repeat(3));
+  const payload = paths.join("\n");
   const warning = "opening\n" + "中文🙂".repeat(800) + "\nfinal cause";
-  const outputs = [small, large].map((budget) =>
-    assembleGrepOutput({
-      formatted: {
-        blocks: [{ lines: payload.split("\n") }],
-        matches: 3_000,
-        files: 1,
-      },
-      warnings: [warning],
-      searchFacts: {},
-      outputMode: "content",
-      matchLimitReached: false,
-      effectiveLimit: 3_000,
-      budget,
-    }),
+  const outputs = await Promise.all(
+    [small, large].map((budget) =>
+      grepOutput({
+        cwd: process.cwd(),
+        anchors: createAnchorFormatter(DEFAULT_CONFIG.hashLen),
+        context: 0,
+        outputMode: "files",
+        search: {
+          files: paths.map((path) => ({
+            filePath: join(process.cwd(), path),
+            rows: [],
+            snapshot: { revision: "", validUtf8: true },
+          })),
+          candidates: "lines",
+          scanLimitReached: false,
+          matchLimitReached: false,
+        },
+        warnings: [warning],
+        effectiveLimit: 3_000,
+        literalPipe: false,
+        budget,
+      }),
+    ),
   );
   assert.equal(outputs[0].facts.outputLimit, formatByteSize(small.grepBytes));
   assert.equal(outputs[1].payload, payload);
@@ -129,13 +139,26 @@ test("model budget grows → grep payload and diagnostics use that call's allowa
   }
 });
 
-test("worker error reaches the tool → text is bounded once using the selected model", () => {
+test("worker error reaches the tool → text is bounded once using the selected model", async (t) => {
   const text = "中文🙂".repeat(800);
-  const reply = decodeWorkerReply(
-    workerFailure(new HashlineError("REGEX_WORKER_FAILED", text, { cause: new Error(text) })),
+  const reply = workerFailure(
+    new HashlineError("REGEX_WORKER_FAILED", text, { cause: new Error(text) }),
   );
-  assert.ok(reply && "error" in reply);
-  const error = restoreWorkerError(reply.error);
+  t.mock.method(Worker.prototype, "postMessage", function (this: Worker) {
+    queueMicrotask(() => this.emit("message", reply));
+  });
+  let error: unknown;
+  try {
+    await runRegexReplacements(
+      "source",
+      [{ find: "source", replace: "target", literal: false }],
+      5_000,
+      undefined,
+    );
+    assert.fail("Worker failure must reject");
+  } catch (failure) {
+    error = failure;
+  }
   const reports = [small, large].map((budget) =>
     describeMutationFailure("replace", error, { budget }),
   );

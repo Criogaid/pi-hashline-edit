@@ -12,7 +12,7 @@ import {
 } from "../core/search-matrix.testing.ts";
 import { searchText, type GrepQuery } from "../core/search.ts";
 import { runRgPaths } from "../pi/rg-process.ts";
-import { candidateArgs } from "../pi/grep-candidates.ts";
+import { fileCandidateArgs } from "../pi/grep-rg.testing.ts";
 
 const syntaxCases = [
   ...MATRIX_SYNTAX,
@@ -53,6 +53,7 @@ function emptyCoverage(): Coverage {
 
 interface CandidateCase {
   readonly prefilter: Prefilter;
+  readonly query: GrepQuery;
   readonly required: Map<string, GrepQuery>;
   readonly contributions: Map<Coverage, number>;
 }
@@ -109,7 +110,7 @@ test("Cartesian prefilter coverage × composition × flags × bytes → real rg 
           const key = JSON.stringify(prefilter);
           let group = groups.get(key);
           if (!group) {
-            group = { prefilter, required: new Map(), contributions: new Map() };
+            group = { prefilter, query, required: new Map(), contributions: new Map() };
             groups.set(key, group);
           }
           let hits = 0;
@@ -140,7 +141,7 @@ test("Cartesian prefilter coverage × composition × flags × bytes → real rg 
         const group = cases[next++];
         const actual = new Set<string>();
         const result = await runRgPaths(
-          [...candidateArgs(group.prefilter), "--null", "--", directory],
+          [...(await fileCandidateArgs(group.query)), "--null", "--", directory],
           AbortSignal.timeout(processTimeoutMs),
           (path) => {
             actual.add(basename(path));

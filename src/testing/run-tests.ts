@@ -31,7 +31,7 @@ const agentDir = mkdtempSync(join(tmpdir(), "hashline-test-agent-"));
 try {
   const result = spawnSync(
     process.execPath,
-    ["--test", filter, ...process.argv.slice(3), ...files],
+    ["--experimental-test-module-mocks", "--test", filter, ...process.argv.slice(3), ...files],
     {
       cwd: fileURLToPath(new URL("../../", import.meta.url)),
       env: testEnvironment(agentDir),

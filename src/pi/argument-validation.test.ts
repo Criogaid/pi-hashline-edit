@@ -5,19 +5,26 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { createActionFusionExecutor } from "./action-fusion.ts";
-import { DEFAULT_CONFIG } from "./config.ts";
-import { makeEditOverride } from "./edit-tool.ts";
-import { makeGrepOverride, makeGrepOverrideWithBackend } from "./grep-tool.ts";
-import { makeReadOverride } from "./read-tool.ts";
-import { makeReplaceTool } from "./replace-tool.ts";
-import { makeWriteOverride } from "./write-tool.ts";
-import { callTool } from "./tool-call.testing.ts";
+import { makeMockGrep } from "./grep-rg.testing.ts";
+import { commandCompletion } from "./action-fusion.testing.ts";
+import { callTool, createToolContext } from "./tool-call.testing.ts";
 import { argumentError, rejectsArgument } from "./argument-error.testing.ts";
 import { POSITIVE_SAFE_INTEGER } from "./schema.ts";
 import { reportOf } from "./report.ts";
 import { createAnchorFormatter } from "./anchor-format.ts";
 import { computeLineHash } from "../core/hash.ts";
-import { grepCounts } from "./grep-output.testing.ts";
+
+// Load candidate-dependent helpers only after grep-rg.testing registers the module mock.
+const { grepCounts } = await import("./grep-output.testing.ts");
+
+const {
+  DEFAULT_CONFIG,
+  makeReadOverride,
+  makeGrepOverride,
+  makeEditOverride,
+  makeReplaceTool,
+  makeWriteOverride,
+} = await import("./tool-factories.testing.ts");
 
 const invalidCommand = { command: "", timeout: 0 };
 const anchorHash = "A".repeat(DEFAULT_CONFIG.hashLen);
@@ -105,17 +112,21 @@ for (const scenario of cases) {
     const original = "original\n";
     await writeFile(path, original);
     let commandRuns = 0;
-    const fusion = createActionFusionExecutor(async () => {
-      commandRuns++;
-      return { status: "succeeded", result: { content: [{ type: "text", text: "ran" }] } };
-    });
+    const fusion = createActionFusionExecutor(() => {});
+    const ctx = {
+      ...(await createToolContext(cwd, t)),
+      executeTool: async () => {
+        commandRuns++;
+        return commandCompletion({ content: [{ type: "text", text: "ran" }], details: undefined });
+      },
+    };
     const tool = scenario.make(cwd, fusion);
     const args: unknown = JSON.parse(JSON.stringify({ path, ...scenario.args, unexpected: true }));
     const snapshot = structuredClone(args);
     const open = t.mock.method(fs, "open");
     syncBuiltinESMExports();
     try {
-      await assert.rejects(callTool(tool, args), (error: unknown) => {
+      await assert.rejects(callTool(tool, args, { ctx }), (error: unknown) => {
         const result = argumentError(error);
         assert.deepEqual(
           new Set(result.issues.map((issue) => issue.field)),
@@ -330,10 +341,14 @@ test("optional edit fields and then_run are null with Fusion → publishes bytes
   t.after(() => rm(cwd, { recursive: true, force: true }));
   const path = join(cwd, "target.txt");
   let commandRuns = 0;
-  const fusion = createActionFusionExecutor(async () => {
-    commandRuns++;
-    return { status: "succeeded", result: { content: [{ type: "text", text: "ran" }] } };
-  });
+  const fusion = createActionFusionExecutor(() => {});
+  const ctx = {
+    ...(await createToolContext(cwd, t)),
+    executeTool: async () => {
+      commandRuns++;
+      return commandCompletion({ content: [{ type: "text", text: "ran" }], details: undefined });
+    },
+  };
   const tool = makeEditOverride(cwd, DEFAULT_CONFIG, fusion);
   for (const scenario of actionCases) {
     await t.test(`${scenario.action} → accepts null optional fields`, async () => {
@@ -350,7 +365,7 @@ test("optional edit fields and then_run are null with Fusion → publishes bytes
       };
       const args = { path, edits: [edit], then_run: null };
       const snapshot = structuredClone(args);
-      const result = await callTool(tool, args);
+      const result = await callTool(tool, args, { ctx });
       assert.equal(result.isError, undefined);
       assert.equal(reportOf(result, "edit")?.publication, "PUBLISHED");
       assert.equal(reportOf(result, "edit")?.then_run, undefined);
@@ -376,7 +391,7 @@ test("null optional fields → grep applies defaults without filename filters", 
     await onPath(path);
     return { code: 0, stderr: "", stopped: false };
   };
-  const tool = makeGrepOverrideWithBackend(cwd, config, {
+  const tool = makeMockGrep(cwd, config, {
     runRgPaths: (args, _signal, onPath) => discover(args, onPath),
     runRgLines: (args, _signal, _maxLines, onFile) =>
       discover(args, (file) => onFile(file, undefined)),
@@ -635,7 +650,7 @@ test("missing required parameter → fix states the parameter's role from its sc
     discoveries++;
     return { code: 1, stderr: "", stopped: false };
   };
-  const grep = makeGrepOverrideWithBackend(process.cwd(), DEFAULT_CONFIG, {
+  const grep = makeMockGrep(process.cwd(), DEFAULT_CONFIG, {
     runRgPaths: discover,
     runRgLines: discover,
   });

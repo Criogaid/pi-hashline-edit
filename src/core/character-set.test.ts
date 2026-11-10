@@ -5,7 +5,6 @@ import {
   contains,
   intersect,
   subtract,
-  membership,
   nativeCharacterRanges,
   surrogatePair,
 } from "./character-set.ts";
@@ -25,7 +24,7 @@ for (const [source, flags] of [
     skip: unsupportedByHost([source], flags),
   }, () => {
     const ranges = nativeCharacterRanges(source, flags);
-    const native = membership(source, flags);
+    const native = new RegExp(`^(?:${source})`, flags);
     for (const char of [
       "a",
       "A",
@@ -47,7 +46,7 @@ for (const [source, flags] of [
       const isUnit = flags.includes("u") || flags.includes("v") || char.length === 1;
       assert.equal(
         contains(ranges, char.codePointAt(0)!),
-        isUnit && native.test(char),
+        isUnit && native.exec(char)?.[0] === char,
         `${source}: ${JSON.stringify(char)}`,
       );
     }

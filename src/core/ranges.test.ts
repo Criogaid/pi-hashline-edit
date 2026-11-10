@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { findSortedRangeConflict, mergeRanges, type HalfOpenRange } from "./ranges.ts";
+import { findSortedRangeConflict, mergeRanges } from "./ranges.ts";
+type HalfOpenRange = Parameters<typeof findSortedRangeConflict>[0][number];
 
 test("sorted ranges sharing or crossing boundaries → report conflicts according to insertion policy", () => {
   const cases: [HalfOpenRange[], number | undefined, number | undefined][] = [

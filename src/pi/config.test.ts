@@ -4,7 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { DEFAULT_CONFIG, loadConfig } from "./config.ts";
+import { loadConfig } from "./config.ts";
+import { DEFAULT_CONFIG } from "./tool-factories.testing.ts";
 
 async function withSettings(
   fn: (

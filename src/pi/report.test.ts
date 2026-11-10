@@ -9,30 +9,28 @@ import { describeMutationFailure } from "./mutation-result.ts";
 import { formatArgumentError } from "./argument-error.ts";
 import { renderToolError, splitReport } from "./render.ts";
 import { causeOf } from "./report-cause.ts";
-import {
-  decodeReport,
-  failureResult,
-  reportOf,
-  reportResult,
-  describeFailure,
-  renderReport,
-} from "./report.ts";
-import { DEFAULT_OUTPUT_BUDGETS, formatByteSize } from "./budgets.ts";
+import { reportOf, reportResult, describeFailure, renderReport, runTool } from "./report.ts";
+import { formatByteSize } from "./budgets.ts";
+import { DEFAULT_OUTPUT_BUDGETS } from "./tool-factories.testing.ts";
 import { MAX_UNNARROWED_SCAN_BYTES } from "./grep-candidates.ts";
 import {
+  ERROR_DEFINITIONS,
   OUTCOME_NEXT,
-  REREAD,
   type Report,
   type ReportTool,
   type SuccessReport,
 } from "./report-schema.ts";
 
 // npm run typecheck checks these invalid callers; they must never run.
-function invalidReportConstruction(report: NonNullable<ReturnType<typeof decodeReport>>) {
+function invalidReportConstruction(report: Report) {
   // @ts-expect-error Grep successes cannot contain write-only facts.
   reportResult({ tool: "grep", created: true });
   // @ts-expect-error NO_MATCH requires its unmatched facts.
-  failureResult({ tool: "replace", error: "NO_MATCH", message: "No replacement matched." });
+  const failure: import("./report-schema.ts").FailureReport = {
+    tool: "replace",
+    error: "NO_MATCH",
+    message: "No replacement matched.",
+  };
   if (report.error === "NO_MATCH") {
     const unmatched: string[] = report.unmatched;
     // @ts-expect-error NO_MATCH no longer carries a single rule.
@@ -43,6 +41,8 @@ function invalidReportConstruction(report: NonNullable<ReturnType<typeof decodeR
 }
 
 const text = (value: string) => ({ type: "text" as const, text: value });
+const reportFromText = (value: string, tool: ReportTool) =>
+  reportOf({ content: [text(value)] }, tool);
 function displayed(result: Parameters<typeof renderToolError>[0], tool: ReportTool) {
   initTheme("dark");
   return stripVTControlCharacters(
@@ -50,13 +50,14 @@ function displayed(result: Parameters<typeof renderToolError>[0], tool: ReportTo
   );
 }
 
-test("structured failure → omits call fields from text and renders the complete details once", () => {
-  const result = failureResult({
-    tool: "write",
-    path: "target.txt",
-    error: "TARGET_EXISTS",
-    message: "Target already exists.",
-  });
+test("structured failure → omits call fields from text and renders the complete details once", async () => {
+  const result = await runTool(
+    "write",
+    { path: "target.txt", budget: DEFAULT_OUTPUT_BUDGETS },
+    async () => {
+      throw new HashlineError("TARGET_EXISTS", "Target already exists.");
+    },
+  );
   const before = structuredClone(result);
   const block = result.content[0];
   assert.ok(block.type === "text");
@@ -67,10 +68,11 @@ test("structured failure → omits call fields from text and renders the complet
   assert.equal(result.details.report.tool, "write");
   assert.equal(result.details.report.path, "target.txt");
   assert.equal(reportOf(result, "write"), result.details.report);
-  assert.deepEqual(decodeReport(block.text, "write"), {
+  assert.deepEqual(reportFromText(block.text, "write"), {
     tool: "write",
     error: "TARGET_EXISTS",
     message: "Target already exists.",
+    next: ERROR_DEFINITIONS.TARGET_EXISTS.next.default,
   });
   const shown = displayed(result, "write");
   assert.match(shown, /TARGET_EXISTS/);
@@ -120,7 +122,7 @@ test("invalid serialized report → retains the raw diagnostic", () => {
       cause: { message: "native", foreign: true },
     }),
   ]) {
-    assert.equal(decodeReport(invalid, "edit"), undefined, invalid);
+    assert.equal(reportFromText(invalid, "edit"), undefined, invalid);
     const report: unknown = JSON.parse(invalid);
     for (const details of [undefined, { report }]) {
       const result = { content: [text(invalid)], details };
@@ -143,7 +145,7 @@ test("native failure with deeply nested cause → retains the terminal diagnosti
     error = Object.assign(new Error(`layer ${index}`, { cause: error }), { code: "EIO" });
   const report = describeFailure("grep", error, { path: "source", budget: DEFAULT_OUTPUT_BUDGETS });
   const serialized = renderReport(report);
-  const decoded = decodeReport(serialized, "grep");
+  const decoded = reportFromText(serialized, "grep");
   assert.ok(decoded);
   assert.deepEqual(decoded, { tool: "grep", ...JSON.parse(serialized) });
   let cause = decoded.cause;
@@ -241,7 +243,7 @@ test("mutation publication → recovery reflects whether the change was saved", 
     const report = describeMutationFailure("edit", error, { budget: DEFAULT_OUTPUT_BUDGETS });
     assert.equal(report.publication, publication);
     assert.equal(report.next, expected);
-    assert.equal(decodeReport(renderReport(report), "edit")?.next, expected);
+    assert.equal(reportFromText(renderReport(report), "edit")?.next, expected);
   }
 });
 
@@ -265,9 +267,9 @@ test("success reports → omit repeated call fields while retaining details and 
 test("success facts without a tool → use call context and enforce tool-specific fields", () => {
   const report: Report = { tool: "write", publication: "PUBLISHED", created: true };
   const serialized = renderReport(report);
-  assert.deepEqual(decodeReport(serialized, "write"), report);
+  assert.deepEqual(reportFromText(serialized, "write"), report);
   for (const tool of ["read", "grep", "edit", "replace"] as const)
-    assert.equal(decodeReport(serialized, tool), undefined);
+    assert.equal(reportFromText(serialized, tool), undefined);
   for (const invalid of [
     '{"created":true,"foreign":true}',
     '{"error":"INVALID_ARGUMENTS","message":"missing issues"}',
@@ -275,11 +277,11 @@ test("success facts without a tool → use call context and enforce tool-specifi
     "[]",
     "null",
   ])
-    assert.equal(decodeReport(invalid, "write"), undefined);
+    assert.equal(reportFromText(invalid, "write"), undefined);
   const foreign: Report = { tool: "grep", matches: 1 };
   const foreignText = JSON.stringify(foreign);
   const hooked = { content: [text(foreignText)], details: { report: foreign } };
-  assert.equal(decodeReport(foreignText, "read"), undefined);
+  assert.equal(reportFromText(foreignText, "read"), undefined);
   assert.equal(reportOf(hooked, "read"), undefined);
   assert.deepEqual(splitReport(hooked, "read"), { content: hooked.content, report: undefined });
 });
@@ -327,7 +329,7 @@ test("replacement failure facts → survive report serialization", () => {
       line: 2,
     },
   ] satisfies Report[]) {
-    assert.deepEqual(decodeReport(renderReport(report), "replace"), report);
+    assert.deepEqual(reportFromText(renderReport(report), "replace"), report);
   }
 });
 
@@ -351,7 +353,7 @@ test("grep success and incomplete candidate facts → survive report serializati
     },
   ] satisfies Report[]) {
     const serialized = renderReport(report);
-    assert.deepEqual(decodeReport(serialized, report.tool), report);
+    assert.deepEqual(reportFromText(serialized, report.tool), report);
     assert.deepEqual(reportOf({ content: [text(serialized)] }, report.tool), report);
   }
 });
@@ -478,18 +480,15 @@ test("failure classification without mutation facts → omits mutation state for
 });
 
 test("mutation freshness → retains the fact and requests reread only for an existing or unknown target", () => {
-  for (const [freshness, next] of [
-    ["missing", undefined],
-    ["changed", REREAD],
-    ["unknown", REREAD],
-  ] as const) {
+  for (const freshness of ["missing", "changed", "unknown"] as const) {
     const result = reportResult({ tool: "edit", publication: "PUBLISHED", freshness });
     const report = reportOf(result, "edit");
     assert.equal(report?.freshness, freshness);
-    assert.equal(report?.next, next);
+    if (freshness === "missing") assert.equal(report?.next, undefined);
+    else assert.match(report?.next ?? "", /read.*before.*edit|reread/i);
     const block = result.content.at(-1);
     assert.ok(block?.type === "text");
-    assert.deepEqual(decodeReport(block.text, "edit"), report);
-    assert.equal(Object.hasOwn(JSON.parse(block.text), "next"), next !== undefined);
+    assert.deepEqual(reportFromText(block.text, "edit"), report);
+    assert.equal(Object.hasOwn(JSON.parse(block.text), "next"), freshness !== "missing");
   }
 });

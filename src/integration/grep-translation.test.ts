@@ -1,14 +1,15 @@
+import { searchWithMockRg } from "../pi/grep-rg.testing.ts";
 import assert from "node:assert/strict";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { test } from "node:test";
 import { searchText, type GrepQuery } from "../core/search.ts";
-import { searchFiles, type GrepFileMatch } from "../pi/grep-search.ts";
+import type { GrepFileMatch } from "../pi/grep-search.ts";
 import { runRgLines, runRgPaths } from "../pi/rg-process.ts";
-import { candidateArgs } from "../pi/grep-candidates.ts";
+import { fileCandidateArgs } from "../pi/grep-rg.testing.ts";
 import { lineCandidatePatterns } from "../pi/rg-regex.ts";
-import { extractPrefilter } from "../core/search-analysis.ts";
+
 import { REGEX_TRANSLATION_CORPUS } from "../testing/regex-translation-corpus.ts";
 import { unsupportedByHost } from "../testing/regex-host.testing.ts";
 
@@ -70,7 +71,7 @@ test("upstream regex witnesses × LF/CRLF/malformed bytes → sound candidates, 
           inputs.push({ bytes, filePath });
         }
         const candidates = new Map<string, readonly number[] | undefined>();
-        const result = await searchFiles({
+        const result = await searchWithMockRg({
           backend: {
             runRgPaths: async () => assert.fail("unexpected file fallback"),
             runRgLines: (args, signal, maxLines, onFile) =>
@@ -131,7 +132,7 @@ test("real rg AND/OR file prefilter → broad candidates retain exact JS results
   };
   const candidates: string[] = [];
   const listing = await runRgPaths(
-    [...candidateArgs(extractPrefilter(query)), "--null", "--", directory],
+    [...(await fileCandidateArgs(query)), "--null", "--", directory],
     AbortSignal.timeout(timeoutMs),
     (path) => {
       candidates.push(resolve(path));
@@ -141,7 +142,7 @@ test("real rg AND/OR file prefilter → broad candidates retain exact JS results
   assert.equal(listing.code, 0);
   assert.equal(listing.stderr, "");
   assert.deepEqual(candidates.sort(), [paths[0], paths[1], paths[2], paths[3], paths[4]].sort());
-  const result = await searchFiles({
+  const result = await searchWithMockRg({
     backend: { runRgPaths, runRgLines },
     scope: { globs: [], searchPaths: [directory] },
     query,
@@ -169,7 +170,7 @@ test("oversized line translation → file prefilter fallback preserves JS result
   const path = join(directory, "long.txt");
   await writeFile(path, pattern);
   let filePasses = 0;
-  const result = await searchFiles({
+  const result = await searchWithMockRg({
     backend: {
       runRgPaths: (...args) => {
         filePasses++;

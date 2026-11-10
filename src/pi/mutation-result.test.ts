@@ -1,3 +1,4 @@
+import { commandCompletion, type SessionCommand } from "./action-fusion.testing.ts";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { generateDiffString } from "@earendil-works/pi-coding-agent";
@@ -7,8 +8,8 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createActionFusionExecutor } from "./action-fusion.ts";
-import { makeWriteOverride } from "./write-tool.ts";
-import { makeReplaceTool } from "./replace-tool.ts";
+import { makeWriteOverride } from "./tool-factories.testing.ts";
+import { makeReplaceTool } from "./tool-factories.testing.ts";
 import type { SuccessReport } from "./report-schema.ts";
 import { callTool, createToolContext } from "./tool-call.testing.ts";
 import { reportOf } from "./report.ts";
@@ -30,20 +31,19 @@ test("command content includes images → report text joins only text blocks", a
   const dir = await mkdtemp(join(tmpdir(), "hashline-command-content-"));
   try {
     const path = join(dir, "file.txt");
-    const fusion = createActionFusionExecutor(async () => ({
-      status: "succeeded",
-      result: {
+    const executeTool: SessionCommand = async () =>
+      commandCompletion({
         content: [
           { type: "text", text: "first" },
           { type: "image", data: "iVBORw0KGgo=", mimeType: "image/png" },
           { type: "text", text: "second" },
         ],
-      },
-    }));
+      });
+    const fusion = createActionFusionExecutor(() => {});
     const result = await callTool(
       makeWriteOverride(dir, fusion),
       { path, content: "saved\n", mode: "create", then_run: { command: "check" } },
-      { ctx: await createToolContext(dir, t) },
+      { ctx: { ...(await createToolContext(dir, t)), executeTool } },
     );
     assert.equal(reportOf(result, "write")?.then_run?.output, "first\nsecond");
     assert.equal(await readFile(path, "utf8"), "saved\n");

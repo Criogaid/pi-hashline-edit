@@ -7,11 +7,12 @@ import { join } from "node:path";
 import { initTheme } from "@earendil-works/pi-coding-agent";
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import { validateToolArguments } from "@earendil-works/pi-ai";
-import { makeReadOverride } from "./read-tool.ts";
+import { makeReadOverride } from "./tool-factories.testing.ts";
 import { computeLineHash } from "../core/hash.ts";
 import { callTool } from "./tool-call.testing.ts";
-import { DEFAULT_CONFIG } from "./config.ts";
-import { DEFAULT_OUTPUT_BUDGETS, formatByteSize } from "./budgets.ts";
+import { DEFAULT_CONFIG } from "./tool-factories.testing.ts";
+import { formatByteSize } from "./budgets.ts";
+import { DEFAULT_OUTPUT_BUDGETS } from "./tool-factories.testing.ts";
 import { reportOf } from "./report.ts";
 import { createAnchorFormatter } from "./anchor-format.ts";
 

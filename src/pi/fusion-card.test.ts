@@ -9,9 +9,10 @@ import { createActionFusionExecutor } from "./action-fusion.ts";
 import type { ActionFusionProgress } from "./report-schema.ts";
 import type { CommandResult } from "./report-schema.ts";
 import { commandText } from "./mutation-result.ts";
-import { decodeReport } from "./report.ts";
-import { makeWriteOverride } from "./write-tool.ts";
-import { callTool, createToolContext } from "./tool-call.testing.ts";
+import { reportOf } from "./report.ts";
+import { makeWriteOverride } from "./tool-factories.testing.ts";
+import { commandCompletion, createFusionContext } from "./action-fusion.testing.ts";
+import { callTool } from "./tool-call.testing.ts";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { ProcessTerminal, TuiMainScreen } from "@earendil-works/pi-tui";
 import { theme as activeTheme } from "../../node_modules/@earendil-works/pi-coding-agent/dist/modes/interactive/theme/theme.js";
@@ -104,12 +105,13 @@ test("one independent card updates live and only persists its endpoints", () => 
 
 test("Fusion command outcomes → progress, cards, and reports preserve command results", async (t) => {
   const success: CommandResult = {
+    details: {},
     content: [
       { type: "text", text: "first" },
       { type: "text", text: "second" },
     ],
   };
-  const failure: CommandResult = { content: [{ type: "text", text: "boom" }] };
+  const failure: CommandResult = { content: [{ type: "text", text: "boom" }], details: {} };
   const cases: readonly {
     scenario:
       | "succeeded"
@@ -128,7 +130,7 @@ test("Fusion command outcomes → progress, cards, and reports preserve command 
     {
       scenario: "cancelled-empty",
       command: "cancelled",
-      result: { content: [] },
+      result: { content: [], details: {} },
       text: /Not run: cancelled\./,
     },
     { scenario: "skipped", command: "skipped", text: /Not run: the mutation did not complete/ },
@@ -144,20 +146,19 @@ test("Fusion command outcomes → progress, cards, and reports preserve command 
       const controller = new AbortController();
       if (scenario === "cancelled") controller.abort();
       let commands = 0;
-      const fusion = createActionFusionExecutor(
-        async () => {
-          commands++;
-          if (scenario === "cancelled-error") controller.abort();
-          if (scenario === "failed" || scenario === "cancelled-error") throw new Error("boom");
-          return scenario === "cancelled-empty"
-            ? { status: "cancelled", result: { content: [] } }
-            : { status: "succeeded", result: success };
-        },
-        (progress) => {
-          events.push(progress);
-          h.report(progress);
-        },
-      );
+      const context = await createFusionContext(dir, t, async () => {
+        commands++;
+        if (scenario === "cancelled-error" || scenario === "cancelled-empty") controller.abort();
+        if (scenario === "failed" || scenario === "cancelled-error")
+          return commandCompletion(failure, true);
+        return scenario === "cancelled-empty"
+          ? commandCompletion({ content: [] }, true)
+          : commandCompletion(success);
+      });
+      const fusion = createActionFusionExecutor((progress) => {
+        events.push(progress);
+        h.report(progress);
+      });
       const result = await callTool(
         makeWriteOverride(dir, fusion),
         {
@@ -166,7 +167,7 @@ test("Fusion command outcomes → progress, cards, and reports preserve command 
           content: "saved\n",
           then_run: { command: "check" },
         },
-        { ctx: await createToolContext(dir, t), signal: controller.signal },
+        { ctx: context, signal: controller.signal },
       );
       assert.equal(commands, expected ? 1 : 0);
       const final = events.at(-1);
@@ -184,7 +185,7 @@ test("Fusion command outcomes → progress, cards, and reports preserve command 
       assert.equal(Object.hasOwn(h.entries[0].data, "result"), false);
       const block = result.content.at(-1);
       assert.ok(block?.type === "text");
-      const report = decodeReport(block.text, "write");
+      const report = reportOf({ content: [block] }, "write");
       assert.ok(report);
       const output = expected ? commandText(expected.content) : "";
       assert.deepEqual(report.then_run, { status: command, ...(output ? { output } : {}) });

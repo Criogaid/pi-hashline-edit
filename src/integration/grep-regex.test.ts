@@ -4,10 +4,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { rejectsArgument } from "../pi/argument-error.testing.ts";
-import { DEFAULT_CONFIG } from "../pi/config.ts";
-import { makeGrepOverrideWithBackend } from "../pi/grep-tool.ts";
+const { DEFAULT_CONFIG, makeGrepOverride } = await import("../pi/tool-factories.testing.ts");
+
 import { reportOf } from "../pi/report.ts";
-import { grepCounts } from "../pi/grep-output.testing.ts";
+const { grepCounts } = await import("../pi/grep-output.testing.ts");
 import { callTool } from "../pi/tool-call.testing.ts";
 import { unsupportedByHost } from "../testing/regex-host.testing.ts";
 
@@ -207,7 +207,7 @@ test("regex and case modes across line endings → real grep agrees with native 
   const directory = await mkdtemp(join(tmpdir(), "hl-grep-js-equivalence-"));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const path = join(directory, "fixture.txt");
-  const tool = makeGrepOverrideWithBackend(directory, DEFAULT_CONFIG, {});
+  const tool = makeGrepOverride(directory, DEFAULT_CONFIG);
   for (const scenario of cases) {
     for (const separator of ["\n", "\r\n"]) {
       for (const multiline of scenario.multilineOnly ? [true] : [false, true]) {
@@ -249,7 +249,7 @@ test("malformed UTF-8 → character classes match replacement characters in the 
   const directory = await mkdtemp(join(tmpdir(), "hl-grep-js-invalid-"));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const path = join(directory, "invalid.txt");
-  const tool = makeGrepOverrideWithBackend(directory, DEFAULT_CONFIG, {});
+  const tool = makeGrepOverride(directory, DEFAULT_CONFIG);
   await writeFile(
     path,
     Buffer.concat([Buffer.from("a"), Buffer.from([0xff]), Buffer.from("b\naxb\n")]),
@@ -274,7 +274,7 @@ test("backreference regression: a capture spanning mixed line endings → matche
   try {
     const path = join(dir, "mixed.txt");
     await writeFile(path, "a\r\na\n");
-    const tool = makeGrepOverrideWithBackend(dir, DEFAULT_CONFIG, {});
+    const tool = makeGrepOverride(dir, DEFAULT_CONFIG);
     const result = await callTool(tool, {
       path,
       pattern: "(a\\n)\\1",
@@ -294,7 +294,7 @@ test("backreference regression: ignoreCase with an ASCII capture → does not ma
   try {
     const path = join(dir, "casefold.txt");
     await writeFile(path, "kK\n");
-    const tool = makeGrepOverrideWithBackend(dir, DEFAULT_CONFIG, {});
+    const tool = makeGrepOverride(dir, DEFAULT_CONFIG);
     const result = await callTool(tool, {
       path,
       pattern: "(k)\\1",
@@ -331,7 +331,7 @@ test("zero-maximum quantifiers → real grep matches the active capture", async 
       try {
         const path = join(dir, "input.txt");
         await writeFile(path, source);
-        const tool = makeGrepOverrideWithBackend(dir, DEFAULT_CONFIG, {});
+        const tool = makeGrepOverride(dir, DEFAULT_CONFIG);
         const result = await callTool(tool, {
           path,
           pattern,
@@ -353,7 +353,7 @@ test("JS syntax boundary → executes constructs requiring JS", async (t) => {
   t.after(() => rm(dir, { recursive: true, force: true }));
   const path = join(dir, "input.txt");
   await writeFile(path, "😀\naba\nab\n");
-  const tool = makeGrepOverrideWithBackend(dir, DEFAULT_CONFIG, {});
+  const tool = makeGrepOverride(dir, DEFAULT_CONFIG);
   for (const pattern of [
     "^..$",
     "^[^a]{2}$",
@@ -378,7 +378,7 @@ test("zero-width assertions at LF and CRLF boundaries → match only empty physi
   t.after(() => rm(directory, { recursive: true, force: true }));
   const path = join(directory, "fixture.txt");
   await writeFile(path, "a\nb\r\nc\n\nd\r\n\r\nx y\n");
-  const tool = makeGrepOverrideWithBackend(directory, DEFAULT_CONFIG, {});
+  const tool = makeGrepOverride(directory, DEFAULT_CONFIG);
   for (const [pattern, multiline] of [
     ["^$", false],
     ["^ *$", false],

@@ -3,11 +3,11 @@ import assert from "node:assert/strict";
 import { mkdtemp, open, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { makeReadOverride } from "../pi/read-tool.ts";
-import { makeGrepOverrideWithBackend } from "../pi/grep-tool.ts";
+import { makeReadOverride } from "../pi/tool-factories.testing.ts";
+import { makeGrepOverride } from "../pi/tool-factories.testing.ts";
 import { computeLineHash } from "../core/hash.ts";
 import { callTool } from "../pi/tool-call.testing.ts";
-import { DEFAULT_CONFIG } from "../pi/config.ts";
+import { DEFAULT_CONFIG } from "../pi/tool-factories.testing.ts";
 
 const call = (tool: any, params: any) => callTool(tool, params, { toolCallId: "large-text" });
 
@@ -15,7 +15,7 @@ test("read and line-based grep retain anchors on LF and CRLF files over 100 MiB"
   const directory = await mkdtemp(join(tmpdir(), "hashline-large-text-"));
   try {
     const read = makeReadOverride(directory, DEFAULT_CONFIG);
-    const grep = makeGrepOverrideWithBackend(directory, DEFAULT_CONFIG, {});
+    const grep = makeGrepOverride(directory, DEFAULT_CONFIG);
     for (const ending of ["\n", "\r\n"]) {
       const path = join(directory, "large.txt");
       const handle = await open(path, "w");
@@ -56,7 +56,7 @@ test("CRLF snapshots normalize terminators split across read chunks and preserve
   try {
     const path = join(directory, "boundary.txt");
     await writeFile(path, "x".repeat(65535) + "\r\nneedle\r\nstandalone\r");
-    const grep = makeGrepOverrideWithBackend(directory, DEFAULT_CONFIG, {});
+    const grep = makeGrepOverride(directory, DEFAULT_CONFIG);
     const result: any = await call(grep, {
       path,
       pattern: ["needle", "standalone\r"],

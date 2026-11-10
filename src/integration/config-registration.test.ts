@@ -7,7 +7,8 @@ import type { ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-age
 import registerHashline from "../index.ts";
 import { computeLineHash } from "../core/hash.ts";
 import { callTool } from "../pi/tool-call.testing.ts";
-import { DEFAULT_CONFIG, type HashlineEditConfig } from "../pi/config.ts";
+import { type HashlineEditConfig } from "../pi/config.ts";
+import { DEFAULT_CONFIG } from "../pi/tool-factories.testing.ts";
 import { reportOf } from "../pi/report.ts";
 import { formatByteSize } from "../pi/budgets.ts";
 import { expectToolFailure } from "../pi/report-failure.testing.ts";

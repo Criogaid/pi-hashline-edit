@@ -3,8 +3,8 @@ import { chmod, mkdir, mkdtemp, rm, stat, symlink, writeFile } from "node:fs/pro
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { DEFAULT_CONFIG } from "../pi/config.ts";
-import { makeGrepOverrideWithBackend } from "../pi/grep-tool.ts";
+const { DEFAULT_CONFIG, makeGrepOverride } = await import("../pi/tool-factories.testing.ts");
+
 import { callTool } from "../pi/tool-call.testing.ts";
 import { expectToolFailure } from "../pi/report-failure.testing.ts";
 
@@ -36,7 +36,7 @@ for (const condition of ["permission denied", "symlink loop"] as const) {
       code = "ELOOP";
     }
     await assert.rejects(stat(path), { code });
-    const tool = makeGrepOverrideWithBackend(directory, DEFAULT_CONFIG, {});
+    const tool = makeGrepOverride(directory, DEFAULT_CONFIG);
     await expectToolFailure(
       callTool(tool, { path, pattern: "needle", literal: true, ignoreCase: false }),
       "FILESYSTEM_ERROR",

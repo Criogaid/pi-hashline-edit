@@ -8,9 +8,10 @@ import { setImmediate } from "node:timers/promises";
 import { Worker } from "node:worker_threads";
 import { computeLineHash } from "../core/hash.ts";
 import { searchText, type LineSearchInput, type SearchInput } from "../core/search.ts";
-import { DEFAULT_CONFIG } from "./config.ts";
+import { loadConfig } from "./config.ts";
+const DEFAULT_CONFIG = loadConfig(os.tmpdir());
 import { reportOf } from "./report.ts";
-import type { GrepBackend } from "./rg-process.ts";
+import type { MockRg } from "./grep-rg.testing.ts";
 import type { WorkerError } from "./report-cause.ts";
 import { callTool } from "./tool-call.testing.ts";
 
@@ -21,7 +22,7 @@ test("out-of-order file completions → listing order fixes rows, warnings, and 
   // Fix the pool size before its module loads, including on single-core CI hosts.
   t.mock.method(os, "availableParallelism", () => concurrentFiles + 1);
   syncBuiltinESMExports();
-  const { makeGrepOverrideWithBackend } = await import("./grep-tool.ts");
+  const { makeMockGrep } = await import("./grep-rg.testing.ts");
   t.mock.restoreAll();
   syncBuiltinESMExports();
 
@@ -77,7 +78,7 @@ test("out-of-order file completions → listing order fixes rows, warnings, and 
             hold(name, () => this.emit("message", { result: searchText(input) }));
           },
         );
-        const backend: GrepBackend = {
+        const backend: MockRg = {
           runRgPaths: async () => assert.fail("This query uses line candidates"),
           runRgLines: async (_args, _signal, _maxLines, onFile) => {
             for (const name of names) {
@@ -88,7 +89,7 @@ test("out-of-order file completions → listing order fixes rows, warnings, and 
             return { code: 2, stderr: listingDiagnostic, stopped: false };
           },
         };
-        const running = callTool(makeGrepOverrideWithBackend(dir, DEFAULT_CONFIG, backend), {
+        const running = callTool(makeMockGrep(dir, DEFAULT_CONFIG, backend), {
           path: dir,
           pattern: "needle",
           literal: true,
@@ -149,7 +150,7 @@ test("out-of-order file completions → listing order fixes rows, warnings, and 
 });
 
 test("match limit reached before a repeated candidate → stop listing before later diagnostics", async (t) => {
-  const { makeGrepOverrideWithBackend } = await import("./grep-tool.ts");
+  const { makeMockGrep } = await import("./grep-rg.testing.ts");
   const dir = await fs.mkdtemp(join(os.tmpdir(), "hl-grep-duplicate-stop-"));
   t.after(() => fs.rm(dir, { recursive: true, force: true }));
   const file = join(dir, "fixture.txt");
@@ -178,7 +179,7 @@ test("match limit reached before a repeated candidate → stop listing before la
         return { code: stopped ? 0 : 2, stderr: stopped ? "" : "later diagnostic", stopped };
       };
       const result = await callTool(
-        makeGrepOverrideWithBackend(dir, DEFAULT_CONFIG, {
+        makeMockGrep(dir, DEFAULT_CONFIG, {
           runRgLines: (_args, _signal, _maxLines, onFile) =>
             list((path) => onFile(path, undefined)),
           runRgPaths: (_args, _signal, onFile) => list(onFile),
@@ -197,7 +198,7 @@ test("file-associated failure → listing position decides failure or cutoff, wh
 }, async (t) => {
   t.mock.method(os, "availableParallelism", () => 3);
   syncBuiltinESMExports();
-  const { makeGrepOverrideWithBackend } = await import("./grep-tool.ts");
+  const { makeMockGrep } = await import("./grep-rg.testing.ts");
   t.mock.restoreAll();
   syncBuiltinESMExports();
   const dir = await fs.mkdtemp(join(os.tmpdir(), "hl-grep-failure-order-"));
@@ -229,7 +230,7 @@ test("file-associated failure → listing position decides failure or cutoff, wh
         }),
     },
   ] as const;
-  const backend: GrepBackend = {
+  const backend: MockRg = {
     runRgPaths: async () => assert.fail("This query uses line candidates"),
     runRgLines: async (_args, _signal, _maxLines, onFile) => {
       for (const name of names) if (!(await onFile(join(dir, name), undefined))) break;
@@ -269,7 +270,7 @@ test("file-associated failure → listing position decides failure or cutoff, wh
             );
             const controller = new AbortController();
             const running = callTool(
-              makeGrepOverrideWithBackend(dir, DEFAULT_CONFIG, backend),
+              makeMockGrep(dir, DEFAULT_CONFIG, backend),
               {
                 path: dir,
                 pattern: "needle",

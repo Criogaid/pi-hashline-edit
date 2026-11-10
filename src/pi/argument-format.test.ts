@@ -1,12 +1,13 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { makeEditOverride } from "./edit-tool.ts";
-import { makeReadOverride } from "./read-tool.ts";
-import { makeGrepOverride } from "./grep-tool.ts";
-import { makeWriteOverride } from "./write-tool.ts";
-import { makeReplaceTool } from "./replace-tool.ts";
-import { DEFAULT_CONFIG } from "./config.ts";
-import { DEFAULT_OUTPUT_BUDGETS, outputBudgetsFor } from "./budgets.ts";
+import { makeEditOverride } from "./tool-factories.testing.ts";
+import { makeReadOverride } from "./tool-factories.testing.ts";
+import { makeGrepOverride } from "./tool-factories.testing.ts";
+import { makeWriteOverride } from "./tool-factories.testing.ts";
+import { makeReplaceTool } from "./tool-factories.testing.ts";
+import { DEFAULT_CONFIG } from "./tool-factories.testing.ts";
+import { outputBudgetsFor } from "./budgets.ts";
+import { DEFAULT_OUTPUT_BUDGETS } from "./tool-factories.testing.ts";
 import { callTool } from "./tool-call.testing.ts";
 import { argumentError } from "./argument-error.testing.ts";
 

@@ -5,7 +5,7 @@ import { test } from "node:test";
 import type { ToolCall } from "@earendil-works/pi-ai";
 import { loadInstalledExtension } from "../testing/extension-loader.testing.ts";
 import { openTestSession, responseStream, SESSION_TIMEOUT_MS } from "../testing/session.testing.ts";
-import { decodeReport } from "../pi/report.ts";
+import { reportOf } from "../pi/report.ts";
 
 test("packed extension completes file, worker, and command operations", {
   timeout: SESSION_TIMEOUT_MS,
@@ -88,7 +88,7 @@ test("packed extension completes file, worker, and command operations", {
   for (const id of ["write", "read", "grep", "edit", "replace"]) result(id);
   const command = result("write")
     .content.map((block) =>
-      block.type === "text" ? decodeReport(block.text, "write")?.then_run : undefined,
+      block.type === "text" ? reportOf({ content: [block] }, "write")?.then_run : undefined,
     )
     .find((facts) => facts !== undefined);
   assert.equal(command?.status, "succeeded");

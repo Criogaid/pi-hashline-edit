@@ -1,3 +1,4 @@
+import { searchWithMockRg } from "../pi/grep-rg.testing.ts";
 import assert from "node:assert/strict";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -5,7 +6,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { acceptsNative } from "../core/search-matrix.testing.ts";
 import { searchText, type GrepQuery } from "../core/search.ts";
-import { searchFiles, type GrepFileMatch } from "../pi/grep-search.ts";
+import type { GrepFileMatch } from "../pi/grep-search.ts";
 import { lineCandidatePatterns } from "../pi/rg-regex.ts";
 import { runRgLines } from "../pi/rg-process.ts";
 import { REGEX_TRANSLATION_CORPUS } from "../testing/regex-translation-corpus.ts";
@@ -182,7 +183,7 @@ test("Cartesian adversarial bytes × syntax × flags × assertion positions → 
         const translated = lineCandidatePatterns(query);
         assert.ok(translated, JSON.stringify(query));
         const candidates = new Map<string, readonly number[] | undefined>();
-        const actual = await searchFiles({
+        const actual = await searchWithMockRg({
           backend: {
             async runRgPaths() {
               assert.fail(`unexpected file fallback: ${JSON.stringify(query)}`);

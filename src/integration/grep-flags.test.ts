@@ -3,10 +3,10 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { DEFAULT_CONFIG } from "../pi/config.ts";
-import { makeGrepOverrideWithBackend } from "../pi/grep-tool.ts";
+const { DEFAULT_CONFIG, makeGrepOverride } = await import("../pi/tool-factories.testing.ts");
+
 import { reportOf } from "../pi/report.ts";
-import { grepCounts } from "../pi/grep-output.testing.ts";
+const { grepCounts } = await import("../pi/grep-output.testing.ts");
 import { callTool } from "../pi/tool-call.testing.ts";
 
 const cases = [
@@ -216,7 +216,7 @@ test("grep flags: JavaScript modes preserve native matching through the real sea
   const directory = await mkdtemp(join(tmpdir(), "hl-grep-flags-"));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const path = join(directory, "input.txt");
-  const tool = makeGrepOverrideWithBackend(directory, DEFAULT_CONFIG, {});
+  const tool = makeGrepOverride(directory, DEFAULT_CONFIG);
   for (const scenario of cases) {
     await t.test(scenario.name, async () => {
       await writeFile(path, scenario.source);
@@ -245,7 +245,7 @@ test("grep flags: valid V8 patterns exceeding translator parser depth still exec
   await writeFile(path, "A\na\n");
   const pattern = `${"(?:".repeat(3_000)}A${")".repeat(3_000)}`;
   assert.equal(new RegExp(pattern).test("A"), true);
-  const tool = makeGrepOverrideWithBackend(directory, DEFAULT_CONFIG, {});
+  const tool = makeGrepOverride(directory, DEFAULT_CONFIG);
   for (const flags of [undefined, "m"]) {
     const result = await callTool(tool, {
       path,

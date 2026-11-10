@@ -1,3 +1,4 @@
+import { commandCompletion, type SessionCommand } from "./action-fusion.testing.ts";
 import { argumentError } from "./argument-error.testing.ts";
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -9,25 +10,26 @@ import { visibleWidth } from "@earendil-works/pi-tui";
 import { initTheme, type ToolDefinition } from "@earendil-works/pi-coding-agent";
 import type { TSchema } from "typebox";
 import { theme } from "../../node_modules/@earendil-works/pi-coding-agent/dist/modes/interactive/theme/theme.js";
-import { makeEditOverride } from "./edit-tool.ts";
-import { makeReplaceTool } from "./replace-tool.ts";
+import { makeEditOverride } from "./tool-factories.testing.ts";
+import { makeReplaceTool } from "./tool-factories.testing.ts";
 import { diffCardRenderers, reportLines } from "./render.ts";
 import { withMutationStatus } from "./fusion-card.ts";
-import { makeWriteOverride } from "./write-tool.ts";
+import { makeWriteOverride } from "./tool-factories.testing.ts";
 import { generateMutationDetails } from "./mutation-result.ts";
 import { createActionFusionExecutor } from "./action-fusion.ts";
-import { DEFAULT_CONFIG } from "./config.ts";
+import { DEFAULT_CONFIG } from "./tool-factories.testing.ts";
 import { toDisplayLines } from "./grep-render.ts";
 import { parseFileHeader } from "./grep-output.ts";
-import { makeReadOverride } from "./read-tool.ts";
+import { makeReadOverride } from "./tool-factories.testing.ts";
 import { callTool } from "./tool-call.testing.ts";
 import { renderToolError } from "./render.ts";
 import { formatArgumentError } from "./argument-error.ts";
-import { makeGrepOverride } from "./grep-tool.ts";
+import { makeGrepOverride } from "./tool-factories.testing.ts";
 import { openTestSession } from "../testing/session.testing.ts";
 import type { ActionFusionProgress, Report, SuccessReport } from "./report-schema.ts";
 import { renderReport } from "./report.ts";
-import { DEFAULT_OUTPUT_BUDGETS, MAX_CONTENT_KIB, outputBudgetsFor } from "./budgets.ts";
+import { MAX_CONTENT_KIB, outputBudgetsFor } from "./budgets.ts";
+import { DEFAULT_OUTPUT_BUDGETS } from "./tool-factories.testing.ts";
 
 const mutationDetails = (
   report: Pick<SuccessReport, "publication" | "freshness" | "then_run">,
@@ -558,12 +560,13 @@ test("command changes or removes the target → completed mutation stays success
   for (const disturbance of ["changed", "missing"] as const) {
     const path = `${disturbance}.txt`;
     const target = join(cwd, path);
-    const fusion = createActionFusionExecutor(async () => {
+    const executeTool: SessionCommand = async () => {
       assert.equal(await readFile(target, "utf8"), "saved\n");
       if (disturbance === "changed") await writeFile(target, "command changed the file\n");
       else await unlink(target);
-      return { status: "succeeded", result: { content: [{ type: "text", text: "checked" }] } };
-    });
+      return commandCompletion({ content: [{ type: "text", text: "checked" }] });
+    };
+    const fusion = createActionFusionExecutor(() => {});
     const tool = withMutationStatus(makeWriteOverride(cwd, fusion));
     const args = {
       path,
@@ -593,7 +596,7 @@ test("command changes or removes the target → completed mutation stays success
     const completedFrames: string[] = [];
     const result = await callTool(tool, args, {
       toolCallId: disturbance,
-      ctx: session.extensionRunner.createToolContext(disturbance, undefined),
+      ctx: { ...session.extensionRunner.createToolContext(disturbance, undefined), executeTool },
       onUpdate: (update: AgentToolResult<{ actionFusion: ActionFusionProgress }>) => {
         tool.renderCall!(args, theme, context);
         renderResult(update, { isPartial: true, expanded: false }, theme, context);

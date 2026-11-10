@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { DEFAULT_OUTPUT_BUDGETS, MAX_CONTENT_KIB, outputBudgetsFor } from "./budgets.ts";
+import { MAX_CONTENT_KIB, outputBudgetsFor } from "./budgets.ts";
+import { DEFAULT_OUTPUT_BUDGETS } from "./tool-factories.testing.ts";
 import { openTestSession } from "../testing/session.testing.ts";
 import { registerModelBudgets } from "./model-budgets.ts";
 

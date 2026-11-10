@@ -4,16 +4,17 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir, homedir } from "node:os";
 import { computeLineHash } from "../core/hash.ts";
 import { createActionFusionExecutor } from "./action-fusion.ts";
-import { makeEditOverride } from "./edit-tool.ts";
-import { makeGrepOverride } from "./grep-tool.ts";
-import { makeReadOverride } from "./read-tool.ts";
-import { makeReplaceTool } from "./replace-tool.ts";
-import { makeWriteOverride } from "./write-tool.ts";
+import { commandCompletion } from "./action-fusion.testing.ts";
+import { makeEditOverride } from "./tool-factories.testing.ts";
+import { makeGrepOverride } from "./tool-factories.testing.ts";
+import { makeReadOverride } from "./tool-factories.testing.ts";
+import { makeReplaceTool } from "./tool-factories.testing.ts";
+import { makeWriteOverride } from "./tool-factories.testing.ts";
 import { canonicalPath } from "./path.ts";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { callTool } from "./tool-call.testing.ts";
-import { DEFAULT_CONFIG } from "./config.ts";
+import { DEFAULT_CONFIG } from "./tool-factories.testing.ts";
 
 test("canonicalPath resolves relative and absolute", () => {
   const cwd = resolve("/cwd");
@@ -110,10 +111,14 @@ test("file tools share Pi-style URL and @ path resolution", async () => {
     assert.match(matches.content[0].text, /edited/);
     assert.equal(await readFile(file, "utf8"), "edited\n");
     let commands = 0;
-    const fusion = createActionFusionExecutor(async () => {
-      commands++;
-      return { status: "succeeded", result: { content: [{ type: "text", text: "checked" }] } };
-    });
+    const fusion = createActionFusionExecutor(() => {});
+    const fusionContext = {
+      cwd: dir,
+      executeTool: async () => {
+        commands++;
+        return commandCompletion({ content: [{ type: "text", text: "checked" }] });
+      },
+    };
     await callTool(
       makeWriteOverride(dir, fusion),
       {
@@ -122,7 +127,7 @@ test("file tools share Pi-style URL and @ path resolution", async () => {
         mode: "overwrite",
         then_run: { command: "check" },
       },
-      { toolCallId: "fused", ctx },
+      { toolCallId: "fused", ctx: fusionContext },
     );
     assert.equal(commands, 1);
   } finally {

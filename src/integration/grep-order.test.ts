@@ -4,9 +4,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { computeLineHash } from "../core/hash.ts";
-import { DEFAULT_CONFIG } from "../pi/config.ts";
-import { parseFileHeader } from "../pi/grep-output.ts";
-import { makeGrepOverrideWithBackend } from "../pi/grep-tool.ts";
+const { DEFAULT_CONFIG, makeGrepOverride } = await import("../pi/tool-factories.testing.ts");
+const { parseFileHeader } = await import("../pi/grep-output.ts");
+
 import { reportOf } from "../pi/report.ts";
 import { callTool } from "../pi/tool-call.testing.ts";
 
@@ -20,7 +20,7 @@ test("repeated real-rg query with increasing limits → stable traversal order a
   for (const name of names) {
     await writeFile(join(dir, name), `${sourceLine(name, 1)}\n${sourceLine(name, 2)}\n`);
   }
-  const tool = makeGrepOverrideWithBackend(dir, DEFAULT_CONFIG, {});
+  const tool = makeGrepOverride(dir, DEFAULT_CONFIG);
   for (const [roots, expectedNames] of [
     [["."], ["a.txt", "sub/b.txt", "sub.txt", "z.txt"]],
     [

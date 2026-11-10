@@ -1,13 +1,14 @@
+import { makeMockGrep } from "../pi/grep-rg.testing.ts";
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { DEFAULT_CONFIG } from "../pi/config.ts";
-import { MAX_MULTILINE_SEARCH_BYTES } from "../pi/grep-search.ts";
-import { makeGrepOverrideWithBackend } from "../pi/grep-tool.ts";
+const { DEFAULT_CONFIG, makeGrepOverride } = await import("../pi/tool-factories.testing.ts");
+const MAX_MULTILINE_SEARCH_BYTES = 64 * 1024 * 1024;
+
 import { reportOf } from "../pi/report.ts";
-import { grepCounts } from "../pi/grep-output.testing.ts";
+const { grepCounts } = await import("../pi/grep-output.testing.ts");
 import { COMMON_RG_ARGS, runRgLines, runRgPaths } from "../pi/rg-process.ts";
 import { searchText } from "../core/search.ts";
 import { callTool } from "../pi/tool-call.testing.ts";
@@ -28,7 +29,7 @@ test("JS grep: rg discovery retains ignore, hidden, glob, and binary rules", asy
     await writeFile(join(directory, name), "😀\n");
   await writeFile(join(directory, ".ignore"), "ignored.txt\n");
   await writeFile(join(directory, "binary.txt"), "😀\n\0");
-  const tool = makeGrepOverrideWithBackend(directory, DEFAULT_CONFIG, {});
+  const tool = makeGrepOverride(directory, DEFAULT_CONFIG);
   const result = await callTool(tool, {
     ...query,
     path: directory,
@@ -55,7 +56,7 @@ test("JS grep: physical rows, context, and limits agree across output modes", as
   t.after(() => rm(directory, { recursive: true, force: true }));
   const path = join(directory, "input.txt");
   await writeFile(path, "head\r\n😀\r\nab\ntail\n");
-  const tool = makeGrepOverrideWithBackend(directory, DEFAULT_CONFIG, {});
+  const tool = makeGrepOverride(directory, DEFAULT_CONFIG);
   for (const outputMode of ["content", "files", "count"] as const) {
     const result = await callTool(tool, { ...query, path, outputMode, limit: 1, context: 1 });
     assert.equal(result.isError, undefined, JSON.stringify(reportOf(result, "grep")));
@@ -79,7 +80,7 @@ test("JS grep: malformed UTF-8 matches the preview text without editable anchors
   t.after(() => rm(directory, { recursive: true, force: true }));
   const path = join(directory, "invalid.txt");
   await writeFile(path, Buffer.from([0x61, 0xff, 0x62, 0x0a]));
-  const tool = makeGrepOverrideWithBackend(directory, DEFAULT_CONFIG, {});
+  const tool = makeGrepOverride(directory, DEFAULT_CONFIG);
   const result = await callTool(tool, { path, pattern: "a.b", literal: false });
   assert.equal(result.isError, undefined, JSON.stringify(reportOf(result, "grep")));
   assert.equal(grepCounts(result).matches, 1);
@@ -97,7 +98,7 @@ test("oversized line or multiline input → explicit incomplete-search diagnosti
   const good = join(directory, "good.txt");
   const oversized = Buffer.alloc(MAX_MULTILINE_SEARCH_BYTES + 1, 0x61);
   await writeFile(good, "a\n");
-  const tool = makeGrepOverrideWithBackend(directory, DEFAULT_CONFIG, {});
+  const tool = makeGrepOverride(directory, DEFAULT_CONFIG);
   for (const finalNewline of [false, true]) {
     await writeFile(path, finalNewline ? Buffer.concat([oversized, Buffer.from("\n")]) : oversized);
     for (const multiline of [false, true]) {
@@ -147,7 +148,7 @@ test("real rg candidates → include every JS row and preserve confirmed output 
   ] as const) {
     await t.test(`${pattern} /${flags} → identical confirmed results`, async () => {
       const candidates = new Map<string, readonly number[] | undefined>();
-      const filtered = makeGrepOverrideWithBackend(directory, DEFAULT_CONFIG, {
+      const filtered = makeMockGrep(directory, DEFAULT_CONFIG, {
         runRgPaths(args, signal, onPath) {
           return runRgPaths(args, signal, (path) => {
             candidates.set(path, undefined);
@@ -161,7 +162,7 @@ test("real rg candidates → include every JS row and preserve confirmed output 
           });
         },
       });
-      const full = makeGrepOverrideWithBackend(directory, DEFAULT_CONFIG, {
+      const full = makeMockGrep(directory, DEFAULT_CONFIG, {
         runRgPaths(args, signal, onPath) {
           const scopeStart = args.indexOf("--null");
           assert.ok(scopeStart >= 0);
@@ -221,7 +222,7 @@ test("NUL past a search limit → skips oversized line and multiline files witho
   const path = join(directory, "large-nul.txt");
   // Place NUL beyond the chunk that first exceeds the search limit.
   const bytes = Buffer.alloc(MAX_MULTILINE_SEARCH_BYTES + 1024 * 1024, 0x61);
-  const tool = makeGrepOverrideWithBackend(directory, DEFAULT_CONFIG, {});
+  const tool = makeGrepOverride(directory, DEFAULT_CONFIG);
   for (const hasNul of [true, false]) {
     bytes[bytes.length - 1] = hasNul ? 0 : 0x61;
     await writeFile(path, bytes);

@@ -11,7 +11,15 @@ export async function expectToolFailure(
 ): Promise<Report> {
   const result = await pending;
   assert.equal(result.isError, true);
-  const report = detailsReport(result.details);
+  const details = result.details;
+  assert.ok(typeof details === "object" && details !== null && "report" in details);
+  const value = details.report;
+  assert.ok(typeof value === "object" && value !== null && "tool" in value);
+  const tool = (["read", "grep", "edit", "replace", "write"] as const).find(
+    (name) => name === value.tool,
+  );
+  assert.ok(tool);
+  const report = detailsReport(details, tool);
   assert.ok(report);
   assert.equal(report.error, code);
   inspect?.(report);
