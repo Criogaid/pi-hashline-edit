@@ -81,7 +81,7 @@ Range operations verify the cited `anchor` and `end`. Interior lines have no ind
 
 ## When an edit is rejected
 
-Argument and anchor validation failures leave the file untouched. The report names the error, the fields involved, and a `next` instruction. For a stale anchor it also shows where the line most likely moved, with its new anchor and nearby lines, so the model can confirm and resubmit without re-reading the whole file. Recovery never edits on its own; every retry is verified again.
+Argument and anchor validation failures leave the file untouched. The report names the error and the fields involved; argument issues carry a per-field `fix`, while anchor failures carry a `next` recovery instruction. For a stale anchor it also shows where the line most likely moved, with its new anchor and nearby lines, so the model can confirm and resubmit without re-reading the whole file. Recovery never edits on its own; every retry is verified again.
 
 A failure during or after publication states `NOT_PUBLISHED`, `PUBLISHED`, or `UNKNOWN`. Follow the report's `next` before retrying: an error after publication can leave the requested change on disk.
 
