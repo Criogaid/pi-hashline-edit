@@ -107,8 +107,6 @@ function resolveSetting<T extends TSchema>(schema: T, value: unknown): Static<T>
   ) as Static<T>;
 }
 
-export const DEFAULT_CONFIG: HashlineEditConfig = resolveSetting(configSchema, {});
-
 /** Parse JSON directly without stripping comments (standard JSON forbids comments; on error fall back to default). */
 function readSettings(filePath: string): Record<string, unknown> {
   try {

@@ -7,7 +7,7 @@
 import { stat } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { canonicalPath } from "./path.ts";
-import { COMMON_RG_ARGS, searchDiagnostic, type GrepBackend } from "./rg-process.ts";
+import { COMMON_RG_ARGS, runRgPaths, searchDiagnostic } from "./rg-process.ts";
 import { errnoCode, HashlineError, PATH_ERROR_MESSAGES } from "../core/errors.ts";
 
 export interface SearchScope {
@@ -78,7 +78,6 @@ async function isListed(path: string, listed: ReadonlyMap<string, readonly strin
  * listing's diagnostic when it may explain an exclusion.
  */
 export async function filterExplicitFilesByGlob(
-  backend: GrepBackend,
   globs: readonly string[],
   paths: readonly SearchPathInfo[],
   signal: AbortSignal | undefined,
@@ -102,7 +101,7 @@ export async function filterExplicitFilesByGlob(
     "--",
     ...parents,
   ];
-  const listed = await backend.runRgPaths(args, signal, async (path) => {
+  const listed = await runRgPaths(args, signal, async (path) => {
     const key = foldedKey(path);
     allowed.set(key, [...(allowed.get(key) ?? []), path]);
     return true;

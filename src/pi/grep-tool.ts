@@ -2,8 +2,7 @@
  * Override grep: valid UTF-8 results feed edit; malformed UTF-8 uses non-editable previews.
  * grep-scope admits paths, grep-candidates selects candidates with rg, grep-search matches
  * them with native JavaScript (core/search), grep-output states the payload and every report
- * fact, and grep-render draws the card. This module owns the schema, backend wiring, and
- * execution order.
+ * fact, and grep-render draws the card. This module owns the schema and execution order.
  * @module pi-hashline-edit/pi
  */
 
@@ -16,7 +15,6 @@ import { GREP_OUTPUT_MODES, grepOutput, type GrepOutputMode } from "./grep-outpu
 import { filterExplicitFilesByGlob, resolveSearchPaths } from "./grep-scope.ts";
 import { searchFiles } from "./grep-search.ts";
 import { toDisplayLines } from "./grep-render.ts";
-import { runRgLines, runRgPaths, type GrepBackend } from "./rg-process.ts";
 import { smartIgnoreCase } from "../core/search-analysis.ts";
 import { checkRegexArguments } from "../core/regex.ts";
 import { DEFAULT_GREP_FLAGS } from "../core/search.ts";
@@ -25,7 +23,7 @@ import { throwIfCancelled } from "./error-text.ts";
 import { reportResult, runTool, type ReportDetails } from "./report.ts";
 import type { HashlineEditConfig } from "./config.ts";
 import { createArgumentPreparer, type ReportArgumentIssue } from "./argument-validation.ts";
-import { defaultOutputBudgets, type OutputBudgetProvider } from "./budgets.ts";
+import type { OutputBudgetProvider } from "./budgets.ts";
 
 /** A list field: arrays only, because strict sampling cannot take a string-or-array union. */
 const nonEmptyStrings = (description: string) =>
@@ -118,25 +116,14 @@ function checkGrepArguments(args: unknown, report: ReportArgumentIssue): void {
   checkRegexArguments("flags", flags ?? DEFAULT_GREP_FLAGS, literal, fields, report);
 }
 
-/** Build the production grep override (a ToolDefinition fragment for registerTool). */
+/** Build the grep override (a ToolDefinition fragment for registerTool). */
 export function makeGrepOverride(
   cwd: string,
   config: HashlineEditConfig,
-  budgets: OutputBudgetProvider = defaultOutputBudgets,
-) {
-  return makeGrepOverrideWithBackend(cwd, config, {}, budgets);
-}
-
-/** @internal — build a grep override with deterministic process backends for tests. */
-export function makeGrepOverrideWithBackend(
-  cwd: string,
-  config: HashlineEditConfig,
-  overrides: Partial<GrepBackend>,
-  budgets: OutputBudgetProvider = defaultOutputBudgets,
+  budgets: OutputBudgetProvider,
 ) {
   const { hashLen } = config;
   const grepSchema = createGrepSchema(config.grep);
-  const backend: GrepBackend = { runRgPaths, runRgLines, ...overrides };
 
   return {
     name: "grep" as const,
@@ -218,9 +205,8 @@ export function makeGrepOverrideWithBackend(
         };
         const globs = params.glob ?? [];
         const paths = await resolveSearchPaths(cwd, params.path);
-        const admitted = await filterExplicitFilesByGlob(backend, globs, paths, signal);
+        const admitted = await filterExplicitFilesByGlob(globs, paths, signal);
         const { warnings: searchWarnings, ...search } = await searchFiles({
-          backend,
           scope: { globs, searchPaths: admitted.searchPaths },
           query,
           limit: effectiveLimit,

@@ -8,9 +8,9 @@ import { splitLines, createLfTextView } from "../src/core/lines.ts";
 import { computeLineHash } from "../src/core/hash.ts";
 import { applyEdits } from "../src/core/apply.ts";
 import type { Edit } from "../src/core/types.ts";
-import { DEFAULT_CONFIG } from "../src/pi/config.ts";
+import { loadConfig } from "../src/pi/config.ts";
 
-const { hashLen, shiftRadius } = DEFAULT_CONFIG;
+const { hashLen, shiftRadius } = loadConfig(process.cwd());
 
 function bench(name: string, iterations: number, fn: () => void): void {
   // Warm up

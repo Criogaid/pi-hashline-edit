@@ -86,7 +86,7 @@ function requireRegularFile(target: Stats | BigIntStats): void {
 
 const REGULAR_FILE_READ_CHUNK_BYTES = 64 * 1024;
 
-/** 完整读取常规文件，即使底层文件系统返回短读。 */
+/** Read a regular file in full, even when the filesystem returns short reads. */
 async function readRegularFileBytes(
   handle: FileHandle,
   size: bigint,

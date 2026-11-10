@@ -23,11 +23,11 @@ import { formatByteSize } from "./budgets.ts";
 export const COMMON_RG_ARGS = ["--no-config", "--color=never", "--sort=path"];
 /** Leave room for rg's arguments and paths on hosts with small command-line limits. */
 export const MAX_RG_PATTERN_UNITS = 24 * 1024;
-export const MAX_RG_RECORD_BYTES = 16 * 1024 * 1024;
+const MAX_RG_RECORD_BYTES = 16 * 1024 * 1024;
 const RG_RECORD_LIMIT_MESSAGE = `ripgrep output record exceeds ${formatByteSize(MAX_RG_RECORD_BYTES)}.`;
 
 /** Bounded ripgrep stderr retains the beginning and end with an omission notice. */
-export const MAX_RG_STDERR_BYTES = 64 * 1024;
+const MAX_RG_STDERR_BYTES = 64 * 1024;
 
 interface ExitResult {
   code: number | null;
@@ -45,12 +45,6 @@ export interface RgRunResult {
   code: number | null;
   stderr: string;
   stopped: boolean;
-}
-
-/** @internal — injectable process boundary for deterministic tests. */
-export interface GrepBackend {
-  runRgPaths: typeof runRgPaths;
-  runRgLines: typeof runRgLines;
 }
 
 /** An incomplete run's diagnostic, surfaced without discarding confirmed matches. */
@@ -153,7 +147,7 @@ async function runRg(
   }
 }
 
-/** @internal — read NUL-delimited UTF-8 paths from an owned rg process. */
+/** Read NUL-delimited UTF-8 paths from an owned rg process. */
 export function runRgPaths(
   args: string[],
   signal: AbortSignal | undefined,
@@ -187,7 +181,7 @@ export const LINE_LISTING_ARGS = [
 ];
 
 /**
- * @internal — read a {@link LINE_LISTING_ARGS} listing. Each file's group is a NUL-terminated
+ * Read a {@link LINE_LISTING_ARGS} listing. Each file's group is a NUL-terminated
  * path, then one `N:` record per matching line ending in a line feed (its content is at most
  * one byte or an omission notice), then an empty line. onFile receives a file's ascending line
  * numbers, or undefined once there are more than maxLines.

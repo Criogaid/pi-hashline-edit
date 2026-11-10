@@ -352,7 +352,7 @@ export const NEXT_GUIDELINE =
   "When a tool report includes next, follow it for that result; it takes precedence over these guidelines.";
 
 /** Text shared by success and failure: a file whose current anchors are unknown must be read first. */
-export const REREAD = "Read the file before further edits.";
+const REREAD = "Read the file before further edits.";
 
 /** Once a mutation reached or may have reached the file, a retry could apply it twice. */
 export const PUBLICATION_NEXT = {

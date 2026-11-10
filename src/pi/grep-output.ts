@@ -163,7 +163,7 @@ interface AssembleGrepOutputOptions {
 }
 
 /** Join the payload within the call's byte budget and state each limit, omission, and diagnostic once. */
-export function assembleGrepOutput(options: AssembleGrepOutputOptions): {
+function assembleGrepOutput(options: AssembleGrepOutputOptions): {
   payload: string;
   facts: SuccessFacts<"grep">;
 } {

@@ -23,7 +23,7 @@ const fallbackBudgets = {
   fieldBytes: 4 * 1024,
   grepPreviewUnits: 500,
 };
-export const DEFAULT_OUTPUT_BUDGETS = Object.freeze(fallbackBudgets);
+const DEFAULT_OUTPUT_BUDGETS = Object.freeze(fallbackBudgets);
 export type OutputBudgets = typeof DEFAULT_OUTPUT_BUDGETS;
 export type OutputBudgetProvider = () => OutputBudgets;
 
@@ -44,9 +44,6 @@ export function outputBudgetsFor(contextWindow: number | undefined): OutputBudge
     grepPreviewUnits: Math.floor(fieldBytes / UTF16_PREVIEW_BYTES),
   });
 }
-
-/** Standalone tool factories have no session model until a provider is supplied. */
-export const defaultOutputBudgets: OutputBudgetProvider = () => DEFAULT_OUTPUT_BUDGETS;
 
 const MIB = 1024 * 1024;
 

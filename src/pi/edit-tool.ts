@@ -27,7 +27,7 @@ import {
   type DiffCounts,
 } from "./render.ts";
 import { describeEditFailure } from "./failure-context.ts";
-import { defaultOutputBudgets, type OutputBudgetProvider } from "./budgets.ts";
+import type { OutputBudgetProvider } from "./budgets.ts";
 import {
   mutationToolBase,
   runTextMutation,
@@ -280,8 +280,8 @@ function editHeader(args: EditParams, theme: Theme, counts?: DiffCounts): string
 export function makeEditOverride(
   cwd: string,
   config: HashlineEditConfig,
-  fusion?: ActionFusionExecutor,
-  budgets: OutputBudgetProvider = defaultOutputBudgets,
+  fusion: ActionFusionExecutor | undefined,
+  budgets: OutputBudgetProvider,
 ) {
   // Schema, verification, and recovery use the registered configuration.
   const { hashLen, shiftRadius } = config;

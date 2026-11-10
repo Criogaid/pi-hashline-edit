@@ -13,7 +13,7 @@ export interface ReplacementRequest {
 }
 
 /** Shared worker errors are checked by the host. */
-export const decodeWorkerReply = workerReplyDecoder(REPLACEMENT_RESULT_SCHEMA);
+const decodeWorkerReply = workerReplyDecoder(REPLACEMENT_RESULT_SCHEMA);
 
 export function runRegexReplacements(
   source: string,

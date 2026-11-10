@@ -1,5 +1,5 @@
 /** Half-open bounds in a caller-selected unit (line indices or string offsets). */
-export type HalfOpenRange = readonly [start: number, end: number];
+type HalfOpenRange = readonly [start: number, end: number];
 
 /**
  * Find the first conflicting pair's second index. Input must be sorted by start, then end.

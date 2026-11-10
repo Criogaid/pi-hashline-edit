@@ -10,7 +10,7 @@ import { countLines } from "../core/lines.ts";
 import type { GrepQuery, LineSearchInput, SearchInput } from "../core/search.ts";
 import { SEARCH_RESULT_SCHEMA, type SearchResult } from "../core/search-schema.ts";
 import { scanTextFile } from "./text-stream.ts";
-import { searchDiagnostic, type GrepBackend } from "./rg-process.ts";
+import { searchDiagnostic } from "./rg-process.ts";
 import type { SearchScope } from "./grep-scope.ts";
 import { listCandidates, type Candidate } from "./grep-candidates.ts";
 import { withRegexWorker } from "./regex-worker.ts";
@@ -32,7 +32,7 @@ interface SearchFileSnapshot {
 }
 
 /** Whole-file input of a multiline query; README's search limits link here. */
-export const MAX_MULTILINE_SEARCH_BYTES = 64 * 1024 * 1024;
+const MAX_MULTILINE_SEARCH_BYTES = 64 * 1024 * 1024;
 /** Line-mode requests end after a line feed once they reach this many UTF-16 units. */
 const SEARCH_CHUNK_UNITS = 1024 * 1024;
 /** Maximum UTF-16 code units in one physical line; independent of its encoded byte length. */
@@ -203,14 +203,13 @@ async function searchFile(
  * files, rows, and warnings, and a limit keeps the first matches in that order.
  */
 export async function searchFiles(options: {
-  readonly backend: GrepBackend;
   readonly scope: SearchScope;
   readonly query: GrepQuery;
   readonly limit: number;
   readonly timeoutMs: number;
   readonly signal?: AbortSignal;
 }) {
-  const { backend, scope, query, limit, timeoutMs, signal } = options;
+  const { scope, query, limit, timeoutMs, signal } = options;
   const files: GrepFileMatch[] = [];
   /** File warnings in listing order, then the listing's own diagnostic. */
   const warnings: string[] = [];
@@ -314,7 +313,6 @@ export async function searchFiles(options: {
   let selection: Awaited<ReturnType<typeof listCandidates>>;
   try {
     selection = await listCandidates({
-      backend,
       scope,
       query,
       signal: poolSignal,

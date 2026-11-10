@@ -15,7 +15,8 @@ import {
   COMMON_RG_ARGS,
   LINE_LISTING_ARGS,
   MAX_RG_PATTERN_UNITS,
-  type GrepBackend,
+  runRgLines,
+  runRgPaths,
   type RgRunResult,
 } from "./rg-process.ts";
 import { lineCandidatePatterns, rgCodePoint } from "./rg-regex.ts";
@@ -59,7 +60,7 @@ function boundedPrefilter(prefilter: Prefilter): Prefilter {
  * List candidate files: those whose original bytes contain a prefilter literal, or every
  * file in scope. Literals never contain a line break, so line-oriented matching finds them.
  */
-export function candidateArgs(prefilter: Prefilter): string[] {
+function candidateArgs(prefilter: Prefilter): string[] {
   if (prefilter.kind === "all") return [...COMMON_RG_ARGS, "--files"];
   return [
     ...COMMON_RG_ARGS,
@@ -78,7 +79,6 @@ type CandidateSource = "lines" | "files" | "all";
  * An empty scope lists nothing, because rg would search the working directory instead.
  */
 export async function listCandidates(options: {
-  readonly backend: GrepBackend;
   readonly scope: SearchScope;
   readonly query: GrepQuery;
   readonly signal: AbortSignal;
@@ -89,7 +89,7 @@ export async function listCandidates(options: {
   readonly candidates: CandidateSource;
   readonly scanLimitReached: boolean;
 }> {
-  const { backend, scope, query, signal, stopped, onCandidate } = options;
+  const { scope, query, signal, stopped, onCandidate } = options;
   if (scope.searchPaths.length === 0) return { candidates: "lines", scanLimitReached: false };
   let candidates: CandidateSource = "lines";
   let listedAny = false;
@@ -118,7 +118,7 @@ export async function listCandidates(options: {
   const scoped = [...scopeArgs(scope), "--", ...scope.searchPaths];
   const patterns = query.multiline ? undefined : lineCandidatePatterns(query);
   let listing = patterns
-    ? await backend.runRgLines(
+    ? await runRgLines(
         [
           ...COMMON_RG_ARGS,
           ...BYTE_PATTERN_ARGS,
@@ -135,11 +135,7 @@ export async function listCandidates(options: {
   if (!listing || (listing.code === 2 && !listedAny)) {
     const prefilter = boundedPrefilter(extractPrefilter(query));
     candidates = prefilter.kind === "all" ? "all" : "files";
-    listing = await backend.runRgPaths(
-      [...candidateArgs(prefilter), "--null", ...scoped],
-      signal,
-      offer,
-    );
+    listing = await runRgPaths([...candidateArgs(prefilter), "--null", ...scoped], signal, offer);
   }
   return { listing, candidates, scanLimitReached };
 }

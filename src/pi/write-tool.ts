@@ -9,7 +9,7 @@ import {
 import { commitFile } from "./file-commit.ts";
 import { mutationToolBase, type ActionFusionExecutor } from "./mutation-runner.ts";
 import { throwIfCancelled } from "./error-text.ts";
-import { defaultOutputBudgets, type OutputBudgetProvider } from "./budgets.ts";
+import type { OutputBudgetProvider } from "./budgets.ts";
 import { unwritableTextError } from "../core/text.ts";
 import { MUTATION_CARD_SHOWN, reportLines, renderToolError, splitReport } from "./render.ts";
 import type { MutationOutcome } from "./mutation-result.ts";
@@ -40,8 +40,8 @@ type WriteRenderContext = Parameters<
 
 export function makeWriteOverride(
   cwd: string,
-  fusion?: ActionFusionExecutor,
-  budgets: OutputBudgetProvider = defaultOutputBudgets,
+  fusion: ActionFusionExecutor | undefined,
+  budgets: OutputBudgetProvider,
 ) {
   const builtin = createWriteToolDefinition(cwd);
   return {

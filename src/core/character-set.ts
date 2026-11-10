@@ -94,7 +94,7 @@ export const contains = (ranges: Ranges, point: number): boolean =>
   ranges.some(([low, high]) => low <= point && point <= high);
 
 /** Full-string membership, including empty alternatives without the final-newline exception of $. */
-export const membership = (source: string, flags: string): RegExp =>
+const membership = (source: string, flags: string): RegExp =>
   new RegExp(`^(?:${source})(?![\\s\\S])`, flags);
 
 /** The exact single-character part of a validated expression; flags contain only i, s, u or v. */

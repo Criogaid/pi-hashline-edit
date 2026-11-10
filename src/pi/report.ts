@@ -71,7 +71,7 @@ export function renderReport(report: ReportText): string {
 }
 
 /** Decode a text report; the text omits its tool, which the originating call supplies. */
-export function decodeReport(text: string, contextTool: ReportTool): Report | undefined {
+function decodeReport(text: string, contextTool: ReportTool): Report | undefined {
   if (!text.startsWith("{")) return undefined;
   try {
     let value: unknown = JSON.parse(text);
@@ -94,7 +94,7 @@ export function decodeReport(text: string, contextTool: ReportTool): Report | un
  * The report a result's details carry, checked once against the wire schema: details also
  * come from saved sessions and other extensions' result hooks, so their shape is unknown.
  */
-export function detailsReport(details: unknown, contextTool?: ReportTool): Report | undefined {
+export function detailsReport(details: unknown, contextTool: ReportTool): Report | undefined {
   const report: unknown =
     typeof details === "object" && details !== null ? Reflect.get(details, "report") : undefined;
   try {
@@ -102,7 +102,7 @@ export function detailsReport(details: unknown, contextTool?: ReportTool): Repor
     JSON.stringify(report);
     if (report === undefined || !Value.Check(WIRE_REPORT_SCHEMA, report)) return undefined;
     const checked = report as Report;
-    return contextTool === undefined || checked.tool === contextTool ? checked : undefined;
+    return checked.tool === contextTool ? checked : undefined;
   } catch (error) {
     if (error instanceof TypeError || error instanceof RangeError) return undefined;
     throw error;
@@ -150,9 +150,7 @@ export function reportResult<TDetails extends object | undefined>(
 }
 
 /** A failed result: the report is its entire content, flagged so Pi reports it as an error. */
-export function failureResult(
-  report: FailureReport,
-): AgentToolResult<ReportDetails<FailureReport>> {
+function failureResult(report: FailureReport): AgentToolResult<ReportDetails<FailureReport>> {
   const complete = Object.fromEntries(reportEntries(report)) as FailureReport;
   return {
     content: [{ type: "text", text: renderReport(complete) }],

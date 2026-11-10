@@ -38,6 +38,7 @@ pi 扩展 `@criogaid/pi-hashline-edit`，注册入口为 `src/index.ts`。它替
 - Give each model-facing rule one home, chosen by what it decides. Choosing a tool, or a parameter of the call being written, belongs in that tool's `description` or the field's description; an obligation spanning several calls belongs in `promptGuidelines`; what to do about one result belongs only in that report's `next` (`src/pi/report-schema.ts`). State a tool's or field's facts once, where they belong. Guidelines never restate a `next`; `NEXT_GUIDELINE`, appended at registration in `src/index.ts`, ranks a report's `next` above them. Word rules as instructions with a concrete trigger and listed exceptions, not as preferences. Include text that applies to one platform only on that platform, decided from `process.platform` where the text is defined.
 - 输入按漏斗处理：每个工具只有一个入口，非法输入在最上层一次性筛掉，包括 schema 表达不了的检查；下游信任已筛过的输入，不重复校验或防御，也不做兼容转换。新增防御前，先确认实际存在绕过上层的调用路径。
 - 测试按生产的调用顺序驱动工具，不为仅在测试中存在的调用路径保留防御代码。
+- 业务代码不含只为测试存在的东西：注入参数、参数默认值、可选参数、函数拆分或 `export`，只要唯一的使用者是测试，就不写。测试需要替身时，在测试里用 `node:test` 的 `mock.module()` 替换模块（`rg-process.ts` 等），由 `src/testing/run-tests.ts` 开启 `--experimental-test-module-mocks`。
 - 类型从 schema 推导，不另写同构的类型。
 - 用户可见的限制和数值与 README 保持同源；提示文本中的数值由常量生成，不写死。
 - 同类工具共用同一条执行流程，工具只实现自己独有的部分。
@@ -51,7 +52,7 @@ pi 扩展 `@criogaid/pi-hashline-edit`，注册入口为 `src/index.ts`。它替
 - Do not use Claude for new model-backed experiments.
 - 在能暴露问题的最低层级写：`core/` 纯函数优先，其次是工具层，最后才是跨工具流程。能在 `apply.test.ts` 里测的边界，不经文件系统在 `execute.test.ts` 里测。
 - 工具层测试通过 `tool-call.testing.ts` 的 `callTool` 按生产顺序驱动，包括非法输入，不为测试开辟生产中不存在的调用路径。
-- 优先断言行为和状态：文件字节、返回结构、错误码。提示语只断言关键部分，预算数值引用 `budgets.ts` 的常量，不写死。
+- 优先断言行为和状态：文件字节、返回结构、错误码。提示语只断言关键部分。随模型变化的预算由 `outputBudgetsFor()` 取得，不写死；README 写明的固定上限（如多行搜索的文件大小、rg 记录与 stderr 上限）在测试里按 README 的数值写死，业务模块不为测试导出这些常量。
 - 同一契约只测一遍。多个输入变体用表驱动；`edit` 与 `replace` 等共用流程的行为，写成一个共享用例跑多个工具。
 - 渲染测试必须断言用户可见的具体内容。只验证“不抛错”的用例不写。
 - 修复 bug 时补一条回归测试，并先确认它在旧代码上失败。行为契约变更时，同一提交里改写保护旧契约的测试，不留给 CI 去发现。

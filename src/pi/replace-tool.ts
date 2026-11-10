@@ -44,7 +44,7 @@ import {
   type ActionFusionExecutor,
   type MutationTarget,
 } from "./mutation-runner.ts";
-import { defaultOutputBudgets, type OutputBudgetProvider } from "./budgets.ts";
+import type { OutputBudgetProvider } from "./budgets.ts";
 import { argumentItems, type ReportArgumentIssue } from "./argument-validation.ts";
 
 const replaceSchema = Type.Object(
@@ -92,8 +92,8 @@ function checkReplaceArguments(args: unknown, report: ReportArgumentIssue): void
 export function makeReplaceTool(
   cwd: string,
   config: HashlineEditConfig,
-  fusion?: ActionFusionExecutor,
-  budgets: OutputBudgetProvider = defaultOutputBudgets,
+  fusion: ActionFusionExecutor | undefined,
+  budgets: OutputBudgetProvider,
 ) {
   return {
     ...mutationToolBase({

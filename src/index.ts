@@ -35,9 +35,7 @@ export default function (pi: ExtensionAPI) {
     const budgets = registerModelBudgets(pi);
     // Saved then_run cards render even when Action Fusion is now off.
     const reportProgress = registerFusionCards(pi);
-    const fusion = config.actionFusion
-      ? createActionFusionExecutor(undefined, reportProgress)
-      : undefined;
+    const fusion = config.actionFusion ? createActionFusionExecutor(reportProgress) : undefined;
     // Every tool returns a report; Pi prints this shared guideline once.
     const register = <TParams extends TSchema, TDetails, TState>(
       tool: ToolDefinition<TParams, TDetails, TState>,

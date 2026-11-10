@@ -123,18 +123,11 @@ interface CommandOutcome {
   readonly terminate?: boolean;
 }
 
-type CommandRunner = (
+async function runCommand(
   input: ThenRunInput,
   signal: AbortSignal | undefined,
   ctx: ExtensionToolContext,
-  onUpdate?: AgentToolUpdateCallback<unknown>,
-) => Promise<CommandOutcome>;
-
-async function defaultCommandRunner(
-  input: ThenRunInput,
-  signal: AbortSignal | undefined,
-  ctx: ExtensionToolContext,
-  onUpdate?: AgentToolUpdateCallback<unknown>,
+  onUpdate: AgentToolUpdateCallback<unknown>,
 ): Promise<CommandOutcome> {
   // Use the session's callable Bash, including overrides, validation, permission
   // hooks and tool_result hooks. Tool failures resolve with isError, not rejection.
@@ -197,7 +190,7 @@ function createProgressTracker<TDetails extends object>({
 }: {
   toolCallId: string;
   thenRun: ThenRunInput;
-  onProgress: ProgressReporter | undefined;
+  onProgress: ProgressReporter;
   onUpdate: AgentToolUpdateCallback<MutationResultDetails<TDetails>> | undefined;
 }) {
   let mutationDetails: TDetails | undefined;
@@ -227,7 +220,7 @@ function createProgressTracker<TDetails extends object>({
         : {}),
     };
     for (const notify of [
-      () => onProgress?.(progress),
+      () => onProgress(progress),
       () => onUpdate?.({ content: [], details: { ...mutationDetails, actionFusion: progress } }),
     ]) {
       try {
@@ -247,10 +240,8 @@ function createProgressTracker<TDetails extends object>({
         timeoutSeconds: thenRun.timeout,
         deadlineMs: Date.now() + thenRun.timeout * MILLISECONDS_PER_SECOND,
       };
-      if (onProgress || onUpdate) {
-        heartbeat = setInterval(() => report("running", "unknown"), MILLISECONDS_PER_SECOND);
-        heartbeat.unref();
-      }
+      heartbeat = setInterval(() => report("running", "unknown"), MILLISECONDS_PER_SECOND);
+      heartbeat.unref();
     }
     commandResult = { content: partial.content, details: partial.details };
     report("running", "unknown");
@@ -272,10 +263,7 @@ function createProgressTracker<TDetails extends object>({
   };
 }
 
-export function createActionFusionExecutor(
-  commandRunner: CommandRunner = defaultCommandRunner,
-  onProgress?: ProgressReporter,
-) {
+export function createActionFusionExecutor(onProgress: ProgressReporter) {
   const queueTails = new Map<string, Promise<void>>();
 
   async function withQueue<T>(path: string, work: () => Promise<T>): Promise<T> {
@@ -367,7 +355,7 @@ export function createActionFusionExecutor(
       progress.report("running", "unchanged");
       let command: CommandOutcome;
       try {
-        command = await commandRunner(thenRun, signal, ctx, progress.followCommand);
+        command = await runCommand(thenRun, signal, ctx, progress.followCommand);
       } catch (error) {
         command = {
           status: signal?.aborted ? "cancelled" : "failed",
