@@ -116,7 +116,6 @@ test("model budget grows → grep payload and diagnostics use that call's allowa
             rows: [],
             snapshot: { revision: "", validUtf8: true },
           })),
-          candidates: "lines",
           scanLimitReached: false,
           matchLimitReached: false,
         },

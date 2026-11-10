@@ -32,7 +32,7 @@ type WriteParams = Static<typeof writeSchema>;
 /** write shows the built-in card; its report states every fact. */
 type WriteMutationDetails = object;
 /** The write card's call line shows the content. */
-const WRITE_CARD_SHOWN = new Set([...MUTATION_CARD_SHOWN, "publication", "created"]);
+const WRITE_CARD_SHOWN = new Set([...MUTATION_CARD_SHOWN, "publication"]);
 type WriteRenderContext = Parameters<
   NonNullable<ReturnType<typeof createWriteToolDefinition>["renderCall"]>
 >[2];
@@ -64,7 +64,7 @@ export function makeWriteOverride(env: MutationToolEnvironment) {
         return {
           commit,
           details: {},
-          facts: commit.created ? { created: true } : {},
+          facts: {},
         };
       },
     }),

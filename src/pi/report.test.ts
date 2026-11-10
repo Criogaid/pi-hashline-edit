@@ -23,8 +23,8 @@ import {
 
 // npm run typecheck checks these invalid callers; they must never run.
 function invalidReportConstruction(report: Report) {
-  // @ts-expect-error Grep successes cannot contain write-only facts.
-  reportResult({ tool: "grep", created: true });
+  // @ts-expect-error Removed facts cannot be supplied to a report.
+  const removedFact: Report = { tool: "grep", created: true };
   // @ts-expect-error NO_MATCH requires its unmatched facts.
   const failure: import("./report-schema.ts").FailureReport = {
     tool: "replace",
@@ -252,7 +252,6 @@ test("success reports → omit repeated call fields while retaining details and 
     tool: "write",
     path: "target.txt",
     publication: "PUBLISHED",
-    created: true,
   };
   const payload = [text("payload")];
   const result = reportResult(report, payload);
@@ -265,7 +264,7 @@ test("success reports → omit repeated call fields while retaining details and 
 });
 
 test("success facts without a tool → use call context and enforce tool-specific fields", () => {
-  const report: Report = { tool: "write", publication: "PUBLISHED", created: true };
+  const report: Report = { tool: "write", publication: "PUBLISHED" };
   const serialized = renderReport(report);
   assert.deepEqual(reportFromText(serialized, "write"), {
     tool: "write",
@@ -338,31 +337,20 @@ test("replacement failure facts → survive report serialization", () => {
   }
 });
 
-test("TUI-only facts survive details but stay out of model report text", () => {
+test("success facts survive details and model serialization", () => {
   for (const report of [
     { tool: "grep", matches: 1 },
-    { tool: "grep", matches: 1, scanned: "files" },
-    {
-      tool: "grep",
-      matches: 0,
-      scanned: "all",
-      scanLimit: formatByteSize(MAX_UNNARROWED_SCAN_BYTES),
-    },
+    { tool: "grep", matches: 0, scanLimit: formatByteSize(MAX_UNNARROWED_SCAN_BYTES) },
     {
       tool: "grep",
       error: "SEARCH_INCOMPLETE",
       message: "Search incomplete.",
       diagnostics: "unreadable file",
-      scanned: "all",
       scanLimit: formatByteSize(MAX_UNNARROWED_SCAN_BYTES),
     },
   ] satisfies Report[]) {
     const serialized = renderReport(report);
-    const { scanned: _scanned, tool, ...modelReport } = report;
-    assert.deepEqual(reportFromText(serialized, report.tool), {
-      ...modelReport,
-      tool,
-    });
+    assert.deepEqual(reportFromText(serialized, report.tool), report);
     assert.deepEqual(
       reportOf({ content: [text(serialized)], details: { report } }, report.tool),
       report,
@@ -377,7 +365,6 @@ test("match and scan limits → recovery prioritizes the match limit", () => {
     tool: "grep",
     matches: 1,
     matchLimit: 1,
-    scanned: "all",
     scanLimit: formatByteSize(MAX_UNNARROWED_SCAN_BYTES),
   });
   assert.equal(reportOf(result, "grep")?.next, next);
@@ -395,15 +382,15 @@ for (const { name, report, fact } of [
     fact: "outputLimit",
   },
   {
-    name: "output limit with read pagination → recovery prioritizes pagination",
+    name: "output limit with read next offset → recovery prioritizes the next offset",
     report: {
       tool: "read",
-      pagination: { start: 1, end: 1, totalLines: 2, nextOffset: 2 },
+      nextOffset: 2,
       outputLimit: formatByteSize(DEFAULT_OUTPUT_BUDGETS.readBytes),
     },
-    fact: "pagination",
+    fact: "nextOffset",
   },
-] satisfies { name: string; report: SuccessReport; fact: "outputLimit" | "pagination" }[]) {
+] satisfies { name: string; report: SuccessReport; fact: "outputLimit" | "nextOffset" }[]) {
   test(name, () => {
     const next = OUTCOME_NEXT.find(([key]) => key === fact)?.[1];
     assert.ok(next);
@@ -433,7 +420,6 @@ test("invalid details report → falls back to valid text and leaves content int
 
 test("output byte limit → follows the scan limit and precedes the line preview limit", () => {
   const serialized = renderReport({
-    scanned: "all",
     scanLimit: formatByteSize(MAX_UNNARROWED_SCAN_BYTES),
     outputLimit: formatByteSize(DEFAULT_OUTPUT_BUDGETS.grepBytes),
     linePreviewLimit: DEFAULT_OUTPUT_BUDGETS.grepPreviewUnits,

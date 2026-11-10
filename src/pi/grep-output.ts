@@ -40,8 +40,8 @@ function searchDiagnostics(warnings: readonly string[], budget: OutputBudgets): 
   return diagnostics.toString().trimEnd();
 }
 
-/** How the search selected and bounded its candidates; stated with success and failure alike. */
-type SearchFacts = Pick<Report, "scanned" | "scanLimit">;
+/** How the search was bounded; stated with success and failure alike. */
+type SearchFacts = Pick<Report, "scanLimit">;
 
 /** No result can be returned from an incomplete search: report it rather than "no matches". */
 function searchIncompleteError(
@@ -227,7 +227,6 @@ export async function grepOutput(
 ): Promise<{ payload?: string; facts: SuccessFacts<"grep"> }> {
   const { search, warnings, outputMode, effectiveLimit, literalPipe, budget } = options;
   const searchFacts: SearchFacts = {
-    scanned: search.candidates === "lines" ? undefined : search.candidates,
     scanLimit: search.scanLimitReached ? formatByteSize(MAX_UNNARROWED_SCAN_BYTES) : undefined,
   };
   if (search.files.length === 0) {

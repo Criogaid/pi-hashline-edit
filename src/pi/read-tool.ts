@@ -243,16 +243,11 @@ export function makeReadOverride({
         // Rows were returned and more remain. A caller's own limit is a chosen window: its header
         // and rows already show where it ends, so only a window the extension cut (default limit
         // or byte budget) gets a report.
-        const pagination =
+        const nextOffset =
           (params.limit === undefined || truncated) &&
           rows.length > 0 &&
           start + rows.length <= stats.totalLines
-            ? {
-                start,
-                end: start + (rows.length - 1),
-                totalLines: stats.totalLines,
-                nextOffset: start + rows.length,
-              }
+            ? start + rows.length
             : undefined;
         const header = `${formatReadHeader(serializePath(cwd, absPath), stats.totalLines, start, stats.finalNewline)}\n`;
         const limitText = formatByteSize(maxBytes);
@@ -260,9 +255,9 @@ export function makeReadOverride({
         return reportResult(
           {
             ...report,
-            pagination,
+            nextOffset,
             outputLimit: truncated && !firstLineExceedsLimit ? limitText : undefined,
-            lineTooLong: firstLineExceedsLimit ? { line: start, limit: limitText } : undefined,
+            lineTooLong: firstLineExceedsLimit ? limitText : undefined,
           },
           [{ type: "text" as const, text: header + rows.join("\n") }],
         );

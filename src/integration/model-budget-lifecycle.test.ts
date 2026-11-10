@@ -81,7 +81,7 @@ test("model capacity changes → read and grep grow and shrink without re-regist
   assert.ok(large.content[0].text.includes(text));
   await session.setModel({ ...model, id: "small", contextWindow: 65_536 });
   const smallAgain = await callTool(tool, { path }, { ctx });
-  assert.deepEqual(reportOf(smallAgain, "read")?.lineTooLong, smallReport.lineTooLong);
+  assert.equal(reportOf(smallAgain, "read")?.lineTooLong, smallReport?.lineTooLong);
   const grep = session.getToolDefinition("grep");
   assert.ok(grep);
   const smallSearch = await callTool(grep, { path, pattern: "中文", literal: true }, { ctx });

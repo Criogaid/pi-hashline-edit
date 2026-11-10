@@ -86,11 +86,10 @@ export async function listCandidates(options: {
   readonly onCandidate: (candidate: Candidate) => Promise<boolean>;
 }): Promise<{
   readonly listing?: RgRunResult;
-  readonly candidates: CandidateSource;
   readonly scanLimitReached: boolean;
 }> {
   const { scope, query, signal, stopped, onCandidate } = options;
-  if (scope.searchPaths.length === 0) return { candidates: "lines", scanLimitReached: false };
+  if (scope.searchPaths.length === 0) return { scanLimitReached: false };
   let candidates: CandidateSource = "lines";
   let listedAny = false;
   let scanned = 0;
@@ -137,5 +136,5 @@ export async function listCandidates(options: {
     candidates = prefilter.kind === "all" ? "all" : "files";
     listing = await runRgPaths([...candidateArgs(prefilter), "--null", ...scoped], signal, offer);
   }
-  return { listing, candidates, scanLimitReached };
+  return { listing, scanLimitReached };
 }

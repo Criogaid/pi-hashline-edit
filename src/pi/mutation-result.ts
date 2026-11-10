@@ -48,7 +48,7 @@ export function generateMutationDetails(before: string, after: string) {
 /** The facts a mutation tool states about its own outcome. */
 export type MutationFacts<TTool extends MutationToolName = MutationToolName> = {
   [T in TTool]: SuccessFacts<T> & {
-    [K in Exclude<"matches" | "created", keyof SuccessFacts<T>>]?: never;
+    [K in Exclude<"matches", keyof SuccessFacts<T>>]?: never;
   };
 }[TTool];
 

@@ -243,20 +243,9 @@ const FACT_FIELDS = {
   exitCode: tuiFact(Type.Union([Type.Integer(), Type.Null()])),
 
   // read outcome; outputLimit below is shared with grep.
-  pagination: modelFact(
-    Type.Object(
-      {
-        start: Type.Integer(),
-        end: Type.Integer(),
-        totalLines: Type.Integer(),
-        nextOffset: Type.Integer(),
-      },
-      { additionalProperties: false },
-    ),
-    "Use pagination.nextOffset to continue reading.",
-  ),
+  nextOffset: modelFact(Type.Integer({ minimum: 1 }), "Use nextOffset to continue reading."),
   lineTooLong: modelFact(
-    Type.Object({ line: Type.Integer(), limit: Type.String() }, { additionalProperties: false }),
+    Type.String({ description: "Byte limit that prevented the first selected line from fitting." }),
     "Inspect the oversized line with an appropriate tool before editing it.",
   ),
 
@@ -268,12 +257,6 @@ const FACT_FIELDS = {
   files: modelFact(
     Type.Integer({ minimum: 0 }),
     "Use the file count to decide whether the search scope is appropriate.",
-  ),
-  scanned: tuiFact(
-    Type.Union([Type.Literal("files"), Type.Literal("all")], {
-      description:
-        "Without line candidates, the files searched whole: those containing text every match needs, or every file in scope.",
-    }),
   ),
   matchLimit: modelFact(
     Type.Integer({ minimum: 1, description: "The match limit that stopped the search." }),
@@ -310,9 +293,6 @@ const FACT_FIELDS = {
     }),
     "Separate pattern alternatives or keep the pattern literal.",
   ),
-
-  // Mutation outcome.
-  created: tuiFact(Type.Literal(true)),
 
   // Commit-layer observation after publication.
   freshness: modelFact(
@@ -442,7 +422,7 @@ export const ERROR_DEFINITIONS = {
   SYMLINK_UNRESOLVED: { facts: NONE },
   PUBLISH_FAILED: { facts: NONE },
   POST_PROCESS_FAILED: { facts: NONE },
-  SEARCH_INCOMPLETE: { facts: facts(["diagnostics"], ["scanned", "scanLimit"]) },
+  SEARCH_INCOMPLETE: { facts: facts(["diagnostics"], ["scanLimit"]) },
   RIPGREP_FAILED: { facts: NONE },
   UNSUPPORTED_PATH: { facts: NONE },
   UNCLASSIFIED: { facts: NONE },
@@ -482,7 +462,6 @@ export const PUBLICATION_NEXT = {
 } as const satisfies Record<Exclude<PublicationStatus, "NOT_PUBLISHED">, string>;
 
 /** One fact's recovery; `except` is a value of that fact which needs none. */
-/** One fact's recovery; `except` is a value of that fact which needs none. */
 type OutcomeRule =
   | {
       [F in FactName]: readonly [fact: F, next: string, except?: Static<FactSchema<F>>];
@@ -505,7 +484,7 @@ export const OUTCOME_NEXT: readonly OutcomeRule[] = [
     "lineTooLong",
     "Inspect the line in chunks with bash, or use replace for a known literal or regex change; a smaller limit cannot split a line.",
   ],
-  ["pagination", "If you need more lines, set offset to pagination.nextOffset."],
+  ["nextOffset", "If you need more lines, set offset to nextOffset."],
   // Ahead of matchLimit: once the byte budget cuts the output, raising limit shows nothing more.
   ["outputLimit", "Narrow path, glob, or pattern to see the omitted output."],
   ["matchLimit", "If you need more matches, raise limit to include rows after the last one shown."],
@@ -537,13 +516,12 @@ type ReportFields = (Omit<Static<typeof REPORT_SCHEMA>, "error"> & { error?: Err
   (AllFactsAreCarried extends true ? unknown : never);
 
 const SUCCESS_DEFINITIONS = {
-  read: facts([], ["pagination", "outputLimit", "lineTooLong"]),
+  read: facts([], ["nextOffset", "outputLimit", "lineTooLong"]),
   grep: facts(
     [],
     [
       "matches",
       "files",
-      "scanned",
       "matchLimit",
       "scanLimit",
       "outputLimit",
@@ -555,7 +533,7 @@ const SUCCESS_DEFINITIONS = {
   ),
   edit: facts([]),
   replace: facts([], ["matches"]),
-  write: facts([], ["created"]),
+  write: facts([]),
 } as const;
 export type ReportTool = keyof typeof SUCCESS_DEFINITIONS;
 /** Tools whose reports carry publication, freshness, and the then_run outcome. */

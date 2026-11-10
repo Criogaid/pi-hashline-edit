@@ -336,7 +336,6 @@ export async function searchFiles(options: {
     files,
     warnings,
     matchLimitReached,
-    candidates: selection.candidates,
     scanLimitReached: selection.scanLimitReached,
   };
 }

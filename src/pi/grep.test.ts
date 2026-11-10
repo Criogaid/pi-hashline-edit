@@ -516,14 +516,14 @@ test("excluded changed file → contributes no preview limit or recovery to comp
   });
 });
 
-test("candidate selection → reports only whole-file candidate facts", async () =>
+test("candidate selection → reports matches without internal strategy facts", async () =>
   withDir(async (dir) => {
     const file = join(dir, "input.txt");
     await writeFile(file, "abc \nneedle");
-    for (const [pattern, multiline, scanned] of [
-      ["needle", false, undefined],
-      ["needle", true, "files"],
-      ["[^x\\s]{3}\\s", true, "all"],
+    for (const [pattern, multiline] of [
+      ["needle", false],
+      ["needle", true],
+      ["[^x\\s]{3}\\s", true],
     ] as const) {
       const fake = fakeBackend({ paths: [file] });
       const result = await callTool(makeMockGrep(dir, DEFAULT_CONFIG, fake.backend), {
@@ -534,7 +534,6 @@ test("candidate selection → reports only whole-file candidate facts", async ()
       });
       assert.equal(result.isError, undefined);
       assert.equal(grepCounts(result).matches, 1);
-      assert.equal(reportOf(result, "grep")?.scanned, scanned);
       assert.equal(reportOf(result, "grep")?.scanLimit, undefined);
       assert.equal(fake.calls[0].kind, multiline ? "paths" : "lines");
     }

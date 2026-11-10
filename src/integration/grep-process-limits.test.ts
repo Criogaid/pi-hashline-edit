@@ -62,7 +62,6 @@ test("multiline prefilter exceeds the rg pattern budget → scan all files and r
         });
         assert.equal(result.isError, undefined, JSON.stringify(reportOf(result, "grep")));
         assert.deepEqual(grepCounts(result), { matches: count, files: count });
-        assert.equal(reportOf(result, "grep")?.scanned, "all");
       },
     );
   }
@@ -74,5 +73,4 @@ test("multiline prefilter exceeds the rg pattern budget → scan all files and r
   });
   assert.equal(literal.isError, undefined);
   assert.deepEqual(grepCounts(literal), { matches: 1, files: 1 });
-  assert.equal(reportOf(literal, "grep")?.scanned, "files");
 });

@@ -99,7 +99,6 @@ test("write supports create-only and overwrite-only modes", async () =>
     assert.doesNotMatch(created.content[0].text, /Revision:|[0-9a-f]{64}/);
     assert.deepEqual(await readFile(target), Buffer.from("new\n"));
     assert.equal(reportOf(created, "write")?.publication, "PUBLISHED");
-    assert.equal(reportOf(created, "write")?.created, true);
     const exists = await callTool(
       write,
       { path: "new.txt", content: "bad\n", mode: "create" },
@@ -141,7 +140,6 @@ test("write returns only a summary for empty, short, and long content", async ()
         undefined,
         context(dir),
       );
-      assert.equal(reportOf(result, "write")?.created, true);
       assert.equal(reportOf(result, "write")?.path, path);
       assert.equal(reportOf(result, "write")?.publication, "PUBLISHED");
       assert.equal(result.content.length, 1);
@@ -170,7 +168,6 @@ test("write returns its summary and command output after an unchanged then_run",
       undefined,
       { ...context(dir), executeTool },
     );
-    assert.equal(reportOf(result, "write")?.created, true);
     assert.deepEqual(reportOf(result, "write")?.then_run, {
       status: "succeeded",
       output: "checked",
@@ -198,7 +195,6 @@ test("write reports changed freshness when then_run changes the target", async (
     );
     const text = result.content.map((block: any) => block.text).join("\n");
     assert.doesNotMatch(text, /revision:|[0-9a-f]{64}/i);
-    assert.equal(reportOf(result, "write")?.created, true);
     assert.equal(reportOf(result, "write")?.freshness, "changed");
     assert.match(reportOf(result, "write")?.next ?? "", /Read the file before further edits/);
     assert.deepEqual(reportOf(result, "write")?.then_run, {

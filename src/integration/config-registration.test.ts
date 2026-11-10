@@ -135,7 +135,7 @@ test("registered tools retain their configuration when another tool set is regis
                   `${index + 1}#${computeLineHash(index + 1, content, hashLen)}│${content}`,
               ),
           );
-          assert.equal(reportOf(result, "read")?.pagination?.nextOffset, read.defaultLimit + 1);
+          assert.equal(reportOf(result, "read")?.nextOffset, read.defaultLimit + 1);
 
           const wide = "界".repeat(500);
           await writeFile(join(directory, path), `${wide}\n`);
@@ -143,17 +143,14 @@ test("registered tools retain their configuration when another tool set is regis
           assert.equal(bounded.content[0].type, "text");
           if (read.maxKiB === 1) {
             const maxBytes = read.maxKiB * 1024;
-            assert.deepEqual(reportOf(bounded, "read")?.lineTooLong, {
-              line: 1,
-              limit: formatByteSize(maxBytes),
-            });
+            assert.equal(reportOf(bounded, "read")?.lineTooLong, formatByteSize(maxBytes));
             assert.doesNotMatch(bounded.content[0].text, /^\d+#/m);
           } else {
             assert.ok(
               bounded.content[0].text.includes(`1#${computeLineHash(1, wide, hashLen)}│${wide}`),
             );
             assert.equal(reportOf(bounded, "read")?.outputLimit, undefined);
-            assert.equal(reportOf(bounded, "read")?.pagination, undefined);
+            assert.equal(reportOf(bounded, "read")?.nextOffset, undefined);
           }
         },
       );

@@ -52,12 +52,8 @@ interface CommitRevisions {
 
 export type CommitResult = CommitRevisions &
   (
-    | { readonly created: boolean; readonly publication: "PUBLISHED" }
-    | {
-        readonly created: false;
-        readonly publication: "NOT_PUBLISHED";
-        readonly observedRevision: string;
-      }
+    | { readonly publication: "PUBLISHED" }
+    | { readonly publication: "NOT_PUBLISHED"; readonly observedRevision: string }
   );
 
 /**
@@ -338,7 +334,6 @@ export async function commitFile(
     if (baseRevision !== undefined)
       await requireBaseRevision(target.publishPath, baseRevision, options.signal);
     return {
-      created: false,
       publishedRevision,
       observedRevision: publishedRevision,
       publication: "NOT_PUBLISHED",
@@ -366,7 +361,6 @@ export async function commitFile(
     published = true;
     await syncDirectory(publishDirectory);
     const committed: CommitResult = {
-      created: !target.existed,
       publishedRevision,
       publication: "PUBLISHED",
     };

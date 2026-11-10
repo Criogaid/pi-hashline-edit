@@ -481,19 +481,14 @@ test("configured read defaults bound omitted limits and returned bytes", async (
     assert.match(description, /default 2\)/);
     await writeFile(join(dir, "short.txt"), "a\nb\nc\n");
     const paged = await call(read, { path: "short.txt" });
-    assert.deepEqual(reportOf(paged, "read")?.pagination, {
-      start: 1,
-      end: 2,
-      totalLines: 3,
-      nextOffset: 3,
-    });
-    assert.match(reportOf(paged, "read")?.next ?? "", /offset.*pagination\.nextOffset/);
+    assert.equal(reportOf(paged, "read")?.nextOffset, 3);
+    assert.match(reportOf(paged, "read")?.next ?? "", /offset.*nextOffset/);
     assert.match(paged.content[0].text, /^2#[0-9A-Z]+│b$/m);
     assert.doesNotMatch(paged.content[0].text, /^3#/m);
     const explicit = await call(read, { path: "short.txt", limit: 3 });
     assert.match(explicit.content[0].text, /^3#[0-9A-Z]+│c$/m);
     await writeFile(join(dir, "wide.txt"), `${"x".repeat(2048)}\n`);
     const wide = await call(read, { path: "wide.txt" });
-    assert.deepEqual(reportOf(wide, "read")?.lineTooLong, { line: 1, limit: formatByteSize(1024) });
+    assert.equal(reportOf(wide, "read")?.lineTooLong, formatByteSize(1024));
     assert.doesNotMatch(wide.content[0].text, /^\d+#/m);
   }));

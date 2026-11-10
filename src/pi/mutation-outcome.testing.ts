@@ -15,7 +15,6 @@ export function publishedMutation<T extends object | undefined>(
       publication: "PUBLISHED",
       publishedRevision: revision,
       observedRevision: revision,
-      created: false,
     },
   };
 }

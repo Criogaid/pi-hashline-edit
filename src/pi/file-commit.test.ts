@@ -36,21 +36,14 @@ import { describeMutationFailure } from "./mutation-result.ts";
 import { reportOf } from "./report.ts";
 import { DEFAULT_OUTPUT_BUDGETS } from "./tool-factories.testing.ts";
 
-// Checked by tsc; these states cannot be returned by the commit layer.
+// Checked by tsc; this state cannot be returned by the commit layer.
 function invalidCommitStates() {
-  // @ts-expect-error A newly created target is always published.
-  const unpublishedCreate: CommitResult = {
-    created: true,
-    publication: "NOT_PUBLISHED",
-    publishedRevision: "r",
-    observedRevision: "r",
-  };
   // @ts-expect-error A no-op has a confirmed observed revision.
   const unobservedNoop: CommitResult = {
-    created: false,
     publication: "NOT_PUBLISHED",
     publishedRevision: "r",
   };
+
   // @ts-expect-error A known freshness state cannot carry a read error.
   const knownError: FreshnessObservation = {
     freshness: "changed",
@@ -429,7 +422,6 @@ test("identical commits preserve the file and still enforce mode, revision, and 
       baseRevision: revision,
     });
     assert.deepEqual(result, {
-      created: false,
       publishedRevision: revision,
       observedRevision: revision,
       publication: "NOT_PUBLISHED",
@@ -452,7 +444,6 @@ test("identical commits preserve the file and still enforce mode, revision, and 
       (error: unknown) => error instanceof HashlineError && error.errorCode === "OPERATION_ABORTED",
     );
     const created = await commitFile(join(dir, "empty"), "", { mode: "create" });
-    assert.equal(created.created, true);
     assert.equal(created.publication, "PUBLISHED");
   }));
 
