@@ -42,6 +42,7 @@ import {
   type ReportTool,
   type SuccessReport,
 } from "./report-schema.ts";
+
 /** Every result's details carry its report for the TUI; Pi does not send details to the model. */
 export interface ReportDetails<TReport extends Report = Report> {
   readonly report: TReport;
@@ -53,8 +54,6 @@ type Content = AgentToolResult<unknown>["content"];
 export type ReportText<R extends Report = Report> = R extends unknown
   ? Omit<R, ModelOmittedField>
   : never;
-
-/** Fields whose values are supplied by the call or reserved for TUI/host audiences. */
 
 /** The fields a report states, in schema order; both renderers list them in this order. */
 export function reportEntries(report: ReportText): [string, unknown][] {

@@ -212,7 +212,6 @@ export async function searchFiles(options: {
   const { scope, query, limit, timeoutMs, signal } = options;
   const files: GrepFileMatch[] = [];
   /** File warnings in listing order, then the listing's own diagnostic. */
-  /** File warnings in listing order, then the listing's own diagnostic. */
   const warnings: SearchWarning[] = [];
   /** Committed matches; a file still searching gets at most the remaining room. */
   let matches = 0;
