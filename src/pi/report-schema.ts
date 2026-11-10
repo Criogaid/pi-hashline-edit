@@ -16,6 +16,7 @@
  */
 
 import { Type, type Static, type TObject, type TProperties, type TSchema } from "typebox";
+import { literalUnion } from "./schema.ts";
 
 const count = (description: string) => Type.Integer({ minimum: 1, description });
 const opt = Type.Optional;
@@ -158,8 +159,10 @@ type FactDefinition<T extends TSchema = TSchema> = {
   decision?: string;
 };
 
-function modelFact<T extends TSchema>(schema: T, decision: string): FactDefinition<T> {
-  if (decision.trim().length === 0) throw new Error("Model facts require a decision statement.");
+function modelFact<T extends TSchema, const D extends string>(
+  schema: T,
+  decision: D extends "" ? never : D,
+): FactDefinition<T> {
   return { schema, audience: "model", decision };
 }
 
@@ -501,7 +504,7 @@ export const OUTCOME_NEXT: readonly OutcomeRule[] = [
 
 /** The report envelope and facts, in output order; `next` is always last. */
 export const REPORT_SCHEMA = Type.Object({
-  error: opt(Type.Union(ERROR_CODES.map((code) => Type.Literal(code)))),
+  error: opt(literalUnion(ERROR_CODES)),
   tool: Type.String(),
   path: opt(Type.Union([Type.String(), Type.Array(Type.String())])),
   publication: opt(PUBLICATION_SCHEMA),
@@ -512,7 +515,7 @@ export const REPORT_SCHEMA = Type.Object({
   ) as { [K in FactName]: ReturnType<typeof Type.Optional<FactSchema<K>>> }),
   next: opt(Type.String()),
 });
-type ReportFields = Omit<Static<typeof REPORT_SCHEMA>, "error"> & { error?: ErrorCode };
+type ReportFields = Static<typeof REPORT_SCHEMA>;
 
 const SUCCESS_DEFINITIONS = {
   read: facts([], ["nextOffset", "outputLimit", "lineTooLong"]),
@@ -541,7 +544,7 @@ export type MutationToolName = (typeof MUTATION_TOOLS)[number];
 /** Argument rejections may omit message; Pi supplies none for them. */
 const MESSAGE_OPTIONAL = "INVALID_ARGUMENTS" satisfies ErrorCode;
 
-const TOOL_SCHEMA = Type.Union(Object.keys(SUCCESS_DEFINITIONS).map((tool) => Type.Literal(tool)));
+const TOOL_SCHEMA = literalUnion(Object.keys(SUCCESS_DEFINITIONS) as ReportTool[]);
 const COMMON_WIRE_FIELDS = {
   tool: TOOL_SCHEMA,
   path: REPORT_SCHEMA.properties.path,

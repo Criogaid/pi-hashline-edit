@@ -13,10 +13,11 @@ import { unwritableTextError } from "../core/text.ts";
 import { MUTATION_CARD_SHOWN, reportLines, renderToolError, splitReport } from "./render.ts";
 import type { MutationOutcome } from "./mutation-result.ts";
 import type { ReportDetails } from "./report.ts";
+import { filePathField } from "./schema.ts";
 
 const writeSchema = Type.Object(
   {
-    path: Type.String({ minLength: 1, description: "Path to the file (relative or absolute)" }),
+    path: filePathField(),
     content: Type.String({
       description: "Complete file content, written exactly as supplied, including line endings.",
     }),

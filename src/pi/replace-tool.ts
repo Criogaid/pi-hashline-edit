@@ -45,13 +45,11 @@ import {
   type MutationToolEnvironment,
 } from "./mutation-runner.ts";
 import { argumentItems, type ReportArgumentIssue } from "./argument-validation.ts";
+import { filePathField } from "./schema.ts";
 
 const replaceSchema = Type.Object(
   {
-    path: Type.String({
-      minLength: 1,
-      description: "Path to the file (relative or absolute)",
-    }),
+    path: filePathField(),
     replacements: REPLACEMENTS_SCHEMA,
   },
   { additionalProperties: false },

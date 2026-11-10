@@ -7,18 +7,23 @@
  */
 
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
-import { Type, type Static, type TLiteral } from "typebox";
+import { Type, type Static } from "typebox";
 import { Text } from "@earendil-works/pi-tui";
 import { renderOutputPreview, renderToolError, reportLines, splitReport } from "./render.ts";
 import { createAnchorFormatter } from "./anchor-format.ts";
-import { GREP_OUTPUT_MODES, grepOutput, type GrepOutputMode } from "./grep-output.ts";
+import { GREP_OUTPUT_MODES, grepOutput } from "./grep-output.ts";
 import { filterExplicitFilesByGlob, resolveSearchPaths } from "./grep-scope.ts";
 import { searchFiles } from "./grep-search.ts";
 import { toDisplayLines } from "./grep-render.ts";
 import { smartIgnoreCase } from "../core/search-analysis.ts";
 import { checkRegexArguments } from "../core/regex.ts";
 import { DEFAULT_GREP_FLAGS } from "../core/search.ts";
-import { GREP_CONTEXT_RANGE, POSITIVE_SAFE_INTEGER, STRICT_SAMPLING } from "./schema.ts";
+import {
+  GREP_CONTEXT_RANGE,
+  literalUnion,
+  POSITIVE_SAFE_INTEGER,
+  STRICT_SAMPLING,
+} from "./schema.ts";
 import { throwIfCancelled } from "./error-text.ts";
 import { reportResult, runTool, type ReportDetails } from "./report.ts";
 import type { HashlineEditConfig, ToolEnvironment } from "./config.ts";
@@ -79,17 +84,10 @@ function createGrepSchema({ defaultLimit, defaultContext }: HashlineEditConfig["
         }),
       ),
       outputMode: Type.Optional(
-        // TypeBox infers a union's static type only from a tuple.
-        Type.Union(
-          GREP_OUTPUT_MODES.map((mode) => Type.Literal(mode)) as [
-            TLiteral<GrepOutputMode>,
-            ...TLiteral<GrepOutputMode>[],
-          ],
-          {
-            description:
-              '"content" (default): matches/context with anchors for valid UTF-8 or plain previews otherwise; "files": paths; "count": matching lines per file and total. Use files or count when only paths or counts are needed. limit counts matching lines in every mode, so files and count stop at the same cutoff as content.',
-          },
-        ),
+        literalUnion(GREP_OUTPUT_MODES, undefined, {
+          description:
+            '"content" (default): matches/context with anchors for valid UTF-8 or plain previews otherwise; "files": paths; "count": matching lines per file and total. Use files or count when only paths or counts are needed. limit counts matching lines in every mode, so files and count stop at the same cutoff as content.',
+        }),
       ),
     },
     { additionalProperties: false },

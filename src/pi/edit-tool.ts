@@ -14,7 +14,7 @@
  */
 
 import type { Theme } from "@earendil-works/pi-coding-agent";
-import { Type, type Static, type TLiteral } from "typebox";
+import { Type, type Static } from "typebox";
 import { applyEdits } from "../core/apply.ts";
 import { unwritableTextError } from "../core/text.ts";
 import { EDIT_ANCHOR_FIELDS, type Anchor, type Edit } from "../core/types.ts";
@@ -33,6 +33,7 @@ import {
   type MutationToolEnvironment,
 } from "./mutation-runner.ts";
 import { argumentItems, type ReportArgumentIssue } from "./argument-validation.ts";
+import { filePathField, literalUnion } from "./schema.ts";
 
 /** Split a validated anchor token; prepareArguments and the schema already checked it. */
 function parseAnchor(value: string): Anchor;
@@ -94,12 +95,7 @@ function buildEditSchema(hashLen: number) {
       // Session evidence is mixed: OpenAI calls usually follow declaration order, while
       // GLM and local calls often use lexical key order. Keep `action`, `anchor`,
       // `end`, `lines` so both orders choose the operation and range before its payload.
-      // TypeBox infers a union's static type only from a tuple.
-      action: Type.Union(
-        EDIT_OP_NAMES.map((op) =>
-          Type.Literal(op, { description: describeEditOp(EDIT_OPS[op]) }),
-        ) as [TLiteral<EditOpName>, ...TLiteral<EditOpName>[]],
-      ),
+      action: literalUnion(EDIT_OP_NAMES, (op) => describeEditOp(EDIT_OPS[op])),
       anchor: anchorField("LINE#HASH of the target line."),
       end: anchorField("Inclusive last LINE#HASH of the range; omit for one line."),
       lines: Type.Optional(
@@ -117,10 +113,7 @@ function buildEditSchema(hashLen: number) {
   );
   return Type.Object(
     {
-      path: Type.String({
-        minLength: 1,
-        description: "Path to the file (relative or absolute)",
-      }),
+      path: filePathField(),
       steps: Type.Array(editOpSchema, {
         minItems: 1,
         maxItems: MAX_EDIT_OPS,
