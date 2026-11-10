@@ -1,5 +1,10 @@
 import { errnoCode, HashlineError } from "../core/errors.ts";
 
+export interface SearchWarning {
+  readonly path?: string;
+  readonly reason: string;
+}
+
 /**
  * Cancellation, worded like Pi's built-in tools. A mutation report's
  * `publication` says where it stopped, so the message does not.
@@ -37,9 +42,9 @@ export function searchChangedError(): HashlineError<"FILE_CHANGED"> {
  * A per-file failure that leaves the rest of the search valid: a filesystem error, or the
  * file changing while it was searched or displayed. Undefined for any other failure.
  */
-export function fileReadWarning(filePath: string, error: unknown): string | undefined {
+export function fileReadWarning(filePath: string, error: unknown): SearchWarning | undefined {
   if (!(error instanceof Error)) return undefined;
   const changed = error instanceof HashlineError && error.errorCode === "FILE_CHANGED";
   if (!changed && errnoCode(error) === undefined) return undefined;
-  return `Could not read ${filePath}: ${error.message}`;
+  return { path: filePath, reason: error.message };
 }

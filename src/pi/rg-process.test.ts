@@ -17,9 +17,9 @@ test("grep search exit status → accepts no matches and preserves failure diagn
     [2, false, "  regex parse error\n", "regex parse error"],
     [null, true, "  regex parse error\n", "regex parse error"],
   ] as const) {
-    assert.equal(
+    assert.deepEqual(
       searchDiagnostic({ code, stderr, stopped }),
-      expected,
+      expected === undefined ? undefined : { reason: expected },
       JSON.stringify({ code, stderr, stopped }),
     );
   }

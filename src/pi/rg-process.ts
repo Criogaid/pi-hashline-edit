@@ -12,7 +12,7 @@ import { DiagnosticBuffer } from "./diagnostic-buffer.ts";
 import { spawn, type ChildProcessByStdio } from "node:child_process";
 import type { Readable } from "node:stream";
 import { HashlineError } from "../core/errors.ts";
-import { throwIfCancelled } from "./error-text.ts";
+import { throwIfCancelled, type SearchWarning } from "./error-text.ts";
 import { formatByteSize } from "./budgets.ts";
 
 /**
@@ -48,13 +48,13 @@ export interface RgRunResult {
 }
 
 /** An incomplete run's diagnostic, surfaced without discarding confirmed matches. */
-export function searchDiagnostic(result: RgRunResult): string | undefined {
-  return (
+export function searchDiagnostic(result: RgRunResult): SearchWarning | undefined {
+  const reason =
     result.stderr.trim() ||
     (!result.stopped && result.code !== 0 && result.code !== 1
       ? `ripgrep exited with code ${result.code}.`
-      : undefined)
-  );
+      : undefined);
+  return reason ? { reason } : undefined;
 }
 
 /** spawn reports a failure to start by throwing or by an error event, depending on the errno. */

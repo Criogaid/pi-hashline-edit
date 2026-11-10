@@ -1017,7 +1017,7 @@ test("candidate file disappears before reading → summary modes report incomple
         }),
         "SEARCH_INCOMPLETE",
         (report) => {
-          assert.match(report.diagnostics ?? "", /Could not read .*listed\.txt: ENOENT/);
+          assert.match(report.diagnostics ?? "", /listed\.txt: ENOENT/);
         },
       );
       assert.equal(fake.calls.length, 1);

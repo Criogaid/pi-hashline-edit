@@ -8,6 +8,7 @@ import { truncateHead } from "@earendil-works/pi-coding-agent";
 import { DiagnosticBuffer } from "./diagnostic-buffer.ts";
 import { plainRow, type AnchorFormatter } from "./anchor-format.ts";
 import type { GrepFileMatch, searchFiles } from "./grep-search.ts";
+import type { SearchWarning } from "./error-text.ts";
 import { MAX_UNNARROWED_SCAN_BYTES } from "./grep-candidates.ts";
 import { rereadMatches, type LineCollector } from "./grep-reread.ts";
 import { formatByteSize, type OutputBudgets } from "./budgets.ts";
@@ -34,9 +35,20 @@ export function parseFileHeader(line: string): { path: string; summary: string }
 }
 
 /** Distinct search diagnostics within their budget, keeping opening context and the final cause. */
-function searchDiagnostics(warnings: readonly string[], budget: OutputBudgets): string {
+function searchDiagnostics(
+  warnings: readonly SearchWarning[],
+  cwd: string,
+  budget: OutputBudgets,
+): string {
   const diagnostics = new DiagnosticBuffer(budget.fieldBytes);
-  for (const warning of new Set(warnings)) diagnostics.append(`${warning}\n`);
+  const seen = new Set<string>();
+  for (const warning of warnings) {
+    const key = `${warning.path ?? ""}\u0000${warning.reason}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const path = warning.path ? `${serializePath(cwd, warning.path)}: ` : "";
+    diagnostics.append(`${path}${warning.reason}\n`);
+  }
   return diagnostics.toString().trimEnd();
 }
 
@@ -46,12 +58,13 @@ type SearchFacts = Pick<Report, "scanLimit">;
 /** No result can be returned from an incomplete search: report it rather than "no matches". */
 function searchIncompleteError(
   message: string,
-  warnings: readonly string[],
+  warnings: readonly SearchWarning[],
+  cwd: string,
   budget: OutputBudgets,
   searchFacts: SearchFacts,
 ): HashlineError<"SEARCH_INCOMPLETE"> {
   return new HashlineError("SEARCH_INCOMPLETE", message, {
-    facts: { ...searchFacts, diagnostics: searchDiagnostics(warnings, budget) },
+    facts: { ...searchFacts, diagnostics: searchDiagnostics(warnings, cwd, budget) },
   });
 }
 
@@ -125,7 +138,7 @@ async function formatMatches(options: FormatMatchesOptions) {
   const formatPath = (filePath: string): string => serializePath(cwd, filePath);
   const blocks: FormattedBlock[] = [];
   /** Files left out after their second read, in result order. */
-  const warnings: string[] = [];
+  const warnings: SearchWarning[] = [];
   // Paths and counts state the searched snapshot as is; content rows come from a second read.
   let fileCount = files.length;
   let matches = files.reduce((sum, file) => sum + file.rows.length, 0);
@@ -154,7 +167,8 @@ async function formatMatches(options: FormatMatchesOptions) {
 
 interface AssembleGrepOutputOptions {
   readonly formatted: Omit<Awaited<ReturnType<typeof formatMatches>>, "warnings">;
-  readonly warnings: readonly string[];
+  readonly cwd: string;
+  readonly warnings: readonly SearchWarning[];
   readonly outputMode: GrepOutputMode;
   readonly matchLimitReached: boolean;
   readonly effectiveLimit: number;
@@ -169,6 +183,7 @@ function assembleGrepOutput(options: AssembleGrepOutputOptions): {
 } {
   const {
     formatted,
+    cwd,
     warnings,
     outputMode,
     matchLimitReached,
@@ -179,7 +194,13 @@ function assembleGrepOutput(options: AssembleGrepOutputOptions): {
   const { blocks, matches, files } = formatted;
 
   if (!blocks.length && warnings.length) {
-    throw searchIncompleteError("No matches could be displayed.", warnings, budget, searchFacts);
+    throw searchIncompleteError(
+      "No matches could be displayed.",
+      warnings,
+      cwd,
+      budget,
+      searchFacts,
+    );
   }
   const truncation = truncateHead(
     blocks.map((block) => block.lines.join("\n")).join(outputMode === "content" ? "\n\n" : "\n"),
@@ -206,7 +227,7 @@ function assembleGrepOutput(options: AssembleGrepOutputOptions): {
       outputLimit: truncation.truncated ? formatByteSize(budget.grepBytes) : undefined,
       linePreviewLimit: linesTruncated ? budget.grepPreviewUnits : undefined,
       invalidUtf8: invalidUtf8.length ? invalidUtf8 : undefined,
-      diagnostics: warnings.length ? searchDiagnostics(warnings, budget) : undefined,
+      diagnostics: warnings.length ? searchDiagnostics(warnings, cwd, budget) : undefined,
     },
   };
 }
@@ -219,19 +240,19 @@ export async function grepOutput(
   options: Omit<FormatMatchesOptions, "files"> & {
     readonly search: Omit<Awaited<ReturnType<typeof searchFiles>>, "warnings">;
     /** Scope and search warnings, in the order those stages produced them. */
-    readonly warnings: readonly string[];
+    readonly warnings: readonly SearchWarning[];
     readonly effectiveLimit: number;
     /** A literal pattern contains `|`, which matches only that character. */
     readonly literalPipe: boolean;
   },
 ): Promise<{ payload?: string; facts: SuccessFacts<"grep"> }> {
-  const { search, warnings, outputMode, effectiveLimit, literalPipe, budget } = options;
+  const { cwd, search, warnings, outputMode, effectiveLimit, literalPipe, budget } = options;
   const searchFacts: SearchFacts = {
     scanLimit: search.scanLimitReached ? formatByteSize(MAX_UNNARROWED_SCAN_BYTES) : undefined,
   };
   if (search.files.length === 0) {
     if (warnings.length)
-      throw searchIncompleteError("No matches confirmed.", warnings, budget, searchFacts);
+      throw searchIncompleteError("No matches confirmed.", warnings, cwd, budget, searchFacts);
     return {
       // A literal `|` finding nothing most likely meant alternatives.
       facts: { matches: 0, files: 0, ...searchFacts, literalPipe: literalPipe || undefined },
@@ -243,6 +264,7 @@ export async function grepOutput(
   });
   return assembleGrepOutput({
     formatted,
+    cwd,
     warnings: [...warnings, ...rereadWarnings],
     outputMode,
     matchLimitReached: search.matchLimitReached,

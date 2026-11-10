@@ -4,7 +4,12 @@
  *
  * @module pi-hashline-edit/pi
  */
-import { fileReadWarning, searchChangedError, throwIfCancelled } from "./error-text.ts";
+import {
+  fileReadWarning,
+  searchChangedError,
+  throwIfCancelled,
+  type SearchWarning,
+} from "./error-text.ts";
 import type { GrepFileMatch } from "./grep-search.ts";
 import { scanTextLines } from "./text-stream.ts";
 
@@ -17,7 +22,7 @@ export interface LineCollector<T> {
   finish(): T;
 }
 
-type Reread<T> = { readonly value: T } | { readonly warning: string };
+type Reread<T> = { readonly value: T } | { readonly warning: SearchWarning };
 
 /** The physical lines shown for a file's matches: each match with `context` lines around it. */
 function shownLines(file: GrepFileMatch, context: number): Set<number> {

@@ -34,7 +34,7 @@ test("out-of-order file completions → listing order fixes rows, warnings, and 
     await fs.writeFile(join(dir, name), `${sourceLines(name).join("\n")}\n`);
   }
   const listingDiagnostic = "listing: Permission denied";
-  const warning = (name: string) => `Could not read ${join(dir, name)}: EACCES: ${name}`;
+  const warning = (name: string) => `${name}: EACCES: ${name}`;
 
   for (const limit of [3, 5]) {
     const outputs: unknown[] = [];

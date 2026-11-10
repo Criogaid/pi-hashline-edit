@@ -15,7 +15,7 @@ import type { SearchScope } from "./grep-scope.ts";
 import { listCandidates, type Candidate } from "./grep-candidates.ts";
 import { withRegexWorker } from "./regex-worker.ts";
 import { invalidWorkerResult, workerReplyDecoder } from "./regex-worker-contract.ts";
-import { fileReadWarning, throwIfCancelled } from "./error-text.ts";
+import { fileReadWarning, throwIfCancelled, type SearchWarning } from "./error-text.ts";
 import { formatByteSize } from "./budgets.ts";
 
 /** Matching physical lines in ascending order, with the revision they were searched against. */
@@ -63,7 +63,7 @@ interface Queued {
 }
 /** A searched candidate, including fatal failures that only matter before the ordered cutoff. */
 type Settled =
-  | { readonly file?: GrepFileMatch; readonly warning?: string }
+  | { readonly file?: GrepFileMatch; readonly warning?: SearchWarning }
   | { readonly error: unknown };
 
 /**
@@ -212,7 +212,8 @@ export async function searchFiles(options: {
   const { scope, query, limit, timeoutMs, signal } = options;
   const files: GrepFileMatch[] = [];
   /** File warnings in listing order, then the listing's own diagnostic. */
-  const warnings: string[] = [];
+  /** File warnings in listing order, then the listing's own diagnostic. */
+  const warnings: SearchWarning[] = [];
   /** Committed matches; a file still searching gets at most the remaining room. */
   let matches = 0;
   let matchLimitReached = false;
@@ -268,9 +269,9 @@ export async function searchFiles(options: {
       result = found?.rows.length ? { file: { filePath, ...found } } : {};
     } catch (error) {
       throwIfCancelled(poolSignal);
-      const warning =
+      const warning: SearchWarning | undefined =
         error instanceof SearchFileLimitError
-          ? `${filePath}: ${error.message}`
+          ? { path: filePath, reason: error.message }
           : fileReadWarning(filePath, error);
       result = warning ? { warning } : { error };
     }

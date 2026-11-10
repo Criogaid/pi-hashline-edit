@@ -119,7 +119,7 @@ test("model budget grows → grep payload and diagnostics use that call's allowa
           scanLimitReached: false,
           matchLimitReached: false,
         },
-        warnings: [warning],
+        warnings: [{ reason: warning }],
         effectiveLimit: 3_000,
         literalPipe: false,
         budget,

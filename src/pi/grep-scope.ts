@@ -9,6 +9,7 @@ import { dirname, resolve } from "node:path";
 import { canonicalPath } from "./path.ts";
 import { COMMON_RG_ARGS, runRgPaths, searchDiagnostic } from "./rg-process.ts";
 import { errnoCode, HashlineError, PATH_ERROR_MESSAGES } from "../core/errors.ts";
+import type { SearchWarning } from "./error-text.ts";
 
 export interface SearchScope {
   readonly globs: readonly string[];
@@ -81,7 +82,7 @@ export async function filterExplicitFilesByGlob(
   globs: readonly string[],
   paths: readonly SearchPathInfo[],
   signal: AbortSignal | undefined,
-): Promise<{ readonly searchPaths: string[]; readonly warnings: readonly string[] }> {
+): Promise<{ readonly searchPaths: string[]; readonly warnings: readonly SearchWarning[] }> {
   const explicitFiles = paths.filter(({ isFile }) => isFile);
   if (globs.length === 0 || explicitFiles.length === 0)
     return { searchPaths: paths.map(({ path }) => path), warnings: [] };
