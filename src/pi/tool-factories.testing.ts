@@ -1,13 +1,14 @@
-import { tmpdir } from "node:os";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { loadConfig } from "./config.ts";
-import { outputBudgetsFor } from "./budgets.ts";
+import { tmpdir } from "node:os";
+import { loadConfig, type HashlineEditConfig } from "./config.ts";
+import { outputBudgetsFor, type OutputBudgetProvider } from "./budgets.ts";
 import { makeReadOverride as read } from "./read-tool.ts";
 import { makeGrepOverride as grep } from "./grep-tool.ts";
 import { makeEditOverride as edit } from "./edit-tool.ts";
 import { makeReplaceTool as replace } from "./replace-tool.ts";
 import { makeWriteOverride as write } from "./write-tool.ts";
+import type { MutationToolEnvironment } from "./mutation-runner.ts";
 
 // The runner isolates global settings; create an empty project root for schema defaults.
 const configRoot = mkdtempSync(join(tmpdir(), "hashline-default-config-"));
@@ -21,30 +22,38 @@ export const DEFAULT_CONFIG = (() => {
 export const DEFAULT_OUTPUT_BUDGETS = outputBudgetsFor(undefined);
 export const defaultOutputBudgets = () => outputBudgetsFor(undefined);
 
+function toolEnvironment(
+  cwd: string,
+  config: HashlineEditConfig,
+  budgets: OutputBudgetProvider,
+): { cwd: string; config: HashlineEditConfig; budgets: OutputBudgetProvider } {
+  return { cwd, config, budgets };
+}
+
 export const makeReadOverride = (
   cwd: string,
-  config: Parameters<typeof read>[1],
+  config: HashlineEditConfig,
   budgets = defaultOutputBudgets,
-) => read(cwd, config, budgets);
+) => read(toolEnvironment(cwd, config, budgets));
 export const makeGrepOverride = (
   cwd: string,
-  config: Parameters<typeof grep>[1],
+  config: HashlineEditConfig,
   budgets = defaultOutputBudgets,
-) => grep(cwd, config, budgets);
+) => grep(toolEnvironment(cwd, config, budgets));
 export const makeEditOverride = (
   cwd: string,
-  config: Parameters<typeof edit>[1],
-  fusion: Parameters<typeof edit>[2] = undefined,
+  config: HashlineEditConfig,
+  fusion: MutationToolEnvironment["fusion"] = undefined,
   budgets = defaultOutputBudgets,
-) => edit(cwd, config, fusion, budgets);
+) => edit({ ...toolEnvironment(cwd, config, budgets), fusion });
 export const makeReplaceTool = (
   cwd: string,
-  config: Parameters<typeof replace>[1],
-  fusion: Parameters<typeof replace>[2] = undefined,
+  config: HashlineEditConfig,
+  fusion: MutationToolEnvironment["fusion"] = undefined,
   budgets = defaultOutputBudgets,
-) => replace(cwd, config, fusion, budgets);
+) => replace({ ...toolEnvironment(cwd, config, budgets), fusion });
 export const makeWriteOverride = (
   cwd: string,
-  fusion: Parameters<typeof write>[1] = undefined,
+  fusion: MutationToolEnvironment["fusion"] = undefined,
   budgets = defaultOutputBudgets,
-) => write(cwd, fusion, budgets);
+) => write({ ...toolEnvironment(cwd, DEFAULT_CONFIG, budgets), fusion });
