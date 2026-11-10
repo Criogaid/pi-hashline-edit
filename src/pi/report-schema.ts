@@ -252,11 +252,11 @@ const FACT_FIELDS = {
   // grep outcome; matches is also replace's match count.
   matches: modelFact(
     Type.Integer({ minimum: 0 }),
-    "Use the match count to decide whether more search or replacement work is needed.",
+    "Change the pattern or scope when zero; otherwise check the total against the rows shown or the replacements intended.",
   ),
   files: modelFact(
     Type.Integer({ minimum: 0 }),
-    "Use the file count to decide whether the search scope is appropriate.",
+    "Know how many files matched when the payload does not show every file.",
   ),
   matchLimit: modelFact(
     Type.Integer({ minimum: 1, description: "The match limit that stopped the search." }),
@@ -285,7 +285,7 @@ const FACT_FIELDS = {
   ),
   diagnostics: modelFact(
     Type.String({ description: "Search diagnostics; results cover confirmed matches." }),
-    "Account for the diagnostics before relying on the search result.",
+    "Treat the result as confirmed matches only; remove the stated cause or narrow the scope to search what was missed.",
   ),
   literalPipe: modelFact(
     Type.Literal(true, {
@@ -310,7 +310,7 @@ const FACT_FIELDS = {
       { status: COMMAND_STATUS_SCHEMA, output: opt(Type.String()) },
       { additionalProperties: false },
     ),
-    "Use the command status and output to decide whether a follow-up action is needed.",
+    "Act on the failure the output shows, and run the command separately when it did not run.",
   ),
   progressError: tuiFact(CAUSE_SCHEMA),
 } as const satisfies Record<string, FactDefinition>;
@@ -512,8 +512,7 @@ export const REPORT_SCHEMA = Type.Object({
   ) as { [K in FactName]: ReturnType<typeof Type.Optional<FactSchema<K>>> }),
   next: opt(Type.String()),
 });
-type ReportFields = (Omit<Static<typeof REPORT_SCHEMA>, "error"> & { error?: ErrorCode }) &
-  (AllFactsAreCarried extends true ? unknown : never);
+type ReportFields = Omit<Static<typeof REPORT_SCHEMA>, "error"> & { error?: ErrorCode };
 
 const SUCCESS_DEFINITIONS = {
   read: facts([], ["nextOffset", "outputLimit", "lineTooLong"]),
@@ -592,8 +591,8 @@ type ErrorFactNames = {
   string;
 type MutationWireFactNames = keyof Fields<typeof MUTATION_WIRE_FIELDS> & string;
 type UnusedFactNames = Exclude<FactName, SuccessFactNames | ErrorFactNames | MutationWireFactNames>;
-type AssertTrue<T extends true> = T;
-type AllFactsAreCarried = AssertTrue<UnusedFactNames extends never ? true : false>;
+// Compilation fails here, naming the fact, when no tool, code, or mutation field carries it.
+({}) satisfies Record<UnusedFactNames, never>;
 
 // Static counterparts of the per-tool and per-code wire schemas above, built from the same fields.
 type Fields<P extends TProperties> = Static<TObject<P>>;
