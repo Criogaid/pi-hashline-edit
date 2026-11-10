@@ -464,6 +464,10 @@ test("all mutation tools succeed without rewriting on no-op, with and without Fu
           { ctx: { ...(await ctx(dir, t)), executeTool } },
         );
         assert.equal(reportOf(result, tool.name)?.publication, "NOT_PUBLISHED");
+        assert.match(
+          reportOf(result, tool.name)?.next ?? "",
+          /file already has this content.*do not repeat/i,
+        );
         assert.ok(result.details);
         assert.equal(Reflect.get(result.details, "diff"), tool.name === "write" ? undefined : "");
         assert.equal(reportOf(result, tool.name)?.freshness, undefined);
@@ -575,6 +579,16 @@ test("no-op Fusion still detects external changes and reports command failures",
           reportOf(result, tool.name)?.freshness,
           scenario === "failed" ? undefined : "changed",
         );
+        if (scenario === "failed")
+          assert.match(
+            reportOf(result, tool.name)?.next ?? "",
+            /file already has this content.*do not repeat/i,
+          );
+        else
+          assert.match(
+            reportOf(result, tool.name)?.next ?? "",
+            /Read the file before further edits/,
+          );
       }
     }
   } finally {

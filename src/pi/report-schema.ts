@@ -482,9 +482,12 @@ export const PUBLICATION_NEXT = {
 } as const satisfies Record<Exclude<PublicationStatus, "NOT_PUBLISHED">, string>;
 
 /** One fact's recovery; `except` is a value of that fact which needs none. */
-type OutcomeRule = {
-  [F in FactName]: readonly [fact: F, next: string, except?: Static<FactSchema<F>>];
-}[FactName];
+/** One fact's recovery; `except` is a value of that fact which needs none. */
+type OutcomeRule =
+  | {
+      [F in FactName]: readonly [fact: F, next: string, except?: Static<FactSchema<F>>];
+    }[FactName]
+  | readonly [fact: "publication", next: string, except?: PublicationStatus];
 
 /**
  * Recovery after a successful result, by the first fact present in this order.
@@ -493,6 +496,11 @@ type OutcomeRule = {
 export const OUTCOME_NEXT: readonly OutcomeRule[] = [
   // A file that no longer exists has no anchors to refresh.
   ["freshness", REREAD, "missing"],
+  [
+    "publication",
+    "The file already has this content; nothing was written, so do not repeat the call.",
+    "PUBLISHED",
+  ],
   [
     "lineTooLong",
     "Inspect the line in chunks with bash, or use replace for a known literal or regex change; a smaller limit cannot split a line.",
