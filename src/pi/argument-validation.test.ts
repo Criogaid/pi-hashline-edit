@@ -152,6 +152,50 @@ for (const scenario of cases) {
   });
 }
 
+test("blank then_run command with Fusion → reports exactly one command issue", async (t) => {
+  const cwd = process.cwd();
+  const fusion = createActionFusionExecutor(() => {});
+  const mutations = [
+    {
+      name: "edit",
+      tool: makeEditOverride(cwd, DEFAULT_CONFIG, fusion),
+      args: { steps: [{ action: "append", lines: ["text"] }] },
+    },
+    {
+      name: "replace",
+      tool: makeReplaceTool(cwd, DEFAULT_CONFIG, fusion),
+      args: { replacements: [{ find: "old", replace: "new", literal: true }] },
+    },
+    {
+      name: "write",
+      tool: makeWriteOverride(cwd, fusion),
+      args: { content: "text", mode: "create" },
+    },
+  ] as const;
+  for (const scenario of mutations) {
+    for (const command of ["", "   "]) {
+      await t.test(
+        `${scenario.name}/${JSON.stringify(command)} → rejects one command issue`,
+        async () => {
+          await assert.rejects(
+            callTool(scenario.tool, {
+              path: "unused.txt",
+              ...scenario.args,
+              then_run: { command },
+            }),
+            (error: unknown) => {
+              const result = argumentError(error);
+              assert.equal(result.issues.length, 1, JSON.stringify(result));
+              assert.equal(result.issues[0].field, "then_run.command");
+              return true;
+            },
+          );
+        },
+      );
+    }
+  }
+});
+
 test("grep and replace flags → accept V8 modes and reject invalid flags before patterns or file reads", async (t) => {
   const cwd = await mkdtemp(join(tmpdir(), "hashline-flags-"));
   t.after(() => rm(cwd, { recursive: true, force: true }));
@@ -293,47 +337,31 @@ for (const scenario of actionCases) {
   });
 }
 
-test("edit action is missing or invalid → reports choices without guessing field permissions", async () => {
+test("edit action is missing → reports choices without guessing field permissions", async () => {
   const tool = makeEditOverride(process.cwd(), DEFAULT_CONFIG);
   const choices = schemaProperties(tool).steps?.items?.properties?.action?.anyOf ?? [];
   assert.deepEqual(
     choices.map((choice) => choice.const),
     actionCases.map(({ action }) => action),
   );
-  for (const action of [undefined, "unknown", null, 42, {}]) {
-    await assert.rejects(
-      callTool(tool, {
-        path: "unused.txt",
-        steps: [
-          {
-            ...(action === undefined ? {} : { action }),
-            anchor: `1#${anchorHash}`,
-            lines: ["valid"],
-          },
-        ],
-      }),
-      (error: unknown) => {
-        const { issues } = argumentError(error);
-        assert.equal(issues.length, 1);
-        const issue = issues[0];
-        assert.equal(issue.field, "steps[0].action");
-        if (action === undefined) {
-          assert.equal(issue.reason, "is required");
-          for (const choice of choices) {
-            assert.ok(choice.description);
-            inOrder(issue.fix ?? "", [JSON.stringify(choice.const), choice.description]);
-          }
-        } else {
-          assert.equal(
-            issue.reason,
-            `expected one of: ${choices.map((choice) => JSON.stringify(choice.const)).join(", ")}`,
-          );
-          assert.equal(issue.fix, undefined);
-        }
-        return true;
-      },
-    );
-  }
+  await assert.rejects(
+    callTool(tool, {
+      path: "unused.txt",
+      steps: [{ anchor: `1#${anchorHash}`, lines: ["valid"] }],
+    }),
+    (error: unknown) => {
+      const { issues } = argumentError(error);
+      assert.equal(issues.length, 1);
+      const issue = issues[0];
+      assert.equal(issue.field, "steps[0].action");
+      assert.equal(issue.reason, "is required");
+      for (const choice of choices) {
+        assert.ok(choice.description);
+        inOrder(issue.fix ?? "", [JSON.stringify(choice.const), choice.description]);
+      }
+      return true;
+    },
+  );
 });
 
 test("optional edit fields and then_run are null with Fusion → publishes bytes without rewriting caller arguments", async (t) => {
@@ -489,17 +517,6 @@ test("grep union value has one applicable type → report only its constraint", 
       },
     );
   }
-});
-
-test("literal enum is invalid → report the permitted values once", async () => {
-  await assert.rejects(
-    callTool(makeWriteOverride(process.cwd()), { path: "unused.txt", content: "ok", mode: "bad" }),
-    (error: unknown) => {
-      const result = argumentError(error);
-      assert.equal(result.issues.length, 1);
-      return rejectsArgument("mode", /create.*overwrite/)(error);
-    },
-  );
 });
 
 test("unknown field names contain punctuation, numeric keys or newlines → quote property keys without treating them as array indices", async () => {
@@ -709,23 +726,70 @@ test("two operations miss the same required field → the shared fix appears onc
   );
 });
 
-test("invalid enum value → the reason carries no description fix", async () => {
-  await assert.rejects(
-    callTool(makeGrepOverride(process.cwd(), DEFAULT_CONFIG), {
-      path: "unused.txt",
-      pattern: "text",
-      literal: true,
-      outputMode: "unknown",
-    }),
-    (error: unknown) => {
-      const result = argumentError(error);
-      assert.equal(result.issues.length, 1);
-      assert.equal(result.issues[0].field, "outputMode");
-      assert.match(result.issues[0].reason, /expected one of/);
-      assert.equal(result.issues[0].fix, undefined);
-      return true;
+test("out-of-choice value → reason lists values and fix explains each choice", async (t) => {
+  const cwd = process.cwd();
+  const cases = [
+    {
+      tool: makeEditOverride(cwd, DEFAULT_CONFIG),
+      field: "steps[0].action",
+      values: ["unknown", null, 42, {}],
+      args: (action: unknown) => ({
+        path: "unused.txt",
+        steps: [{ action, anchor: `1#${anchorHash}`, lines: ["valid"] }],
+      }),
+      choices: [
+        ["replace", "Replace the cited line(s)"],
+        ["delete", "Delete the cited line(s)"],
+        ["insert_after", "Insert lines after the anchor line"],
+        ["insert_before", "Insert lines before the anchor line"],
+        ["append", "Add lines at the end"],
+        ["prepend", "Add lines at the start"],
+      ],
     },
-  );
+    {
+      tool: makeWriteOverride(cwd),
+      field: "mode",
+      values: ["unknown"],
+      args: (mode: unknown) => ({ path: "unused.txt", content: "ok", mode }),
+      choices: [
+        ["create", "Fail if the target already exists."],
+        ["overwrite", "Fail if the target does not exist."],
+      ],
+    },
+    {
+      tool: makeGrepOverride(cwd, DEFAULT_CONFIG),
+      field: "outputMode",
+      values: ["unknown"],
+      args: (outputMode: unknown) => ({ pattern: "text", literal: true, outputMode }),
+      choices: [
+        ["content", "Matches and context", "anchors", "plain previews"],
+        ["files", "Paths of the files", "only paths"],
+        ["count", "Matching lines per file", "total", "only counts"],
+      ],
+    },
+  ] as const;
+  for (const scenario of cases) {
+    await t.test(`${scenario.tool.name}/${scenario.field}`, async () => {
+      for (const value of scenario.values) {
+        await assert.rejects(callTool(scenario.tool, scenario.args(value)), (error: unknown) => {
+          const { issues } = argumentError(error);
+          assert.equal(issues.length, 1, JSON.stringify(issues));
+          const issue = issues[0];
+          assert.equal(issue.field, scenario.field);
+          assert.equal(
+            issue.reason,
+            `expected one of: ${scenario.choices.map(([value]) => JSON.stringify(value)).join(", ")}`,
+          );
+          assert.ok(issue.fix, JSON.stringify(issues));
+          inOrder(
+            issue.fix,
+            scenario.choices.flatMap(([value, ...meaning]) => [JSON.stringify(value), ...meaning]),
+          );
+          return true;
+        });
+      }
+    });
+  }
 });
 
 const acceptedFields = (shape: SchemaNode): string =>

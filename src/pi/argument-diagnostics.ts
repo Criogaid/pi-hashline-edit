@@ -192,9 +192,9 @@ function combineIssues(issues: readonly ArgumentIssue[]): readonly ArgumentIssue
 
 /**
  * One issue per native error. Reasons that do not say how to correct the value
- * carry a fix derived from the declared schema: a missing field and a pattern
- * mismatch explain the field, and a field that is not allowed lists its
- * object's declared fields.
+ * carry a fix derived from the declared schema: a missing field, a pattern
+ * mismatch, and a value outside the field's choices explain the field, and a
+ * field that is not allowed lists its object's declared fields.
  */
 function aggregateErrors(
   errors: readonly TLocalizedValidationError[],
@@ -245,6 +245,7 @@ function aggregateErrors(
         add(
           fieldPath(error.instancePath, prepared),
           `expected one of: ${error.params.allowedValues.map((value) => JSON.stringify(value)).join(", ")}`,
+          fieldExplanation(parameters, pointerParts(error.instancePath)),
         );
         break;
       default:

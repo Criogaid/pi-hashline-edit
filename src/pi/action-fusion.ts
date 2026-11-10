@@ -65,7 +65,7 @@ function createThenRunSchema(tool: MutationToolName) {
   return Type.Optional(
     Type.Object(
       {
-        command: Type.String({ minLength: 1, pattern: "\\S", description: COMMAND_DESCRIPTION }),
+        command: Type.String({ pattern: "\\S", description: COMMAND_DESCRIPTION }),
         timeout: Type.Optional(
           Type.Number({
             exclusiveMinimum: 0,

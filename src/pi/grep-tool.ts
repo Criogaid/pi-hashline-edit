@@ -11,7 +11,7 @@ import { Type, type Static } from "typebox";
 import { Text } from "@earendil-works/pi-tui";
 import { renderOutputPreview, renderToolError, reportLines, splitReport } from "./render.ts";
 import { createAnchorFormatter } from "./anchor-format.ts";
-import { GREP_OUTPUT_MODES, grepOutput } from "./grep-output.ts";
+import { GREP_OUTPUT_MODES, grepOutput, type GrepOutputMode } from "./grep-output.ts";
 import { filterExplicitFilesByGlob, resolveSearchPaths } from "./grep-scope.ts";
 import { searchFiles } from "./grep-search.ts";
 import { toDisplayLines } from "./grep-render.ts";
@@ -32,6 +32,14 @@ import { createArgumentPreparer, type ReportArgumentIssue } from "./argument-val
 /** A list field: arrays only, because strict sampling cannot take a string-or-array union. */
 const nonEmptyStrings = (description: string) =>
   Type.Array(Type.String({ minLength: 1 }), { minItems: 1, description });
+
+/** What each output mode returns; argument diagnostics list these beside the values. */
+const OUTPUT_MODE_MEANING: Record<GrepOutputMode, string> = {
+  content:
+    "Default. Matches and context, with anchors for valid UTF-8 or plain previews otherwise.",
+  files: "Paths of the files with a match; use it when only paths are needed.",
+  count: "Matching lines per file and in total; use it when only counts are needed.",
+};
 
 /** Grep parameters; descriptions state the configured defaults. */
 function createGrepSchema({ defaultLimit, defaultContext }: HashlineEditConfig["grep"]) {
@@ -80,14 +88,11 @@ function createGrepSchema({ defaultLimit, defaultContext }: HashlineEditConfig["
       limit: Type.Optional(
         Type.Number({
           ...POSITIVE_SAFE_INTEGER,
-          description: `Maximum matching lines, across all files (default ${defaultLimit}).`,
+          description: `Maximum matching lines, across all files (default ${defaultLimit}). Every outputMode counts them the same way, so files and count stop at the same cutoff as content.`,
         }),
       ),
       outputMode: Type.Optional(
-        literalUnion(GREP_OUTPUT_MODES, undefined, {
-          description:
-            '"content" (default): matches/context with anchors for valid UTF-8 or plain previews otherwise; "files": paths; "count": matching lines per file and total. Use files or count when only paths or counts are needed. limit counts matching lines in every mode, so files and count stop at the same cutoff as content.',
-        }),
+        literalUnion(GREP_OUTPUT_MODES, (mode) => OUTPUT_MODE_MEANING[mode]),
       ),
     },
     { additionalProperties: false },
