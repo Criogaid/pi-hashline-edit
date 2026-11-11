@@ -274,11 +274,11 @@ const FACT_FIELDS = {
   ),
   outputLimit: modelFact(
     Type.String({ description: "The output byte budget that cut the result." }),
-    "Narrow the scope to see omitted output.",
+    "Remove context or narrow the scope to see omitted output.",
   ),
   linePreviewLimit: modelFact(
     Type.Integer({ description: "UTF-16 units kept in a cut line preview." }),
-    "Read the full line before rewriting it from a partial preview.",
+    "Inspect the full line with a tool that supports its encoding before rewriting a partial preview.",
   ),
   invalidUtf8: modelFact(
     Type.Array(Type.String(), {
@@ -489,7 +489,10 @@ export const OUTCOME_NEXT: readonly OutcomeRule[] = [
   ],
   ["nextOffset", "If you need more lines, set offset to nextOffset."],
   // Ahead of matchLimit: once the byte budget cuts the output, raising limit shows nothing more.
-  ["outputLimit", "Narrow path, glob, or pattern to see the omitted output."],
+  [
+    "outputLimit",
+    "Set context to 0; if it is already 0, narrow path, glob, or pattern to see the omitted output.",
+  ],
   ["matchLimit", "If you need more matches, raise limit to include rows after the last one shown."],
   [
     "literalPipe",
@@ -499,7 +502,10 @@ export const OUTCOME_NEXT: readonly OutcomeRule[] = [
     "scanLimit",
     "Narrow path or glob, or add text every match must contain, to search the remaining files.",
   ],
-  ["linePreviewLimit", "Read the full line before rewriting it from a partial preview."],
+  [
+    "linePreviewLimit",
+    "For paths listed in invalidUtf8, inspect the full line with bash; otherwise use read before rewriting a partial preview.",
+  ],
 ];
 
 /** The report envelope and facts, in output order; `next` is always last. */

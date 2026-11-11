@@ -358,6 +358,24 @@ test("success facts survive details and model serialization", () => {
   }
 });
 
+test("grep output byte limit → recovery removes context before narrowing the search", () => {
+  const result = reportResult({
+    tool: "grep",
+    outputLimit: formatByteSize(DEFAULT_OUTPUT_BUDGETS.grepBytes),
+  });
+  assert.match(reportOf(result, "grep")?.next ?? "", /context.*0/);
+});
+
+test("grep preview from invalid UTF-8 → recovery selects bash for the listed paths", () => {
+  const result = reportResult({
+    tool: "grep",
+    linePreviewLimit: DEFAULT_OUTPUT_BUDGETS.grepPreviewUnits,
+    invalidUtf8: ["invalid.txt"],
+  });
+  const next = reportOf(result, "grep")?.next ?? "";
+  assert.match(next, /invalidUtf8.*bash/);
+});
+
 test("match and scan limits → recovery prioritizes the match limit", () => {
   const next = OUTCOME_NEXT.find(([fact]) => fact === "matchLimit")?.[1];
   assert.ok(next);
