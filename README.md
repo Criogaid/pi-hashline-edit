@@ -22,7 +22,7 @@ Hash-anchored file editing for [Pi](https://github.com/earendil-works/pi-coding-
 pi install npm:@criogaid/pi-hashline-edit
 ```
 
-Requires Pi 0.99.1 or later. The extension works on local files; for remote or custom storage, set `hashlineEdit.enabled` to `false` and reload Pi to restore the built-in tools.
+Requires Pi 1.5.0 or later. The extension works on local files; for remote or custom storage, set `hashlineEdit.enabled` to `false` and reload Pi to restore the built-in tools.
 
 ## Quick start
 
@@ -82,6 +82,8 @@ Edit operations:
 One call takes at most [64 operations](src/pi/edit-tool.ts). Ranges in one call must not overlap, and each gap between lines takes at most one insertion. An insertion at the start of a replaced or deleted range goes before it.
 
 Every tool asks for constrained sampling (Pi's `constrainedSampling`, a strict JSON schema) where the provider supports it, so the model cannot emit fields or values the schema does not declare, or exceed edit's operation limit. Optional fields the call does not use are then written as `null`, including each edit operation's fields that its `action` does not take. For the same reason, grep's `pattern`, `path`, and `glob` take arrays only; on other providers Pi wraps a single string into an array.
+
+Pi owns argument coercion and acceptance; diagnostics do not change the submitted arguments. Supply operation arrays as declared. Pi drops optional `null` fields before wrapping singleton values into arrays: `replacements: [{ ..., flags: null }]` omits `flags`, while `replacements: { ..., flags: null }` converts it to the string `"null"` and fails flags validation.
 
 The model sees each tool's full parameter schema; the definitions live in the tool files under [`src/pi/`](src/pi/).
 

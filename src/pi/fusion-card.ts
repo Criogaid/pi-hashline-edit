@@ -9,6 +9,7 @@ import type {
   ExtensionAPI,
   ExtensionContext,
   ToolDefinition,
+  ToolRenderers,
 } from "@earendil-works/pi-coding-agent";
 import {
   createBashToolDefinition,
@@ -131,15 +132,16 @@ export function registerFusionCards(pi: ExtensionAPI) {
   });
   pi.on("session_tree", (_event, ctx) => restore(ctx));
 
-  pi.registerEntryRenderer<CommandCardData>(CARD_TYPE, function renderCard(entry, { expanded }):
+  pi.registerEntryRenderer<CommandCardData>(CARD_TYPE, function renderCard(entry, options):
     | Component
     | undefined {
+    const { expanded } = options;
     const initial = entry.data;
     if (!Value.Check(COMMAND_CARD_SCHEMA, initial)) return undefined;
     if (!tui) {
       // Pi may rebuild history before session_start supplies its UI context.
       let component: Component | undefined;
-      const ready = () => (component ??= tui ? renderCard(entry, { expanded }) : undefined);
+      const ready = () => (component ??= tui ? renderCard(entry, options) : undefined);
       return {
         render: (width) => ready()?.render(width) ?? [],
         invalidate: () => component?.invalidate(),
@@ -155,15 +157,16 @@ export function registerFusionCards(pi: ExtensionAPI) {
       let box = new Box(outputPadding, 1);
       let call: Component | undefined;
       let result: Component | undefined;
-      const renderers: Pick<typeof bash, "renderShell" | "renderCall" | "renderResult"> = {
+      const renderers: ToolRenderers = {
         renderShell: "self",
-        renderCall(args, theme, context) {
+        renderCall(_args, theme, context) {
           const padding = SettingsManager.inMemory(pi.getSettings()).getOutputPad();
           if (padding !== outputPadding) {
             outputPadding = padding;
             box = new Box(outputPadding, 1);
           }
           const value = current();
+          const args = { command: value.commandText, timeout: value.timing?.timeoutSeconds };
           const pending = commandPending(value);
           const interrupted = pending && !active.has(value.toolCallId);
           const status = interrupted ? "interrupted (final status unknown)" : value.command;
@@ -192,7 +195,7 @@ export function registerFusionCards(pi: ExtensionAPI) {
           statusText.setText(
             `${theme.fg("toolTitle", theme.bold("then_run"))} · ${theme.fg(color, status + countdown)}`,
           );
-          call = bash.renderCall!(args, theme, { ...context, lastComponent: call });
+          call = bash.renderCall!(args, theme, { ...context, args, lastComponent: call });
           box.clear();
           box.addChild(statusText);
           box.addChild(call);
@@ -205,6 +208,7 @@ export function registerFusionCards(pi: ExtensionAPI) {
           if (current().result) {
             result = bash.renderResult!(value, options, theme, {
               ...context,
+              args: { command: current().commandText, timeout: current().timing?.timeoutSeconds },
               lastComponent: result,
             });
             box.addChild(result);
