@@ -4,6 +4,57 @@ import { applyReplacements } from "./replace.ts";
 import type { Replacement } from "./replace-schema.ts";
 import { HashlineError } from "./errors.ts";
 
+test("replacement at the file start → retains the original BOM at byte zero", async (t) => {
+  const cases = [
+    {
+      name: "zero-width insertion",
+      source: "\uFEFFfoo\r\nbar\n",
+      find: "^",
+      replace: "X",
+      expected: "\uFEFFXfoo\r\nbar\n",
+    },
+    {
+      name: "whole-file replacement",
+      source: "\uFEFFfoo",
+      find: "^[\\s\\S]*$",
+      replace: "X",
+      expected: "\uFEFFX",
+    },
+    { name: "copied BOM", source: "\uFEFFfoo", find: "^.", replace: "$&X", expected: "\uFEFFXfoo" },
+    { name: "consumed BOM", source: "\uFEFFfoo", find: "^.", replace: "", expected: "\uFEFFfoo" },
+    {
+      name: "inserted body BOM",
+      source: "\uFEFFfoo",
+      find: "^",
+      replace: "\uFEFF",
+      expected: "\uFEFF\uFEFFfoo",
+    },
+    {
+      name: "capture copied into body",
+      source: "\uFEFFfoo",
+      find: "^(.*)",
+      replace: "X$1",
+      expected: "\uFEFFX\uFEFFfoo",
+    },
+    { name: "BOM-only file", source: "\uFEFF", find: "^", replace: "X", expected: "\uFEFFX" },
+    {
+      name: "body BOM",
+      source: "foo\uFEFFbar",
+      find: "^",
+      replace: "X",
+      expected: "Xfoo\uFEFFbar",
+    },
+  ];
+  for (const { name, source, find, replace, expected } of cases) {
+    await t.test(name, () => {
+      assert.deepEqual(applyReplacements(source, [{ literal: false, find, replace }]), {
+        text: expected,
+        count: 1,
+      });
+    });
+  }
+});
+
 test("replacement joins beside LF → preserve standalone CR content", async (t) => {
   const literal = (find: string, replace: string): Replacement => ({
     find,

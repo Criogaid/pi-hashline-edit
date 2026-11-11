@@ -88,11 +88,17 @@ export function applyReplacements(
       },
     });
   }
-  const parts: string[] = [];
-  let cursor = 0;
+  const bom = source.startsWith("\uFEFF") ? "\uFEFF" : "";
+  const parts: string[] = [bom];
+  let cursor = bom.length;
   for (const change of changes) {
-    parts.push(source.slice(cursor, change.start), change.text);
-    cursor = change.end;
+    // Keep the original header at byte zero; a copied leading BOM denotes that same header.
+    const text =
+      bom && change.start === 0 && change.end > 0 && change.text.startsWith(bom)
+        ? change.text.slice(1)
+        : change.text;
+    parts.push(source.slice(cursor, Math.max(bom.length, change.start)), text);
+    cursor = Math.max(bom.length, change.end);
   }
   parts.push(source.slice(cursor));
   return { text: joinTextFragments(parts), count: changes.length };

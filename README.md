@@ -66,6 +66,8 @@ Grep visits input paths in the order supplied and uses ripgrep's sorted director
 
 Grep matches the LF view with native JavaScript regexes. Without `multiline`, each physical line is searched separately; with it, the whole file is searched and every physical line touched by a match is returned. Context rows do not count toward `limit`. Content output re-reads matched files and omits any whose revision changed; `files` and `count` report the searched snapshot without a second read. Incomplete scans state their diagnostics or scan limit in the report.
 
+`replace` matches the same LF view, including a leading BOM. When rebuilding the file, it keeps the original BOM at byte zero, even when a match consumes it or inserts before it. A replacement that consumes the file header and starts with a copied BOM reuses that header; explicitly inserted or internal U+FEFF characters remain content. Use `write` to replace the complete byte representation, including the BOM.
+
 The grep card preserves file paths and count rows as returned. Only `content` mode formats match rows for display, hiding anchor hashes and folding shared indentation.
 
 An `edit` call puts its small locator first: `path`, `steps`, then optional `then_run`. Each step puts the operation and range before the replacement payload: `action`, `anchor`, optional `end`, then `lines`. This keeps the file and target range visible while arguments stream.
