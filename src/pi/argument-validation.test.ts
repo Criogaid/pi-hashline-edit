@@ -263,6 +263,46 @@ test("grep and replace flags → accept V8 modes and reject invalid flags before
   }
 });
 
+test("invalid regex pattern → explains literal recovery without changing the requested mode", async (t) => {
+  const cwd = await mkdtemp(join(tmpdir(), "hashline-regex-recovery-"));
+  t.after(() => rm(cwd, { recursive: true, force: true }));
+  const path = join(cwd, "missing.txt");
+  const cases = [
+    {
+      tool: makeGrepOverride(cwd, DEFAULT_CONFIG),
+      args: (find: string, literal: boolean) => ({ pattern: [find], literal }),
+      field: "pattern[0]",
+    },
+    {
+      tool: makeReplaceTool(cwd, DEFAULT_CONFIG),
+      args: (find: string, literal: boolean) => ({
+        replacements: [{ find, literal, replace: "updated" }],
+      }),
+      field: "replacements[0].find",
+    },
+  ];
+  for (const { tool, args, field } of cases) {
+    await t.test(tool.name, async () => {
+      const input = { path, ...args("call(", false) };
+      const original = structuredClone(input);
+      await assert.rejects(callTool(tool, input), (error: unknown) => {
+        const { issues } = argumentError(error);
+        assert.equal(issues.length, 1);
+        assert.equal(issues[0].field, field);
+        assert.match(issues[0].reason, /Invalid regular expression/);
+        assert.match(issues[0].fix ?? "", /literal.*true.*otherwise.*regex/);
+        return true;
+      });
+      assert.deepEqual(input, original);
+      for (const corrected of [args("call(", true), args("call\\(", false)]) {
+        const result = await callTool(tool, { path, ...corrected });
+        assert.equal(reportOf(result, tool.name)?.error, "PATH_NOT_FOUND");
+      }
+      await assert.rejects(readFile(path), { code: "ENOENT" });
+    });
+  }
+});
+
 const editFields = ["anchor", "end", "lines"] as const;
 type EditField = (typeof editFields)[number];
 const fieldValues = {

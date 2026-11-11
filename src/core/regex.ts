@@ -30,7 +30,7 @@ export function checkRegexArguments(
   flags: string | undefined,
   literal: boolean,
   patterns: readonly (readonly [field: string, value: unknown])[],
-  report: (field: string, reason: string) => void,
+  report: (field: string, reason: string, fix?: string) => void,
 ): void {
   try {
     buildRegex("", true, flags);
@@ -44,7 +44,11 @@ export function checkRegexArguments(
     try {
       buildRegex(value, false, flags);
     } catch (error) {
-      report(field, errorMessage(error));
+      report(
+        field,
+        errorMessage(error),
+        "For an exact-text match, set literal to true; otherwise correct the regex syntax.",
+      );
     }
   }
 }

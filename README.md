@@ -93,7 +93,7 @@ Argument and anchor validation failures leave the file untouched. The report nam
 
 A failure during or after publication states `NOT_PUBLISHED`, `PUBLISHED`, or `UNKNOWN`. Follow the report's `next` before retrying: an error after publication can leave the requested change on disk.
 
-Argument mistakes, including a reversed range, are reported per field, with what the field means and how to fix it, before any file is touched.
+Argument mistakes, including a reversed range, are reported per field, with what the field means and how to fix it, before any file is touched. A regex syntax error in `grep` or `replace` keeps V8's diagnostic and adds a `fix`: use `literal: true` for exact text, or correct the intended regex. The tool never switches modes automatically.
 
 ## Action Fusion
 
