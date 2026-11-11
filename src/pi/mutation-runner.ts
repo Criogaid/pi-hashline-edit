@@ -58,7 +58,7 @@ import type { OutputBudgets } from "./budgets.ts";
 import type { ToolEnvironment } from "./config.ts";
 import { STRICT_SAMPLING } from "./schema.ts";
 
-export type ActionFusionExecutor = ReturnType<typeof createActionFusionExecutor>;
+type ActionFusionExecutor = ReturnType<typeof createActionFusionExecutor>;
 
 /** A mutation tool's registration environment; fusion is undefined when Action Fusion is off. */
 export interface MutationToolEnvironment extends ToolEnvironment {
