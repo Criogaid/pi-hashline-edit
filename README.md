@@ -56,7 +56,7 @@ The extension replaces Pi's `read`, `grep`, `edit`, and `write`, and adds `repla
 | `grep` | Searches files and directories with JavaScript regex or literal text; returns anchored matches, file paths, or counts in traversal order; a limit keeps the first matches in that order. Directory searches respect ignore rules and skip `.git` and linked directories, even beneath a directory named in `path`; naming an ignored file or one of those directories itself searches it. |
 | `edit` | Replaces, inserts, or deletes whole lines by anchor. All operations in one call apply to the same snapshot, or none apply. |
 | `replace` | Applies literal or regex substitutions across one file. Every rule must match, and overlapping matches reject the batch. |
-| `write` | Creates a file (`mode: "create"`) or overwrites one (`mode: "overwrite"`), using the content exactly as given. |
+| `write` | Creates a file (`mode: "create"`) or overwrites one (`mode: "overwrite"`), using the content exactly as given. Missing parent directories are created. |
 
 Grep visits input paths in the order supplied and uses ripgrep's sorted directory traversal within each root. Repeated candidate paths are searched once, at their first occurrence. This is not global lexicographic sorting of full paths.
 
@@ -150,7 +150,7 @@ Read reports `nextOffset` when its default line limit or byte budget cuts a wind
 - Revision checks catch most concurrent changes, but there is no cross-process lock or multi-file transaction.
 - Overwrites keep symlinks pointing at their target; FIFOs, other non-regular files, and files with multiple hard links are not overwritten.
 - Grep's [search limits](src/pi/grep-search.ts) allow multiline files up to 64 MiB and individual physical lines up to 64 × 1024² UTF-16 code units. Matching runs in at most four workers, each with a 512 MiB V8 old-generation heap limit; individual regex evaluations use the configured timeout.
-- When discovery falls back to every file in scope, it stops queuing files once their combined sizes reach the [256 MiB whole-scope budget](src/pi/grep-candidates.ts); the last queued file can cross that threshold. The report states when this prevents another file from being scanned. Ripgrep protocol records have a [16 MiB limit](src/pi/rg-process.ts). Unsupported or over-limit candidate analysis widens discovery; JavaScript still decides the matches.
+- When discovery falls back to every file in scope, it stops queuing files once their combined sizes reach the [256 MiB whole-scope budget](src/pi/grep-candidates.ts); the last queued file can cross that threshold. The report states when this prevents another file from being scanned. Ripgrep protocol records have a [16 MiB limit](src/pi/rg-process.ts), and its stderr is kept to 64 KiB, beginning and end. Unsupported or over-limit candidate analysis widens discovery; JavaScript still decides the matches.
 
 ## Development
 
