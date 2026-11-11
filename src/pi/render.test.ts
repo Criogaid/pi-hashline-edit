@@ -358,6 +358,33 @@ test("Unicode line separators in grep paths → parses the full file header", as
   }
 });
 
+test("grep files mode with header-like and anchor-like names → preserves complete paths", () => {
+  initTheme("dark");
+  const tool = makeGrepOverride(process.cwd(), DEFAULT_CONFIG);
+  const paths = ["a · 1 match", "1#ABCD│name"];
+  const rendered = tool.renderResult(
+    { content: [{ type: "text", text: paths.join("\n") }], details: undefined },
+    { isPartial: false, expanded: true },
+    theme,
+    {
+      args: { pattern: ["needle"], literal: true, outputMode: "files" },
+      toolCallId: "test",
+      invalidate() {},
+      lastComponent: undefined,
+      state: {},
+      cwd: process.cwd(),
+      executionStarted: true,
+      argsComplete: true,
+      isPartial: false,
+      expanded: true,
+      showImages: false,
+      isError: false,
+    },
+  );
+  const lines = rendered.render(120).map((line) => stripVTControlCharacters(line).trimEnd());
+  for (const path of paths) assert.ok(lines.includes(path), JSON.stringify(lines));
+});
+
 test("grep renders anchored and plain groups with shared width and folded indentation", () => {
   initTheme("dark");
   const raw = [
