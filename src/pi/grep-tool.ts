@@ -108,14 +108,11 @@ function streamedList(value: string | readonly string[] | null | undefined): rea
 /** Validate JavaScript syntax once; the search never rejects a pattern V8 accepts. */
 function checkGrepArguments(args: unknown, report: ReportArgumentIssue): void {
   const { pattern, literal, flags } = (args ?? {}) as Record<string, unknown>;
-  if (
-    !Array.isArray(pattern) ||
-    typeof literal !== "boolean" ||
-    (flags !== undefined && typeof flags !== "string")
-  )
-    return;
-  const fields = pattern.map((value, index) => [`pattern[${index}]`, value] as const);
-  checkRegexArguments("flags", flags ?? DEFAULT_GREP_FLAGS, literal, fields, report);
+  if (flags !== undefined && typeof flags !== "string") return;
+  const fields = Array.isArray(pattern)
+    ? pattern.map((value, index) => [`pattern[${index}]`, value] as const)
+    : [];
+  checkRegexArguments("flags", flags ?? DEFAULT_GREP_FLAGS, literal !== false, fields, report);
 }
 
 /** Build the grep override (a ToolDefinition fragment for registerTool). */

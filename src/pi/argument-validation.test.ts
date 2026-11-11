@@ -26,6 +26,29 @@ const {
   makeWriteOverride,
 } = await import("./tool-factories.testing.ts");
 
+test("grep has invalid flags alongside invalid literal or pattern → reports independent fields", async (t) => {
+  const tool = makeGrepOverride(process.cwd(), DEFAULT_CONFIG);
+  for (const args of [
+    { pattern: ["text"], flags: "x" },
+    { pattern: ["text"], literal: {}, flags: "x" },
+    { pattern: {}, literal: true, flags: "x" },
+  ]) {
+    await t.test(JSON.stringify(args), async () => {
+      await assert.rejects(callTool(tool, args), (error: unknown) => {
+        const fields = argumentError(error).issues.map((issue) => issue.field);
+        assert.ok(fields.includes("flags"), JSON.stringify(fields));
+        assert.ok(
+          fields.some((field) =>
+            Array.isArray(args.pattern) ? field === "literal" : field.startsWith("pattern"),
+          ),
+          JSON.stringify(fields),
+        );
+        return true;
+      });
+    });
+  }
+});
+
 const invalidCommand = { command: "", timeout: 0 };
 const anchorHash = "A".repeat(DEFAULT_CONFIG.hashLen);
 const cases = [
