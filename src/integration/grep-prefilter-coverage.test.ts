@@ -41,6 +41,7 @@ const syntaxCases = [
 
 interface Coverage {
   queries: number;
+  rejected: number;
   fullScan: number;
   withHits: number;
   nativeFiles: number;
@@ -48,7 +49,7 @@ interface Coverage {
 }
 
 function emptyCoverage(): Coverage {
-  return { queries: 0, fullScan: 0, withHits: 0, nativeFiles: 0, candidateFiles: 0 };
+  return { queries: 0, rejected: 0, fullScan: 0, withHits: 0, nativeFiles: 0, candidateFiles: 0 };
 }
 
 interface CandidateCase {
@@ -104,6 +105,7 @@ test("Cartesian prefilter coverage × composition × flags × bytes → real rg 
           const query: GrepQuery = { patterns: [...patterns], flags, multiline, literal: false };
           if (!acceptsNative(query)) {
             rejected++;
+            for (const stats of composition === "bare" ? [total, row] : [total]) stats.rejected++;
             continue;
           }
           const prefilter = extractPrefilter(query);
@@ -159,14 +161,19 @@ test("Cartesian prefilter coverage × composition × flags × bytes → real rg 
     }),
   );
   for (const worker of workers) if (worker.status === "rejected") throw worker.reason;
+  const unsupported = [...syntax]
+    .filter(([, stats]) => stats.queries === 0)
+    .map(([label]) => label);
   const unwitnessed = [...syntax]
-    .filter(([, stats]) => stats.withHits === 0)
+    .filter(([, stats]) => stats.queries > 0 && stats.withHits === 0)
     .map(([label]) => label);
   t.diagnostic(
     JSON.stringify({
       files: inputs.length,
       syntaxCases: syntaxCases.length,
       rejected,
+      unsupported,
+      supportedSyntaxCases: syntax.size - unsupported.length,
       candidateExpressions: cases.length,
       checkedFiles,
       unwitnessed,
@@ -177,6 +184,10 @@ test("Cartesian prefilter coverage × composition × flags × bytes → real rg 
       JSON.stringify({ composition, ...stats, possibleFiles: stats.queries * inputs.length }),
     );
   for (const [label, stats] of syntax) t.diagnostic(JSON.stringify({ syntax: label, ...stats }));
+  for (const stats of syntax.values())
+    assert.equal(stats.queries + stats.rejected, MATRIX_FLAGS.length * 2);
+  for (const stats of compositions.values())
+    assert.equal(stats.queries + stats.rejected, syntaxCases.length * MATRIX_FLAGS.length * 2);
   // A NUL-only pattern cannot match grep's searchable (non-NUL) file domain.
   assert.deepEqual(unwitnessed, ["NUL"]);
   const requiredLiteral = compositions.get("required literal");

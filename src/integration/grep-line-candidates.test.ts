@@ -127,7 +127,7 @@ const patterns = [
   "(?m:b$)",
 ];
 const processTimeoutMs = 10_000;
-const matrixTimeoutMs = 180_000;
+const matrixTimeoutMs = 5 * 60_000;
 const candidateLineLimit = 65_536;
 
 const sortedRows = (files: readonly Pick<GrepFileMatch, "filePath" | "rows">[]) =>
