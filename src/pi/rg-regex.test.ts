@@ -49,6 +49,19 @@ test("capture disables i inside a caseless reference → retain the reference's 
   );
 });
 
+test("caseless backreference repeats a v string-class capture → retains native case variants", () => {
+  const pattern = "([\\q{a}])\\1";
+  assert.equal(new RegExp(pattern, "iv").test("aA"), true);
+  const candidates = lineCandidatePatterns({
+    patterns: [pattern],
+    literal: false,
+    flags: "iv",
+    multiline: false,
+  });
+  // This ASCII-only translation uses syntax shared by rg and JavaScript.
+  assert.ok(candidates?.some((candidate) => new RegExp(candidate).test("aA")));
+});
+
 test("deeply nested pattern → line candidates retain the native match", () => {
   for (const depth of [50, 200, 500, 1_000, 2_000, 4_000]) {
     const pattern = `${"(?:".repeat(depth)}A${")".repeat(depth)}`;

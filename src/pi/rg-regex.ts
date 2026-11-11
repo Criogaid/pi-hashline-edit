@@ -121,8 +121,8 @@ function nativeFlags(node: AST.Node, ctx: Context): string {
 
 function scalarRanges(node: CharacterNode, ctx: Context): Ranges {
   const ranges = nativeCharacterRanges(node.raw, nativeFlags(node, ctx));
-  // Case comparison at a reference can widen its capture's original character set.
-  return ctx.repeated && ctx.ignoreCase && !ignoreCaseAt(node, ctx) ? folded(ranges, ctx) : ranges;
+  // Reference comparison can widen even a capture whose native class already uses i.
+  return ctx.repeated ? folded(ranges, ctx) : ranges;
 }
 
 const choice = (patterns: readonly string[]): string =>
