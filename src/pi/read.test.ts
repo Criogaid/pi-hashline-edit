@@ -112,8 +112,16 @@ test("file URLs escape special filenames → text and delegated reads open the e
           assert.ok(result.content.some((block) => block.type === "image"));
         } else {
           const text = result.content.find((block) => block.type === "text")?.text;
-          assert.ok(text?.includes(native ? "first\0" : "│first"));
-          assert.ok(text?.includes("second"));
+          assert.ok(text);
+          assert.ok(text.includes(native ? "first\0" : "│first"));
+          assert.ok(text.includes("second"));
+          if (!native) {
+            const header = text.split("\n")[0];
+            const returnedPath = header.slice(0, header.lastIndexOf(" · "));
+            const reread = await callTool(tool, { path: returnedPath });
+            assert.equal(reread.isError, undefined);
+            assert.deepEqual(reread.content, result.content);
+          }
         }
         assert.deepEqual(await readFile(path), bytes);
       });
