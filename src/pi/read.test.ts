@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import { mkdir, mkdtemp, rm, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { initTheme } from "@earendil-works/pi-coding-agent";
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import { validateToolArguments } from "@earendil-works/pi-ai";
@@ -87,6 +88,38 @@ test("read execute: Pi-supported images without NUL bypass text decoding", async
       assert.deepEqual(await readFile(join(dir, name)), bytes);
     }
   }));
+
+test("file URLs escape special filenames → text and delegated reads open the exact file", async (t) => {
+  await withDir(async (dir) => {
+    const tool = makeReadOverride(dir, DEFAULT_CONFIG);
+    const cases = [
+      { name: "text.txt", bytes: Buffer.from("first\nsecond\n"), native: false },
+      { name: "binary.bin", bytes: Buffer.from("first\0\nsecond\n"), native: true },
+      {
+        name: "image.gif",
+        bytes: Buffer.from("R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7", "base64"),
+        native: true,
+      },
+    ];
+    for (const { name, bytes, native } of cases) {
+      await t.test(name, async () => {
+        const path = join(dir, `space\u202Fname #% ${name}`);
+        await writeFile(path, bytes);
+        const result = await callTool(tool, { path: pathToFileURL(path).href });
+        assert.equal(result.isError, undefined);
+        assert.equal(result.details?.nativeRead === true, native);
+        if (name === "image.gif") {
+          assert.ok(result.content.some((block) => block.type === "image"));
+        } else {
+          const text = result.content.find((block) => block.type === "text")?.text;
+          assert.ok(text?.includes(native ? "first\0" : "│first"));
+          assert.ok(text?.includes("second"));
+        }
+        assert.deepEqual(await readFile(path), bytes);
+      });
+    }
+  });
+});
 
 test("read execute: a missing final newline is stated in the header", async () => {
   await withDir(async (dir) => {

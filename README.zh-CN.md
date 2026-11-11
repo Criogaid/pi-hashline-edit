@@ -58,6 +58,10 @@ greet.ts · 3 lines
 | `replace` | 在单个文件内批量执行字面或正则替换。每条规则都必须有匹配，匹配区域重叠时整批拒绝。 |
 | `write` | 新建文件（`mode: "create"`）或覆盖文件（`mode: "overwrite"`），内容原样写入，缺失的父目录会一并创建。 |
 
+文件路径支持相对路径、绝对路径、`~`、可选的前导 `@` 和 `file://` URL。Windows 还支持 `/c/work/file.txt`、`/mnt/c/work/file.txt`、`/cygdrive/c/work/file.txt` 等 shell 盘符路径。相对路径以工作区目录为基准解析。
+
+路径输入会把 U+202F 等部分 Unicode 空格归一化为普通空格。要精确读取文件名中含有 Unicode 空格的文件，请传入经过百分号编码的文件 URL，例如 `file:///home/me/space%E2%80%AFname.txt` 对应含有 U+202F 的文件名。`read` 和 `grep` 返回的路径可以直接传回工具；请保留返回的写法，包括 URL 转义。`read` 将图片和含 NUL 字节的文件交给 Pi 时，也使用相同的路径语法。
+
 Grep 按传入顺序访问各个搜索路径，在每个根路径内采用 ripgrep 的有序目录遍历。重复候选路径只在第一次出现时搜索。这不是对所有文件完整路径做全局字典序排序。
 
 Grep 用原生 JavaScript 正则匹配 LF 视图。不设 `multiline` 时逐物理行搜索；设为 true 时搜索整个文件，返回匹配涉及的每一物理行。上下文行不计入 `limit`。content 输出会重读匹配文件，略过版本已变的文件；`files` 和 `count` 直接报告搜索时的快照，不做第二次读取。扫描不完整时，报告会给出诊断或扫描上限。
