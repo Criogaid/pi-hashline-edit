@@ -11,7 +11,7 @@
 - `docs/` exists only on the maintainer's machine and is git-ignored. `docs/README.md` indexes the research notes there (written in Chinese); `docs/archive/` holds retired material.
 - When changing tool parameters, user-visible behavior, or configuration, check the matching contract in `README.md` (tool parameters, output budgets, recovery semantics, publication states).
 - When changing Pi API use, lifecycle, or TUI integration, read the documentation and type declarations of the installed Pi version.
-- The runtime `typebox` comes from Pi's extension loader (a peer dependency). The `@earendil-works/*` devDependencies and `typebox` are pinned exactly: the Pi packages to one shared version, `typebox` to the version `@earendil-works/pi-coding-agent` depends on. Upgrade them together.
+- The runtime `typebox` comes from Pi's extension loader (a peer dependency). The `@earendil-works/*` devDependencies and `typebox` are pinned exactly: the Pi packages to one shared version, `typebox` to the version `@earendil-works/pi-coding-agent` depends on. The runtime dependency `@earendil-works/pi-schema` is pinned to that same Pi version, and the compile options in `src/pi/argument-validation.ts` match those of `validateToolArguments` in the installed `@earendil-works/pi-ai`. Upgrade them together.
 - For releases, check `.github/workflows/publish.yml` and `package.json`.
 
 ## Behavior contracts
