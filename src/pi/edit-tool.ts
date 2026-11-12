@@ -108,7 +108,7 @@ function buildEditSchema(hashLen: number) {
     },
     {
       additionalProperties: false,
-      description: "One operation. Omit, or set to null, each field its action does not take.",
+      description: "One step. Omit, or set to null, each field its action does not take.",
     },
   );
   return Type.Object(
@@ -117,7 +117,7 @@ function buildEditSchema(hashLen: number) {
       steps: Type.Array(editOpSchema, {
         minItems: 1,
         maxItems: MAX_EDIT_OPS,
-        description: `Operations on one snapshot; ranges must not overlap. Each gap between lines takes at most one insertion; insert_after N and insert_before N+1 target the same gap, so put all new lines for a gap in one operation. An insertion at the start of a replaced or deleted range goes before it. Anchors are LINE#HASH with exactly ${hashLen} hash characters. Copy each anchor from read, grep, or edit failure diagnostics; never write a hash you have not seen there. Shell output such as sed, head, or cat has no anchors, so read or grep those lines first.`,
+        description: `Steps applied to one snapshot; ranges must not overlap. Each gap between lines takes at most one insertion; insert_after N and insert_before N+1 target the same gap, so put all new lines for a gap in one step. An insertion at the start of a replaced or deleted range goes before it. Anchors are LINE#HASH with exactly ${hashLen} hash characters. Copy each anchor from read, grep, or edit failure diagnostics; never write a hash you have not seen there. Shell output such as sed, head, or cat has no anchors, so read or grep those lines first.`,
       }),
     },
     { additionalProperties: false },
