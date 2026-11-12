@@ -71,6 +71,7 @@ Grep 用原生 JavaScript 正则匹配 LF 视图。不设 `multiline` 时逐物�
 grep 卡片原样显示返回的文件路径和计数行。只有 `content` 模式会格式化匹配行，隐藏锚点哈希并折叠共有缩进。
 
 `edit` 调用先给出定位信息：`path`、`steps`，再是可选的 `then_run`。每个操作先给出动作和范围，再给出替换内容：`action`、`anchor`、可选的 `end`，最后是 `lines`。参数流式输出时，TUI 可以先显示文件和目标范围。
+
 `edit` 的操作：
 
 | `action` | 效果 |

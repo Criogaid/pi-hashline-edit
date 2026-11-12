@@ -71,6 +71,7 @@ Grep matches the LF view with native JavaScript regexes. Without `multiline`, ea
 The grep card preserves file paths and count rows as returned. Only `content` mode formats match rows for display, hiding anchor hashes and folding shared indentation.
 
 An `edit` call puts its small locator first: `path`, `steps`, then optional `then_run`. Each step puts the operation and range before the replacement payload: `action`, `anchor`, optional `end`, then `lines`. This keeps the file and target range visible while arguments stream.
+
 Edit operations:
 
 | `action` | Effect |
