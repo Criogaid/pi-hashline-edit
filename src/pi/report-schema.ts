@@ -391,7 +391,7 @@ export const ERROR_DEFINITIONS = {
   OVERLAPPING_EDITS: {
     facts: facts(["conflict"]),
     next: {
-      default: "Merge them into one edit per range or position.",
+      default: "Merge them into one step per range or position.",
     },
   },
   NO_MATCH: {

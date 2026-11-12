@@ -320,7 +320,7 @@ test("overlapping edits → ordered conflict and shared recovery", () => {
         assert.deepEqual(report.conflict, ["steps[0]", "steps[2]"]);
         assert.equal(report.message, error.message);
         assert.equal(report.publication, "NOT_PUBLISHED");
-        assert.match(report.next ?? "", /one edit per range or position/);
+        assert.match(report.next ?? "", /one step per range or position/);
         return true;
       },
     );

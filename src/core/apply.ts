@@ -210,7 +210,7 @@ export function applyEdits(
       current.lo === current.hi && previous.lo === current.lo && previous.hi === current.hi;
     throw new HashlineError(
       "OVERLAPPING_EDITS",
-      repeatedInsertion ? "Two edits insert at one position." : "Two edits overlap.",
+      repeatedInsertion ? "Two steps insert at one position." : "Two steps overlap.",
       {
         // The first conflicting pair found, ascending.
         facts: {
