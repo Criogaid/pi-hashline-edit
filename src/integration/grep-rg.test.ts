@@ -533,6 +533,49 @@ test("directory traversal with caller globs → excludes .git while an explicit 
   }
 });
 
+test("case-variant candidate paths → deduplicate aliases while retaining distinct files and later matches", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "hl-grep-case-dedup-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const first = join(directory, "MiXeD.txt");
+  const variant = join(directory, "mixed.txt");
+  const later = join(directory, "later.txt");
+  await writeFile(first, "needle\n");
+  await writeFile(later, "needle\n");
+  let distinct = true;
+  try {
+    await writeFile(variant, "needle\n", { flag: "wx" });
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "EEXIST") distinct = false;
+    else throw error;
+  }
+  const expected = distinct
+    ? "MiXeD.txt: 1\nmixed.txt: 1\nlater.txt: 1"
+    : "MiXeD.txt: 1\nlater.txt: 1";
+  const limit = distinct ? 3 : 2;
+  const tool = makeGrepOverride(directory, DEFAULT_CONFIG);
+  for (const [pattern, multiline] of [
+    ["needle", false],
+    ["needle", true],
+    [".", true],
+  ] as const) {
+    await t.test(`${pattern}, multiline=${multiline}`, async () => {
+      const result = await callTool(tool, {
+        path: [first, variant, later],
+        pattern: [pattern],
+        literal: false,
+        multiline,
+        outputMode: "count",
+        limit,
+      });
+      assert.equal(result.isError, undefined);
+      assert.equal(result.content[0].type, "text");
+      assert.equal(result.content[0].text.split("\n{\n")[0].replaceAll("\\", "/"), expected);
+      assert.equal(grepCounts(result).matches, limit);
+      assert.equal(grepCounts(result).files, limit);
+    });
+  }
+});
+
 test("explicit file with different case and a glob → admits the same file on a case-insensitive filesystem", async (t) => {
   const directory = await mkdtemp(join(tmpdir(), "hl-grep-case-admission-"));
   t.after(() => rm(directory, { recursive: true, force: true }));

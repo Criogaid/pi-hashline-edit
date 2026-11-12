@@ -55,11 +55,11 @@ export async function resolveSearchPaths(cwd: string, path: readonly string[] | 
 }
 
 /** Groups spellings that a case-insensitive filesystem may treat as one file. */
-const foldedKey = (path: string): string => resolve(path).toLowerCase();
+export const foldedPathKey = (path: string): string => resolve(path).toLowerCase();
 
-/** Whether rg listed the named file, possibly under its on-disk case spelling. */
-async function isListed(path: string, listed: ReadonlyMap<string, readonly string[]>) {
-  const spellings = listed.get(foldedKey(path)) ?? [];
+/** Whether the listed spellings include the same file, without folding distinct files together. */
+export async function isListedFile(path: string, listed: ReadonlyMap<string, readonly string[]>) {
+  const spellings = listed.get(foldedPathKey(path)) ?? [];
   const absolute = resolve(path);
   if (spellings.some((spelling) => resolve(spelling) === absolute)) return true;
   if (!spellings.length) return false;
@@ -103,12 +103,12 @@ export async function filterExplicitFilesByGlob(
     ...parents,
   ];
   const listed = await runRgPaths(args, signal, async (path) => {
-    const key = foldedKey(path);
+    const key = foldedPathKey(path);
     allowed.set(key, [...(allowed.get(key) ?? []), path]);
     return true;
   });
   const admitted = new Set<string>();
-  for (const { path } of explicitFiles) if (await isListed(path, allowed)) admitted.add(path);
+  for (const { path } of explicitFiles) if (await isListedFile(path, allowed)) admitted.add(path);
   // Listing diagnostics about sibling entries matter only when they may explain an exclusion.
   const diagnostic = admitted.size < explicitFiles.length ? searchDiagnostic(listed) : undefined;
   return {
