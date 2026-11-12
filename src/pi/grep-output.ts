@@ -14,7 +14,7 @@ import { rereadMatches, type LineCollector } from "./grep-reread.ts";
 import { formatByteSize, type OutputBudgets } from "./budgets.ts";
 import { HashlineError } from "../core/errors.ts";
 import { serializePath } from "./path.ts";
-import type { Report, SuccessFacts } from "./report-schema.ts";
+import type { OutcomeVariant, Report, SuccessFacts } from "./report-schema.ts";
 
 /** How grep presents matches; the tool's schema offers these and this module formats each. */
 export const GREP_OUTPUT_MODES = ["content", "files", "count"] as const;
@@ -170,6 +170,7 @@ interface AssembleGrepOutputOptions {
   readonly cwd: string;
   readonly warnings: readonly SearchWarning[];
   readonly outputMode: GrepOutputMode;
+  readonly context: number;
   readonly matchLimitReached: boolean;
   readonly effectiveLimit: number;
   readonly searchFacts: SearchFacts;
@@ -180,12 +181,14 @@ interface AssembleGrepOutputOptions {
 function assembleGrepOutput(options: AssembleGrepOutputOptions): {
   payload: string;
   facts: SuccessFacts<"grep">;
+  next?: OutcomeVariant;
 } {
   const {
     formatted,
     cwd,
     warnings,
     outputMode,
+    context,
     matchLimitReached,
     effectiveLimit,
     searchFacts,
@@ -229,6 +232,8 @@ function assembleGrepOutput(options: AssembleGrepOutputOptions): {
       invalidUtf8: invalidUtf8.length ? invalidUtf8 : undefined,
       diagnostics: warnings.length ? searchDiagnostics(warnings, cwd, budget) : undefined,
     },
+    // Only content mode with a nonzero context spends the byte budget on context rows.
+    next: outputMode === "content" && context > 0 ? "contextRows" : undefined,
   };
 }
 
@@ -245,8 +250,9 @@ export async function grepOutput(
     /** A literal pattern contains `|`, which matches only that character. */
     readonly literalPipe: boolean;
   },
-): Promise<{ payload?: string; facts: SuccessFacts<"grep"> }> {
-  const { cwd, search, warnings, outputMode, effectiveLimit, literalPipe, budget } = options;
+): Promise<{ payload?: string; facts: SuccessFacts<"grep">; next?: OutcomeVariant }> {
+  const { cwd, search, warnings, outputMode, context, effectiveLimit, literalPipe, budget } =
+    options;
   const searchFacts: SearchFacts = {
     scanLimit: search.scanLimitReached ? formatByteSize(MAX_UNNARROWED_SCAN_BYTES) : undefined,
   };
@@ -267,6 +273,7 @@ export async function grepOutput(
     cwd,
     warnings: [...warnings, ...rereadWarnings],
     outputMode,
+    context,
     matchLimitReached: search.matchLimitReached,
     effectiveLimit,
     searchFacts,

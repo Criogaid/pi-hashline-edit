@@ -327,6 +327,41 @@ test("grep payload blocks → only a single complete content or count block omit
     }
   }));
 
+test("grep output byte limit → recovery follows output mode and effective context before match limit", async () =>
+  withDir(async (dir) => {
+    const paths = Array.from({ length: 8 }, (_, index) => join(dir, `file-${index}.txt`));
+    await Promise.all(
+      paths.map((path) => writeFile(path, "before\nneedle\nafter\nneedle\nafter\nneedle\nafter\n")),
+    );
+    const budget = outputBudgetsFor(32);
+    const config = {
+      ...DEFAULT_CONFIG,
+      grep: { ...DEFAULT_CONFIG.grep, defaultContext: 2 },
+    };
+    for (const [outputMode, context, limit, expected] of [
+      ["content", 2, 1000, "Set context to 0 to see more of the omitted matches."],
+      ["content", undefined, 1000, "Set context to 0 to see more of the omitted matches."],
+      ["content", 0, 1000, "Narrow path, glob, or pattern to see the omitted output."],
+      ["files", undefined, 1000, "Narrow path, glob, or pattern to see the omitted output."],
+      ["count", undefined, 1000, "Narrow path, glob, or pattern to see the omitted output."],
+      ["content", 2, 12, "Set context to 0 to see more of the omitted matches."],
+      ["content", 0, 12, "Narrow path, glob, or pattern to see the omitted output."],
+    ] as const) {
+      const { backend } = fakeBackend({ paths });
+      const result = await callTool(
+        makeMockGrep(dir, config, backend, () => budget),
+        { path: dir, pattern: ["needle"], literal: true, outputMode, context, limit },
+      );
+      const scenario = JSON.stringify({ outputMode, context, limit });
+      assert.equal(result.isError, undefined, scenario);
+      const report = reportOf(result, "grep");
+      assert.ok(report, scenario);
+      assert.equal(report.outputLimit, formatByteSize(budget.grepBytes), scenario);
+      assert.equal(report.matchLimit, limit === 12 ? limit : undefined, scenario);
+      assert.equal(report.next, expected, scenario);
+    }
+  }));
+
 test("grep output truncates preview rows → reports only displayed preview facts", async () =>
   withDir(async (dir) => {
     const paths = [join(dir, "a.txt"), join(dir, "z.txt")];

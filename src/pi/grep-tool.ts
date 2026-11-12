@@ -212,7 +212,7 @@ export function makeGrepOverride({ cwd, config, budgets }: ToolEnvironment) {
           timeoutMs: config.grep.regexTimeoutMs,
           signal,
         });
-        const { payload, facts } = await grepOutput({
+        const { payload, facts, next } = await grepOutput({
           cwd,
           search,
           outputMode,
@@ -228,6 +228,8 @@ export function makeGrepOverride({ cwd, config, budgets }: ToolEnvironment) {
         return reportResult(
           { tool: "grep" as const, path: params.path, ...facts },
           payload === undefined ? [] : [{ type: "text" as const, text: payload }],
+          undefined,
+          next,
         );
       });
     },

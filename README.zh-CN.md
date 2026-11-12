@@ -154,7 +154,7 @@ grep 卡片原样显示返回的文件路径和计数行。只有 `content` 模�
 
 Read 因默认行数或字节预算截断窗口时会报告 `nextOffset`；只有调用方指定的 `limit` 生效时不额外报告 `nextOffset`。首行放不下时报告 `lineTooLong`，其值为字节上限。Grep 分别报告载荷和行预览的截断，非法 UTF-8 的普通预览不带编辑锚点。
 
-grep 载荷被截断时，先用 `context: 0` 重试，再进一步缩小搜索范围。依据部分预览重写前需检查完整行：`invalidUtf8` 列出的路径使用 Bash，有效 UTF-8 使用 `read`。
+grep 载荷被截断时，如果本次调用返回了上下文行，报告会提示用 `context: 0` 重试，否则提示缩小搜索范围。依据部分预览重写前需检查完整行：`invalidUtf8` 列出的路径使用 Bash，有效 UTF-8 使用 `read`。
 
 ## 限制
 

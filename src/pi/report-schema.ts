@@ -464,10 +464,24 @@ export const PUBLICATION_NEXT = {
     "The change may or may not be saved. Read the file, and repeat the change only if it is missing.",
 } as const satisfies Record<Exclude<PublicationStatus, "NOT_PUBLISHED">, string>;
 
+/** The byte budget cut a grep payload: context rows go first, and without them only a narrower search helps. */
+const OUTPUT_LIMIT_NEXT = {
+  default: "Narrow path, glob, or pattern to see the omitted output.",
+  contextRows: "Set context to 0 to see more of the omitted matches.",
+} as const;
+
+/** Recovery alternatives the producing layer may select for a successful result. */
+export type OutcomeVariant = Exclude<keyof typeof OUTPUT_LIMIT_NEXT, "default">;
+
+/** One recovery, or a default with the named alternatives its producer may select. */
+type OutcomeNext =
+  | string
+  | ({ readonly default: string } & Partial<Record<OutcomeVariant, string>>);
+
 /** One fact's recovery; `except` is a value of that fact which needs none. */
 type OutcomeRule =
   | {
-      [F in FactName]: readonly [fact: F, next: string, except?: Static<FactSchema<F>>];
+      [F in FactName]: readonly [fact: F, next: OutcomeNext, except?: Static<FactSchema<F>>];
     }[FactName]
   | readonly [fact: "publication", next: string, except?: PublicationStatus];
 
@@ -489,10 +503,7 @@ export const OUTCOME_NEXT: readonly OutcomeRule[] = [
   ],
   ["nextOffset", "If you need more lines, set offset to nextOffset."],
   // Ahead of matchLimit: once the byte budget cuts the output, raising limit shows nothing more.
-  [
-    "outputLimit",
-    "Set context to 0; if it is already 0, narrow path, glob, or pattern to see the omitted output.",
-  ],
+  ["outputLimit", OUTPUT_LIMIT_NEXT],
   ["matchLimit", "If you need more matches, raise limit to include rows after the last one shown."],
   [
     "literalPipe",

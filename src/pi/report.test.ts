@@ -358,14 +358,6 @@ test("success facts survive details and model serialization", () => {
   }
 });
 
-test("grep output byte limit → recovery removes context before narrowing the search", () => {
-  const result = reportResult({
-    tool: "grep",
-    outputLimit: formatByteSize(DEFAULT_OUTPUT_BUDGETS.grepBytes),
-  });
-  assert.match(reportOf(result, "grep")?.next ?? "", /context.*0/);
-});
-
 test("grep preview from invalid UTF-8 → recovery selects bash for the listed paths", () => {
   const result = reportResult({
     tool: "grep",
@@ -388,34 +380,16 @@ test("match and scan limits → recovery prioritizes the match limit", () => {
   assert.equal(reportOf(result, "grep")?.next, next);
 });
 
-for (const { name, report, fact } of [
-  {
-    name: "output limit with grep match limit → recovery prioritizes the output limit",
-    report: {
-      tool: "grep",
-      matches: 1,
-      matchLimit: 1,
-      outputLimit: formatByteSize(DEFAULT_OUTPUT_BUDGETS.grepBytes),
-    },
-    fact: "outputLimit",
-  },
-  {
-    name: "output limit with read next offset → recovery prioritizes the next offset",
-    report: {
-      tool: "read",
-      nextOffset: 2,
-      outputLimit: formatByteSize(DEFAULT_OUTPUT_BUDGETS.readBytes),
-    },
-    fact: "nextOffset",
-  },
-] satisfies { name: string; report: SuccessReport; fact: "outputLimit" | "nextOffset" }[]) {
-  test(name, () => {
-    const next = OUTCOME_NEXT.find(([key]) => key === fact)?.[1];
-    assert.ok(next);
-    const result = reportResult(report);
-    assert.equal(reportOf(result, report.tool)?.next, next);
+test("output limit with read next offset → recovery prioritizes the next offset", () => {
+  const next = OUTCOME_NEXT.find(([key]) => key === "nextOffset")?.[1];
+  assert.ok(next);
+  const result = reportResult({
+    tool: "read",
+    nextOffset: 2,
+    outputLimit: formatByteSize(DEFAULT_OUTPUT_BUDGETS.readBytes),
   });
-}
+  assert.equal(reportOf(result, "read")?.next, next);
+});
 
 test("text-only error contains facts invalid for the originating tool → preserves the raw diagnostic", () => {
   const diagnostic = '{"publication":"PUBLISHED"}';

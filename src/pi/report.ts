@@ -37,6 +37,7 @@ import {
   WIRE_REPORT_SCHEMA,
   type ErrorCode,
   type FailureReport,
+  type OutcomeVariant,
   type ModelOmittedField,
   type Report,
   type ReportTool,
@@ -121,24 +122,30 @@ export function reportOf(
   return last?.type === "text" ? decodeReport(last.text, tool) : undefined;
 }
 
-/** The recovery a successful result's facts call for: the first in OUTCOME_NEXT order. */
-function outcomeNext(report: Report): string | undefined {
-  return OUTCOME_NEXT.find(
+/**
+ * The recovery a successful result's facts call for: the first in OUTCOME_NEXT order, in the
+ * producer's selected alternative when that rule names it.
+ */
+function outcomeNext(report: Report, variant: OutcomeVariant | undefined): string | undefined {
+  const next = OUTCOME_NEXT.find(
     ([fact, , except]) => report[fact] !== undefined && report[fact] !== except,
   )?.[1];
+  return typeof next === "object" ? ((variant && next[variant]) ?? next.default) : next;
 }
 
 /**
  * A successful result: the tool's payload, then its report when it states
- * anything beyond tool and path or when there is no payload.
+ * anything beyond tool and path or when there is no payload. `variant` is the recovery
+ * alternative the producing layer selected.
  */
 export function reportResult<TDetails extends object | undefined>(
   report: SuccessReport,
   payload: Content = [],
   details?: TDetails,
+  variant?: OutcomeVariant,
 ): AgentToolResult<TDetails & ReportDetails<SuccessReport>> {
   const complete = Object.fromEntries(
-    reportEntries({ ...report, next: outcomeNext(report) }),
+    reportEntries({ ...report, next: outcomeNext(report, variant) }),
   ) as SuccessReport;
   const stated = Object.keys(complete).some(
     (key) => !MODEL_OMITTED_FIELDS.has(key as ModelOmittedField),
