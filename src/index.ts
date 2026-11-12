@@ -33,7 +33,7 @@ export default function (pi: ExtensionAPI) {
   // read/grep/edit/write stay in place, as if this package were not installed.
   if (config.enabled) {
     const budgets = registerModelBudgets(pi);
-    // Saved then_run cards render even when Action Fusion is now off.
+    // Saved then_run cards render even when Action Fusion is off.
     const reportProgress = registerFusionCards(pi);
     const fusion = config.actionFusion ? createActionFusionExecutor(reportProgress) : undefined;
     // Every tool returns a report; Pi prints this shared guideline once.
