@@ -33,7 +33,8 @@ function wrongHash(text: string): string {
 
 test("byte budget sizes include fractional KiB → round to one decimal and preserve whole units", () => {
   for (const [bytes, expected] of [
-    [outputBudgetsFor(200_000).readBytes, "195.3 KiB"],
+    [outputBudgetsFor(200_000).readBytes, "48.8 KiB"],
+    [outputBudgetsFor(200_000).grepBytes, "24.4 KiB"],
     [outputBudgetsFor(200_000).blockBytes, "48.8 KiB"],
     [outputBudgetsFor(200_000).fieldBytes, "12.2 KiB"],
     [16 * 1024, "16 KiB"],

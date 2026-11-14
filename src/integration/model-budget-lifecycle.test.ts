@@ -63,7 +63,11 @@ test("model capacity changes → read and grep grow and shrink without re-regist
     configure: (pi) => hashlineEdit(pi),
   });
   const path = join(cwd, "large-row.txt");
-  const text = "中文🙂".repeat(30_000);
+  const smallBudget = outputBudgetsFor(65_536);
+  const largeBudget = outputBudgetsFor(1_048_576);
+  const text = "中文🙂".repeat(
+    Math.floor((smallBudget.readBytes + largeBudget.readBytes) / (2 * Buffer.byteLength("中文🙂"))),
+  );
   await writeFile(path, text);
   const tool = session.getToolDefinition("read");
   assert.ok(tool);

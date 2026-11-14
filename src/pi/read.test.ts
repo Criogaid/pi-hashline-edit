@@ -167,7 +167,7 @@ test("read byte truncation counts UTF-8 and separators without cutting anchors",
     const maxBytes = DEFAULT_READ_MAX_BYTES;
     const hashLen = DEFAULT_CONFIG.hashLen;
     const prefixBytes = Buffer.byteLength(`1#${"X".repeat(hashLen)}│`);
-    const first = "界".repeat(40000);
+    const first = "界".repeat(Math.floor(maxBytes / (2 * Buffer.byteLength("界"))));
     const second = "x".repeat(maxBytes - Buffer.byteLength(first) - 2 * prefixBytes);
     await writeFile(join(dir, "large.txt"), `${first}\n${second}\n`);
     const result = await call(makeReadOverride(dir, DEFAULT_CONFIG), { path: "large.txt" });

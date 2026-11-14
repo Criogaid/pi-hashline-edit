@@ -20,7 +20,7 @@ import { Worker } from "node:worker_threads";
 const { makeEditOverride } = await import("./tool-factories.testing.ts");
 import { callTool } from "./tool-call.testing.ts";
 const { DEFAULT_CONFIG } = await import("./tool-factories.testing.ts");
-import { formatByteSize, outputBudgetsFor } from "./budgets.ts";
+import { formatByteSize } from "./budgets.ts";
 import { reportOf } from "./report.ts";
 const { grepCounts } = await import("./grep-output.testing.ts");
 const { parseFileHeader } = await import("./grep-output.ts");
@@ -333,7 +333,7 @@ test("grep output byte limit → recovery follows output mode and effective cont
     await Promise.all(
       paths.map((path) => writeFile(path, "before\nneedle\nafter\nneedle\nafter\nneedle\nafter\n")),
     );
-    const budget = outputBudgetsFor(32);
+    const budget = { ...DEFAULT_OUTPUT_BUDGETS, grepBytes: 32 };
     const config = {
       ...DEFAULT_CONFIG,
       grep: { ...DEFAULT_CONFIG.grep, defaultContext: 2 },
@@ -365,7 +365,7 @@ test("grep output byte limit → recovery follows output mode and effective cont
 test("grep output truncates preview rows → reports only displayed preview facts", async () =>
   withDir(async (dir) => {
     const paths = [join(dir, "a.txt"), join(dir, "z.txt")];
-    const budget = outputBudgetsFor(512);
+    const budget = DEFAULT_OUTPUT_BUDGETS;
     await writeFile(paths[0], "needle\n".repeat(3));
     await writeFile(
       paths[1],
