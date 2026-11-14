@@ -32,16 +32,38 @@ const mutationFactories = [
   makeWriteOverride,
 ];
 
-test("mutation tools expose Fusion schemas and guidance when supplied an executor", () => {
+test("Fusion executor toggled → mutation descriptions stay identical without then_run instructions", () => {
   const fusion = createActionFusionExecutor(() => {});
   for (const makeTool of mutationFactories) {
     const disabled = makeTool("/tmp");
     const enabled = makeTool("/tmp", fusion);
+    assert.equal(enabled.description, disabled.description, enabled.name);
+    assert.doesNotMatch(enabled.description, /then_run|separate bash call/i);
+  }
+});
+
+test("mutation tools expose Fusion schemas and guidance when supplied an executor", () => {
+  const fusion = createActionFusionExecutor(() => {});
+  assert.equal(ACTION_FUSION_GUIDELINES.length, 1);
+  const guideline = ACTION_FUSION_GUIDELINES[0];
+  assert.match(
+    guideline,
+    /^Set then_run on edit, replace, or write for a check that can run right after that change\./,
+  );
+  assert.match(
+    guideline,
+    /Use a separate bash call when the command requires approval, needs information from the tool's result, must wait for reload, or covers several changes; run that check once after all of them\./,
+  );
+  for (const makeTool of mutationFactories) {
+    const disabled = makeTool("/tmp");
+    const enabled = makeTool("/tmp", fusion);
     assert.equal(Object.hasOwn(disabled.parameters.properties, "then_run"), false);
-    assert.ok(
-      "then_run" in enabled.parameters.properties && enabled.parameters.properties.then_run,
-    );
-    assert.match(enabled.description, /set the then_run parameter/i);
+    assert.ok("then_run" in enabled.parameters.properties);
+    const thenRun = enabled.parameters.properties.then_run;
+    assert.partialDeepStrictEqual(thenRun, {
+      description: `Command to run once after ${enabled.name} succeeds; failure does not roll back the file.`,
+      properties: { command: { description: "Bash command to run." } },
+    });
     assert.deepEqual(enabled.promptGuidelines, [
       ...(disabled.promptGuidelines ?? []),
       ...ACTION_FUSION_GUIDELINES,
