@@ -14,6 +14,7 @@ import { ACTION_FUSION_GUIDELINES, createActionFusionExecutor } from "./action-f
 import { loadConfig } from "./config.ts";
 import { ACTION_FUSION_PROGRESS_SCHEMA } from "./report-schema.ts";
 import { Value } from "typebox/value";
+import { Type } from "typebox";
 import { reportOf } from "./report.ts";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import { publishedMutation } from "./mutation-outcome.testing.ts";
@@ -73,6 +74,36 @@ test("mutation tools expose Fusion schemas and guidance when supplied an executo
         ACTION_FUSION_GUIDELINES.includes(line),
       ),
     );
+  }
+});
+
+test("Fusion platform guidance → only Windows gets the path note and command descriptions stay platform neutral", async () => {
+  const original = Object.getOwnPropertyDescriptor(process, "platform");
+  assert.ok(original);
+  const base =
+    "Set then_run on edit, replace, or write for a check that can run right after that change. Use a separate bash call when the command requires approval, needs information from the tool's result, must wait for reload, or covers several changes; run that check once after all of them.";
+  const windowsNote =
+    " then_run commands run in Bash on Windows: avoid Unix-only paths such as /tmp.";
+  try {
+    for (const platform of ["win32", "linux"] as const) {
+      Object.defineProperty(process, "platform", { ...original, value: platform });
+      const fusion: typeof import("./action-fusion.ts") = await import(
+        new URL(`./action-fusion.ts?platform=${platform}`, import.meta.url).href
+      );
+      assert.deepEqual(fusion.ACTION_FUSION_GUIDELINES, [
+        base + (platform === "win32" ? windowsNote : ""),
+      ]);
+      for (const tool of ["edit", "replace", "write"] as const) {
+        const schema = fusion.withThenRunSchema(Type.Object({ path: Type.String() }), tool, true);
+        assert.partialDeepStrictEqual(schema, {
+          properties: {
+            then_run: { properties: { command: { description: "Bash command to run." } } },
+          },
+        });
+      }
+    }
+  } finally {
+    Object.defineProperty(process, "platform", original);
   }
 });
 

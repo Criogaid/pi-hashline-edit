@@ -13,7 +13,11 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import registerHashline from "../index.ts";
 import { initTheme } from "@earendil-works/pi-coding-agent";
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type {
+  ExtensionAPI,
+  ExtensionContext,
+  ToolDefinition,
+} from "@earendil-works/pi-coding-agent";
 import { ProcessTerminal, TuiMainScreen } from "@earendil-works/pi-tui";
 import { ToolExecutionComponent } from "../../node_modules/@earendil-works/pi-coding-agent/dist/modes/interactive/components/tool-execution.js";
 import { theme } from "../../node_modules/@earendil-works/pi-coding-agent/dist/modes/interactive/theme/theme.js";
@@ -25,8 +29,22 @@ import { reportOf } from "./report.ts";
 import { formatByteSize } from "./budgets.ts";
 import { expectToolFailure } from "./report-failure.testing.ts";
 import { STRICT_SAMPLING } from "./schema.ts";
+import { NEXT_GUIDELINE } from "./report-schema.ts";
+import { ACTION_FUSION_GUIDELINES } from "./action-fusion.ts";
 
-test("registered tools with or without Fusion → request strict sampling with convertible parameters", async (t) => {
+test("registered tools with or without Fusion → expose prompt rules and convertible strict schemas", async (t) => {
+  const guidelines = {
+    read: [
+      "In a codemode script, take raw file text from tools.bash (cat, git show); read and grep rows carry a line prefix.",
+    ],
+    edit: [
+      "Batch all steps for one file into a single edit call, and send changes to different files in the same response; they do not interfere.",
+      "Before citing a line after write, edit, or replace, get its anchor from a new read or grep. Only after edit, lines above the earliest changed line keep their anchors.",
+    ],
+    grep: [
+      "When you need several independent searches, send them as separate grep calls in one response; they run in parallel.",
+    ],
+  };
   await withDir(async (dir) => {
     const previousCwd = process.cwd();
     try {
@@ -37,7 +55,7 @@ test("registered tools with or without Fusion → request strict sampling with c
           join(dir, ".pi", "settings.json"),
           JSON.stringify({ hashlineEdit: { enabled: true, actionFusion } }),
         );
-        const tools: Tool[] = [];
+        const tools: (Tool & Pick<ToolDefinition, "promptGuidelines">)[] = [];
         const api: Pick<ExtensionAPI, "on" | "registerEntryRenderer" | "registerTool"> = {
           on() {
             return () => {};
@@ -51,9 +69,37 @@ test("registered tools with or without Fusion → request strict sampling with c
         registerHashline(api as ExtensionAPI);
         assert.equal(tools.length, 5);
         for (const tool of tools) {
+          if (tool.name === "read" || tool.name === "edit" || tool.name === "grep") {
+            const expected = [
+              ...guidelines[tool.name],
+              ...(tool.name === "edit" && actionFusion ? ACTION_FUSION_GUIDELINES : []),
+              NEXT_GUIDELINE,
+            ];
+            await t.test(
+              `${tool.name}/Fusion ${actionFusion} → registers the tool's prompt rules`,
+              () => {
+                assert.deepEqual(tool.promptGuidelines, expected);
+              },
+            );
+          }
           await t.test(`${tool.name}/Fusion ${actionFusion} → supports strict sampling`, () => {
             assert.deepEqual(tool.constrainedSampling, STRICT_SAMPLING);
             const strict = makeStrictJsonSchema(tool.parameters);
+            if (tool.name === "read") {
+              assert.partialDeepStrictEqual(tool.parameters, {
+                required: ["path"],
+                properties: {
+                  anchors: {
+                    type: "boolean",
+                    description:
+                      "false returns the lines alone, without LINE#HASH│ prefixes, about a third fewer tokens; edit cannot cite them. Use it for a file you will not edit (default true).",
+                  },
+                },
+              });
+              assert.partialDeepStrictEqual(strict, {
+                properties: { anchors: { anyOf: [{ type: "boolean" }, { type: "null" }] } },
+              });
+            }
             if (tool.name === "edit") {
               assert.partialDeepStrictEqual(strict, {
                 type: "object",
