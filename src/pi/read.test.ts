@@ -12,7 +12,7 @@ import { makeReadOverride } from "./tool-factories.testing.ts";
 import { computeLineHash } from "../core/hash.ts";
 import { callTool } from "./tool-call.testing.ts";
 import { DEFAULT_CONFIG } from "./tool-factories.testing.ts";
-import { formatByteSize } from "./budgets.ts";
+import { formatByteSize, outputBudgetsFor } from "./budgets.ts";
 import { DEFAULT_OUTPUT_BUDGETS } from "./tool-factories.testing.ts";
 import { reportOf } from "./report.ts";
 import { createAnchorFormatter } from "./anchor-format.ts";
@@ -35,17 +35,118 @@ const stubTheme = { fg: (_k: string, s: string) => s, bold: (s: string) => s } a
 
 initTheme();
 
-test("read execute: text outputs LINE#HASH│content", async () => {
+test("read anchors omitted, true, or null → preserves anchored text output", async () => {
   await withDir(async (dir) => {
     await writeFile(join(dir, "f.txt"), "line1\nline2\n");
-    const r = await call(makeReadOverride(dir, DEFAULT_CONFIG), { path: "f.txt" });
-    const text = r.content[0];
-    assert.equal(text.type, "text");
-    assert.match(text.text, /1#[0-9A-Z]+│line1/);
-    assert.match(text.text, /2#[0-9A-Z]+│line2/);
-    assert.match(text.text, /f\.txt · 2 lines/);
+    const tool = makeReadOverride(dir, DEFAULT_CONFIG);
+    const formatter = createAnchorFormatter(DEFAULT_CONFIG.hashLen);
+    for (const options of [{}, { anchors: true }, { anchors: null }]) {
+      const result = await callTool(tool, { path: "f.txt", ...options });
+      assert.equal(result.isError, undefined);
+      assert.equal(result.content[0].type, "text");
+      assert.equal(
+        result.content[0].text,
+        ["f.txt · 2 lines", formatter.row(1, "line1"), formatter.row(2, "line2")].join("\n"),
+      );
+    }
   });
 });
+
+test("read without anchors → preserves the header and raw window with LF and visible standalone CR", async () =>
+  withDir(async (dir) => {
+    const tool = makeReadOverride(dir, DEFAULT_CONFIG);
+    const lines = ["first", "second␍third", "", "12#ABCD│literal"];
+    for (const ending of ["\r\n", ""]) {
+      await writeFile(
+        join(dir, "raw.txt"),
+        `first\r\nsecond\rthird\r\n\r\n12#ABCD│literal${ending}`,
+      );
+      for (const [offset, limit] of [
+        [undefined, undefined],
+        [2, 2],
+        [2, 3],
+      ] as const) {
+        const start = offset ?? 1;
+        const result = await callTool(tool, { path: "raw.txt", anchors: false, offset, limit });
+        assert.equal(result.isError, undefined);
+        assert.equal(result.content[0].type, "text");
+        const header = `raw.txt · 4 lines${start > 1 ? ` (from line ${start})` : ""}${ending ? "" : " · no trailing newline"}`;
+        assert.equal(
+          result.content[0].text,
+          `${header}\n${lines.slice(start - 1, limit === undefined ? undefined : start - 1 + limit).join("\n")}`,
+        );
+        const report = reportOf(result, "read");
+        assert.equal(report?.nextOffset, undefined);
+        assert.equal(report?.outputLimit, undefined);
+        assert.equal(report?.lineTooLong, undefined);
+      }
+    }
+  }));
+
+test("read without anchors at the same byte cap → fits more complete rows and retains byte-limit pagination", async () =>
+  withDir(async (dir) => {
+    const budget = outputBudgetsFor(2_048);
+    const tool = makeReadOverride(dir, DEFAULT_CONFIG, () => budget);
+    const visibleLine = "界␍x";
+    const rowCount = Math.floor((budget.readBytes + 1) / (Buffer.byteLength(visibleLine) + 1));
+    const totalLines = rowCount + 2;
+    await writeFile(join(dir, "raw.txt"), Array(totalLines).fill("界\rx").join("\r\n"));
+    const anchored = await callTool(tool, { path: "raw.txt", limit: totalLines });
+    const raw = await callTool(tool, { path: "raw.txt", limit: totalLines, anchors: false });
+    assert.equal(raw.isError, undefined);
+    assert.equal(raw.content[0].type, "text");
+    assert.equal(
+      raw.content[0].text,
+      `raw.txt · ${totalLines} lines · no trailing newline\n${Array(rowCount).fill(visibleLine).join("\n")}`,
+    );
+    const report = reportOf(raw, "read");
+    const anchoredReport = reportOf(anchored, "read");
+    assert.equal(report?.nextOffset, rowCount + 1);
+    assert.ok(anchoredReport?.nextOffset);
+    assert.ok(rowCount + 1 > anchoredReport.nextOffset);
+    for (const facts of [report, anchoredReport]) {
+      assert.equal(facts?.outputLimit, formatByteSize(budget.readBytes));
+      assert.equal(facts?.lineTooLong, undefined);
+    }
+    const next = await callTool(tool, {
+      path: "raw.txt",
+      anchors: false,
+      offset: report.nextOffset,
+    });
+    assert.equal(next.content[0].type, "text");
+    assert.equal(
+      next.content[0].text,
+      `raw.txt · ${totalLines} lines (from line ${rowCount + 1}) · no trailing newline\n${visibleLine}\n${visibleLine}`,
+    );
+    assert.equal(reportOf(next, "read")?.nextOffset, undefined);
+    assert.equal(reportOf(next, "read")?.outputLimit, undefined);
+  }));
+
+test("read without anchors first row at or beyond the byte cap → counts UTF-8 content without a prefix", async () =>
+  withDir(async (dir) => {
+    const budget = outputBudgetsFor(2_048);
+    const tool = makeReadOverride(dir, DEFAULT_CONFIG, () => budget);
+    const content = "界".repeat(Math.floor(budget.readBytes / Buffer.byteLength("界")));
+    const fitting = content + "x".repeat(budget.readBytes - Buffer.byteLength(content));
+    for (const [source, fits] of [
+      [fitting, true],
+      [fitting + "x", false],
+      ["\r".repeat(Math.floor(budget.readBytes / Buffer.byteLength("␍")) + 1), false],
+    ] as const) {
+      await writeFile(join(dir, "raw.txt"), source);
+      const result = await callTool(tool, { path: "raw.txt", anchors: false });
+      assert.equal(result.isError, undefined);
+      assert.equal(result.content[0].type, "text");
+      assert.equal(
+        result.content[0].text,
+        `raw.txt · 1 lines · no trailing newline\n${fits ? source : ""}`,
+      );
+      const report = reportOf(result, "read");
+      assert.equal(report?.lineTooLong, fits ? undefined : formatByteSize(budget.readBytes));
+      assert.equal(report?.outputLimit, undefined);
+      assert.equal(report?.nextOffset, undefined);
+    }
+  }));
 
 test("absolute path inside cwd → read header uses relative spelling", async () =>
   withDir(async (dir) => {
@@ -444,3 +545,47 @@ test("Unicode line separators in a read path or middle row → renders every fol
     }
   }
 });
+
+test("raw read rendering with an offset → numbers every source line from the header without parsing its content", async () =>
+  withDir(async (dir) => {
+    const tool = makeReadOverride(dir, DEFAULT_CONFIG);
+    const render = tool.renderResult;
+    assert.ok(render);
+    const lines = ["12#ABCD│literal", "", "before\u2028middle\u2029after", "last"];
+    await writeFile(join(dir, "raw.txt"), lines.join("\n"));
+    for (const offset of [1, 2]) {
+      const args = { path: "raw.txt", anchors: false, offset };
+      const result = await callTool(tool, args);
+      const rendered: string[] = render(
+        JSON.parse(JSON.stringify(result)),
+        { expanded: true, isPartial: false },
+        stubTheme,
+        {
+          args,
+          state: {},
+          cwd: dir,
+          toolCallId: "raw-read",
+          lastComponent: undefined,
+          invalidate() {},
+          executionStarted: true,
+          durationMs: undefined,
+          outputPad: 1,
+          keyText: () => "",
+          keyHint: (_key, description) => description,
+          argsComplete: true,
+          isPartial: false,
+          expanded: true,
+          showImages: false,
+          isError: false,
+        },
+      )
+        .render(120)
+        .map((line) => line.trimEnd());
+      assert.deepEqual(rendered, [
+        `raw.txt · 4 lines${offset > 1 ? ` (from line ${offset})` : ""} · no trailing newline`,
+        ...lines
+          .slice(offset - 1)
+          .map((line, index) => `   ${offset + index}:${line ? ` ${line}` : ""}`),
+      ]);
+    }
+  }));
