@@ -189,11 +189,11 @@ function participates(group: AST.CapturingGroup, reference: AST.Backreference): 
   for (let node: AST.Node | null = group; node; node = node.parent) ancestors.add(node);
   let referenceChild: AST.Node = reference;
   let common: AST.Node | null = reference.parent;
-  while (common && !ancestors.has(common)) {
+  while (!ancestors.has(common)) {
     referenceChild = common;
     common = common.parent;
   }
-  if (common?.type !== "Alternative") return false;
+  if (common.type !== "Alternative") return false;
   let groupChild: AST.Node = group;
   for (let node: AST.Node = group.parent; node !== common; node = node.parent!) {
     const kept =
