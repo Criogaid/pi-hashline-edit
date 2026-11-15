@@ -35,6 +35,8 @@ greet.ts · 3 lines
 3#FNSZ│}
 ```
 
+For a file it will not edit, the model can pass `anchors: false`; the result is then the file's lines alone, without `LINE#HASH│` prefixes, at about a third fewer tokens.
+
 The model copies an anchor into `edit`:
 
 ```json

@@ -1,6 +1,7 @@
 /**
  * Override read: recognized images and NUL-containing files delegate to Pi's
- * built-in read; valid UTF-8 text outputs "lineNo#hash│content".
+ * built-in read; valid UTF-8 text outputs "lineNo#hash│content", or the lines alone
+ * when the caller sets `anchors: false` for a file it will not edit.
  *
  * Hashes are computed from the current content on the fly — nothing is stored.
  * The hash is `(line number, content)`, recomputed and checked at edit time, so
@@ -40,6 +41,9 @@ const DEFAULT_OFFSET = 1;
 /** Pi's read details for a delegated native read; the report states this read's own facts. */
 type ReadDetails = (ReadToolDetails & { nativeRead?: true }) & Partial<ReportDetails>;
 
+/** Pi's read arguments plus this override's own. */
+type ReadInput = ReadToolInput & { anchors?: boolean };
+
 /**
  * First result line: `<path> · <N> lines`, optionally ` (from line <offset>)` and
  * ` · no trailing newline`. A missing final newline is a byte-level fact the
@@ -59,12 +63,13 @@ const READ_HEADER = /^(.+?) · (\d+ lines(?: \(from line \d+\))?(?: · no traili
 
 /**
  * Render the expanded read body for the TUI: color the header, strip the
- * `LINE#HASH│` prefix from every anchor line to `   N: content`, and
+ * `LINE#HASH│` prefix from every anchor line to `   N: content` (rows read with
+ * `anchors: false` have no prefix and are numbered from the header's offset), and
  * syntax-highlight the code block by the file's language (falls back to a
  * single `toolOutput` color when the language is unknown or the highlight
  * line count diverges). Notices are report facts, rendered from the report.
  */
-function renderReadBody(raw: string, path: string, theme: Theme): string {
+function renderReadBody(raw: string, path: string, anchored: boolean, theme: Theme): string {
   const lines = raw.split("\n");
   const out: string[] = [];
 
@@ -77,11 +82,14 @@ function renderReadBody(raw: string, path: string, theme: Theme): string {
     bodyStart = 1;
   }
 
-  // Collect anchor rows (full content).
+  // Collect rows (full content).
   const lineNos: string[] = [];
   const codeContents: string[] = [];
+  const firstLine = Number(/\(from line (\d+)\)/.exec(h?.[2] ?? "")?.[1] ?? DEFAULT_OFFSET);
   for (let i = bodyStart; i < lines.length; i++) {
-    const row = parseHashline(lines[i]);
+    const row = anchored
+      ? parseHashline(lines[i])
+      : { lineNo: String(firstLine + i - bodyStart), content: lines[i] };
     if (!row) break;
     lineNos.push(row.lineNo);
     codeContents.push(row.content);
@@ -134,6 +142,12 @@ export function makeReadOverride({
           description: `Maximum lines to read (default ${defaultLimit}).`,
         }),
       ),
+      anchors: Type.Optional(
+        Type.Boolean({
+          description:
+            "false returns the lines alone, without LINE#HASH│ prefixes, about a third fewer tokens; edit cannot cite them. Use it for a file you will not edit (default true).",
+        }),
+      ),
     },
     { additionalProperties: false },
   );
@@ -144,6 +158,9 @@ export function makeReadOverride({
     description:
       "Read a file. Text lines show as LINE#HASH│content anchors for edit; CRLF line endings show as LF.",
     promptSnippet: "Read files with editable line anchors",
+    promptGuidelines: [
+      "In a codemode script, take raw file text from tools.bash (cat, git show); read and grep rows carry a line prefix.",
+    ],
     parameters: parameters as typeof builtin.parameters,
     prepareArguments: createArgumentPreparer("read", parameters, undefined, budgets),
     constrainedSampling: STRICT_SAMPLING,
@@ -164,7 +181,12 @@ export function makeReadOverride({
       const raw = content[0]?.type === "text" ? content[0].text : "";
       return new Text(
         [
-          renderReadBody(raw, String(context.args?.path ?? ""), theme),
+          renderReadBody(
+            raw,
+            String(context.args?.path ?? ""),
+            (context.args as ReadInput | undefined)?.anchors !== false,
+            theme,
+          ),
           ...(report ? reportLines(report, theme) : []),
         ].join("\n"),
         0,
@@ -174,7 +196,7 @@ export function makeReadOverride({
 
     async execute(
       toolCallId: string,
-      params: ReadToolInput,
+      { anchors: anchored, ...params }: ReadInput,
       signal: AbortSignal | undefined,
       onUpdate: AgentToolUpdateCallback<ReadToolDetails | undefined> | undefined,
       ctx: ExtensionToolContext,
@@ -187,6 +209,10 @@ export function makeReadOverride({
         const start = params.offset ?? DEFAULT_OFFSET;
         const limit = params.limit ?? defaultLimit;
         const anchors = createAnchorFormatter(hashLen);
+        const formatRow =
+          anchored === false
+            ? (_line: number, content: string) => displayCarriageReturns(content)
+            : anchors.row;
         const report = { tool: "read" as const, path: params.path };
         const readNative = async () => {
           const result = await builtin.execute(toolCallId, params, signal, onUpdate, ctx);
@@ -220,14 +246,14 @@ export function makeReadOverride({
               const rowBytes =
                 line.byteLength +
                 line.carriageReturns * crExpansion +
-                Buffer.byteLength(anchors.row(line.number, ""));
+                Buffer.byteLength(formatRow(line.number, ""));
               const nextBytes = outputBytes + rowBytes + (rows.length > 0 ? 1 : 0);
               if (nextBytes > maxBytes) {
                 truncated = true;
                 firstLineExceedsLimit = rows.length === 0;
                 return;
               }
-              rows.push(anchors.row(line.number, line.text!));
+              rows.push(formatRow(line.number, line.text!));
               outputBytes = nextBytes;
             },
             { signal, maxLineBytes: maxBytes },

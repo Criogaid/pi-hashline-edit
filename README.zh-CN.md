@@ -35,6 +35,8 @@ greet.ts · 3 lines
 3#FNSZ│}
 ```
 
+不打算编辑的文件，模型可以传 `anchors: false`；此时只返回文件的原始行，不带 `LINE#HASH│` 前缀，token 约少三分之一。
+
 模型把锚点复制到 `edit` 中：
 
 ```json
