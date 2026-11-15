@@ -3,21 +3,26 @@
  * The context window is a capacity hint, not a tokenizer or remaining-context counter.
  */
 
+// A read is a chosen window of one file; a grep is a probe whose size the caller cannot predict.
+// At four bytes per token a full read spends about a sixteenth of the window, a full grep a
+// thirty-second.
+const READ_SHARE = 4;
+const GREP_SHARE = 8;
+// Full-width previews for grep's default 100-match limit fit one payload.
+const GREP_PREVIEW_SHARE = 100;
 const BLOCK_SHARE = 4;
 const FIELD_SHARE = 4;
-const UTF16_PREVIEW_BYTES = 4;
 // Keep JSON envelopes and diagnostic omission markers usable for tiny declared windows.
 const MIN_BLOCK_BYTES = 512;
 const MIN_FIELD_BYTES = 128;
-// Model-derived content budgets never exceed the explicit read cap's ceiling; config.ts
-// reuses this constant for the read.maxKiB range, so automatic sizing may approach but
-// not surpass what a user could configure, keeping one absolute bound per call.
+// Capacity counted toward the budgets stops here; config.ts reuses this constant for the
+// read.maxKiB range, so automatic sizing never surpasses what a user could configure.
 export const MAX_CONTENT_KIB = 4096;
 const MAX_CONTENT_BYTES = MAX_CONTENT_KIB * 1024;
 
 // Declared apart so Object.freeze keeps these as numbers rather than literal types.
 const fallbackBudgets = {
-  readBytes: 256 * 1024,
+  readBytes: 64 * 1024,
   grepBytes: 50 * 1024,
   blockBytes: 16 * 1024,
   fieldBytes: 4 * 1024,
@@ -32,16 +37,17 @@ export function outputBudgetsFor(contextWindow: number | undefined): OutputBudge
   if (contextWindow === undefined || !Number.isSafeInteger(contextWindow) || contextWindow <= 0) {
     return DEFAULT_OUTPUT_BUDGETS;
   }
-  // One byte per declared context token.
+  // One byte per declared context token, shared out below.
   const contentBytes = Math.min(contextWindow, MAX_CONTENT_BYTES);
+  const grepBytes = Math.max(MIN_BLOCK_BYTES, Math.floor(contentBytes / GREP_SHARE));
   const blockBytes = Math.max(MIN_BLOCK_BYTES, Math.floor(contentBytes / BLOCK_SHARE));
   const fieldBytes = Math.max(MIN_FIELD_BYTES, Math.floor(blockBytes / FIELD_SHARE));
   return Object.freeze({
-    readBytes: contentBytes,
-    grepBytes: contentBytes,
+    readBytes: Math.max(MIN_BLOCK_BYTES, Math.floor(contentBytes / READ_SHARE)),
+    grepBytes,
     blockBytes,
     fieldBytes,
-    grepPreviewUnits: Math.floor(fieldBytes / UTF16_PREVIEW_BYTES),
+    grepPreviewUnits: Math.floor(grepBytes / GREP_PREVIEW_SHARE),
   });
 }
 

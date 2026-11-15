@@ -148,9 +148,9 @@ A project's `hashlineEdit` replaces the global one as a whole; invalid values fa
 
 ## Output budgets
 
-The selected model's declared context capacity sets the output budgets; remaining context is never used. For a known capacity, anchored read rows and grep payloads receive one byte per context token, up to 4 MiB. Diagnostic blocks receive a quarter of that budget (at least 512 bytes), and free-text fields a quarter of the block budget (at least 128 bytes). Grep previews keep one UTF-16 code unit per four field bytes. The definitions and fallback values live in [`budgets.ts`](src/pi/budgets.ts).
+The selected model's declared context capacity sets the output budgets; remaining context is never used. A known capacity counts as one byte per context token, up to 4 MiB. Anchored read rows receive a quarter of it and grep payloads an eighth (each at least 512 bytes); a 384,000-token model gets 93.8 KiB per read and 46.9 KiB per grep. Diagnostic blocks receive a quarter of the capacity (at least 512 bytes), and free-text fields a quarter of the block budget (at least 128 bytes). Grep previews keep one UTF-16 code unit per 100 bytes of grep payload, so the default 100 matches fit at full preview width. The definitions and fallback values live in [`budgets.ts`](src/pi/budgets.ts).
 
-When model capacity is unknown or invalid, the defaults are 256 KiB for read rows, 50 KiB for grep payloads, 16 KiB per diagnostic block, 4 KiB per free-text field, and 500 UTF-16 code units per grep preview. An explicit `read.maxKiB` overrides only the read cap. Each execution keeps the budget snapshot it started with.
+When model capacity is unknown or invalid, the defaults are 64 KiB for read rows, 50 KiB for grep payloads, 16 KiB per diagnostic block, 4 KiB per free-text field, and 500 UTF-16 code units per grep preview. An explicit `read.maxKiB` overrides only the read cap. Each execution keeps the budget snapshot it started with.
 
 Read reports `nextOffset` when its default line limit or byte budget cuts a window; a caller-supplied `limit` alone does not add a `nextOffset` report. A first row that cannot fit gets a `lineTooLong` byte-limit fact. Grep reports payload and preview truncation separately, and plain previews for invalid UTF-8 never carry edit anchors.
 
