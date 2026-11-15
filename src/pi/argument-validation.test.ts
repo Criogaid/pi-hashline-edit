@@ -26,27 +26,30 @@ const {
   makeWriteOverride,
 } = await import("./tool-factories.testing.ts");
 
-test("grep has invalid flags alongside invalid literal or pattern → reports independent fields", async (t) => {
-  const tool = makeGrepOverride(process.cwd(), DEFAULT_CONFIG);
-  for (const args of [
-    { pattern: ["text"], flags: "x" },
-    { pattern: ["text"], literal: {}, flags: "x" },
-    { pattern: {}, literal: true, flags: "x" },
-  ]) {
-    await t.test(JSON.stringify(args), async () => {
-      await assert.rejects(callTool(tool, args), (error: unknown) => {
-        const fields = argumentError(error).issues.map((issue) => issue.field);
-        assert.ok(fields.includes("flags"), JSON.stringify(fields));
-        assert.ok(
-          fields.some((field) =>
-            Array.isArray(args.pattern) ? field === "literal" : field.startsWith("pattern"),
-          ),
-          JSON.stringify(fields),
-        );
-        return true;
-      });
-    });
-  }
+test('grep receives flags: "i" → rejects INVALID_ARGUMENTS before searching', async () => {
+  let searches = 0;
+  const discover = async () => {
+    searches++;
+    return { code: 1, stderr: "", stopped: false };
+  };
+  const tool = makeMockGrep(process.cwd(), DEFAULT_CONFIG, {
+    runRgPaths: discover,
+    runRgLines: discover,
+  });
+  await assert.rejects(
+    callTool(tool, { pattern: ["text"], literal: true, flags: "i" }),
+    (error: unknown) => {
+      const report = argumentError(error);
+      assert.equal(report.error, "INVALID_ARGUMENTS");
+      assert.deepEqual(
+        report.issues.map((issue) => issue.field),
+        ["flags"],
+      );
+      assert.match(report.issues[0].reason, /not allowed/);
+      return true;
+    },
+  );
+  assert.equal(searches, 0);
 });
 
 const invalidCommand = { command: "", timeout: 0 };
@@ -219,16 +222,11 @@ test("blank then_run command with Fusion → reports exactly one command issue",
   }
 });
 
-test("grep and replace flags → accept V8 modes and reject invalid flags before patterns or file reads", async (t) => {
+test("replace flags → accept V8 modes and reject invalid flags before patterns or file reads", async (t) => {
   const cwd = await mkdtemp(join(tmpdir(), "hashline-flags-"));
   t.after(() => rm(cwd, { recursive: true, force: true }));
   const path = join(cwd, "missing.txt");
   const tools = [
-    {
-      tool: makeGrepOverride(cwd, DEFAULT_CONFIG),
-      args: (find: string, literal: boolean, flags: string) => ({ pattern: find, literal, flags }),
-      field: "flags",
-    },
     {
       tool: makeReplaceTool(cwd, DEFAULT_CONFIG),
       args: (find: string, literal: boolean, flags: string) => ({

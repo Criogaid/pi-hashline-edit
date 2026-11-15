@@ -10,7 +10,7 @@ export function regexSource(find: string, literal: boolean): string {
 
 /**
  * Both matcher modes operate on the shared LF view. Replace's and grep's prepareArguments
- * validate flags and compile regexes through checkRegexArguments before any file is read.
+ * compile their regexes through checkRegexArguments before any file is read.
  */
 export function buildRegex(find: string, literal: boolean, flagsRaw: string | undefined): RegExp {
   const set = new Set((flagsRaw ?? "").split(""));

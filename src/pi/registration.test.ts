@@ -183,7 +183,6 @@ test("mutation cards use Fusion by default and explicit false removes command su
     const grep = tools.find((tool) => tool.name === "grep");
     assert.deepEqual(Object.keys(grep.parameters.properties).sort(), [
       "context",
-      "flags",
       "glob",
       "ignoreCase",
       "limit",
@@ -194,6 +193,11 @@ test("mutation cards use Fusion by default and explicit false removes command su
       "pattern",
     ]);
     assert.equal(grep.parameters.additionalProperties, false);
+    assert.match(
+      grep.parameters.properties.ignoreCase.description,
+      /no pattern contains an uppercase letter/,
+    );
+    assert.doesNotMatch(grep.parameters.properties.ignoreCase.description, /flag/);
     await assert.rejects(
       callTool(grep, { pattern: "needle", literal: true, unexpected: true }),
       rejectsArgument("unexpected", /not allowed/),

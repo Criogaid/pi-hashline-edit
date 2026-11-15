@@ -140,13 +140,12 @@ test("real rg candidates → include every JS row and preserve confirmed output 
     ["miss.txt", Buffer.from("unrelated\n")],
   ] as const;
   for (const [name, bytes] of fixtures) await writeFile(join(directory, name), bytes);
-  for (const [pattern, flags, multiline, matches] of [
-    ["colou?r", "mi", false, 2],
-    ["a\\uFFFDb", "m", false, 1],
-    ["k", "miu", false, 2],
-    ["alpha\\nbeta", "m", true, 2],
+  for (const [pattern, ignoreCase, multiline, matches] of [
+    ["colou?r", true, false, 2],
+    ["a\\uFFFDb", false, false, 1],
+    ["alpha\\nbeta", false, true, 2],
   ] as const) {
-    await t.test(`${pattern} /${flags} → identical confirmed results`, async () => {
+    await t.test(`${pattern} ignoreCase=${ignoreCase} → identical confirmed results`, async () => {
       const candidates = new Map<string, readonly number[] | undefined>();
       const filtered = makeMockGrep(directory, DEFAULT_CONFIG, {
         runRgPaths(args, signal, onPath) {
@@ -183,7 +182,14 @@ test("real rg candidates → include every JS row and preserve confirmed output 
         },
       });
       for (const outputMode of ["content", "files", "count"] as const) {
-        const params = { path: directory, pattern, flags, multiline, literal: false, outputMode };
+        const params = {
+          path: directory,
+          pattern,
+          ignoreCase,
+          multiline,
+          literal: false,
+          outputMode,
+        };
         const actual = await callTool(filtered, params);
         const expected = await callTool(full, params);
         assert.equal(actual.isError, undefined, JSON.stringify(reportOf(actual, "grep")));
@@ -200,7 +206,7 @@ test("real rg candidates → include every JS row and preserve confirmed output 
         const path = join(directory, name);
         const rows = searchText({
           source: bytes.toString("utf8"),
-          query: { patterns: [pattern], literal: false, flags, multiline },
+          query: { patterns: [pattern], literal: false, flags: ignoreCase ? "mi" : "m", multiline },
           limit: bytes.length,
         }).lines;
         if (!rows.length) continue;

@@ -3,8 +3,8 @@ import { normalizeLineEndings } from "./lines.ts";
 import { buildRegex } from "./regex.ts";
 import type { SearchResult } from "./search-schema.ts";
 
-/** Explicit flags replace this default. */
-export const DEFAULT_GREP_FLAGS = "m";
+/** Every grep regex uses these flags; ignoreCase adds i. */
+export const GREP_FLAGS = "m";
 
 export interface GrepQuery {
   readonly patterns: readonly string[];

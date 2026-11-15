@@ -17,7 +17,7 @@ import { searchFiles } from "./grep-search.ts";
 import { toDisplayLines } from "./grep-render.ts";
 import { smartIgnoreCase } from "../core/search-analysis.ts";
 import { checkRegexArguments } from "../core/regex.ts";
-import { DEFAULT_GREP_FLAGS } from "../core/search.ts";
+import { GREP_FLAGS } from "../core/search.ts";
 import {
   GREP_CONTEXT_RANGE,
   literalUnion,
@@ -62,15 +62,10 @@ function createGrepSchema({ defaultLimit, defaultContext }: HashlineEditConfig["
         description:
           "true: match the text exactly, including regex punctuation; use it for names, paths, and code snippets. false: JavaScript regex, where foo(0) matches foo0; use it only for an intentional regex.",
       }),
-      flags: Type.Optional(
-        Type.String({
-          description: `JavaScript regex flags (default ${DEFAULT_GREP_FLAGS}); given flags replace the default, so in a multiline search without m, ^ and $ anchor to the file's start and end. g is always enabled and repeated flags are ignored. Use u or v for Unicode mode, s for dotAll, and y for sticky matching.`,
-        }),
-      ),
       ignoreCase: Type.Optional(
         Type.Boolean({
           description:
-            "true ignores case, false matches case; overrides the i flag. When omitted, the i flag ignores case; without it, case is ignored only when no pattern contains an uppercase letter (a pattern that cannot be analyzed counts as uppercase).",
+            "true ignores case, false matches case. When omitted, case is ignored only when no pattern contains an uppercase letter (a pattern that cannot be analyzed counts as uppercase).",
         }),
       ),
       multiline: Type.Optional(
@@ -107,12 +102,11 @@ function streamedList(value: string | readonly string[] | null | undefined): rea
 
 /** Validate JavaScript syntax once; the search never rejects a pattern V8 accepts. */
 function checkGrepArguments(args: unknown, report: ReportArgumentIssue): void {
-  const { pattern, literal, flags } = (args ?? {}) as Record<string, unknown>;
-  if (flags !== undefined && typeof flags !== "string") return;
+  const { pattern, literal } = (args ?? {}) as Record<string, unknown>;
   const fields = Array.isArray(pattern)
     ? pattern.map((value, index) => [`pattern[${index}]`, value] as const)
     : [];
-  checkRegexArguments("flags", flags ?? DEFAULT_GREP_FLAGS, literal !== false, fields, report);
+  checkRegexArguments("flags", GREP_FLAGS, literal !== false, fields, report);
 }
 
 /** Build the grep override (a ToolDefinition fragment for registerTool). */
@@ -143,7 +137,7 @@ export function makeGrepOverride({ cwd, config, budgets }: ToolEnvironment) {
       const globs = streamedList(args?.glob);
       let text =
         theme.fg("toolTitle", theme.bold("grep ")) +
-        theme.fg("accent", `/${streamedList(args?.pattern).join(" | ")}/${args?.flags ?? ""}`) +
+        theme.fg("accent", `/${streamedList(args?.pattern).join(" | ")}/`) +
         theme.fg("toolOutput", ` in ${paths.length ? paths.join(" ") : "."}`);
       if (globs.length) text += theme.fg("toolOutput", ` (${globs.join(", ")})`);
       if (args?.outputMode && args.outputMode !== "content")
@@ -189,16 +183,11 @@ export function makeGrepOverride({ cwd, config, budgets }: ToolEnvironment) {
         const effectiveLimit = params.limit ?? config.grep.defaultLimit;
         const outputMode = params.outputMode ?? "content";
         const { literal } = params;
-        const flags = new Set(params.flags ?? DEFAULT_GREP_FLAGS);
-        const ignoreCase =
-          params.ignoreCase ??
-          (flags.has("i") || smartIgnoreCase(patterns, literal, [...flags].join("")));
-        if (ignoreCase) flags.add("i");
-        else flags.delete("i");
+        const ignoreCase = params.ignoreCase ?? smartIgnoreCase(patterns, literal, GREP_FLAGS);
         const query = {
           patterns,
           literal,
-          flags: [...flags].join(""),
+          flags: ignoreCase ? `${GREP_FLAGS}i` : GREP_FLAGS,
           multiline: params.multiline ?? false,
         };
         const globs = params.glob ?? [];

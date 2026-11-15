@@ -131,8 +131,8 @@ test("installed extension argument failures → precise independent issues and h
     },
     {
       name: "grep",
-      args: { pattern: "(", literal: false, flags: "x", outputMode: "rows", context: null },
-      fields: ["flags", "outputMode"],
+      args: { pattern: "(", literal: false, outputMode: "rows", context: null },
+      fields: ["pattern[0]", "outputMode"],
     },
     {
       name: "replace",
@@ -169,7 +169,6 @@ test("installed extension argument failures → precise independent issues and h
         path: "diagnostic.txt",
         pattern: "42",
         literal: "true",
-        flags: null,
         outputMode: "count",
       },
       fields: [],

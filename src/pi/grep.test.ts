@@ -1,3 +1,4 @@
+import { stripVTControlCharacters } from "node:util";
 import type { MockRg } from "./grep-rg.testing.ts";
 import { rejectsArgument, rejectsArguments } from "./argument-error.testing.ts";
 /**
@@ -82,17 +83,17 @@ const text = (result: any): string => result.content[0].text;
 const call = (tool: any, params: any, signal?: AbortSignal) =>
   callTool(tool, params, { toolCallId: "0", signal });
 
-test("explicit JavaScript flags → call rendering shows them", () => {
+test("regex patterns → call rendering shows the pattern without trailing flags", () => {
   initTheme("dark");
   const { backend } = fakeBackend();
   const tool = makeMockGrep(process.cwd(), DEFAULT_CONFIG, backend);
   const rendered = tool.renderCall!(
-    { pattern: ["\\p{Letter}+"], literal: false, flags: "u" },
+    { pattern: ["needle", "other"], literal: false, ignoreCase: true },
     theme,
   )
     .render(120)
     .join("\n");
-  assert.ok(rendered.includes("/\\p{Letter}+/u"));
+  assert.match(stripVTControlCharacters(rendered), /\/needle \| other\/(?:\s|$)/);
 });
 
 test("streamed grep strings and null fields → render the pattern and default path without a limit", () => {
@@ -928,22 +929,21 @@ test("literal pipe patterns find no match → alternatives recovery preserves li
 
 test("invalid JavaScript → its field rejects before file discovery", async () =>
   withDir(async (dir) => {
-    for (const [pattern, flags, field] of [
-      ["(", undefined, "pattern[0]"],
-      [["plain", "("], undefined, "pattern[1]"],
-      ["(?m)^foo", undefined, "pattern[0]"],
-      [["plain", "(?m)^foo"], undefined, "pattern[1]"],
-      ["(?i)abc", undefined, "pattern[0]"],
-      [["plain", "(?i)abc"], undefined, "pattern[1]"],
-      ["\\p{NotAProperty}", "u", "pattern[0]"],
-      ["queueTool(", undefined, "pattern[0]"],
-      [["queueTool(", "\\bfoo\\b"], undefined, "pattern[0]"],
-      ["*", undefined, "pattern[0]"],
+    for (const [pattern, field] of [
+      ["(", "pattern[0]"],
+      [["plain", "("], "pattern[1]"],
+      ["(?m)^foo", "pattern[0]"],
+      [["plain", "(?m)^foo"], "pattern[1]"],
+      ["(?i)abc", "pattern[0]"],
+      [["plain", "(?i)abc"], "pattern[1]"],
+      ["queueTool(", "pattern[0]"],
+      [["queueTool(", "\\bfoo\\b"], "pattern[0]"],
+      ["*", "pattern[0]"],
     ] as const) {
       const fake = fakeBackend();
       const tool = makeMockGrep(dir, DEFAULT_CONFIG, fake.backend);
       await assert.rejects(
-        call(tool, { path: "missing.txt", pattern, literal: false, flags }),
+        call(tool, { path: "missing.txt", pattern, literal: false }),
         rejectsArgument(field, /Invalid regular expression/),
       );
       assert.equal(fake.calls.length, 0);
@@ -1388,7 +1388,6 @@ test("non-multiline or multiline query → use line candidates or the file prefi
         glob: ["*", "!*.bak"],
         pattern: ["a", "b"],
         literal: true,
-        flags: "",
         multiline,
         ignoreCase: false,
       };
@@ -1470,7 +1469,6 @@ test("sparse, dense, or overflowed candidate lines → matching preserves origin
       path: file,
       pattern: "\\r$",
       literal: false,
-      flags: "",
     });
     assert.equal(grepCounts(result).matches, 1);
     assert.match(text(result), /5#[0-9A-Z]+│needle␍/);

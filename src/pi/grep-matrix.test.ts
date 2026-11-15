@@ -1,13 +1,14 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { MATRIX_FLAGS, MATRIX_SYNTAX } from "../core/search-matrix.testing.ts";
+import { MATRIX_SYNTAX } from "../core/search-matrix.testing.ts";
+import { GREP_FLAGS } from "../core/search.ts";
 import { makeMockGrep } from "./grep-rg.testing.ts";
 const { DEFAULT_CONFIG } = await import("./tool-factories.testing.ts");
 import { reportOf } from "./report.ts";
 import { rejectsArgument } from "./argument-error.testing.ts";
 import { callTool } from "./tool-call.testing.ts";
 
-test("Cartesian JS syntax × all flag combinations → tool entry agrees with V8 before discovery", async (t) => {
+test("Cartesian JS syntax × case override → tool entry agrees with V8 before discovery", async (t) => {
   let discoveries = 0;
   const discover = async () => {
     discoveries++;
@@ -17,17 +18,6 @@ test("Cartesian JS syntax × all flag combinations → tool entry agrees with V8
     runRgPaths: discover,
     runRgLines: discover,
   });
-  const flagsCases = [
-    ...["", "d", "g", "dg"].flatMap((prefix) => MATRIX_FLAGS.map((flags) => prefix + flags)),
-    "uv",
-    "imuv",
-    "x",
-    "I",
-    "u v",
-    "gg",
-    "ii",
-    "mmuu",
-  ];
   const patterns = [
     ...MATRIX_SYNTAX.map(([, pattern]) => pattern),
     "(",
@@ -38,26 +28,22 @@ test("Cartesian JS syntax × all flag combinations → tool entry agrees with V8
   let accepted = 0;
   let rejected = 0;
   for (const pattern of patterns) {
-    for (const flags of flagsCases) {
-      const normalizedFlags = [...new Set(flags)].join("");
-      let field: "flags" | "pattern[0]" | undefined;
+    for (const ignoreCase of [undefined, false, true]) {
+      let field: "pattern[0]" | undefined;
       try {
-        new RegExp("", normalizedFlags);
+        new RegExp(pattern, GREP_FLAGS);
       } catch (error) {
         if (!(error instanceof SyntaxError)) throw error;
-        field = "flags";
-      }
-      if (!field) {
-        try {
-          new RegExp(pattern, normalizedFlags);
-        } catch (error) {
-          if (!(error instanceof SyntaxError)) throw error;
-          field = "pattern[0]";
-        }
+        field = "pattern[0]";
       }
       const before = discoveries;
-      const result = callTool(tool, { pattern, flags, literal: false });
-      const context = JSON.stringify({ pattern, flags });
+      const params = {
+        pattern,
+        literal: false,
+        ...(ignoreCase === undefined ? {} : { ignoreCase }),
+      };
+      const result = callTool(tool, params);
+      const context = JSON.stringify(params);
       if (field) {
         rejected++;
         await assert.rejects(result, rejectsArgument(field), context);
@@ -74,7 +60,6 @@ test("Cartesian JS syntax × all flag combinations → tool entry agrees with V8
   t.diagnostic(
     JSON.stringify({
       syntaxInputs: patterns.length,
-      flagInputs: flagsCases.length,
       accepted,
       rejected,
     }),
