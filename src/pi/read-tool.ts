@@ -69,7 +69,13 @@ const READ_HEADER = /^(.+?) · (\d+ lines(?: \(from line \d+\))?(?: · no traili
  * single `toolOutput` color when the language is unknown or the highlight
  * line count diverges). Notices are report facts, rendered from the report.
  */
-function renderReadBody(raw: string, path: string, anchored: boolean, theme: Theme): string {
+function renderReadBody(
+  raw: string,
+  path: string,
+  anchored: boolean,
+  lineTooLong: boolean,
+  theme: Theme,
+): string {
   const lines = raw.split("\n");
   const out: string[] = [];
 
@@ -86,6 +92,10 @@ function renderReadBody(raw: string, path: string, anchored: boolean, theme: The
   const lineNos: string[] = [];
   const codeContents: string[] = [];
   const firstLine = Number(/\(from line (\d+)\)/.exec(h?.[2] ?? "")?.[1] ?? DEFAULT_OFFSET);
+  const totalLines = Number(/^(\d+) lines/.exec(h?.[2] ?? "")?.[1] ?? 0);
+  // Unanchored rows carry no marker, so no rows and one empty row are the same text: a window
+  // past the last line or a first line over the byte limit shows no row.
+  if (!anchored && (lineTooLong || firstLine > totalLines)) bodyStart = lines.length;
   for (let i = bodyStart; i < lines.length; i++) {
     const row = anchored
       ? parseHashline(lines[i])
@@ -185,6 +195,7 @@ export function makeReadOverride({
             raw,
             String(context.args?.path ?? ""),
             (context.args as ReadInput | undefined)?.anchors !== false,
+            report !== undefined && "lineTooLong" in report && report.lineTooLong !== undefined,
             theme,
           ),
           ...(report ? reportLines(report, theme) : []),
