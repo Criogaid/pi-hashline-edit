@@ -70,13 +70,7 @@ function verifyAnchor(
   radius: number,
 ): AnchorFailure | null {
   const { line, hash } = cited;
-  if (
-    line >= 1 &&
-    line <= lines.length &&
-    computeLineHash(line, lines[line - 1], hashLen) === hash
-  ) {
-    return null;
-  }
+  if (line <= lines.length && computeLineHash(line, lines[line - 1], hashLen) === hash) return null;
 
   const candidates: { line: number; hash: string }[] = [];
   const scan = (start: number, end: number) => {
