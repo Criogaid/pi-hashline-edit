@@ -39,13 +39,10 @@ function collectContextRows(
   budget: OutputBudgets,
 ) {
   const windows = mergeRanges(
-    centers.map((center) => {
-      const line = Math.min(lines.length, Math.max(1, center));
-      return [
-        Math.max(1, line - CONTEXT_RADIUS),
-        Math.min(lines.length, line + CONTEXT_RADIUS) + 1,
-      ];
-    }),
+    centers.map((line) => [
+      Math.max(1, line - CONTEXT_RADIUS),
+      Math.min(lines.length, line + CONTEXT_RADIUS) + 1,
+    ]),
   );
   const total = windows.reduce((sum, [start, end]) => sum + end - start, 0);
   const rows: ContextRow[] = [];
