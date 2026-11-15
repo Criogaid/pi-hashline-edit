@@ -23,10 +23,7 @@ let cachedRanges = 0;
 const nativeSets = new Map<string, Ranges>();
 
 /** Without u, two adjacent Character nodes can encode one supplementary code point. */
-export function surrogatePair(
-  element: AST.Element,
-  next: AST.Element | undefined,
-): number | undefined {
+export function surrogatePair(element: AST.Node, next: AST.Node | undefined): number | undefined {
   if (element.type !== "Character" || next?.type !== "Character") return undefined;
   const [high, low] = [element.value, next.value];
   if (

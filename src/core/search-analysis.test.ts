@@ -81,6 +81,21 @@ for (const [patterns, isLiteral, expected] of [
   });
 }
 
+test("smart case: a supplementary uppercase letter → case-sensitive", () => {
+  for (const [pattern, isLiteral] of [
+    ["𐐀é", true],
+    ["𐐀é", false],
+    ["\\uD801\\uDC00", false],
+    ["[𐐀]", false],
+  ] as const) {
+    assert.equal(
+      smartIgnoreCase([pattern], isLiteral),
+      false,
+      `${JSON.stringify(pattern)} literal=${isLiteral}`,
+    );
+  }
+});
+
 test("seeded random patterns × raw bytes → a JS hit always retains a candidate byte literal", () => {
   let seed = 0x5eed1234;
   const next = (bound: number) => {

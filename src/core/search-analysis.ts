@@ -293,14 +293,23 @@ export function analyzeQueryPattern<T>(
   }
 }
 
-/** Smart case over decoded characters; case-sensitive when a pattern cannot be analyzed. */
+/**
+ * Smart case over decoded characters, a surrogate pair counting as its supplementary
+ * character; case-sensitive when a pattern cannot be analyzed.
+ */
 export function smartIgnoreCase(patterns: readonly string[], literal: boolean): boolean {
   return !patterns.some((pattern) => {
     const uppercase = analyzeQueryPattern(pattern, literal, (parsed) => {
       let found = false;
       visitRegExpAST(parsed, {
-        onCharacterEnter({ value }) {
-          const text = String.fromCodePoint(value);
+        onCharacterEnter(node) {
+          const { parent } = node;
+          const siblings: readonly AST.Node[] =
+            parent.type === "Alternative" || parent.type === "CharacterClass"
+              ? parent.elements
+              : [];
+          const point = surrogatePair(node, siblings[siblings.indexOf(node) + 1]) ?? node.value;
+          const text = String.fromCodePoint(point);
           found ||= text !== text.toLowerCase();
         },
       });
