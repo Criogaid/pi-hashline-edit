@@ -15,7 +15,7 @@ for (const { entry, input, expected } of [
     entry: "grep-worker.mjs",
     input: {
       source: "😀\r\na\n",
-      query: { patterns: ["^..$"], literal: false, multiline: false, flags: "m" },
+      query: { patterns: ["^..$"], literal: false, multiline: false, ignoreCase: false },
       limit: 10,
     },
     expected: { lines: [{ lineNumber: 1, column: 0 }] },

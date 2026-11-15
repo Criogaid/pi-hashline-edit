@@ -6,8 +6,8 @@
  * may be dropped and an element may match more text, but nothing a match needs is removed.
  *
  * Original line bytes differ from the LF view in three ways, each widened here: a CRLF line
- * keeps its CR before the line feed, malformed UTF-8 is U+FFFD in the view, and without u a
- * consuming element can match half of a supplementary character.
+ * keeps its CR before the line feed, malformed UTF-8 is U+FFFD in the view, and a consuming
+ * element can match half of a supplementary character, since grep regexes have no u flag.
  *
  * @module pi-hashline-edit/pi
  */
@@ -22,12 +22,11 @@ import {
   nativeCharacterRanges,
   foldRanges,
   type Ranges,
-  acceptedClassStrings,
   type CharacterNode,
   surrogatePair,
 } from "../core/character-set.ts";
 import { analyzeQueryPattern } from "../core/search-analysis.ts";
-import type { GrepQuery } from "../core/search.ts";
+import { GREP_FLAGS, type GrepQuery } from "../core/search.ts";
 import { MAX_RG_PATTERN_UNITS } from "./rg-process.ts";
 
 const LF = 0x0a;
@@ -36,8 +35,6 @@ const SURROGATES: Ranges = [[0xd800, 0xdfff]];
 const SUPPLEMENTARY: Ranges = [[0x10000, MAX_SCALAR]];
 /** Repetition counts above this become unbounded, keeping rg's compiled size small. */
 const MAX_EXACT_REPEAT = 16;
-/** Bound expanded class strings by total code points, counting an empty string as one. */
-const MAX_EXPANDED_STRING_POINTS = 256;
 
 /** The bytes a lossy decoder shows as U+FFFD: every byte of a malformed sequence is 0x80–0xFF. */
 const MALFORMED = "(?-u:[\\x80-\\xff])+";
@@ -51,10 +48,6 @@ interface Context {
   readonly ignoreCase: boolean;
   /** The i flag, which modifier groups override. */
   readonly flagIgnoreCase: boolean;
-  readonly flagDotAll: boolean;
-  /** u or v: elements consume code points, not UTF-16 units. */
-  readonly unicode: boolean;
-  readonly unicodeSets: boolean;
   readonly multilineAnchors: boolean;
   /** Translating a group as the text a backreference repeats, away from where it matched. */
   readonly repeated: boolean;
@@ -70,7 +63,7 @@ const INNER: Position = { first: false, last: false };
 const intersects = (ranges: Ranges, other: Ranges) => intersect(ranges, other).length !== 0;
 
 const folded = (ranges: Ranges, ctx: Context): Ranges =>
-  ctx.ignoreCase ? foldRanges(ranges, ctx.unicode) : ranges;
+  ctx.ignoreCase ? foldRanges(ranges) : ranges;
 
 /** One code point in an rg pattern; every non-word character is a code point escape. */
 export const rgCodePoint = (point: number) =>
@@ -84,12 +77,12 @@ function classPattern(ranges: Ranges): string {
 }
 
 /**
- * One consuming element over the units or code points it can match. U+FFFD may be malformed
- * bytes. Without u, a surrogate may be half of a supplementary character: the element then
- * consumes the whole character or nothing, and its neighbour consumes the other half.
+ * One consuming element over the UTF-16 units it can match. U+FFFD may be malformed bytes.
+ * A surrogate may be half of a supplementary character: the element then consumes the whole
+ * character or nothing, and its neighbour consumes the other half.
  */
-function unit(ranges: Ranges, ctx: Context): string {
-  const halves = !ctx.unicode && intersects(ranges, SURROGATES);
+function unit(ranges: Ranges): string {
+  const halves = intersects(ranges, SURROGATES);
   let scalars = subtract(ranges, [[LF, LF], ...SURROGATES]);
   if (halves) scalars = normalize([...scalars, ...SUPPLEMENTARY]);
   const alternatives = [
@@ -114,9 +107,9 @@ function flagAt(node: AST.Node, flag: "ignoreCase" | "dotAll", patternFlag: bool
 const ignoreCaseAt = (node: AST.Node, ctx: Context) =>
   flagAt(node, "ignoreCase", ctx.flagIgnoreCase);
 
+/** Grep regexes have no s flag; only a modifier group sets dotAll. */
 function nativeFlags(node: AST.Node, ctx: Context): string {
-  const dotAll = flagAt(node, "dotAll", ctx.flagDotAll);
-  return `${ignoreCaseAt(node, ctx) ? "i" : ""}${dotAll ? "s" : ""}${ctx.unicodeSets ? "v" : ctx.unicode ? "u" : ""}`;
+  return `${ignoreCaseAt(node, ctx) ? "i" : ""}${flagAt(node, "dotAll", false) ? "s" : ""}`;
 }
 
 function scalarRanges(node: CharacterNode, ctx: Context): Ranges {
@@ -128,42 +121,9 @@ function scalarRanges(node: CharacterNode, ctx: Context): Ranges {
 const choice = (patterns: readonly string[]): string =>
   patterns.length === 0 ? NEVER : patterns.length === 1 ? patterns[0] : `(?:${patterns.join("|")})`;
 
-/** Factor common prefixes without dropping an alternative or cutting a code point escape. */
-function wordTree(words: readonly (readonly number[])[], ctx: Context): string {
-  const branches = new Map<number, number[][]>();
-  let empty = false;
-  for (const word of words) {
-    if (!word.length) {
-      empty = true;
-      continue;
-    }
-    const branch = branches.get(word[0]) ?? [];
-    branch.push(word.slice(1));
-    branches.set(word[0], branch);
-  }
-  const patterns = [...branches].map(
-    ([point, tails]) => unit(folded([[point, point]], ctx), ctx) + wordTree(tails, ctx),
-  );
-  if (empty) patterns.push("");
-  return choice(patterns);
-}
-
-function stringPattern(strings: readonly string[], ctx: Context): string {
-  const words = [...new Set(strings)].map((text) => [...text].map((char) => char.codePointAt(0)!));
-  const size = words.reduce((sum, word) => sum + Math.max(1, word.length), 0);
-  return size <= MAX_EXPANDED_STRING_POINTS ? wordTree(words, ctx) : ANY_TEXT;
-}
-
 function characterPattern(node: CharacterNode, ctx: Context): string {
-  const accepted = acceptedClassStrings(node, nativeFlags(node, ctx));
-  if (!accepted) return ANY_TEXT;
   const ranges = scalarRanges(node, ctx);
-  return choice([
-    ...(ranges.length ? [unit(ranges, ctx)] : []),
-    ...(accepted.length
-      ? [stringPattern(accepted, { ...ctx, ignoreCase: ctx.ignoreCase || ignoreCaseAt(node, ctx) })]
-      : []),
-  ]);
+  return ranges.length ? unit(ranges) : NEVER;
 }
 
 function assertion(node: AST.Assertion, ctx: Context, position: Position): string {
@@ -181,12 +141,10 @@ function assertion(node: AST.Assertion, ctx: Context, position: Position): strin
       if (!position.last) return "";
       return ctx.multilineAnchors ? `(?:${TERMINATORS}|\\r?$)` : "\\r?$";
     case "word":
-      // JavaScript and rg agree on ASCII word boundaries over valid text and malformed bytes.
-      // With u and i, \b also sees U+017F and U+212A; without u, \B holds between the two
-      // halves of a supplementary character, which rg consumes as one.
-      if (ctx.ignoreCase && ctx.unicode) return "";
-      if (node.negate) return ctx.unicode ? "(?-u:\\B)" : "";
-      return "(?-u:\\b)";
+      // JavaScript and rg agree on ASCII word boundaries over valid text and malformed bytes;
+      // \B also holds between the two halves of a supplementary character, which rg consumes
+      // as one.
+      return node.negate ? "" : "(?-u:\\b)";
     default:
       if (!node.negate && position.first && position.last)
         return alternatives(node.alternatives, ctx, INNER);
@@ -284,7 +242,7 @@ function element(node: AST.Element, ctx: Context, position: Position): string {
   switch (node.type) {
     case "Character":
       if (node.value === LF) return NEVER;
-      return unit(folded([[node.value, node.value]], ctx), ctx);
+      return unit(folded([[node.value, node.value]], ctx));
     case "CharacterClass":
     case "ExpressionCharacterClass":
     case "CharacterSet":
@@ -307,7 +265,7 @@ function alternatives(nodes: readonly AST.Alternative[], ctx: Context, position:
     nodes.map(({ elements }) => {
       let pattern = "";
       for (let index = 0; index < elements.length; index++) {
-        const pair = ctx.unicode ? undefined : surrogatePair(elements[index], elements[index + 1]);
+        const pair = surrogatePair(elements[index], elements[index + 1]);
         if (pair !== undefined) {
           pattern += classPattern([[pair, pair]]);
           index++;
@@ -329,17 +287,14 @@ function alternatives(nodes: readonly AST.Alternative[], ctx: Context, position:
  */
 export function lineCandidatePatterns(query: GrepQuery): string[] | undefined {
   const ctx: Context = {
-    ignoreCase: query.flags.includes("i"),
-    flagIgnoreCase: query.flags.includes("i"),
-    flagDotAll: query.flags.includes("s"),
-    unicode: query.flags.includes("u") || query.flags.includes("v"),
-    unicodeSets: query.flags.includes("v"),
-    multilineAnchors: query.flags.includes("m"),
+    ignoreCase: query.ignoreCase,
+    flagIgnoreCase: query.ignoreCase,
+    multilineAnchors: GREP_FLAGS.includes("m"),
     repeated: false,
   };
   const patterns: string[] = [];
   for (const pattern of query.patterns) {
-    const translated = analyzeQueryPattern(pattern, query.literal, query.flags, (parsed) =>
+    const translated = analyzeQueryPattern(pattern, query.literal, (parsed) =>
       alternatives(parsed.alternatives, ctx, { first: true, last: true }),
     );
     if (translated === undefined) return undefined;
@@ -348,8 +303,7 @@ export function lineCandidatePatterns(query: GrepQuery): string[] | undefined {
       MAX_RG_PATTERN_UNITS
     )
       return undefined;
-    // A sticky match starts where the line starts.
-    patterns.push(query.flags.includes("y") ? `^(?:${translated})` : translated);
+    patterns.push(translated);
   }
   return patterns;
 }

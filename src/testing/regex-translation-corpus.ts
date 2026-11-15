@@ -5,7 +5,7 @@
 
 export interface RegexWitness {
   readonly pattern: string;
-  readonly flags: string;
+  readonly ignoreCase: boolean;
   readonly hits: readonly string[];
   readonly misses: readonly string[];
   readonly rejectCandidates: boolean;
@@ -18,7 +18,7 @@ const local = "JS-to-rg translation contract";
 export const REGEX_TRANSLATION_CORPUS: readonly RegexWitness[] = [
   {
     pattern: "(?:([])\\1|b)",
-    flags: "",
+    ignoreCase: false,
     hits: ["b"],
     misses: ["a"],
     rejectCandidates: true,
@@ -26,7 +26,7 @@ export const REGEX_TRANSLATION_CORPUS: readonly RegexWitness[] = [
   },
   {
     pattern: "(?!a)[a-z]",
-    flags: "",
+    ignoreCase: false,
     hits: ["b", "z"],
     misses: ["a", "A"],
     rejectCandidates: false,
@@ -34,7 +34,7 @@ export const REGEX_TRANSLATION_CORPUS: readonly RegexWitness[] = [
   },
   {
     pattern: "(?=ab)a[bcd]",
-    flags: "",
+    ignoreCase: false,
     hits: ["ab"],
     misses: ["ac", "ad"],
     rejectCandidates: false,
@@ -42,7 +42,7 @@ export const REGEX_TRANSLATION_CORPUS: readonly RegexWitness[] = [
   },
   {
     pattern: "[a-z](?<=b)",
-    flags: "",
+    ignoreCase: false,
     hits: ["b"],
     misses: ["a", "c"],
     rejectCandidates: false,
@@ -50,7 +50,7 @@ export const REGEX_TRANSLATION_CORPUS: readonly RegexWitness[] = [
   },
   {
     pattern: "(?!ab)[a-z]{2}",
-    flags: "",
+    ignoreCase: false,
     hits: ["ac", "ba"],
     misses: ["ab"],
     rejectCandidates: false,
@@ -58,7 +58,7 @@ export const REGEX_TRANSLATION_CORPUS: readonly RegexWitness[] = [
   },
   {
     pattern: "[a-z]{2}(?<!ab)",
-    flags: "",
+    ignoreCase: false,
     hits: ["ac", "ba"],
     misses: ["ab"],
     rejectCandidates: false,
@@ -66,15 +66,15 @@ export const REGEX_TRANSLATION_CORPUS: readonly RegexWitness[] = [
   },
   {
     pattern: "(?i:(?!k)[a-z])",
-    flags: "u",
-    hits: ["a", "ſ"],
-    misses: ["k", "K", "K"],
+    ignoreCase: false,
+    hits: ["a"],
+    misses: ["k", "K", "K", "ſ"],
     rejectCandidates: false,
     source: local,
   },
   {
     pattern: "a\\b[ a]",
-    flags: "",
+    ignoreCase: false,
     hits: ["a "],
     misses: ["aa"],
     rejectCandidates: true,
@@ -82,23 +82,23 @@ export const REGEX_TRANSLATION_CORPUS: readonly RegexWitness[] = [
   },
   {
     pattern: "k\\b[\\w ]",
-    flags: "iu",
-    hits: ["k ", "K "],
-    misses: ["kk", "Kk"],
+    ignoreCase: true,
+    hits: ["k "],
+    misses: ["kk", "Kk", "K "],
     rejectCandidates: false,
     source: local,
   },
   {
     pattern: "(?m:[\\ra]^b)",
-    flags: "",
+    ignoreCase: false,
     hits: ["\rb"],
     misses: ["ab"],
     rejectCandidates: false,
     source: local,
   },
   {
-    pattern: "a^b",
-    flags: "",
+    pattern: "(?-m:a^b)",
+    ignoreCase: false,
     hits: [],
     misses: ["ab", "a^b"],
     rejectCandidates: true,
@@ -106,7 +106,7 @@ export const REGEX_TRANSLATION_CORPUS: readonly RegexWitness[] = [
   },
   {
     pattern: "(?=needle)",
-    flags: "",
+    ignoreCase: false,
     hits: ["needle"],
     misses: ["haystack"],
     rejectCandidates: true,
@@ -114,7 +114,7 @@ export const REGEX_TRANSLATION_CORPUS: readonly RegexWitness[] = [
   },
   {
     pattern: "(?<=needle)",
-    flags: "",
+    ignoreCase: false,
     hits: ["needle"],
     misses: ["haystack"],
     rejectCandidates: true,
@@ -122,7 +122,7 @@ export const REGEX_TRANSLATION_CORPUS: readonly RegexWitness[] = [
   },
   {
     pattern: "(?<=(a)\\1)",
-    flags: "",
+    ignoreCase: false,
     hits: ["a", "ab"],
     misses: ["b"],
     rejectCandidates: true,
@@ -130,7 +130,7 @@ export const REGEX_TRANSLATION_CORPUS: readonly RegexWitness[] = [
   },
   {
     pattern: "(?<=\\1(a))",
-    flags: "",
+    ignoreCase: false,
     hits: ["aa"],
     misses: ["a", "ab"],
     rejectCandidates: true,
@@ -138,7 +138,7 @@ export const REGEX_TRANSLATION_CORPUS: readonly RegexWitness[] = [
   },
   {
     pattern: "(cat|dog)\\1",
-    flags: "",
+    ignoreCase: false,
     hits: ["catcat", "dogdog"],
     misses: ["catdog", "dogcat"],
     rejectCandidates: false,
@@ -146,7 +146,7 @@ export const REGEX_TRANSLATION_CORPUS: readonly RegexWitness[] = [
   },
   {
     pattern: "(a|bc)\\1",
-    flags: "",
+    ignoreCase: false,
     hits: ["aa", "bcbc"],
     misses: ["abc", "bca"],
     rejectCandidates: false,
@@ -154,23 +154,15 @@ export const REGEX_TRANSLATION_CORPUS: readonly RegexWitness[] = [
   },
   {
     pattern: "(a{1,2})b\\1",
-    flags: "",
+    ignoreCase: false,
     hits: ["aba", "aabaa"],
     misses: ["abb"],
     rejectCandidates: true,
     source: local,
   },
   {
-    pattern: "(?i:([\\q{ks|ab}]))(?-i:\\1)",
-    flags: "v",
-    hits: ["KsKs", "abab"],
-    misses: ["Ksks", "abAB"],
-    rejectCandidates: false,
-    source: local,
-  },
-  {
     pattern: "(a(?=b))b\\1",
-    flags: "",
+    ignoreCase: false,
     hits: ["aba"],
     misses: ["abb"],
     rejectCandidates: false,
@@ -178,48 +170,15 @@ export const REGEX_TRANSLATION_CORPUS: readonly RegexWitness[] = [
   },
   {
     pattern: "^(é|Σ|𐐀)$",
-    flags: "iu",
-    hits: ["É", "é", "ς", "σ", "Σ", "𐐨"],
-    misses: ["e", "s", "a"],
+    ignoreCase: true,
+    hits: ["É", "é", "ς", "σ", "Σ"],
+    misses: ["e", "s", "a", "𐐨"],
     rejectCandidates: true,
-    source: local,
-  },
-  {
-    pattern: "^\\p{Letter}+$",
-    flags: "u",
-    hits: ["é", "Σ", "𐐀"],
-    misses: ["123", "😀"],
-    rejectCandidates: true,
-    source: local,
-  },
-  {
-    pattern: "^[\\p{Letter}--[a-z]]+$",
-    flags: "v",
-    hits: ["É", "Σ"],
-    misses: ["abc", "123"],
-    rejectCandidates: true,
-    source: local,
-  },
-  {
-    pattern: "^[^\\p{Letter}]$",
-    flags: "v",
-    hits: ["1", "😀"],
-    // Malformed-byte widening may also admit non-ASCII letters as candidates.
-    misses: ["a"],
-    rejectCandidates: true,
-    source: local,
-  },
-  {
-    pattern: `^[\\q{prefix${"a".repeat(300)}suffix|prefix${"b".repeat(300)}suffix}]$`,
-    flags: "v",
-    hits: [`prefix${"a".repeat(300)}suffix`, `prefix${"b".repeat(300)}suffix`],
-    misses: ["wrong", "prefixwrong", "wrongsuffix"],
-    rejectCandidates: false,
     source: local,
   },
   {
     pattern: "(?:(?<x>a)|(?<x>b))\\k<x>",
-    flags: "",
+    ignoreCase: false,
     hits: ["aa", "bb"],
     misses: ["abab", "cdef"],
     rejectCandidates: false,
@@ -227,7 +186,7 @@ export const REGEX_TRANSLATION_CORPUS: readonly RegexWitness[] = [
   },
   {
     pattern: "(?:(?:(?<x>a)|(?<x>b))\\k<x>){2}",
-    flags: "",
+    ignoreCase: false,
     hits: ["aabb"],
     misses: ["abab"],
     rejectCandidates: false,
@@ -235,7 +194,7 @@ export const REGEX_TRANSLATION_CORPUS: readonly RegexWitness[] = [
   },
   {
     pattern: "^(?:(?<a>x)|(?<a>y)|z)\\k<a>$",
-    flags: "",
+    ignoreCase: false,
     hits: ["xx", "z"],
     misses: ["zz"],
     rejectCandidates: false,
@@ -243,7 +202,7 @@ export const REGEX_TRANSLATION_CORPUS: readonly RegexWitness[] = [
   },
   {
     pattern: "^(?:(?<a>x)|(?<a>y)|z){2}\\k<a>$",
-    flags: "",
+    ignoreCase: false,
     hits: ["xz", "yz"],
     misses: ["xzx", "yzy"],
     rejectCandidates: false,
@@ -251,7 +210,7 @@ export const REGEX_TRANSLATION_CORPUS: readonly RegexWitness[] = [
   },
   {
     pattern: "(.)(?<=(\\1\\1))",
-    flags: "i",
+    ignoreCase: true,
     hits: ["abB"],
     misses: ["ab"],
     rejectCandidates: false,
@@ -259,7 +218,7 @@ export const REGEX_TRANSLATION_CORPUS: readonly RegexWitness[] = [
   },
   {
     pattern: "(..)(?<=\\1\\1\\1)",
-    flags: "",
+    ignoreCase: false,
     hits: ["fababab"],
     misses: ["fabxbab", "faxabab"],
     rejectCandidates: false,
@@ -267,7 +226,7 @@ export const REGEX_TRANSLATION_CORPUS: readonly RegexWitness[] = [
   },
   {
     pattern: "(?<=(.))(\\w+)(?=\\1)",
-    flags: "",
+    ignoreCase: false,
     hits: ["  'foo'  ", '  "foo"  '],
     misses: ['  .foo"  '],
     rejectCandidates: false,
@@ -275,7 +234,7 @@ export const REGEX_TRANSLATION_CORPUS: readonly RegexWitness[] = [
   },
   {
     pattern: "(?<=ab(?=c)\\wd)\\w\\w",
-    flags: "",
+    ignoreCase: false,
     hits: ["abcdef"],
     misses: [],
     rejectCandidates: false,
@@ -283,7 +242,7 @@ export const REGEX_TRANSLATION_CORPUS: readonly RegexWitness[] = [
   },
   {
     pattern: "(?<=a(?=([bc]{2}(?<!a{2}))d)\\w{3})\\w\\w",
-    flags: "",
+    ignoreCase: false,
     hits: ["abcdef"],
     misses: [],
     rejectCandidates: false,
@@ -291,7 +250,7 @@ export const REGEX_TRANSLATION_CORPUS: readonly RegexWitness[] = [
   },
   {
     pattern: "(?<=a(?=([bc]{2}(?<!a*))d)\\w{3})\\w\\w",
-    flags: "",
+    ignoreCase: false,
     hits: [],
     misses: ["abcdef"],
     rejectCandidates: false,
@@ -299,26 +258,10 @@ export const REGEX_TRANSLATION_CORPUS: readonly RegexWitness[] = [
   },
   {
     pattern: "(?<!(^|[ab]))\\w{2}",
-    flags: "",
+    ignoreCase: false,
     hits: ["abcdef"],
     misses: [],
     rejectCandidates: false,
     source: `${test262}lookBehind/captures-negative.js`,
-  },
-  {
-    pattern: "^[[0-9]--\\p{ASCII_Hex_Digit}]+$",
-    flags: "v",
-    hits: [],
-    misses: ["0", "9", "C", "☃", "𝌆", "🇧🇪"],
-    rejectCandidates: true,
-    source: `${test262}unicodeSets/generated/character-class-difference-character-property-escape.js`,
-  },
-  {
-    pattern: "^[[0-9]&&[0-9]]+$",
-    flags: "v",
-    hits: ["0", "9"],
-    misses: ["6\uFE0F\u20E3", "C", "☃", "𝌆", "🇧🇪"],
-    rejectCandidates: true,
-    source: `${test262}unicodeSets/generated/character-class-intersection-character-class.js`,
   },
 ];

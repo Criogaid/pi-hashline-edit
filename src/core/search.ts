@@ -9,7 +9,7 @@ export const GREP_FLAGS = "m";
 export interface GrepQuery {
   readonly patterns: readonly string[];
   readonly literal: boolean;
-  readonly flags: string;
+  readonly ignoreCase: boolean;
   readonly multiline: boolean;
 }
 export interface SearchInput {
@@ -74,8 +74,10 @@ function multilineRows(source: string, regex: RegExp, limit: number): Rows {
   return rows;
 }
 
-const queryRegexes = (query: GrepQuery) =>
-  query.patterns.map((pattern) => buildRegex(pattern, query.literal, query.flags));
+const queryRegexes = ({ patterns, literal, ignoreCase }: GrepQuery) =>
+  patterns.map((pattern) =>
+    buildRegex(pattern, literal, ignoreCase ? `${GREP_FLAGS}i` : GREP_FLAGS),
+  );
 
 /** The first match column of one physical line, or undefined when no pattern matches it. */
 function lineColumn(regexes: readonly RegExp[], text: string): number | undefined {

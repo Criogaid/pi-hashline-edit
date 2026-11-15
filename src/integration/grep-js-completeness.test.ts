@@ -206,7 +206,7 @@ test("real rg candidates → include every JS row and preserve confirmed output 
         const path = join(directory, name);
         const rows = searchText({
           source: bytes.toString("utf8"),
-          query: { patterns: [pattern], literal: false, flags: ignoreCase ? "mi" : "m", multiline },
+          query: { patterns: [pattern], literal: false, ignoreCase, multiline },
           limit: bytes.length,
         }).lines;
         if (!rows.length) continue;

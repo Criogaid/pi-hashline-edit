@@ -59,22 +59,12 @@ export const MATRIX_SYNTAX = [
   ["remove m", "(?-m:^a$)"],
   ["Unicode property", "\\p{Letter}"],
   ["negated Unicode property", "\\P{ASCII}"],
-  ["v intersection", "[\\p{ASCII}&&\\p{Letter}]"],
-  ["v subtraction", "[\\p{Letter}--[a]]"],
-  ["v string alternatives", "[\\q{ab|cd}]"],
-  ["v string property", "\\p{RGI_Emoji}"],
 ] as const;
 
 export const MATRIX_QUANTIFIERS = ["", "?", "*", "+", "*?", "+?", "{0}", "{2}", "{1,3}?"] as const;
 export const MATRIX_CONTEXTS = ["bare", "sequence", "alternative", "capture", "OR query"] as const;
 
-/** All combinations of matching flags; d and caller-supplied g are covered at tool entry. */
-export const MATRIX_FLAGS = ["", "u", "v"].flatMap((unicode) =>
-  Array.from(
-    { length: 16 },
-    (_, mask) => [..."imsy"].filter((_, bit) => mask & (1 << bit)).join("") + unicode,
-  ),
-);
+export const MATRIX_IGNORE_CASE = [false, true] as const;
 
 export const MATRIX_INPUTS = [
   ["empty", Buffer.alloc(0)],
@@ -116,13 +106,13 @@ export function* matrixCases(): Generator<MatrixCase> {
                 : context === "capture"
                   ? [`(${part})\\1`]
                   : [part, "Z"];
-        for (const flags of MATRIX_FLAGS) {
+        for (const ignoreCase of MATRIX_IGNORE_CASE) {
           for (const multiline of [false, true])
             yield {
               syntax,
               quantifier,
               context,
-              query: { patterns, flags, multiline, literal: false },
+              query: { patterns, ignoreCase, multiline, literal: false },
             };
         }
       }
@@ -132,7 +122,7 @@ export function* matrixCases(): Generator<MatrixCase> {
 
 export function acceptsNative(query: GrepQuery): boolean {
   try {
-    for (const pattern of query.patterns) new RegExp(pattern, query.flags);
+    for (const pattern of query.patterns) new RegExp(pattern, query.ignoreCase ? "mi" : "m");
     return true;
   } catch (error) {
     if (error instanceof SyntaxError) return false;
@@ -171,9 +161,9 @@ export function* pairedMatrixCases(): Generator<{ readonly query: GrepQuery }> {
         [`(?:${left}|${right})`],
         [left, right],
       ]) {
-        for (const flags of MATRIX_FLAGS) {
+        for (const ignoreCase of MATRIX_IGNORE_CASE) {
           for (const multiline of [false, true])
-            yield { query: { patterns, flags, multiline, literal: false } };
+            yield { query: { patterns, ignoreCase, multiline, literal: false } };
         }
       }
     }

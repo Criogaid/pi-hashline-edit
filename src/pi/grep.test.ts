@@ -1395,7 +1395,7 @@ test("non-multiline or multiline query → use line candidates or the file prefi
       assert.equal(grepCounts(result).matches, 2);
       assert.equal(fake.calls.length, 1);
       assert.equal(fake.calls[0].kind, multiline ? "paths" : "lines");
-      const query = { patterns: params.pattern, literal: true, flags: "", multiline };
+      const query = { patterns: params.pattern, literal: true, ignoreCase: false, multiline };
       const candidates = lineCandidatePatterns(query);
       assert.ok(candidates);
       const prefix = multiline

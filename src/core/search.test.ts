@@ -76,7 +76,7 @@ for (const scenario of cases) {
       query: {
         patterns: [scenario.pattern],
         literal: false,
-        flags: scenario.ignoreCase ? "mi" : "m",
+        ignoreCase: scenario.ignoreCase ?? false,
         multiline: scenario.multiline ?? false,
       },
       limit: 100,
@@ -94,7 +94,7 @@ test("JS search: alternatives merge before the physical row limit", () => {
     query: {
       patterns: ["c", "a\\nb", "(?=b)"],
       literal: false,
-      flags: "m",
+      ignoreCase: false,
       multiline: true,
     },
     limit: 2,
@@ -108,14 +108,14 @@ test("JS search: alternatives merge before the physical row limit", () => {
 test("JS search: columns retain UTF-16 positions inside supplementary characters", () => {
   const result = searchText({
     source: "😀x\n",
-    query: { patterns: ["\\uDE00"], literal: false, flags: "m", multiline: false },
+    query: { patterns: ["\\uDE00"], literal: false, ignoreCase: false, multiline: false },
     limit: 1,
   });
   assert.deepEqual(result.lines, [{ lineNumber: 1, column: 1 }]);
 });
 
 test("selected lines ending in CR → matching preserves the CR and uses 1-based positions", () => {
-  const query = { patterns: ["\\r$"], literal: false, flags: "", multiline: false };
+  const query = { patterns: ["\\r$"], literal: false, ignoreCase: false, multiline: false };
   assert.deepEqual(searchLines({ lines: "skip\na\r\nb\r\n", query, limit: 10 }), {
     lines: [
       { lineNumber: 2, column: 1 },
@@ -125,7 +125,7 @@ test("selected lines ending in CR → matching preserves the CR and uses 1-based
 });
 
 test("selected lines exceed limit → matching rows truncate at the limit", () => {
-  const query = { patterns: ["a", "b"], literal: true, flags: "", multiline: false };
+  const query = { patterns: ["a", "b"], literal: true, ignoreCase: false, multiline: false };
   assert.deepEqual(searchLines({ lines: "skip\nxa\nb\na\n", query, limit: 1 }), {
     lines: [{ lineNumber: 2, column: 1 }],
   });

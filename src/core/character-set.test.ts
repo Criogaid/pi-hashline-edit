@@ -11,11 +11,6 @@ import {
 import { unsupportedByHost } from "../testing/regex-host.testing.ts";
 
 for (const [source, flags] of [
-  ["\\p{Letter}", "u"],
-  ["[^\\p{Letter}]", "v"],
-  ["[\\p{Letter}--[a-z]]", "iv"],
-  ["(?i:[kſΣ])", "u"],
-  ["[\\q{ab|😀|}]", "v"],
   ["\\uD83D", ""],
   [".", ""],
   [".", "s"],
@@ -43,7 +38,7 @@ for (const [source, flags] of [
       "\ud83d",
       "�",
     ]) {
-      const isUnit = flags.includes("u") || flags.includes("v") || char.length === 1;
+      const isUnit = char.length === 1;
       assert.equal(
         contains(ranges, char.codePointAt(0)!),
         isUnit && native.exec(char)?.[0] === char,

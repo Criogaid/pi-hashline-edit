@@ -3,64 +3,24 @@ import { test } from "node:test";
 import { lineCandidatePatterns } from "./rg-regex.ts";
 
 // These expressions are the byte-level boundary contract, including deliberate widening.
-for (const [pattern, flags, expected] of [
-  ["a$", "", "a\\r?$"],
-  ["[A-Z]{10,}", "m", "(?:[A-Z]){10,}"],
-  ["(?m:^)b", "", "(?:^|[\\r\\x{2028}\\x{2029}])b"],
-  ["(\\w)\\1{4}", "m", "[0-9A-Z_a-z](?:[0-9A-Z_a-z]){4,4}"],
-] as const) {
-  test(`line candidates ${pattern} /${flags} → preserve required byte positions`, () => {
-    assert.deepEqual(
-      lineCandidatePatterns({ patterns: [pattern], literal: false, flags, multiline: false }),
-      [expected],
-    );
-  });
-}
-
 for (const [pattern, expected] of [
-  ["[[a-c]&&[b-d]]", "[b-c]"],
-  ["[[a-c]--[b]]", "[ac]"],
-  ["[\\p{ASCII}&&\\p{Letter}]", "[A-Za-z]"],
-  ["[\\p{Letter}&&[a-c]]", "[a-c]"],
-  ["[[a-c]--\\p{Uppercase_Letter}]", "[a-c]"],
-  ["[a[bc]\\q{de|fg}]", "(?:[a-c]|(?:de|fg))"],
-  ["[\\q{ab|cd}&&\\q{cd|ef}]", "cd"],
-  ["[\\q{ab|cd}--\\q{cd}]", "ab"],
-  ["[\\q{ab|}]", "(?:ab|)"],
-  ["[[a]--[a]]", "[^\\x{0}-\\x{10ffff}]"],
+  ["a$", "a(?:[\\r\\x{2028}\\x{2029}]|\\r?$)"],
+  ["[A-Z]{10,}", "(?:[A-Z]){10,}"],
+  ["(?m:^)b", "(?:^|[\\r\\x{2028}\\x{2029}])b"],
+  ["(\\w)\\1{4}", "[0-9A-Z_a-z](?:[0-9A-Z_a-z]){4,4}"],
 ] as const) {
-  test(`finite v class ${pattern} → narrow candidates without discarding strings`, () => {
+  test(`line candidates ${pattern} → preserve required byte positions`, () => {
     assert.deepEqual(
-      lineCandidatePatterns({ patterns: [pattern], literal: false, flags: "v", multiline: false }),
+      lineCandidatePatterns({
+        patterns: [pattern],
+        literal: false,
+        ignoreCase: false,
+        multiline: false,
+      }),
       [expected],
     );
   });
 }
-
-test("capture disables i inside a caseless reference → retain the reference's case variants", () => {
-  assert.deepEqual(
-    lineCandidatePatterns({
-      patterns: ["((?-i:[[a]--[A]]))(?i:\\1)"],
-      literal: false,
-      flags: "v",
-      multiline: false,
-    }),
-    ["a[Aa]"],
-  );
-});
-
-test("caseless backreference repeats a v string-class capture → retains native case variants", () => {
-  const pattern = "([\\q{a}])\\1";
-  assert.equal(new RegExp(pattern, "iv").test("aA"), true);
-  const candidates = lineCandidatePatterns({
-    patterns: [pattern],
-    literal: false,
-    flags: "iv",
-    multiline: false,
-  });
-  // This ASCII-only translation uses syntax shared by rg and JavaScript.
-  assert.ok(candidates?.some((candidate) => new RegExp(candidate).test("aA")));
-});
 
 test("deeply nested pattern → line candidates retain the native match", () => {
   for (const depth of [50, 200, 500, 1_000, 2_000, 4_000]) {
@@ -69,7 +29,7 @@ test("deeply nested pattern → line candidates retain the native match", () => 
     const candidates = lineCandidatePatterns({
       patterns: [pattern],
       literal: false,
-      flags: "",
+      ignoreCase: false,
       multiline: false,
     });
     // An unavailable line analysis delegates candidate discovery to the file prefilter.

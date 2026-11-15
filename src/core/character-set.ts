@@ -5,11 +5,6 @@ export type CharacterNode =
   | AST.CharacterClass
   | AST.ExpressionCharacterClass
   | AST.CharacterSet;
-type ClassNode =
-  | CharacterNode
-  | AST.CharacterClassElement
-  | AST.ClassIntersection
-  | AST.ClassSubtraction;
 /** Sorted, disjoint, inclusive code point intervals. */
 export type Ranges = readonly (readonly [number, number])[];
 export const MAX_UNIT = 0xffff;
@@ -97,7 +92,7 @@ export const contains = (ranges: Ranges, point: number): boolean =>
 const membership = (source: string, flags: string): RegExp =>
   new RegExp(`^(?:${source})(?![\\s\\S])`, flags);
 
-/** The exact single-character part of a validated expression; flags contain only i, s, u or v. */
+/** The UTF-16 units a validated expression matches; flags contain only i or s. */
 export function nativeCharacterRanges(source: string, flags: string): Ranges {
   const key = `${flags}:${source}`;
   const cached = nativeSets.get(key);
@@ -107,17 +102,16 @@ export function nativeCharacterRanges(source: string, flags: string): Ranges {
     return cached;
   }
   const native = membership(source, flags);
-  const max = flags.includes("u") || flags.includes("v") ? MAX_SCALAR : MAX_UNIT;
   const ranges: [number, number][] = [];
   let start: number | undefined;
-  for (let point = 0; point <= max; point++) {
+  for (let point = 0; point <= MAX_UNIT; point++) {
     if (native.test(String.fromCodePoint(point))) start ??= point;
     else if (start !== undefined) {
       ranges.push([start, point - 1]);
       start = undefined;
     }
   }
-  if (start !== undefined) ranges.push([start, max]);
+  if (start !== undefined) ranges.push([start, MAX_UNIT]);
   if (ranges.length <= MAX_CACHED_RANGES && source.length <= MAX_CACHED_SOURCE_UNITS) {
     while (nativeSets.size >= MAX_CACHED_SETS || cachedRanges + ranges.length > MAX_CACHED_RANGES) {
       const oldest = nativeSets.keys().next().value!;
@@ -131,54 +125,9 @@ export function nativeCharacterRanges(source: string, flags: string): Ranges {
 }
 
 /** Close intervals under V8 case equivalence without shipping a second Unicode version. */
-export function foldRanges(ranges: Ranges, unicode: boolean): Ranges {
+export function foldRanges(ranges: Ranges): Ranges {
   if (!ranges.length) return ranges;
-  const escape = (point: number) =>
-    unicode ? `\\u{${point.toString(16)}}` : `\\u${point.toString(16).padStart(4, "0")}`;
+  const escape = (point: number) => `\\u${point.toString(16).padStart(4, "0")}`;
   const source = `[${ranges.map(([low, high]) => (low === high ? escape(low) : `${escape(low)}-${escape(high)}`)).join("")}]`;
-  return nativeCharacterRanges(source, unicode ? "iu" : "i");
-}
-
-/**
- * The multi-character strings a class node matches under `flags`; undefined when a string
- * property cannot be enumerated here.
- */
-export function acceptedClassStrings(
-  node: CharacterNode,
-  flags: string,
-): readonly string[] | undefined {
-  const strings = classStrings(node);
-  if (!strings?.length) return strings;
-  const accepts = membership(node.raw, flags);
-  return strings.filter((value) => accepts.test(value));
-}
-
-/** String representatives of a class; undefined means a string property is not enumerable here. */
-function classStrings(node: ClassNode): readonly string[] | undefined {
-  switch (node.type) {
-    case "ExpressionCharacterClass":
-      return node.negate ? [] : classStrings(node.expression);
-    case "ClassIntersection":
-      return classStrings(node.left) ?? classStrings(node.right);
-    case "ClassSubtraction":
-      return classStrings(node.left);
-    case "CharacterClass": {
-      if (node.negate) return [];
-      const result: string[] = [];
-      for (const child of node.elements) {
-        const strings = classStrings(child);
-        if (!strings) return undefined;
-        result.push(...strings);
-      }
-      return result;
-    }
-    case "ClassStringDisjunction":
-      return node.alternatives
-        .filter(({ elements }) => elements.length !== 1)
-        .map(({ elements }) => elements.map(({ value }) => String.fromCodePoint(value)).join(""));
-    case "CharacterSet":
-      return node.kind === "property" && node.strings ? undefined : [];
-    default:
-      return [];
-  }
+  return nativeCharacterRanges(source, "i");
 }

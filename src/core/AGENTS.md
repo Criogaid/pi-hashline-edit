@@ -15,5 +15,5 @@ Internal pure engine: no Pi imports and no public API. It trusts input already f
 
 ## Constraints
 
-- Own interval algebra, bounded membership caching, and explicit class-string enumeration in `character-set.ts`; derive Unicode properties, `v` sets, and case closure from the running V8 rather than separate Unicode tables. Intersections may enumerate either string operand, subtractions only the left, and unions require every operand. Unknown string properties remain widened.
+- Own interval algebra and bounded membership caching in `character-set.ts`; derive class membership and case closure from the running V8 rather than separate Unicode tables. Grep regexes have no `u` or `v` flag, so a class matches single UTF-16 units and a supplementary character is a surrogate pair.
 - Derive one necessary file condition in `search-analysis.ts`: an AND keeps its most selective side, because extra rg passes cost more than they save. Preserve every OR alternative, retain necessary prefixes or suffixes when expansion is too large, and cut literals where bytes can differ from the LF view. Unknown constructs widen candidates, never narrow them.

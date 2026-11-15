@@ -183,11 +183,10 @@ export function makeGrepOverride({ cwd, config, budgets }: ToolEnvironment) {
         const effectiveLimit = params.limit ?? config.grep.defaultLimit;
         const outputMode = params.outputMode ?? "content";
         const { literal } = params;
-        const ignoreCase = params.ignoreCase ?? smartIgnoreCase(patterns, literal, GREP_FLAGS);
         const query = {
           patterns,
           literal,
-          flags: ignoreCase ? `${GREP_FLAGS}i` : GREP_FLAGS,
+          ignoreCase: params.ignoreCase ?? smartIgnoreCase(patterns, literal),
           multiline: params.multiline ?? false,
         };
         const globs = params.glob ?? [];

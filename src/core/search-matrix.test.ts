@@ -9,7 +9,7 @@ import {
   MATRIX_INPUTS,
 } from "./search-matrix.testing.ts";
 
-test("Cartesian JS syntax × quantifiers × contexts × flags × line modes × bytes → prefilter never drops a native match", (t) => {
+test("Cartesian JS syntax × quantifiers × contexts × case modes × line modes × bytes → prefilter never drops a native match", (t) => {
   let accepted = 0;
   let rejected = 0;
   let evaluations = 0;
@@ -59,6 +59,6 @@ test("Cartesian JS syntax × quantifiers × contexts × flags × line modes × b
       misses,
     }),
   );
-  assert.ok(accepted > 0 && rejected > 0 && filteredHits > 0);
+  assert.ok(accepted > 0 && filteredHits > 0);
   assert.equal(misses, 0, examples.join("\n"));
 });

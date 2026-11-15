@@ -6,7 +6,7 @@ import { test } from "node:test";
 import { extractPrefilter, type Prefilter } from "../core/search-analysis.ts";
 import {
   acceptsNative,
-  MATRIX_FLAGS,
+  MATRIX_IGNORE_CASE,
   MATRIX_INPUTS,
   MATRIX_SYNTAX,
 } from "../core/search-matrix.testing.ts";
@@ -35,8 +35,6 @@ const syntaxCases = [
   ["many alternatives", Array.from({ length: 65 }, (_, i) => `token${i}`).join("|")],
   ["long repetition", "a{65}"],
   ["zero repetition", "x{0}"],
-  ["nested v subtraction", "[[a-z]--[aeiou]]"],
-  ["v empty string alternative", "[\\q{|ab}]"],
 ] as const;
 
 interface Coverage {
@@ -59,7 +57,7 @@ interface CandidateCase {
   readonly contributions: Map<Coverage, number>;
 }
 
-test("Cartesian prefilter coverage × composition × flags × bytes → real rg retains witnessed JS hits and reports selectivity", async (t) => {
+test("Cartesian prefilter coverage × composition × case mode × bytes → real rg retains witnessed JS hits and reports selectivity", async (t) => {
   const directory = await mkdtemp(join(tmpdir(), "hl-prefilter-coverage-"));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const witnesses = [
@@ -68,6 +66,7 @@ test("Cartesian prefilter coverage × composition × flags × bytes → real rg 
     "ab\ncd\nα\nβ\n漢\n𐐀\n𐐨\n👩‍💻\n🇺🇳\n",
     "kſ\nKs\nσςΣ\néÉ\n\\K\nK\n",
     "a\nb\r\na\r\nb\na\na\n",
+    "u{1F600}\np{Letter}\nP{ASCII}\n",
   ];
   const sources = [
     ...MATRIX_INPUTS.map(([, bytes]) => bytes),
@@ -100,9 +99,14 @@ test("Cartesian prefilter coverage × composition × flags × bytes → real rg 
     ] as const) {
       const total = compositions.get(composition) ?? emptyCoverage();
       compositions.set(composition, total);
-      for (const flags of MATRIX_FLAGS) {
+      for (const ignoreCase of MATRIX_IGNORE_CASE) {
         for (const multiline of [false, true]) {
-          const query: GrepQuery = { patterns: [...patterns], flags, multiline, literal: false };
+          const query: GrepQuery = {
+            patterns: [...patterns],
+            ignoreCase,
+            multiline,
+            literal: false,
+          };
           if (!acceptsNative(query)) {
             rejected++;
             for (const stats of composition === "bare" ? [total, row] : [total]) stats.rejected++;
@@ -185,9 +189,12 @@ test("Cartesian prefilter coverage × composition × flags × bytes → real rg 
     );
   for (const [label, stats] of syntax) t.diagnostic(JSON.stringify({ syntax: label, ...stats }));
   for (const stats of syntax.values())
-    assert.equal(stats.queries + stats.rejected, MATRIX_FLAGS.length * 2);
+    assert.equal(stats.queries + stats.rejected, MATRIX_IGNORE_CASE.length * 2);
   for (const stats of compositions.values())
-    assert.equal(stats.queries + stats.rejected, syntaxCases.length * MATRIX_FLAGS.length * 2);
+    assert.equal(
+      stats.queries + stats.rejected,
+      syntaxCases.length * MATRIX_IGNORE_CASE.length * 2,
+    );
   // A NUL-only pattern cannot match grep's searchable (non-NUL) file domain.
   assert.deepEqual(unwitnessed, ["NUL"]);
   const requiredLiteral = compositions.get("required literal");

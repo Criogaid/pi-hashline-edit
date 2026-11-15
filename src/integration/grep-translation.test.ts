@@ -26,12 +26,12 @@ test("upstream regex witnesses × LF/CRLF/malformed bytes → sound candidates, 
   t.after(() => rm(directory, { recursive: true, force: true }));
   for (const [index, example] of REGEX_TRANSLATION_CORPUS.entries()) {
     await t.test(
-      `${example.pattern.slice(0, 90)} /${example.flags}`,
-      { skip: unsupportedByHost([example.pattern], example.flags) },
+      `${example.pattern.slice(0, 90)} /${example.ignoreCase ? "mi" : "m"}`,
+      { skip: unsupportedByHost([example.pattern], example.ignoreCase ? "mi" : "m") },
       async () => {
         const query: GrepQuery = {
           patterns: [example.pattern],
-          flags: example.flags,
+          ignoreCase: example.ignoreCase,
           literal: false,
           multiline: false,
         };
@@ -125,8 +125,8 @@ test("real rg AND/OR file prefilter → broad candidates retain exact JS results
     paths.push(path);
   }
   const query: GrepQuery = {
-    patterns: ["(?:foo.*bar|baz.*qux)"],
-    flags: "s",
+    patterns: ["(?s:foo.*bar|baz.*qux)"],
+    ignoreCase: false,
     literal: false,
     multiline: true,
   };
@@ -165,7 +165,12 @@ test("oversized line translation → file prefilter fallback preserves JS result
   const directory = await mkdtemp(join(tmpdir(), "hl-regex-budget-"));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const pattern = "a".repeat(30_000);
-  const query: GrepQuery = { patterns: [pattern], flags: "", literal: true, multiline: false };
+  const query: GrepQuery = {
+    patterns: [pattern],
+    ignoreCase: false,
+    literal: true,
+    multiline: false,
+  };
   assert.equal(lineCandidatePatterns(query), undefined);
   const path = join(directory, "long.txt");
   await writeFile(path, pattern);

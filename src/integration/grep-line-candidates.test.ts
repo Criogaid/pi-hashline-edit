@@ -61,37 +61,7 @@ const patterns = [
   "\\W",
   ".",
   "[^a]",
-  "[\\p{ASCII}&&\\p{Letter}]",
-  "[\\p{Letter}--[a]]",
-  "[\\q{ab|😀}]",
-  "[[a-c]&&[b-d]]",
-  "[[a-c]--[b]]",
-  "[\\p{Letter}&&[a-c]]",
-  "[[a-c]--\\p{Uppercase_Letter}]",
-  "[a[bc]\\q{de|fg}]",
-  "[\\q{ab|cd}&&\\q{cd|ef}]",
-  "[\\q{ab|cd}--\\q{cd}]",
-  "[\\q{ab|}]",
-  "[[a]--[a]]",
-  "[[^a]&&[ab]]",
-  "[[ab]--[^a]]",
-  "[^[a]--[b]]",
-  "[\\q{\\uFFFD|a\\uFFFDb|😀|\\r|\\u2028}]",
-  "[\\q{ab|a}]+",
-  "[[Kkſs]--[k]]",
-  "(?i:[\\q{ks|ab}])",
-  "(?-i:[[aA]--[A]])",
-  "([[a]--[A]])\\1",
-  "([[a]--[A]])(?i:\\1)",
-  "((?-i:[[a]--[A]]))(?i:\\1)",
-  "((?-i:[\\q{a|b}]))(?i:\\1)",
-  "([\\q{a}])\\1",
   "((?-i:a))(?i:\\1)",
-  "(?i:([\\q{ks|ab}]))\\1",
-  "[\\q{\\u0558|a}&&\\p{Letter}]",
-  "[[\\u0100-\\u0300]&&[ſı]]",
-  "[[\\u0100-\\u0300]--[ſ]]",
-  `[\\q{${"a".repeat(300)}|b}]`,
   "(?m:^)",
   "(?m:$)",
   "(?-m:^)",
@@ -135,7 +105,7 @@ const sortedRows = (files: readonly Pick<GrepFileMatch, "filePath" | "rows">[]) 
     .flatMap(({ filePath, rows }) => rows.map((row) => ({ ...row, filePath })))
     .sort((a, b) => a.filePath.localeCompare(b.filePath) || a.lineNumber - b.lineNumber);
 
-test("Cartesian adversarial bytes × syntax × flags × assertion positions → rg rows contain JS and final rows equal JS", {
+test("Cartesian adversarial bytes × syntax × case mode × assertion positions → rg rows contain JS and final rows equal JS", {
   timeout: matrixTimeoutMs,
 }, async (t) => {
   const directory = await mkdtemp(join(tmpdir(), "hl-grep-line-candidates-"));
@@ -168,12 +138,12 @@ test("Cartesian adversarial bytes × syntax × flags × assertion positions → 
   let listedRows = 0;
   let nativeRows = 0;
   for (const atom of patterns) {
-    for (const flags of ["", "m", "iu", "v", "iv", "mv"]) {
+    for (const ignoreCase of [false, true]) {
       // Wrapping places each assertion inside a consuming sequence as well as at its edges.
       for (const queryPatterns of [[atom], [`a(?:${atom})b`], [atom, "Z"]]) {
         const query: GrepQuery = {
           patterns: queryPatterns,
-          flags,
+          ignoreCase,
           literal: false,
           multiline: false,
         };

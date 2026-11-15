@@ -11,7 +11,6 @@
 import { RegExpParser, visitRegExpAST, type AST } from "@eslint-community/regexpp";
 import { caseVariants } from "./case-fold.ts";
 import {
-  acceptedClassStrings,
   nativeCharacterRanges,
   total,
   type CharacterNode,
@@ -51,8 +50,6 @@ const UNKNOWN: Info = { exact: [[GAP]], filter: ALL };
 
 interface Context {
   readonly ignoreCase: boolean;
-  readonly unicode: boolean;
-  readonly unicodeSets: boolean;
 }
 
 /**
@@ -67,7 +64,7 @@ function isUnstable(point: number): boolean {
 function charUnit(point: number, ctx: Context): Unit {
   if (isUnstable(point)) return GAP;
   const char = String.fromCodePoint(point);
-  return ctx.ignoreCase ? caseVariants(char, ctx.unicode) : [char];
+  return ctx.ignoreCase ? caseVariants(char) : [char];
 }
 
 function unionUnits(units: readonly Unit[]): Unit {
@@ -217,25 +214,14 @@ function quantified(node: AST.Quantifier, ctx: Context): Info {
 
 function classInfo(node: CharacterNode, ctx: Context): Info {
   if (node.type === "CharacterSet" && node.kind === "any") return UNKNOWN;
-  const flags = `${ctx.ignoreCase ? "i" : ""}${ctx.unicodeSets ? "v" : ctx.unicode ? "u" : ""}`;
-  const strings = acceptedClassStrings(node, flags);
-  if (!strings) return UNKNOWN;
-  const ranges = nativeCharacterRanges(node.raw, flags);
+  const ranges = nativeCharacterRanges(node.raw, ctx.ignoreCase ? "i" : "");
   if (total(ranges) > MAX_CLASS_CHARS) return UNKNOWN;
   const units: Unit[] = [];
   for (const [low, high] of ranges)
     for (let point = low; point <= high; point++)
-      units.push(charUnit(point, { ...ctx, ignoreCase: false }));
-  const infos: Info[] = units.length ? [{ exact: [[unionUnits(units)]], filter: ALL }] : [];
-  for (const value of strings) {
-    const sequence = [...value].map((char) => charUnit(char.codePointAt(0)!, ctx));
-    infos.push(
-      sequence.length <= MAX_SEQUENCE_LENGTH
-        ? { exact: [sequence], filter: ALL }
-        : { filter: sequenceFilter([sequence]) },
-    );
-  }
-  return alternate(infos);
+      units.push(charUnit(point, { ignoreCase: false }));
+  // A class that matches nothing has no exact text.
+  return alternate(units.length ? [{ exact: [[unionUnits(units)]], filter: ALL }] : []);
 }
 
 function analyzeElement(node: AST.Element, ctx: Context): Info {
@@ -273,7 +259,7 @@ function analyzeAlternatives(alternatives: readonly AST.Alternative[], ctx: Cont
     alternatives.map(({ elements }) => {
       const infos: Info[] = [];
       for (let index = 0; index < elements.length; index++) {
-        const pair = ctx.unicode ? undefined : surrogatePair(elements[index], elements[index + 1]);
+        const pair = surrogatePair(elements[index], elements[index + 1]);
         if (pair === undefined) infos.push(analyzeElement(elements[index], ctx));
         else {
           infos.push({ exact: [[charUnit(pair, ctx)]], filter: ALL });
@@ -292,14 +278,13 @@ function analyzeAlternatives(alternatives: readonly AST.Alternative[], ctx: Cont
 export function analyzeQueryPattern<T>(
   pattern: string,
   literal: boolean,
-  flags: string,
   analyze: (parsed: AST.Pattern) => T,
 ): T | undefined {
   const source = regexSource(pattern, literal);
   try {
     const parsed = new RegExpParser({ ecmaVersion: 2025 }).parsePattern(source, 0, source.length, {
-      unicode: flags.includes("u"),
-      unicodeSets: flags.includes("v"),
+      unicode: false,
+      unicodeSets: false,
     });
     return analyze(parsed);
   } catch (error) {
@@ -309,13 +294,9 @@ export function analyzeQueryPattern<T>(
 }
 
 /** Smart case over decoded characters; case-sensitive when a pattern cannot be analyzed. */
-export function smartIgnoreCase(
-  patterns: readonly string[],
-  literal: boolean,
-  flags: string,
-): boolean {
+export function smartIgnoreCase(patterns: readonly string[], literal: boolean): boolean {
   return !patterns.some((pattern) => {
-    const uppercase = analyzeQueryPattern(pattern, literal, flags, (parsed) => {
+    const uppercase = analyzeQueryPattern(pattern, literal, (parsed) => {
       let found = false;
       visitRegExpAST(parsed, {
         onCharacterEnter({ value }) {
@@ -331,16 +312,11 @@ export function smartIgnoreCase(
 
 /** One necessary file condition, its literals bounded; every OR retains all alternatives. */
 export function extractPrefilter(query: GrepQuery): Prefilter {
-  const unicode = query.flags.includes("u") || query.flags.includes("v");
-  const ctx: Context = {
-    ignoreCase: query.flags.includes("i"),
-    unicode,
-    unicodeSets: query.flags.includes("v"),
-  };
+  const ctx: Context = { ignoreCase: query.ignoreCase };
   return orFilters(
     query.patterns.map(
       (pattern) =>
-        analyzeQueryPattern(pattern, query.literal, query.flags, (parsed) =>
+        analyzeQueryPattern(pattern, query.literal, (parsed) =>
           filterOf(analyzeAlternatives(parsed.alternatives, ctx)),
         ) ?? ALL,
     ),

@@ -4,29 +4,27 @@ import { extractPrefilter, smartIgnoreCase, type Literal } from "./search-analys
 import { searchText, type GrepQuery } from "./search.ts";
 import { hasCandidateBytes } from "./search-matrix.testing.ts";
 
-const query = (pattern: string, flags = "m", literal = false): GrepQuery => ({
+const query = (pattern: string, ignoreCase = false, literal = false): GrepQuery => ({
   patterns: [pattern],
-  flags,
+  ignoreCase,
   literal,
   multiline: true,
 });
 const literal = (text: string): Literal => [...text].map((char) => [char]);
 
-for (const [pattern, flags, expected] of [
-  ["colou?r", "m", [literal("color"), literal("colour")]],
-  ["a*", "m", undefined],
-  ["(?:word|)", "m", undefined],
-  ["[^a]+", "m", undefined],
-  ["(?=word)", "m", [literal("word")]],
-  ["(?i:a)(?-i:b)", "m", [[["A", "a"], ["b"]]]],
-  ["(?-i:a)(?i:b)", "mi", [[["a"], ["B", "b"]]]],
-  ["k", "mi", [[["K", "k"]]]],
-  ["s", "mi", [[["S", "s"]]]],
-  ["k", "miu", [[["K", "k", "K"]]]],
-  ["s", "miv", [[["S", "s", "ſ"]]]],
+for (const [pattern, ignoreCase, expected] of [
+  ["colou?r", false, [literal("color"), literal("colour")]],
+  ["a*", false, undefined],
+  ["(?:word|)", false, undefined],
+  ["[^a]+", false, undefined],
+  ["(?=word)", false, [literal("word")]],
+  ["(?i:a)(?-i:b)", false, [[["A", "a"], ["b"]]]],
+  ["(?-i:a)(?i:b)", true, [[["a"], ["B", "b"]]]],
+  ["k", true, [[["K", "k"]]]],
+  ["s", true, [[["S", "s"]]]],
   [
     "abéz",
-    "miu",
+    true,
     [
       [
         ["A", "a"],
@@ -36,16 +34,16 @@ for (const [pattern, flags, expected] of [
       ],
     ],
   ],
-  ["é", "miu", [[["É", "é"]]]],
-  ["[\\u0100-\\u0200]", "m", undefined],
-  ["foo.*bar", "m", [literal("foo")]],
-  ["(?:abcdef.*xy|zz.*ghijkl)", "m", [literal("abcdef"), literal("ghijkl")]],
-  ["foo|bar.*baz", "m", [literal("foo"), literal("bar")]],
-  ["(?=foo|bar).*baz", "m", [literal("baz")]],
+  ["é", true, [[["É", "é"]]]],
+  ["[\\u0100-\\u0200]", false, undefined],
+  ["foo.*bar", false, [literal("foo")]],
+  ["(?:abcdef.*xy|zz.*ghijkl)", false, [literal("abcdef"), literal("ghijkl")]],
+  ["foo|bar.*baz", false, [literal("foo"), literal("bar")]],
+  ["(?=foo|bar).*baz", false, [literal("baz")]],
 ] as const) {
-  test(`${pattern.slice(0, 80)} /${flags} → conservative candidate literals`, () => {
+  test(`${pattern.slice(0, 80)} ignoreCase=${ignoreCase} → conservative candidate literals`, () => {
     assert.deepEqual(
-      extractPrefilter(query(pattern, flags)),
+      extractPrefilter(query(pattern, ignoreCase)),
       expected ? { kind: "literals", literals: expected } : { kind: "all" },
     );
   });
@@ -53,41 +51,33 @@ for (const [pattern, flags, expected] of [
 
 for (const boundary of ["\n", "\r\n", "\uFFFD", "\uD800", "\uDC00", "\0"]) {
   test(`literal ${JSON.stringify(boundary)} boundary → no candidate spans changed bytes`, () => {
-    const prefilter = extractPrefilter(query(`left${boundary}right`, "m", true));
+    const prefilter = extractPrefilter(query(`left${boundary}right`, false, true));
     assert.deepEqual(prefilter, { kind: "literals", literals: [literal("right")] });
     assert.ok(hasCandidateBytes(Buffer.from(`left${boundary}right`), prefilter));
     assert.ok(hasCandidateBytes(Buffer.from("left\nright"), prefilter));
     assert.equal(hasCandidateBytes(Buffer.from("left"), prefilter), false);
     assert.ok(hasCandidateBytes(Buffer.from("right"), prefilter));
-    assert.deepEqual(extractPrefilter(query(boundary, "m", true)), { kind: "all" });
+    assert.deepEqual(extractPrefilter(query(boundary, false, true)), { kind: "all" });
   });
 }
 
-for (const [patterns, isLiteral, expected, flags] of [
-  [["foo", "bar"], false, true, ""],
-  [["foo", "Bar"], false, false, ""],
-  [["foo\\S*", "\\D", "\\W"], false, true, ""],
-  [["\\u0041"], false, false, ""],
-  [["\\x41"], false, false, ""],
-  [["\\u0061"], false, true, ""],
-  [["[A-Z]"], false, false, ""],
-  [["(?<UPPER>foo)"], false, true, ""],
-  [["ς", "σ"], false, true, ""],
-  [["σ", "Σ"], false, false, ""],
-  [["foo\\S*"], true, false, ""],
-  [["\\u0041"], true, true, ""],
-  [["foo", "BAR"], true, false, ""],
-  [["\\u{41}"], false, false, "u"],
-  [["\\u{41}"], false, false, "v"],
-  [["\\u{61}"], false, true, "u"],
-  [["\\u{61}"], false, true, "v"],
-  [["𐐀"], false, false, "u"],
-  [["𐐀"], false, false, "v"],
-  [["𐐨"], false, true, "u"],
-  [["𐐨"], false, true, "v"],
+for (const [patterns, isLiteral, expected] of [
+  [["foo", "bar"], false, true],
+  [["foo", "Bar"], false, false],
+  [["foo\\S*", "\\D", "\\W"], false, true],
+  [["\\u0041"], false, false],
+  [["\\x41"], false, false],
+  [["\\u0061"], false, true],
+  [["[A-Z]"], false, false],
+  [["(?<UPPER>foo)"], false, true],
+  [["ς", "σ"], false, true],
+  [["σ", "Σ"], false, false],
+  [["foo\\S*"], true, false],
+  [["\\u0041"], true, true],
+  [["foo", "BAR"], true, false],
 ] as const) {
-  test(`${JSON.stringify(patterns)} literal=${isLiteral} flags=${flags} → smart case follows decoded letters`, () => {
-    assert.equal(smartIgnoreCase(patterns, isLiteral, flags), expected);
+  test(`${JSON.stringify(patterns)} literal=${isLiteral} → smart case follows decoded letters`, () => {
+    assert.equal(smartIgnoreCase(patterns, isLiteral), expected);
   });
 }
 
@@ -147,16 +137,9 @@ test("seeded random patterns × raw bytes → a JS hit always retains a candidat
   let checkedHits = 0;
   let filteredHits = 0;
   for (const pattern of patterns) {
-    for (const flags of ["m", "mi", "miu", "miv"]) {
-      // Some generated legacy patterns are invalid in Unicode mode; the real boundary rejects them.
-      try {
-        new RegExp(pattern, flags);
-      } catch (error) {
-        if (error instanceof SyntaxError) continue;
-        throw error;
-      }
+    for (const ignoreCase of [false, true]) {
       for (const multiline of [false, true]) {
-        const request = { ...query(pattern, flags), multiline };
+        const request = { ...query(pattern, ignoreCase), multiline };
         const prefilter = extractPrefilter(request);
         for (const bytes of sources) {
           if (
@@ -168,7 +151,13 @@ test("seeded random patterns × raw bytes → a JS hit always retains a candidat
           filteredHits++;
           assert.ok(
             hasCandidateBytes(bytes, prefilter),
-            JSON.stringify({ pattern, flags, multiline, bytes: bytes.toString("hex"), prefilter }),
+            JSON.stringify({
+              pattern,
+              ignoreCase,
+              multiline,
+              bytes: bytes.toString("hex"),
+              prefilter,
+            }),
           );
         }
       }
@@ -199,7 +188,7 @@ test("deeply nested uppercase pattern → smart case stays sensitive and prefilt
   for (const depth of [50, 200, 500, 1_000, 2_000, 4_000]) {
     const pattern = `${"(?:".repeat(depth)}A${")".repeat(depth)}`;
     assert.equal(new RegExp(pattern).test("A"), true);
-    assert.equal(smartIgnoreCase([pattern], false, ""), false);
+    assert.equal(smartIgnoreCase([pattern], false), false);
     assert.equal(hasCandidateBytes(Buffer.from("A"), extractPrefilter(query(pattern))), true);
   }
 });

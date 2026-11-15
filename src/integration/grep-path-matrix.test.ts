@@ -4,7 +4,7 @@ import { test } from "node:test";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
-import { GREP_FLAGS, searchText } from "../core/search.ts";
+import { searchText } from "../core/search.ts";
 const { DEFAULT_CONFIG } = await import("../pi/tool-factories.testing.ts");
 
 import { reportOf } from "../pi/report.ts";
@@ -60,8 +60,7 @@ test("Cartesian literal mode × case override × line mode × bytes → the real
             outputMode: "count",
             limit,
           };
-          const resolvedFlags = GREP_FLAGS + (ignoreCase ? "i" : "");
-          const query = { patterns: [pattern], literal, flags: resolvedFlags, multiline };
+          const query = { patterns: [pattern], literal, ignoreCase, multiline };
           const context = JSON.stringify(params);
           candidates.clear();
           if (!literal && !acceptsNative(query)) {

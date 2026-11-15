@@ -113,6 +113,6 @@ test("Cartesian multiline JS queries → file prefilter retains all native hits"
   await checkCandidates(t, matrixCases());
 });
 
-test("Cartesian paired multiline JS syntax × composition × flags → file prefilter retains native hits", async (t) => {
+test("Cartesian paired multiline JS syntax × composition × case mode → file prefilter retains native hits", async (t) => {
   await checkCandidates(t, pairedMatrixCases());
 });
