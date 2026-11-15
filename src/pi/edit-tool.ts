@@ -283,7 +283,7 @@ export function makeEditOverride(env: MutationToolEnvironment) {
         "Edit whole lines using LINE#HASH anchors checked against the current file. Use replace instead when the same change repeats in several places, or when only a fragment of a long line changes.",
       promptSnippet: "Edit file lines using verified anchors",
       promptGuidelines: [
-        "Batch all steps for one file into a single edit call.",
+        "Batch all steps for one file into a single edit call, and send changes to different files in the same response; they do not interfere.",
         "Before citing a line after write, edit, or replace, get its anchor from a new read or grep. Only after edit, lines above the earliest changed line keep their anchors.",
       ],
       check: (args, report) =>

@@ -128,7 +128,6 @@ export function makeGrepOverride({ cwd, config, budgets }: ToolEnvironment) {
     promptSnippet: "Search file contents",
     promptGuidelines: [
       "When you need several independent searches, send them as separate grep calls in one response; they run in parallel.",
-      "Copy grep anchors directly into edit.",
     ],
     parameters: grepSchema,
     prepareArguments: createArgumentPreparer("grep", grepSchema, checkGrepArguments, budgets),
