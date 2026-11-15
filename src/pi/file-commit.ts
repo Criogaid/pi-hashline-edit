@@ -125,7 +125,7 @@ async function fileRevision(path: string): Promise<string> {
 }
 
 /** Decode and bind a mutation snapshot to the exact bytes read. */
-export async function readEditableSnapshot(path: string, signal?: AbortSignal) {
+export async function readEditableSnapshot(path: string, signal: AbortSignal | undefined) {
   try {
     const bytes = await readRegularFile(path, signal);
     return { text: decodeEditableText(bytes), baseRevision: byteRevision(bytes) };

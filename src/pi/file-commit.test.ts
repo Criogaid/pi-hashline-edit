@@ -157,7 +157,7 @@ test("short low-level reads → complete mutation snapshots before revision bind
     });
     syncBuiltinESMExports();
     try {
-      const snapshot = await readEditableSnapshot(target);
+      const snapshot = await readEditableSnapshot(target, undefined);
       assert.equal(snapshot.text, expected.toString("utf8"));
       assert.equal(snapshot.baseRevision, byteRevision(expected));
       assert.ok(lowLevelReads >= 2);
@@ -470,7 +470,7 @@ test("file changes after the read → bound commits reject changed and unchanged
     const target = join(dir, "target.txt");
     const initialContent = "line 1\nline 2\n";
     await writeFile(target, initialContent);
-    const snapshot = await readEditableSnapshot(target);
+    const snapshot = await readEditableSnapshot(target, undefined);
     assert.equal(snapshot.text, initialContent);
 
     // External process modifies target after snapshot is read.
@@ -497,7 +497,7 @@ test("file changes after the read → bound commits reject changed and unchanged
     assert.equal(await readFile(target, "utf8"), initialContent);
 
     // When target does not change externally, no-op commit succeeds and confirms observed revision.
-    const freshSnapshot = await readEditableSnapshot(target);
+    const freshSnapshot = await readEditableSnapshot(target, undefined);
     const noopResult = await commitFile(target, freshSnapshot.text, {
       mode: "overwrite",
       baseRevision: freshSnapshot.baseRevision,
@@ -511,7 +511,7 @@ test("no-op commit with baseRevision rejects if target was deleted externally", 
   withTemp(async (dir) => {
     const target = join(dir, "deleted.txt");
     await writeFile(target, "content\n");
-    const snapshot = await readEditableSnapshot(target);
+    const snapshot = await readEditableSnapshot(target, undefined);
 
     await rm(target);
 
