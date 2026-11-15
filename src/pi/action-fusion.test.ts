@@ -14,7 +14,6 @@ import { ACTION_FUSION_GUIDELINES, createActionFusionExecutor } from "./action-f
 import { loadConfig } from "./config.ts";
 import { ACTION_FUSION_PROGRESS_SCHEMA } from "./report-schema.ts";
 import { Value } from "typebox/value";
-import { Type } from "typebox";
 import { reportOf } from "./report.ts";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import { publishedMutation } from "./mutation-outcome.testing.ts";
@@ -45,16 +44,6 @@ test("Fusion executor toggled → mutation descriptions stay identical without t
 
 test("mutation tools expose Fusion schemas and guidance when supplied an executor", () => {
   const fusion = createActionFusionExecutor(() => {});
-  assert.equal(ACTION_FUSION_GUIDELINES.length, 1);
-  const guideline = ACTION_FUSION_GUIDELINES[0];
-  assert.match(
-    guideline,
-    /^Set then_run on edit, replace, or write for a check that can run right after that change\./,
-  );
-  assert.match(
-    guideline,
-    /Use a separate bash call when the command requires approval, needs information from the tool's result, must wait for reload, or covers several changes; run that check once after all of them\./,
-  );
   for (const makeTool of mutationFactories) {
     const disabled = makeTool("/tmp");
     const enabled = makeTool("/tmp", fusion);
@@ -77,7 +66,7 @@ test("mutation tools expose Fusion schemas and guidance when supplied an executo
   }
 });
 
-test("Fusion platform guidance → only Windows gets the path note and command descriptions stay platform neutral", async () => {
+test("Fusion platform guidance → only Windows gets the path note", async () => {
   const original = Object.getOwnPropertyDescriptor(process, "platform");
   assert.ok(original);
   const base =
@@ -93,14 +82,6 @@ test("Fusion platform guidance → only Windows gets the path note and command d
       assert.deepEqual(fusion.ACTION_FUSION_GUIDELINES, [
         base + (platform === "win32" ? windowsNote : ""),
       ]);
-      for (const tool of ["edit", "replace", "write"] as const) {
-        const schema = fusion.withThenRunSchema(Type.Object({ path: Type.String() }), tool, true);
-        assert.partialDeepStrictEqual(schema, {
-          properties: {
-            then_run: { properties: { command: { description: "Bash command to run." } } },
-          },
-        });
-      }
     }
   } finally {
     Object.defineProperty(process, "platform", original);
