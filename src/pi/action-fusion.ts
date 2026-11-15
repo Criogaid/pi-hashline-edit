@@ -49,14 +49,14 @@ const MILLISECONDS_PER_SECOND = 1_000;
 // Pi's built-in Bash rejects timeouts above the setTimeout millisecond limit.
 const MAX_BASH_TIMEOUT_SECONDS = 2_147_483_647 / MILLISECONDS_PER_SECOND;
 
-// Pi's Bash runs on this host, and Pi's prompt does not name the OS; only Windows needs the path note.
-const COMMAND_DESCRIPTION =
-  process.platform === "win32"
-    ? "Bash command to run. This host is Windows: avoid Unix-only paths such as /tmp."
-    : "Bash command to run.";
-
+// The one place the model is told when to use then_run; the tools' descriptions stay their own.
 export const ACTION_FUSION_GUIDELINES = [
-  "When a check covers several changes, run it once after all of those changes.",
+  `Set then_run on edit, replace, or write for a check that can run right after that change. Use a separate bash call when the command requires approval, needs information from the tool's result, must wait for reload, or covers several changes; run that check once after all of them.${
+    // Pi's Bash runs on this host, and Pi's prompt does not name the OS; only Windows needs the path note.
+    process.platform === "win32"
+      ? " then_run commands run in Bash on Windows: avoid Unix-only paths such as /tmp."
+      : ""
+  }`,
 ];
 
 type ProgressReporter = (progress: ActionFusionProgress) => void;
@@ -65,7 +65,7 @@ function createThenRunSchema(tool: MutationToolName) {
   return Type.Optional(
     Type.Object(
       {
-        command: Type.String({ pattern: "\\S", description: COMMAND_DESCRIPTION }),
+        command: Type.String({ pattern: "\\S", description: "Bash command to run." }),
         timeout: Type.Optional(
           Type.Number({
             exclusiveMinimum: 0,
@@ -97,13 +97,6 @@ export function withThenRunSchema<P extends TProperties>(
 }
 
 export type ThenRunInput = NonNullable<Static<ReturnType<typeof createThenRunSchema>>>;
-
-/** Name then_run in a mutation tool's description when Action Fusion is enabled. */
-export function withThenRunDescription(description: string, actionFusion: boolean): string {
-  return actionFusion
-    ? `${description} Set the then_run parameter for checks that can run immediately after this change. Use a separate bash call when the command requires approval, needs information from this tool's result, must wait for reload, or checks several changes from one response.`
-    : description;
-}
 
 /** What a fused call leaves for the mutation runner to report; Fusion builds no result itself. */
 export interface FusedMutation<TDetails, TTool extends MutationToolName> {

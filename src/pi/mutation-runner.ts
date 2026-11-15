@@ -2,7 +2,7 @@
  * Shared execution pipeline for the file mutation tools (edit, replace, write).
  *
  * `mutationToolBase` assembles the definition every mutation tool shares:
- * then_run's field, description, and guideline when Action Fusion is on,
+ * then_run's field and guideline when Action Fusion is on,
  * argument preparation, strict sampling, and execution. Each tool supplies its schema, text,
  * semantic checks, and `run`, and adds its own renderers.
  *
@@ -28,7 +28,6 @@ import type { AgentToolResult, AgentToolUpdateCallback } from "@earendil-works/p
 import type { Static, TObject, TProperties } from "typebox";
 import {
   ACTION_FUSION_GUIDELINES,
-  withThenRunDescription,
   withThenRunSchema,
   type createActionFusionExecutor,
   type FusedMutation,
@@ -98,7 +97,7 @@ interface MutationToolSpec<P extends TProperties, TDetails, TTool extends Mutati
 
 /**
  * The definition every mutation tool shares. Action Fusion adds then_run to the
- * schema, description, and guidelines only when it is on; arguments are prepared
+ * schema and guidelines only when it is on; arguments are prepared
  * against the parameters Pi registers; `execute` queues and publishes one
  * validated call, then runs its then_run command when fused.
  */
@@ -113,7 +112,7 @@ export function mutationToolBase<
   return {
     name: tool,
     label: tool,
-    description: withThenRunDescription(spec.description, actionFusion),
+    description: spec.description,
     promptSnippet: spec.promptSnippet,
     promptGuidelines: [
       ...(spec.promptGuidelines ?? []),
