@@ -589,3 +589,86 @@ test("raw read rendering with an offset → numbers every source line from the h
       ]);
     }
   }));
+
+test("unanchored read with no rows or a real empty row → expanded rendering preserves the selected rows", async (t) =>
+  withDir(async (dir) => {
+    const budget = outputBudgetsFor(4_000);
+    const tool = makeReadOverride(dir, DEFAULT_CONFIG, () => budget);
+    const render = tool.renderResult;
+    assert.ok(render);
+    const cases = [
+      { name: "empty file", path: "empty.txt", content: "", header: "empty.txt · 0 lines" },
+      {
+        name: "offset past EOF",
+        path: "blank.txt",
+        content: "a\n\nb\n",
+        offset: 9,
+        header: "blank.txt · 3 lines (from line 9)",
+      },
+      {
+        name: "first line exceeds the byte budget",
+        path: "long.txt",
+        content: "x".repeat(budget.readBytes + 1) + "\n",
+        header: "long.txt · 1 lines",
+        lineTooLong: true,
+      },
+      {
+        name: "real empty row",
+        path: "blank.txt",
+        content: "a\n\nb\n",
+        offset: 2,
+        limit: 1,
+        header: "blank.txt · 3 lines (from line 2)",
+        emptyRow: true,
+      },
+    ];
+    for (const c of cases) {
+      await t.test(c.name, async () => {
+        await writeFile(join(dir, c.path), c.content);
+        const args = { path: c.path, anchors: false, offset: c.offset, limit: c.limit };
+        const result = await callTool(tool, args);
+        assert.equal(result.isError, undefined);
+        const rendered = render(
+          JSON.parse(JSON.stringify(result)),
+          { expanded: true, isPartial: false },
+          stubTheme,
+          {
+            args,
+            state: {},
+            cwd: dir,
+            toolCallId: "raw-read",
+            lastComponent: undefined,
+            invalidate() {},
+            executionStarted: true,
+            durationMs: undefined,
+            outputPad: 1,
+            keyText: () => "",
+            keyHint: (_key, description) => description,
+            argsComplete: true,
+            isPartial: false,
+            expanded: true,
+            showImages: false,
+            isError: false,
+          },
+        ).render(120);
+        assert.equal(rendered[0].trimEnd(), c.header);
+        const codeRows = rendered.slice(1).filter((line) => /^\s+\d+: /.test(line));
+        if (c.emptyRow) {
+          assert.equal(codeRows.length, 1);
+          assert.ok(codeRows[0].startsWith("   2: "));
+          assert.equal(codeRows[0].trimEnd(), "   2:");
+        } else {
+          assert.deepEqual(codeRows, []);
+        }
+        if (c.lineTooLong) {
+          assert.equal(reportOf(result, "read")?.lineTooLong, formatByteSize(budget.readBytes));
+          assert.ok(
+            rendered.some((line) =>
+              line.includes(`lineTooLong: ${formatByteSize(budget.readBytes)}`),
+            ),
+          );
+          assert.ok(rendered.some((line) => line.includes("next: ")));
+        }
+      });
+    }
+  }));
