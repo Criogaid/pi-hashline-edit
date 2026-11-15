@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { extractPrefilter, smartIgnoreCase, type Literal } from "./search-analysis.ts";
 import { searchText, type GrepQuery } from "./search.ts";
-import { hasCandidateBytes } from "./search-matrix.testing.ts";
+import { acceptsNative, hasCandidateBytes } from "./search-matrix.testing.ts";
 
 const query = (pattern: string, ignoreCase = false, literal = false): GrepQuery => ({
   patterns: [pattern],
@@ -153,6 +153,7 @@ test("seeded random patterns × raw bytes → a JS hit always retains a candidat
   let filteredHits = 0;
   for (const pattern of patterns) {
     for (const ignoreCase of [false, true]) {
+      if (!acceptsNative(query(pattern, ignoreCase))) continue;
       for (const multiline of [false, true]) {
         const request = { ...query(pattern, ignoreCase), multiline };
         const prefilter = extractPrefilter(request);

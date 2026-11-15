@@ -114,7 +114,9 @@ test("upstream regex witnesses × LF/CRLF/malformed bytes → sound candidates, 
   }
 });
 
-test("real rg AND/OR file prefilter → broad candidates retain exact JS results", async (t) => {
+test("real rg AND/OR file prefilter → broad candidates retain exact JS results", {
+  skip: unsupportedByHost(["(?s:foo.*bar|baz.*qux)"], "m"),
+}, async (t) => {
   const directory = await mkdtemp(join(tmpdir(), "hl-regex-conjunction-"));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const fixtures = ["foo\nbar", "baz\nqux", "foo\nqux", "baz\nbar", "foo", "bar", "unrelated"];
