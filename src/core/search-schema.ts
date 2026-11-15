@@ -11,7 +11,6 @@ export const SEARCH_RESULT_SCHEMA = Type.Object(
         { additionalProperties: false },
       ),
     ),
-    totalLines: Type.Integer({ minimum: 0 }),
   },
   { additionalProperties: false },
 );

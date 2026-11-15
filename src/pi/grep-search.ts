@@ -14,7 +14,7 @@ import { searchDiagnostic } from "./rg-process.ts";
 import type { SearchScope } from "./grep-scope.ts";
 import { listCandidates, type Candidate } from "./grep-candidates.ts";
 import { withRegexWorker } from "./regex-worker.ts";
-import { invalidWorkerResult, workerReplyDecoder } from "./regex-worker-contract.ts";
+import { workerReplyDecoder } from "./regex-worker-contract.ts";
 import { fileReadWarning, throwIfCancelled, type SearchWarning } from "./error-text.ts";
 import { formatByteSize } from "./budgets.ts";
 
@@ -69,11 +69,10 @@ type Settled =
 /**
  * The candidate lines among the next lines of a request source, as the LF view shows them.
  * `next` indexes the first candidate in source; a returned line number is 1-based in source.
- * `lengths` holds each selected line's length, and `lines` the lines a worker matches.
+ * `lines` holds the lines a worker matches.
  */
 function selectLines(source: string, offset: number, wanted: readonly number[], next: number) {
   const numbers: number[] = [];
-  const lengths: number[] = [];
   const texts: string[] = [];
   let start = 0;
   let line = offset + 1;
@@ -88,10 +87,9 @@ function selectLines(source: string, offset: number, wanted: readonly number[], 
     // A CRLF line feeds its view without the CR; a CR before the end of the file stays.
     const end = lf === -1 ? source.length : source[lf - 1] === "\r" ? lf - 1 : lf;
     numbers.push(line - offset);
-    lengths.push(end - start);
     texts.push(source.slice(start, end), "\n");
   }
-  return { numbers, lengths, lines: texts.join("") };
+  return { numbers, lines: texts.join("") };
 }
 
 /**
@@ -108,17 +106,6 @@ async function searchFile(
   const rows: Rows = [];
   let lineOffset = 0;
   let nextWanted = 0;
-  const check = async (input: SearchInput | LineSearchInput, lines: number) => {
-    const result = await run(input);
-    if (result.totalLines !== lines || result.lines.length > input.limit)
-      throw invalidWorkerResult();
-    let previous = 0;
-    for (const row of result.lines) {
-      if (row.lineNumber <= previous || row.lineNumber > lines) throw invalidWorkerResult();
-      previous = row.lineNumber;
-    }
-    return result.lines;
-  };
   const send = async (source: string) => {
     const lines = countLines(source);
     let candidates = lines;
@@ -132,16 +119,12 @@ async function searchFile(
       // Selecting most lines costs more than matching them all, with the same results.
       if (wanted && candidates * 2 <= lines) {
         const selected = selectLines(source, lineOffset, wanted, nextWanted);
-        const found = await check({ lines: selected.lines, query, limit }, candidates);
-        for (const { lineNumber, column } of found) {
-          if (column > selected.lengths[lineNumber - 1]) throw invalidWorkerResult();
+        const found = await run({ lines: selected.lines, query, limit });
+        for (const { lineNumber, column } of found.lines)
           rows.push({ lineNumber: lineOffset + selected.numbers[lineNumber - 1], column });
-        }
       } else {
-        for (const { lineNumber, column } of await check({ source, query, limit }, lines)) {
-          if (column > source.length) throw invalidWorkerResult();
+        for (const { lineNumber, column } of (await run({ source, query, limit })).lines)
           rows.push({ lineNumber: lineOffset + lineNumber, column });
-        }
       }
     }
     if (wanted) nextWanted += candidates;

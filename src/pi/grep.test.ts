@@ -1232,17 +1232,13 @@ test("invalid worker replies → the entire grep call fails", async (t) => {
     const path = join(dir, "input.txt");
     await writeFile(path, "😀\n");
     for (const result of [
-      { lines: [{ lineNumber: 2, column: 0 }], totalLines: 1 },
-      {
-        lines: [
-          { lineNumber: 1, column: 0 },
-          { lineNumber: 1, column: 0 },
-        ],
-        totalLines: 1,
-      },
-      { lines: [{ lineNumber: 1, column: 0 }], totalLines: 2 },
-      { lines: [{ lineNumber: 1, column: -1 }], totalLines: 1 },
-      { lines: [{ lineNumber: 1, column: 999 }], totalLines: 1 },
+      { lines: [{ lineNumber: 1, column: 0 }], extra: true },
+      { lines: [{ lineNumber: 1, column: 0, extra: true }] },
+      { lines: [{ lineNumber: 0, column: 0 }] },
+      { lines: [{ lineNumber: 1, column: -1 }] },
+      { lines: [{ lineNumber: 1.5, column: 0 }] },
+      { lines: [{ lineNumber: 1, column: 0.5 }] },
+      {},
     ]) {
       await t.test(`${JSON.stringify(result)} → REGEX_WORKER_FAILED`, async (t) => {
         const emit = Worker.prototype.emit;

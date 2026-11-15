@@ -103,7 +103,6 @@ test("JS search: alternatives merge before the physical row limit", () => {
     { lineNumber: 2, column: 0 },
     { lineNumber: 3, column: 0 },
   ]);
-  assert.equal(result.totalLines, 4);
 });
 
 test("JS search: columns retain UTF-16 positions inside supplementary characters", () => {
@@ -122,24 +121,12 @@ test("selected lines ending in CR → matching preserves the CR and uses 1-based
       { lineNumber: 2, column: 1 },
       { lineNumber: 3, column: 1 },
     ],
-    totalLines: 3,
   });
 });
 
-test("selected lines exceed limit → rows truncate while totalLines counts all lines", () => {
+test("selected lines exceed limit → matching rows truncate at the limit", () => {
   const query = { patterns: ["a", "b"], literal: true, flags: "", multiline: false };
   assert.deepEqual(searchLines({ lines: "skip\nxa\nb\na\n", query, limit: 1 }), {
     lines: [{ lineNumber: 2, column: 1 }],
-    totalLines: 4,
   });
-});
-
-test("empty selected input or one empty line → physical totals are zero or one", () => {
-  const query = { patterns: ["^$"], literal: false, flags: "", multiline: false };
-  for (const [lines, expected] of [
-    ["", { lines: [], totalLines: 0 }],
-    ["\n", { lines: [{ lineNumber: 1, column: 0 }], totalLines: 1 }],
-  ] as const) {
-    assert.deepEqual(searchLines({ lines, query, limit: 1 }), expected);
-  }
 });

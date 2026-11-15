@@ -1,5 +1,5 @@
 /** JavaScript matching on the LF view, returning bounded physical rows rather than match objects. */
-import { countLines, normalizeLineEndings } from "./lines.ts";
+import { normalizeLineEndings } from "./lines.ts";
 import { buildRegex } from "./regex.ts";
 import type { SearchResult } from "./search-schema.ts";
 
@@ -110,10 +110,10 @@ export function searchText({ source: raw, query, limit }: SearchInput): SearchRe
     for (const regex of regexes)
       lines = mergeRows(lines, multilineRows(source, regex, limit), limit);
   } else lines = lineRows(source, regexes, limit);
-  return { lines, totalLines: countLines(source) };
+  return { lines };
 }
 
 /** Line-mode matching of selected lines; a row's lineNumber is the line's 1-based position. */
 export function searchLines({ lines, query, limit }: LineSearchInput): SearchResult {
-  return { lines: lineRows(lines, queryRegexes(query), limit), totalLines: countLines(lines) };
+  return { lines: lineRows(lines, queryRegexes(query), limit) };
 }

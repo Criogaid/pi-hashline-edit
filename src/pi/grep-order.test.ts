@@ -222,11 +222,11 @@ test("file-associated failure → listing position decides failure or cutoff, wh
       finish: (worker: Worker) => worker.emit("error", new Error("Worker crashed")),
     },
     {
-      name: "inconsistent rows",
+      name: "invalid reply schema",
       code: "REGEX_WORKER_FAILED",
       finish: (worker: Worker) =>
         worker.emit("message", {
-          result: { totalLines: 2, lines: [{ lineNumber: 1, column: 0 }] },
+          result: { lines: [{ lineNumber: 0, column: 0 }] },
         }),
     },
   ] as const;

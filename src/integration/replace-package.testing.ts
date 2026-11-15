@@ -18,7 +18,7 @@ for (const { entry, input, expected } of [
       query: { patterns: ["^..$"], literal: false, multiline: false, flags: "m" },
       limit: 10,
     },
-    expected: { lines: [{ lineNumber: 1, column: 0 }], totalLines: 2 },
+    expected: { lines: [{ lineNumber: 1, column: 0 }] },
   },
 ]) {
   const worker = new Worker(join(process.argv[2], "src", "pi", entry));
