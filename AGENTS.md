@@ -78,7 +78,7 @@ Test layout: `*.test.ts` files sit next to the source. `registration.test.ts` co
 
 TypeScript runs directly through Node's type stripping, without a build step. CI runs Node 24 on Linux, macOS, and Windows, plus Node 22.19.0 and 26 on Linux. Local formatting, type checks, tests, and benchmarks need no confirmation.
 
-- `npm run format:check` / `npm run format`: Biome, formatting only, over `src/` and `bench/`.
+- `npm run format:check` / `npm run format`: Biome, formatting only, over `src/` and `bench/`. To format a change, run `npx biome format --write <files>` on the files it touched instead of `npm run format`, which rewrites every file under both directories, including files outside the change.
 - `npm run typecheck`: `tsc --noEmit`, covering source, tests, and benchmarks.
 - `npm test`: runs the core and tool tests through `src/testing/run-tests.ts` in an isolated Node environment and a temporary Pi agent directory, excluding inherited Node loaders and personal Pi settings.
 - One case: `npm test -- --test-name-pattern "<regex>"`; `npm run test:integration` accepts the same flag. Do not run `node --test` directly; it bypasses the environment isolation.
