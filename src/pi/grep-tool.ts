@@ -202,7 +202,7 @@ export function makeGrepOverride({ cwd, config, budgets }: ToolEnvironment) {
           multiline: params.multiline ?? false,
         };
         const globs = params.glob ?? [];
-        const paths = await resolveSearchPaths(cwd, params.path);
+        const { paths, missing } = await resolveSearchPaths(cwd, params.path);
         const admitted = await filterExplicitFilesByGlob(globs, paths, signal);
         const { warnings: searchWarnings, ...search } = await searchFiles({
           scope: { globs, searchPaths: admitted.searchPaths },
@@ -220,6 +220,7 @@ export function makeGrepOverride({ cwd, config, budgets }: ToolEnvironment) {
           signal,
           // Each stage returns its warnings in order; the report states them in stage order.
           warnings: [...admitted.warnings, ...searchWarnings],
+          missing,
           effectiveLimit,
           literalPipe: literal && patterns.some((pattern) => pattern.includes("|")),
           budget,

@@ -108,6 +108,7 @@ test("model budget grows → grep payload and diagnostics use that call's allowa
     [small, large].map((budget) =>
       grepOutput({
         cwd: process.cwd(),
+        missing: [],
         anchors: createAnchorFormatter(DEFAULT_CONFIG.hashLen),
         context: 0,
         outputMode: "files",

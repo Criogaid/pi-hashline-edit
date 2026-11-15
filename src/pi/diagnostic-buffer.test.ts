@@ -52,6 +52,7 @@ test("search warning aggregation retains the final cause and labels truncation",
   const { facts, payload } = await grepOutput({
     budget: DEFAULT_OUTPUT_BUDGETS,
     cwd: process.cwd(),
+    missing: [],
     anchors: createAnchorFormatter(4),
     context: 0,
     search: {

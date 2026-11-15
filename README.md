@@ -64,7 +64,7 @@ File paths accept relative or absolute paths, `~`, an optional leading `@`, and 
 
 Path input normalizes several Unicode space characters, including U+202F, to ordinary spaces. To address a filename containing a literal Unicode space, pass a percent-encoded file URL, such as `file:///home/me/space%E2%80%AFname.txt` for a name containing U+202F. Paths returned by `read` and `grep` use a spelling that can be passed back to the tools; keep that spelling, including any URL escapes. The same path syntax applies when `read` delegates images or NUL-containing files to Pi.
 
-Grep visits input paths in the order supplied and uses ripgrep's sorted directory traversal within each root. Repeated candidate paths are searched once, at their first occurrence. This is not global lexicographic sorting of full paths.
+Grep visits input paths in the order supplied and uses ripgrep's sorted directory traversal within each root. Repeated candidate paths are searched once, at their first occurrence. This is not global lexicographic sorting of full paths. A path that does not exist is listed in the report's `missing`, and the other paths are still searched; the call fails with `PATH_NOT_FOUND` when every path is missing or a missing path contains a wildcard.
 
 Grep matches the LF view with native JavaScript regexes. Without `multiline`, each physical line is searched separately; with it, the whole file is searched and every physical line touched by a match is returned. Context rows do not count toward `limit`. Content output re-reads matched files and omits any whose revision changed; `files` and `count` report the searched snapshot without a second read. Incomplete scans state their diagnostics or scan limit in the report.
 

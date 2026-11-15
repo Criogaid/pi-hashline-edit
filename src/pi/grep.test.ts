@@ -227,35 +227,125 @@ test("grep points wildcard paths to glob without changing ordinary missing-path 
   });
 });
 
-test("multiple grep paths are missing → reports all resolved paths and selects wildcard recovery", async () =>
+test("some grep paths are missing → searches existing paths and reports missing paths in input order", async (t) =>
+  withDir(async (dir) => {
+    const existing = ["present.txt", "second.txt"];
+    await Promise.all(existing.map((name) => writeFile(join(dir, name), "value\n")));
+    for (const [path, missing, limit] of [
+      [["missing.txt", ...existing], ["missing.txt"], 10],
+      [["other.txt", "present.txt", "missing.txt", "second.txt"], ["other.txt", "missing.txt"], 10],
+      [["missing.txt", ...existing, "other.txt"], ["missing.txt", "other.txt"], 1],
+    ] as const) {
+      await t.test(`${path.join(", ")}; limit=${limit}`, async () => {
+        const fake = fakeBackend({ paths: existing.map((name) => join(dir, name)) });
+        const tool = makeMockGrep(dir, DEFAULT_CONFIG, fake.backend);
+        const result = await callTool(tool, {
+          literal: true,
+          pattern: ["value"],
+          path,
+          limit,
+          context: 0,
+        });
+        assert.equal(result.isError, undefined);
+        const report = reportOf(result, "grep");
+        assert.deepEqual(
+          report?.missing,
+          missing.map((name) => join(dir, name)),
+        );
+        assert.match(report?.next ?? "", /Correct the paths in missing/);
+        const payload = text(result);
+        for (const name of existing.slice(0, limit))
+          assert.ok(payload.includes(`${name} · 1 match`));
+        assert.deepEqual(
+          payload.split("\n").filter((line) => /^\d+#/.test(line)),
+          existing
+            .slice(0, limit)
+            .map(() => `1#${computeLineHash(1, "value", DEFAULT_CONFIG.hashLen)}│value`),
+        );
+        assert.deepEqual(
+          fake.calls[0].args.slice(-existing.length),
+          existing.map((name) => join(dir, name)),
+        );
+        if (limit === 1) assert.equal(report?.matchLimit, 1);
+      });
+    }
+  }));
+
+test("every grep path is missing → reports all resolved paths with default recovery", async (t) =>
+  withDir(async (dir) => {
+    for (const path of [["missing.txt"], ["other.txt", "missing.txt"]]) {
+      await t.test(path.join(", "), async () => {
+        const fake = fakeBackend();
+        const tool = makeMockGrep(dir, DEFAULT_CONFIG, fake.backend);
+        await expectToolFailure(
+          callTool(tool, { literal: true, pattern: ["value"], path }),
+          "PATH_NOT_FOUND",
+          (report) => {
+            assert.deepEqual(
+              report.missing,
+              path.map((name) => join(dir, name)),
+            );
+            assert.match(report.next ?? "", /Check the path/);
+          },
+        );
+        assert.equal(fake.calls.length, 0);
+      });
+    }
+  }));
+
+test("a missing grep path contains a wildcard alongside an existing path → reports all missing paths with glob recovery", async (t) =>
   withDir(async (dir) => {
     await writeFile(join(dir, "present.txt"), "value\n");
-    for (const [path, missing, wildcard] of [
-      [["missing.txt", "present.txt", "other.txt"], ["missing.txt", "other.txt"], false],
-      [["missing.txt", "present.txt", "other*.txt"], ["missing.txt", "other*.txt"], true],
-      [["missing?.txt", "present.txt", "other.txt"], ["missing?.txt", "other.txt"], true],
+    for (const [path, missing] of [
+      [
+        ["missing.txt", "present.txt", "other*.txt"],
+        ["missing.txt", "other*.txt"],
+      ],
+      [
+        ["missing?.txt", "present.txt", "other.txt"],
+        ["missing?.txt", "other.txt"],
+      ],
     ] as const) {
-      const fake = fakeBackend();
-      const tool = makeMockGrep(dir, DEFAULT_CONFIG, fake.backend);
-      const result = await call(tool, { literal: true, pattern: "value", path });
-      assert.equal(result.isError, true);
-      const block = result.content[0];
-      assert.ok(block.type === "text");
-      const facts = JSON.parse(block.text);
-      assert.equal(facts.error, "PATH_NOT_FOUND");
-      assert.deepEqual(
-        facts.missing,
-        missing.map((item) => join(dir, item)),
-      );
-      if (wildcard) assert.match(facts.next, /directory.*path.*wildcard.*glob/);
-      else assert.equal(facts.next, "Check the path.");
-      assert.equal(Object.hasOwn(facts, "tool"), false);
-      assert.equal(Object.hasOwn(facts, "path"), false);
-      const report = reportOf(result, "grep");
-      assert.equal(report?.tool, "grep");
-      assert.deepEqual(report?.path, path);
-      assert.deepEqual(report?.missing, facts.missing);
-      assert.equal(fake.calls.length, 0);
+      await t.test(path.join(", "), async () => {
+        const fake = fakeBackend();
+        const tool = makeMockGrep(dir, DEFAULT_CONFIG, fake.backend);
+        await expectToolFailure(
+          callTool(tool, { literal: true, pattern: ["value"], path }),
+          "PATH_NOT_FOUND",
+          (report) => {
+            assert.deepEqual(
+              report.missing,
+              missing.map((name) => join(dir, name)),
+            );
+            assert.match(report.next ?? "", /directory.*path.*wildcard.*glob/);
+          },
+        );
+        assert.equal(fake.calls.length, 0);
+      });
+    }
+  }));
+
+test("existing grep paths have no matches alongside a missing path → succeeds with zero totals and missing paths", async (t) =>
+  withDir(async (dir) => {
+    const file = join(dir, "present.txt");
+    await writeFile(file, "other content\n");
+    for (const outputMode of ["content", "files", "count"] as const) {
+      await t.test(outputMode, async () => {
+        const fake = fakeBackend({ paths: [file] });
+        const tool = makeMockGrep(dir, DEFAULT_CONFIG, fake.backend);
+        const result = await callTool(tool, {
+          literal: true,
+          pattern: ["value"],
+          path: ["present.txt", "missing.txt"],
+          outputMode,
+        });
+        assert.equal(result.isError, undefined);
+        const report = reportOf(result, "grep");
+        assert.equal(report?.matches, 0);
+        assert.equal(report?.files, 0);
+        assert.deepEqual(report?.missing, [join(dir, "missing.txt")]);
+        assert.match(report?.next ?? "", /Correct the paths in missing/);
+      });
     }
   }));
 

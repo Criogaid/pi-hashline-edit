@@ -194,7 +194,7 @@ const FACT_FIELDS = {
     Type.Array(Type.String(), {
       description: "Resolved paths that do not exist; shows where a relative path led.",
     }),
-    "Use the resolved missing paths to correct the target or choose create mode.",
+    "Correct the missing paths and search them again, or use create mode for a new file.",
   ),
 
   // Anchor verification (failure-context.ts).
@@ -425,7 +425,7 @@ export const ERROR_DEFINITIONS = {
   SYMLINK_UNRESOLVED: { facts: NONE },
   PUBLISH_FAILED: { facts: NONE },
   POST_PROCESS_FAILED: { facts: NONE },
-  SEARCH_INCOMPLETE: { facts: facts(["diagnostics"], ["scanLimit"]) },
+  SEARCH_INCOMPLETE: { facts: facts(["diagnostics"], ["scanLimit", "missing"]) },
   RIPGREP_FAILED: { facts: NONE },
   UNSUPPORTED_PATH: { facts: NONE },
   UNCLASSIFIED: { facts: NONE },
@@ -502,6 +502,11 @@ export const OUTCOME_NEXT: readonly OutcomeRule[] = [
     "Inspect the line in chunks with bash, or use replace for a known literal or regex change; a smaller limit cannot split a line.",
   ],
   ["nextOffset", "If you need more lines, set offset to nextOffset."],
+  // Ahead of grep's limits: repeating the corrected search states them again.
+  [
+    "missing",
+    "Only the existing paths were searched. Correct the paths in missing and repeat the search.",
+  ],
   // Ahead of matchLimit: once the byte budget cuts the output, raising limit shows nothing more.
   ["outputLimit", OUTPUT_LIMIT_NEXT],
   ["matchLimit", "If you need more matches, raise limit to include rows after the last one shown."],
@@ -541,6 +546,7 @@ const SUCCESS_DEFINITIONS = {
     [
       "matches",
       "files",
+      "missing",
       "matchLimit",
       "scanLimit",
       "outputLimit",

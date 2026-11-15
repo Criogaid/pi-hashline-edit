@@ -52,8 +52,8 @@ function searchDiagnostics(
   return diagnostics.toString().trimEnd();
 }
 
-/** How the search was bounded; stated with success and failure alike. */
-type SearchFacts = Pick<Report, "scanLimit">;
+/** How the search was bounded and which named paths it skipped; stated with success and failure alike. */
+type SearchFacts = Pick<Report, "scanLimit" | "missing">;
 
 /** No result can be returned from an incomplete search: report it rather than "no matches". */
 function searchIncompleteError(
@@ -246,15 +246,27 @@ export async function grepOutput(
     readonly search: Omit<Awaited<ReturnType<typeof searchFiles>>, "warnings">;
     /** Scope and search warnings, in the order those stages produced them. */
     readonly warnings: readonly SearchWarning[];
+    /** Resolved paths that do not exist; the other paths were searched. */
+    readonly missing: readonly string[];
     readonly effectiveLimit: number;
     /** A literal pattern contains `|`, which matches only that character. */
     readonly literalPipe: boolean;
   },
 ): Promise<{ payload?: string; facts: SuccessFacts<"grep">; next?: OutcomeVariant }> {
-  const { cwd, search, warnings, outputMode, context, effectiveLimit, literalPipe, budget } =
-    options;
+  const {
+    cwd,
+    search,
+    warnings,
+    missing,
+    outputMode,
+    context,
+    effectiveLimit,
+    literalPipe,
+    budget,
+  } = options;
   const searchFacts: SearchFacts = {
     scanLimit: search.scanLimitReached ? formatByteSize(MAX_UNNARROWED_SCAN_BYTES) : undefined,
+    missing: missing.length ? [...missing] : undefined,
   };
   if (search.files.length === 0) {
     if (warnings.length)

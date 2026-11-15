@@ -32,7 +32,10 @@ interface SearchPathInfo {
   readonly isFile: boolean;
 }
 
-/** Canonical search paths, the working directory when none is given; any missing one fails, all reported. */
+/**
+ * Canonical search paths, the working directory when none is given, and the missing ones. The
+ * call fails when every path is missing, or when a missing path is a wildcard meant for glob.
+ */
 export async function resolveSearchPaths(cwd: string, path: readonly string[] | undefined) {
   const pathInfo: SearchPathInfo[] = [];
   const missing: string[] = [];
@@ -46,12 +49,13 @@ export async function resolveSearchPaths(cwd: string, path: readonly string[] | 
       missing.push(searchPath);
     }
   }
-  if (missing.length)
+  const wildcard = missing.some((path) => /[*?]/.test(path));
+  if (wildcard || (missing.length && pathInfo.length === 0))
     throw new HashlineError("PATH_NOT_FOUND", PATH_ERROR_MESSAGES.PATH_NOT_FOUND, {
       facts: { missing },
-      ...(missing.some((path) => /[*?]/.test(path)) ? { next: "useGlob" as const } : {}),
+      ...(wildcard ? { next: "useGlob" as const } : {}),
     });
-  return pathInfo;
+  return { paths: pathInfo, missing };
 }
 
 /** Groups spellings that a case-insensitive filesystem may treat as one file. */
