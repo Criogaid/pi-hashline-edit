@@ -109,7 +109,7 @@ export async function scanTextLines(
     readonly signal?: AbortSignal;
     readonly maxLineBytes?: number;
     readonly decoding?: Utf8Decoding;
-  } = {},
+  },
 ) {
   const { signal, decoding, maxLineBytes: maxBytes = Infinity } = options;
   let number = 1;

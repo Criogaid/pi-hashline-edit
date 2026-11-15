@@ -43,6 +43,7 @@ test("streamed lines preserve BOM, standalone CR, and boundaries split across ch
           assert.equal(line.byteLength, Buffer.byteLength(line.text!));
           lines.push(line.text!);
         },
+        {},
       );
       assert.deepEqual(lines, splitLines(text));
       assert.equal(stats.totalLines, lines.length);
@@ -76,6 +77,7 @@ test("streamed scans → return the revision of every original byte and byte-bas
         path,
         (number) => number === 1,
         () => {},
+        {},
       );
       assert.equal(selected.revision, stats.revision);
     }
@@ -110,6 +112,7 @@ test("streamed validation checks the entire file and gives NUL precedence over m
         path,
         (number) => number === 1,
         () => {},
+        {},
       ),
       (error: unknown) => error instanceof Utf8DecodingError,
     );
