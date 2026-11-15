@@ -198,8 +198,7 @@ export function reportLines(
       lines.push(
         theme.fg(report.publication === "NOT_PUBLISHED" ? "dim" : "warning", report.publication),
       );
-    if (report.message !== undefined)
-      for (const line of report.message.split("\n")) lines.push(theme.fg("error", line));
+    for (const line of report.message.split("\n")) lines.push(theme.fg("error", line));
   }
   for (const [key, value] of reportEntries(report)) {
     if (HEADER_FIELDS.includes(key) || shown.has(key)) continue;
