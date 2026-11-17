@@ -211,4 +211,4 @@ grep 载荷被截断时，如果本次调用返回了上下文行，报告会提
 
 ## 许可证
 
-[MIT](LICENSE) © Chien Zhang and contributors
+[MIT](LICENSE)

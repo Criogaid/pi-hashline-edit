@@ -211,4 +211,4 @@ Questions and bug reports go to [GitHub issues](https://github.com/Criogaid/pi-h
 
 ## License
 
-[MIT](LICENSE) © Chien Zhang and contributors
+[MIT](LICENSE)
