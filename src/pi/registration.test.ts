@@ -35,7 +35,7 @@ import { ACTION_FUSION_GUIDELINES } from "./action-fusion.ts";
 test("registered tools with or without Fusion → expose prompt rules and convertible strict schemas", async (t) => {
   const guidelines = {
     read: [
-      "In a codemode script, take raw file text from tools.bash (cat, git show); read and grep rows carry a line prefix.",
+      "In a codemode script, take raw file text from tools.bash (cat, git show); read and grep results add a header line and show CRLF as LF, and their rows carry a line prefix unless read's anchors is false.",
     ],
     edit: [
       "Batch all steps for one file into a single edit call, and send changes to different files in the same response; they do not interfere.",
