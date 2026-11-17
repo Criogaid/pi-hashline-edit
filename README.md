@@ -4,7 +4,24 @@
 
 English · [简体中文](README.zh-CN.md)
 
-Hash-anchored file editing for [Pi](https://github.com/earendil-works/pi-coding-agent). The model edits lines by citing anchors from `read` or `grep`; every anchor is checked against the current file before anything is written. Stale or mistaken edits are rejected with enough context for the model to correct them, instead of silently changing the wrong lines.
+Hash-anchored file editing for [Pi](https://github.com/earendil-works/pi-coding-agent): line edits cite anchors that are checked against the current file before any write.
+
+The model edits lines by citing anchors from `read` or `grep`. Stale or mistaken edits are rejected with enough context for the model to correct them, instead of silently changing the wrong lines.
+
+## Table of Contents
+
+- [Why use it](#why-use-it)
+- [Install](#install)
+- [Usage](#usage)
+- [Tools](#tools)
+- [When an edit is rejected](#when-an-edit-is-rejected)
+- [Action Fusion](#action-fusion)
+- [Configuration](#configuration)
+- [Output budgets](#output-budgets)
+- [Limits](#limits)
+- [Development](#development)
+- [Contributing](#contributing)
+- [License](#license)
 
 ## Why use it
 
@@ -24,7 +41,7 @@ pi install npm:@criogaid/pi-hashline-edit
 
 Requires Pi 1.5.0 or later. The extension works on local files; for remote or custom storage, set `hashlineEdit.enabled` to `false` and reload Pi to restore the built-in tools.
 
-## Quick start
+## Usage
 
 Pi's model uses the tools automatically. A `read` returns lines with anchors:
 
@@ -34,8 +51,6 @@ greet.ts · 3 lines
 2#GFYR│  return "hello";
 3#FNSZ│}
 ```
-
-For a file it will not edit, the model can pass `anchors: false`; the result is then the file's lines alone, without `LINE#HASH│` prefixes, at about a third fewer tokens.
 
 The model copies an anchor into `edit`:
 
@@ -54,25 +69,31 @@ The extension replaces Pi's `read`, `grep`, `edit`, and `write`, and adds `repla
 
 | Tool | What it does |
 | --- | --- |
-| `read` | Shows UTF-8 text with anchors, paginated within the model's output budget. Images and files containing NUL bytes go to Pi's built-in read. |
+| `read` | Shows UTF-8 text with anchors, paginated within the model's output budget. With `anchors: false`, for a file the model will not edit, it returns the lines alone, at about a third fewer tokens. Images and files containing NUL bytes go to Pi's built-in read. |
 | `grep` | Searches files and directories with JavaScript regex or literal text; returns anchored matches, file paths, or counts in traversal order; a limit keeps the first matches in that order. Directory searches respect ignore rules and skip `.git` and linked directories, even beneath a directory named in `path`; naming an ignored file or one of those directories itself searches it. |
 | `edit` | Replaces, inserts, or deletes whole lines by anchor. All operations in one call apply to the same snapshot, or none apply. |
 | `replace` | Applies literal or regex substitutions across one file. Every rule must match, and overlapping matches reject the batch. |
 | `write` | Creates a file (`mode: "create"`) or overwrites one (`mode: "overwrite"`), using the content exactly as given. Missing parent directories are created. |
 
+### Paths
+
 File paths accept relative or absolute paths, `~`, an optional leading `@`, and `file://` URLs. On Windows, shell drive paths such as `/c/work/file.txt`, `/mnt/c/work/file.txt`, and `/cygdrive/c/work/file.txt` are also accepted. Relative paths resolve from the workspace directory.
 
 Path input normalizes several Unicode space characters, including U+202F, to ordinary spaces. To address a filename containing a literal Unicode space, pass a percent-encoded file URL, such as `file:///home/me/space%E2%80%AFname.txt` for a name containing U+202F. Paths returned by `read` and `grep` use a spelling that can be passed back to the tools; keep that spelling, including any URL escapes. The same path syntax applies when `read` delegates images or NUL-containing files to Pi.
 
+### grep
+
 Grep visits input paths in the order supplied and uses ripgrep's sorted directory traversal within each root. Repeated candidate paths are searched once, at their first occurrence. This is not global lexicographic sorting of full paths. A path that does not exist is listed in the report's `missing`, and the other paths are still searched; the call fails with `PATH_NOT_FOUND` when every path is missing or a missing path contains a wildcard.
 
-Grep matches the LF view with native JavaScript regexes under the `m` flag; `ignoreCase` adds `i`, and grep takes no other flags. Without `multiline`, each physical line is searched separately; with it, the whole file is searched and every physical line touched by a match is returned. Context rows do not count toward `limit`. Content output re-reads matched files and omits any whose revision changed; `files` and `count` report the searched snapshot without a second read. Incomplete scans state their diagnostics or scan limit in the report.
-
-`replace` matches the same LF view, including a leading BOM. When rebuilding the file, it keeps the original BOM at byte zero, even when a match consumes it or inserts before it. A replacement that consumes the file header and starts with a copied BOM reuses that header; explicitly inserted or internal U+FEFF characters remain content. Use `write` to replace the complete byte representation, including the BOM.
+Grep matches the LF view (the file's text with CRLF line endings shown as LF) with native JavaScript regexes under the `m` flag; `ignoreCase` adds `i`, and grep takes no other flags. Without `multiline`, each physical line is searched separately; with it, the whole file is searched and every physical line touched by a match is returned. Context rows do not count toward `limit`. Content output re-reads matched files and omits any whose revision (the SHA-256 of its bytes) changed; `files` and `count` report the searched snapshot without a second read. Incomplete scans state their diagnostics or scan limit in the report.
 
 The grep card preserves file paths and count rows as returned. Only `content` mode formats match rows for display, hiding anchor hashes and folding shared indentation.
 
-An `edit` call puts its small locator first: `path`, `steps`, then optional `then_run`. Each step puts the operation and range before the replacement payload: `action`, `anchor`, optional `end`, then `lines`. This keeps the file and target range visible while arguments stream.
+### replace
+
+`replace` matches the same LF view, including a leading BOM. When rebuilding the file, it keeps the original BOM at byte zero, even when a match consumes it or inserts before it. A replacement that consumes the file header and starts with a copied BOM reuses that header; explicitly inserted or internal U+FEFF characters remain content. Use `write` to replace the complete byte representation, including the BOM.
+
+### edit
 
 Edit operations:
 
@@ -84,13 +105,17 @@ Edit operations:
 
 One call takes at most [64 operations](src/pi/edit-tool.ts). Ranges in one call must not overlap, and each gap between lines takes at most one insertion. An insertion at the start of a replaced or deleted range goes before it.
 
-Every tool asks for constrained sampling (Pi's `constrainedSampling`, a strict JSON schema) where the provider supports it, so the model cannot emit fields or values the schema does not declare, or exceed edit's operation limit. Optional fields the call does not use are then written as `null`, including each edit operation's fields that its `action` does not take. For the same reason, grep's `pattern`, `path`, and `glob` take arrays only; on other providers Pi wraps a single string into an array.
+Range operations verify the cited `anchor` and `end`. Interior lines have no individual anchor check. Changes elsewhere before the call do not invalidate unchanged anchors; publication rechecks the bytes read while applying the call and rejects a detected change.
 
-Pi owns argument coercion and acceptance; diagnostics do not change the submitted arguments. Supply operation arrays as declared. Pi drops optional `null` fields before wrapping singleton values into arrays: `replacements: [{ ..., flags: null }]` omits `flags`, while `replacements: { ..., flags: null }` converts it to the string `"null"` and fails flags validation.
+An `edit` call puts its small locator first: `path`, `steps`, then optional `then_run`. Each step puts the operation and range before the replacement payload: `action`, `anchor`, optional `end`, then `lines`. This keeps the file and target range visible while arguments stream.
+
+### Arguments
 
 The model sees each tool's full parameter schema; the definitions live in the tool files under [`src/pi/`](src/pi/).
 
-Range operations verify the cited `anchor` and `end`. Interior lines have no individual anchor check. Changes elsewhere before the call do not invalidate unchanged anchors; publication rechecks the bytes read while applying the call and rejects a detected change.
+Every tool asks for constrained sampling (Pi's `constrainedSampling`: the provider restricts the model's output to the tool's strict JSON schema) where the provider supports it, so the model cannot emit fields or values the schema does not declare, or exceed edit's operation limit. Optional fields the call does not use are then written as `null`, including each edit operation's fields that its `action` does not take. For the same reason, grep's `pattern`, `path`, and `glob` take arrays only; on other providers Pi wraps a single string into an array.
+
+Pi owns argument coercion and acceptance; diagnostics do not change the submitted arguments. Supply operation arrays as declared. Pi drops optional `null` fields before wrapping singleton values into arrays: `replacements: [{ ..., flags: null }]` omits `flags`, while `replacements: { ..., flags: null }` converts it to the string `"null"` and fails flags validation.
 
 ## When an edit is rejected
 
@@ -179,3 +204,11 @@ For a truncated grep payload, the report says to retry with `context: 0` when th
 | `npm run test:cartesian` | Slow Cartesian regex matrices; run after changing regex translation or prefiltering. |
 
 Result fields and error codes are defined in [`report-schema.ts`](src/pi/report-schema.ts). Module responsibilities are in [`src/core/AGENTS.md`](src/core/AGENTS.md) and [`src/pi/AGENTS.md`](src/pi/AGENTS.md). [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) lists borrowed techniques and test cases.
+
+## Contributing
+
+Questions and bug reports go to [GitHub issues](https://github.com/Criogaid/pi-hashline-edit/issues). Pull requests are welcome: run the checks under [Development](#development) first, and follow the commit conventions in [`AGENTS.md`](AGENTS.md).
+
+## License
+
+[MIT](LICENSE) © Chien Zhang and contributors

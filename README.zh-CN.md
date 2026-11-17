@@ -4,7 +4,24 @@
 
 [English](README.md) · 简体中文
 
-为 [Pi](https://github.com/earendil-works/pi-coding-agent) 提供基于行哈希锚点的文件编辑。模型引用 `read` 或 `grep` 输出中的锚点来修改行，写入前每个锚点都会与当前文件核对。过期或错误的修改会被拒绝，并附带足够的信息让模型自行纠正，而不是悄悄改错行。
+为 [Pi](https://github.com/earendil-works/pi-coding-agent) 提供基于行哈希锚点的文件编辑：修改行时引用锚点，写入前与当前文件核对。
+
+模型引用 `read` 或 `grep` 输出中的锚点来修改行。过期或错误的修改会被拒绝，并附带足够的信息让模型自行纠正，而不是悄悄改错行。
+
+## 目录
+
+- [优势](#优势)
+- [安装](#安装)
+- [用法](#用法)
+- [工具](#工具)
+- [修改被拒绝时](#修改被拒绝时)
+- [Action Fusion](#action-fusion)
+- [配置](#配置)
+- [输出预算](#输出预算)
+- [限制](#限制)
+- [开发](#开发)
+- [贡献](#贡献)
+- [许可证](#许可证)
 
 ## 优势
 
@@ -24,7 +41,7 @@ pi install npm:@criogaid/pi-hashline-edit
 
 需要 Pi 1.5.0 或更高版本。扩展只处理本地文件；如果使用远程或自定义存储，把 `hashlineEdit.enabled` 设为 `false` 并重新加载 Pi，即可恢复内置工具。
 
-## 快速上手
+## 用法
 
 Pi 的模型会自动使用这些工具。`read` 返回带锚点的行：
 
@@ -34,8 +51,6 @@ greet.ts · 3 lines
 2#GFYR│  return "hello";
 3#FNSZ│}
 ```
-
-不打算编辑的文件，模型可以传 `anchors: false`；此时只返回文件的原始行，不带 `LINE#HASH│` 前缀，token 约少三分之一。
 
 模型把锚点复制到 `edit` 中：
 
@@ -54,25 +69,31 @@ greet.ts · 3 lines
 
 | 工具 | 作用 |
 | --- | --- |
-| `read` | 显示带锚点的 UTF-8 文本，按模型的输出预算分页。图片和含 NUL 字节的文件交给 Pi 内置的 read。 |
+| `read` | 显示带锚点的 UTF-8 文本，按模型的输出预算分页。对不打算编辑的文件传 `anchors: false` 时只返回原始行，token 约少三分之一。图片和含 NUL 字节的文件交给 Pi 内置的 read。 |
 | `grep` | 用 JavaScript 正则或字面文本搜索文件和目录，按遍历顺序返回带锚点的匹配行、文件路径或计数，设了 limit 时保留该顺序下的前若干条匹配。搜索目录时遵守忽略规则，并跳过 `.git` 和链接目录，在 `path` 指定的目录之下也是如此；在 `path` 中直接指定被忽略的文件或这些目录本身才会搜索。 |
 | `edit` | 按锚点替换、插入或删除整行。一次调用中的所有操作基于同一份快照，要么全部生效，要么全部不生效。 |
 | `replace` | 在单个文件内批量执行字面或正则替换。每条规则都必须有匹配，匹配区域重叠时整批拒绝。 |
 | `write` | 新建文件（`mode: "create"`）或覆盖文件（`mode: "overwrite"`），内容原样写入，缺失的父目录会一并创建。 |
 
+### 路径
+
 文件路径支持相对路径、绝对路径、`~`、可选的前导 `@` 和 `file://` URL。Windows 还支持 `/c/work/file.txt`、`/mnt/c/work/file.txt`、`/cygdrive/c/work/file.txt` 等 shell 盘符路径。相对路径以工作区目录为基准解析。
 
 路径输入会把 U+202F 等部分 Unicode 空格归一化为普通空格。要精确读取文件名中含有 Unicode 空格的文件，请传入经过百分号编码的文件 URL，例如 `file:///home/me/space%E2%80%AFname.txt` 对应含有 U+202F 的文件名。`read` 和 `grep` 返回的路径可以直接传回工具；请保留返回的写法，包括 URL 转义。`read` 将图片和含 NUL 字节的文件交给 Pi 时，也使用相同的路径语法。
 
+### grep
+
 Grep 按传入顺序访问各个搜索路径，在每个根路径内采用 ripgrep 的有序目录遍历。重复候选路径只在第一次出现时搜索。这不是对所有文件完整路径做全局字典序排序。不存在的路径列在报告的 `missing` 中，其余路径照常搜索；只有全部路径都不存在，或某个不存在的路径含通配符时，调用才以 `PATH_NOT_FOUND` 失败。
 
-Grep 用带 `m` 标志的原生 JavaScript 正则匹配 LF 视图；`ignoreCase` 会加上 `i`，grep 不接受其他标志。不设 `multiline` 时逐物理行搜索；设为 true 时搜索整个文件，返回匹配涉及的每一物理行。上下文行不计入 `limit`。content 输出会重读匹配文件，略过版本已变的文件；`files` 和 `count` 直接报告搜索时的快照，不做第二次读取。扫描不完整时，报告会给出诊断或扫描上限。
-
-`replace` 在相同的 LF 视图上匹配，开头的 BOM 也参与匹配。组装文件时，原 BOM 保持在字节零处，即使匹配包含它或在它前面插入内容。替换包含文件头的匹配时，替换文本开头复制的 BOM 复用原文件头；显式插入或位于正文中的 U+FEFF 字符仍作为内容保留。若需连同 BOM 一起替换完整文件内容，使用 `write`。
+Grep 用带 `m` 标志的原生 JavaScript 正则匹配 LF 视图（把 CRLF 换行显示为 LF 的文件文本）；`ignoreCase` 会加上 `i`，grep 不接受其他标志。不设 `multiline` 时逐物理行搜索；设为 true 时搜索整个文件，返回匹配涉及的每一物理行。上下文行不计入 `limit`。content 输出会重读匹配文件，略过版本（文件字节的 SHA-256）已变的文件；`files` 和 `count` 直接报告搜索时的快照，不做第二次读取。扫描不完整时，报告会给出诊断或扫描上限。
 
 grep 卡片原样显示返回的文件路径和计数行。只有 `content` 模式会格式化匹配行，隐藏锚点哈希并折叠共有缩进。
 
-`edit` 调用先给出定位信息：`path`、`steps`，再是可选的 `then_run`。每个操作先给出动作和范围，再给出替换内容：`action`、`anchor`、可选的 `end`，最后是 `lines`。参数流式输出时，TUI 可以先显示文件和目标范围。
+### replace
+
+`replace` 在相同的 LF 视图上匹配，开头的 BOM 也参与匹配。组装文件时，原 BOM 保持在字节零处，即使匹配包含它或在它前面插入内容。替换包含文件头的匹配时，替换文本开头复制的 BOM 复用原文件头；显式插入或位于正文中的 U+FEFF 字符仍作为内容保留。若需连同 BOM 一起替换完整文件内容，使用 `write`。
+
+### edit
 
 `edit` 的操作：
 
@@ -84,13 +105,17 @@ grep 卡片原样显示返回的文件路径和计数行。只有 `content` 模�
 
 一次调用最多 [64 个操作](src/pi/edit-tool.ts)。一次调用中的范围不能重叠，相邻两行之间的每个位置最多一次插入。位于替换或删除区间起点的插入放在该区间之前。
 
-在提供方支持时，所有工具都请求约束采样（Pi 的 `constrainedSampling`，即 strict JSON schema），模型因此无法写出 schema 未声明的字段或取值，也无法超出 edit 的操作数上限。这时调用中没用到的可选字段都写 `null`，edit 每个操作里其 `action` 用不到的字段也一样。出于同一原因，grep 的 `pattern`、`path` 和 `glob` 只接受数组；在其他提供方上，Pi 会把单个字符串包成数组。
+范围操作核对给出的 `anchor`、`end`，不逐行验证区间内部的内容。调用前其他位置的变化不会使未改变的锚点失效；发布前会复核修改操作实际读取的字节，检测到变化时拒绝发布。
 
-参数转换和接受判定由 Pi 负责；诊断不修改提交的参数。操作数组应按 schema 提交。Pi 先移除可选的 `null` 字段，再把单值包成数组：`replacements: [{ ..., flags: null }]` 会省略 `flags`，而 `replacements: { ..., flags: null }` 会把它转为字符串 `"null"`，随后 flags 校验失败。
+`edit` 调用先给出定位信息：`path`、`steps`，再是可选的 `then_run`。每个操作先给出动作和范围，再给出替换内容：`action`、`anchor`、可选的 `end`，最后是 `lines`。参数流式输出时，TUI 可以先显示文件和目标范围。
+
+### 参数
 
 模型能看到每个工具完整的参数 schema，定义位于 [`src/pi/`](src/pi/) 下的各工具文件。
 
-范围操作核对给出的 `anchor`、`end`，不逐行验证区间内部的内容。调用前其他位置的变化不会使未改变的锚点失效；发布前会复核修改操作实际读取的字节，检测到变化时拒绝发布。
+在提供方支持时，所有工具都请求约束采样（Pi 的 `constrainedSampling`：提供方把模型输出限制在工具的 strict JSON schema 内），模型因此无法写出 schema 未声明的字段或取值，也无法超出 edit 的操作数上限。这时调用中没用到的可选字段都写 `null`，edit 每个操作里其 `action` 用不到的字段也一样。出于同一原因，grep 的 `pattern`、`path` 和 `glob` 只接受数组；在其他提供方上，Pi 会把单个字符串包成数组。
+
+参数转换和接受判定由 Pi 负责；诊断不修改提交的参数。操作数组应按 schema 提交。Pi 先移除可选的 `null` 字段，再把单值包成数组：`replacements: [{ ..., flags: null }]` 会省略 `flags`，而 `replacements: { ..., flags: null }` 会把它转为字符串 `"null"`，随后 flags 校验失败。
 
 ## 修改被拒绝时
 
@@ -179,3 +204,11 @@ grep 载荷被截断时，如果本次调用返回了上下文行，报告会提
 | `npm run test:cartesian` | 耗时较长的笛卡尔积正则矩阵；修改正则翻译或预筛后运行。 |
 
 报告字段和错误码定义在 [`report-schema.ts`](src/pi/report-schema.ts)。模块职责见 [`src/core/AGENTS.md`](src/core/AGENTS.md) 与 [`src/pi/AGENTS.md`](src/pi/AGENTS.md)。[`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) 列出了借鉴的技术和测试用例。
+
+## 贡献
+
+提问和报告缺陷请到 [GitHub issues](https://github.com/Criogaid/pi-hashline-edit/issues)。欢迎提交 pull request：请先运行[开发](#开发)一节的检查，并遵循 [`AGENTS.md`](AGENTS.md) 中的提交约定。
+
+## 许可证
+
+[MIT](LICENSE) © Chien Zhang and contributors
