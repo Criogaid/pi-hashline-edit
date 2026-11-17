@@ -8,8 +8,12 @@
 // thirty-second.
 const READ_SHARE = 4;
 const GREP_SHARE = 8;
-// Full-width previews for grep's default 100-match limit fit one payload.
+// A preview grows with the payload: above the minimum, full-width previews for grep's default
+// 100-match limit fit one payload.
 const GREP_PREVIEW_SHARE = 100;
+// Pi's built-in grep keeps this many characters of a line. A narrower preview cuts a row in
+// far more calls and keeps almost none of them within the payload budget.
+const MIN_GREP_PREVIEW_UNITS = 500;
 const BLOCK_SHARE = 4;
 const FIELD_SHARE = 4;
 // Keep JSON envelopes and diagnostic omission markers usable for tiny declared windows.
@@ -26,7 +30,7 @@ const fallbackBudgets = {
   grepBytes: 50 * 1024,
   blockBytes: 16 * 1024,
   fieldBytes: 4 * 1024,
-  grepPreviewUnits: 500,
+  grepPreviewUnits: MIN_GREP_PREVIEW_UNITS,
 };
 const DEFAULT_OUTPUT_BUDGETS = Object.freeze(fallbackBudgets);
 export type OutputBudgets = typeof DEFAULT_OUTPUT_BUDGETS;
@@ -47,7 +51,7 @@ export function outputBudgetsFor(contextWindow: number | undefined): OutputBudge
     grepBytes,
     blockBytes,
     fieldBytes,
-    grepPreviewUnits: Math.floor(grepBytes / GREP_PREVIEW_SHARE),
+    grepPreviewUnits: Math.max(MIN_GREP_PREVIEW_UNITS, Math.floor(grepBytes / GREP_PREVIEW_SHARE)),
   });
 }
 
