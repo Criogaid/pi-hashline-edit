@@ -290,7 +290,8 @@ export function withMutationStatus<TParams extends TSchema, TDetails>(
     ...tool,
     renderShell: "self",
     renderCall(args, theme, context) {
-      const shell = (context.state.mutationShell ??= { box: new Box(1, 1) });
+      const shell = (context.state.mutationShell ??= { box: new Box(context.outputPad, 1) });
+      shell.box.setPaddingX(context.outputPad);
       shell.call = tool.renderCall!(args, theme, { ...context, lastComponent: shell.call });
       shell.box.clear();
       shell.box.addChild(shell.call);
@@ -307,7 +308,7 @@ export function withMutationStatus<TParams extends TSchema, TDetails>(
       return shell.box;
     },
     renderResult(result, options, theme, context) {
-      const shell = (context.state.mutationShell ??= { box: new Box(1, 1) });
+      const shell = (context.state.mutationShell ??= { box: new Box(context.outputPad, 1) });
       // Fusion updates carry progress alongside TDetails; final results carry only the outcome.
       const details = result.details as { actionFusion?: MutationCardProgress } | undefined;
       const file = details?.actionFusion ?? shell.fileState;

@@ -42,6 +42,42 @@ const mutationDetails = (
   },
 });
 
+test("Fusion mutation card → follows Pi's output padding when it changes", async (t) => {
+  initTheme("dark");
+  const { cwd } = await openTestSession(t, { tools: [] });
+  const tool = withMutationStatus(
+    makeWriteOverride(
+      cwd,
+      createActionFusionExecutor(() => {}),
+    ),
+  );
+  const args = { path: "target.txt", content: "saved", mode: "create" as const };
+  const context: Parameters<NonNullable<typeof tool.renderCall>>[2] = {
+    args,
+    toolCallId: "padding",
+    cwd,
+    state: {},
+    lastComponent: undefined,
+    durationMs: undefined,
+    invalidate() {},
+    executionStarted: true,
+    argsComplete: true,
+    isPartial: true,
+    expanded: false,
+    showImages: false,
+    isError: false,
+    outputPad: 0,
+    keyText: () => "",
+    keyHint: (_key, description) => description,
+  };
+  for (const outputPad of [0, 4]) {
+    const lines = tool.renderCall!(args, theme, { ...context, outputPad }).render(100);
+    const header = lines.map(stripVTControlCharacters).find((line) => line.includes("target.txt"));
+    assert.ok(header);
+    assert.equal(header.length - header.trimStart().length, outputPad);
+  }
+});
+
 test("empty logical diff → render according to confirmed publication state", () => {
   initTheme("dark");
   const diff = generateMutationDetails("same\r\nsame\n", "same\nsame\r\n");
