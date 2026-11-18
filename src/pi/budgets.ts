@@ -8,8 +8,7 @@
 // thirty-second.
 const READ_SHARE = 4;
 const GREP_SHARE = 8;
-// A preview grows with the payload: above the minimum, full-width previews for grep's default
-// 100-match limit fit one payload.
+// A preview grows with the payload: one UTF-16 unit per this many payload bytes.
 const GREP_PREVIEW_SHARE = 100;
 // Pi's built-in grep keeps this many characters of a line. A narrower preview cuts a row in
 // far more calls and keeps almost none of them within the payload budget.
