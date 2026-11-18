@@ -453,9 +453,11 @@ test("grep output byte limit → recovery follows output mode and effective cont
     }
   }));
 
-test("small grep payload and one long multibyte match → keeps the anchored preview", async () =>
+test("small grep payload and a long multibyte path → keeps the only anchored match", async () =>
   withDir(async (dir) => {
-    const path = join(dir, "wide.txt");
+    const subdir = join(dir, "项目".repeat(25));
+    const path = join(subdir, `${"文档".repeat(25)}.md`);
+    await mkdir(subdir);
     const pattern = "命中";
     const line = pattern + "文".repeat(600);
     await writeFile(path, `${line}\n`);
@@ -472,12 +474,17 @@ test("small grep payload and one long multibyte match → keeps the anchored pre
       },
     );
 
-    const [, row = ""] = text(result).split("\n");
-    const width = budget.grepPreviewUnits;
-    assert.deepEqual(parseHashline(row), {
-      lineNo: "1",
-      content: `[partial, columns 1-${width}] ${line.slice(0, width)}…`,
-    });
+    const payload = text(result);
+    const [, row = ""] = payload.split("\n");
+    const parsedRow = parseHashline(row);
+    assert.ok(parsedRow, `Expected an anchored match row after the header:\n${payload}`);
+    assert.equal(parsedRow.lineNo, "1");
+    assert.ok(Buffer.byteLength(payload) <= budget.grepBytes);
+
+    const marker = /^\[partial, columns 1-(\d+)\]/.exec(parsedRow.content);
+    assert.ok(marker);
+    const width = Number(marker[1]);
+    assert.equal(parsedRow.content, `${marker[0]} ${line.slice(0, width)}…`);
     const report = reportOf(result, "grep");
     assert.ok(report);
     assert.equal(report.linePreviewLimit, width);
