@@ -41,6 +41,8 @@ pi install npm:@criogaid/pi-hashline-edit
 
 Requires Pi 1.5.0 or later. The extension works on local files; for remote or custom storage, set `hashlineEdit.enabled` to `false` and reload Pi to restore the built-in tools.
 
+To locate the workspace during registration, the extension runs Windows PowerShell on Windows or `/bin/pwd` on macOS and Linux.
+
 ## Usage
 
 Pi's model uses the tools automatically. A `read` returns lines with anchors:

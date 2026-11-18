@@ -41,6 +41,8 @@ pi install npm:@criogaid/pi-hashline-edit
 
 需要 Pi 1.5.0 或更高版本。扩展只处理本地文件；如果使用远程或自定义存储，把 `hashlineEdit.enabled` 设为 `false` 并重新加载 Pi，即可恢复内置工具。
 
+注册时，扩展通过系统命令定位工作区：Windows 使用 Windows PowerShell，macOS 和 Linux 使用 `/bin/pwd`。
+
 ## 用法
 
 Pi 的模型会自动使用这些工具。`read` 返回带锚点的行：

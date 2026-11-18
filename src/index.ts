@@ -10,7 +10,7 @@
  * @module pi-hashline-edit
  */
 
-import { isAbsolute } from "node:path";
+import { isAbsolute, join } from "node:path";
 import type { ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import type { TSchema } from "typebox";
 import { loadConfig } from "./pi/config.ts";
@@ -27,13 +27,24 @@ import { NEXT_GUIDELINE } from "./pi/report-schema.ts";
 export default async function (pi: ExtensionAPI) {
   // Pi runs exec in the extension loader's workspace, even before session_start.
   // Replay on reload needs tools and entry renderers registered before that event.
-  const {
-    stdout: cwd,
-    stderr,
-    code,
-    killed,
-    truncated,
-  } = await pi.exec(process.execPath, ["-e", "process.stdout.write(process.cwd())"]);
+  // Ask the OS directly so a second Node runtime cannot rerun the host's preloads.
+  const windows = process.platform === "win32";
+  const result = windows
+    ? await pi.exec(
+        join(
+          process.env.SystemRoot ?? "C:\\Windows",
+          "System32/WindowsPowerShell/v1.0/powershell.exe",
+        ),
+        [
+          "-NoProfile",
+          "-NonInteractive",
+          "-Command",
+          "[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false); [Console]::Write([Environment]::CurrentDirectory)",
+        ],
+      )
+    : await pi.exec("/bin/pwd", ["-P"]);
+  const { stderr, code, killed, truncated } = result;
+  const cwd = windows ? result.stdout : result.stdout.replace(/\n$/, "");
   if (code !== 0 || killed || truncated || !isAbsolute(cwd)) {
     throw new Error(`Unable to resolve the Pi workspace (exit ${code})`, {
       cause: stderr || undefined,

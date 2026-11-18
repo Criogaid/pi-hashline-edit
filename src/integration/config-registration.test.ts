@@ -15,6 +15,24 @@ import { formatByteSize } from "../pi/budgets.ts";
 import { expectToolFailure } from "../pi/report-failure.testing.ts";
 import { openTestSession } from "../testing/session.testing.ts";
 
+test("relative Node preload → registration uses the workspace", async (t) => {
+  const cwd = await mkdtemp(join(tmpdir(), "hashline-workspace-"));
+  t.after(() => rm(cwd, { recursive: true, force: true }));
+  const previous = process.env.NODE_OPTIONS;
+  process.env.NODE_OPTIONS = "--require=./package.json";
+  try {
+    const { session } = await openTestSession(t, {
+      cwd,
+      tools: ["read"],
+      configure: registerHashline,
+    });
+    assert.ok(session.getToolDefinition("read")?.prepareArguments);
+  } finally {
+    if (previous === undefined) delete process.env.NODE_OPTIONS;
+    else process.env.NODE_OPTIONS = previous;
+  }
+});
+
 test("SDK cwd differs from process cwd → project settings and relative tools use the workspace", async (t) => {
   const cwd = await mkdtemp(join(tmpdir(), "hashline-workspace-"));
   t.after(() => rm(cwd, { recursive: true, force: true }));
