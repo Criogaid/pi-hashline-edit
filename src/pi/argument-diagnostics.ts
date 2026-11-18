@@ -99,46 +99,19 @@ function propertyPath(path: string, key: string): string {
     : `${path}[${JSON.stringify(key)}]`;
 }
 
-const unescapePointer = (part: string) => part.replaceAll("~1", "/").replaceAll("~0", "~");
-
+/** Declared tool fields do not contain slashes or tildes. TypeBox emits unknown keys verbatim. */
 function pointerParts(pointer: string): readonly string[] {
-  return pointer.split("/").slice(1).map(unescapePointer);
+  return pointer.split("/").slice(1);
 }
 
-/**
- * The projection paths of the value at `pointer` and of its parent; the root is "". Pi's TypeBox
- * leaves `/` and `~` in property names unescaped, so a name spans the fewest segments that form
- * an own key, read escaped or as is.
- */
-function valuePaths(pointer: string, prepared: unknown): { path: string; parent: string } {
-  const segments = pointer.split("/").slice(1);
+function valuePath(parts: readonly string[], prepared: unknown): string {
   let value = prepared;
   let path = "";
-  let parent = "";
-  for (let index = 0; index < segments.length; index++) {
-    let part = unescapePointer(segments[index]);
-    if (typeof value === "object" && value !== null && !Array.isArray(value)) {
-      const object = value;
-      for (let end = index + 1; end <= segments.length; end++) {
-        const raw = segments.slice(index, end).join("/");
-        const key = [unescapePointer(raw), raw].find((name) => Object.hasOwn(object, name));
-        if (key !== undefined) {
-          part = key;
-          index = end - 1;
-          break;
-        }
-      }
-    }
-    parent = path;
+  for (const part of parts) {
     path = Array.isArray(value) ? `${path}[${part}]` : propertyPath(path, part);
     value = typeof value === "object" && value !== null ? Reflect.get(value, part) : undefined;
   }
-  return { path, parent };
-}
-
-function fieldPath(pointer: string, prepared: unknown, key?: string): string {
-  const { path } = valuePaths(pointer, prepared);
-  return (key === undefined ? path : propertyPath(path, key)) || "$";
+  return path;
 }
 
 /** One declaration's meaning: its description, labeled with its values when it is a choice. */
@@ -206,36 +179,39 @@ function aggregateErrors(
   const add = (field: string, reason: string, fix?: string) =>
     issues.push(fix === undefined ? { field, reason } : { field, reason, fix });
   for (const error of errors) {
+    const parts = pointerParts(error.instancePath);
     switch (error.keyword) {
       case "required": {
-        const parts = pointerParts(error.instancePath);
         for (const key of error.params.requiredProperties)
           add(
-            fieldPath(error.instancePath, prepared, key),
+            propertyPath(valuePath(parts, prepared), key),
             "is required",
             fieldExplanation(parameters, [...parts, key]),
           );
         break;
       }
       case "additionalProperties": {
-        const { path } = valuePaths(error.instancePath, prepared);
+        const path = valuePath(parts, prepared);
         const fix = shapeExplanation(objects.get(path));
         for (const key of error.params.additionalProperties)
-          add(fieldPath(error.instancePath, prepared, key), "is not allowed", fix);
+          add(propertyPath(path, key), "is not allowed", fix);
         break;
       }
       case "pattern":
-        add(
-          fieldPath(error.instancePath, prepared),
-          error.message,
-          fieldExplanation(parameters, pointerParts(error.instancePath)),
-        );
+        add(valuePath(parts, prepared) || "$", error.message, fieldExplanation(parameters, parts));
         break;
       case "boolean": {
-        // Once TypeBox's error capacity ends before `additionalProperties`, this is the only report.
-        const { parent } = valuePaths(error.instancePath, prepared);
+        // TypeBox emits a false-schema error per unknown key before its grouped error.
+        // Count declared path steps to preserve the entire unknown key, even if it contains '/'.
+        const depth = error.schemaPath
+          .split("/")
+          .filter(
+            (segment) =>
+              segment === "properties" || segment === "items" || segment === "prefixItems",
+          ).length;
+        const parent = valuePath(parts.slice(0, depth), prepared);
         add(
-          fieldPath(error.instancePath, prepared),
+          propertyPath(parent, parts.slice(depth).join("/")),
           "is not allowed",
           shapeExplanation(objects.get(parent)),
         );
@@ -243,13 +219,13 @@ function aggregateErrors(
       }
       case "enum":
         add(
-          fieldPath(error.instancePath, prepared),
+          valuePath(parts, prepared) || "$",
           `expected one of: ${error.params.allowedValues.map((value) => JSON.stringify(value)).join(", ")}`,
-          fieldExplanation(parameters, pointerParts(error.instancePath)),
+          fieldExplanation(parameters, parts),
         );
         break;
       default:
-        add(fieldPath(error.instancePath, prepared), error.message);
+        add(valuePath(parts, prepared) || "$", error.message);
     }
   }
   return combineIssues(issues);

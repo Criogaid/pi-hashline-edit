@@ -969,3 +969,21 @@ test("20 unknown keys including a slash → bounded issues retain one accepted-f
     },
   );
 });
+
+test("bounded additional-property diagnostics → preserve exact keys despite pointer-like spelling", async () => {
+  const extras = Object.fromEntries([
+    ...["a/b", "a", "a~1b"].map((key) => [key, true]),
+    ...Array.from({ length: 20 }, (_, index) => [`extra${index}`, true]),
+  ]);
+  const tool = makeEditOverride(process.cwd(), DEFAULT_CONFIG);
+  await assert.rejects(
+    callTool(tool, { path: "unused.txt", steps: [{ action: "append", lines: ["ok"], ...extras }] }),
+    (error: unknown) => {
+      const report = argumentError(error);
+      assert.equal(report.schemaLimited, true);
+      const fields = report.issues.map((issue) => issue.field);
+      assert.deepEqual(fields.slice(0, 3), ['steps[0]["a/b"]', "steps[0].a", 'steps[0]["a~1b"]']);
+      return true;
+    },
+  );
+});
