@@ -18,45 +18,51 @@ function indentation(text: string): number {
  * hashes. Notices are report facts, which the card renders from the report.
  */
 export function toDisplayLines(raw: string, theme: Theme): string[] {
-  const out: string[] = [];
   const lines = raw.split("\n");
-  const lineNoWidth = lines.reduce(
-    (width, line) => Math.max(width, parseDisplayRow(line)?.lineNo.length ?? 0),
-    0,
-  );
-  let index = 0;
-  while (index < lines.length) {
+  type Header = NonNullable<ReturnType<typeof parseFileHeader>>;
+  type Row = NonNullable<ReturnType<typeof parseDisplayRow>>;
+  const blocks: (string | { header: Header; rows: Row[] })[] = [];
+  let lineNoWidth = 0;
+  // A filename can look like a row, and a source row can end like a header.
+  // Parse each group before measuring its rows so the header contributes no width.
+  for (let index = 0; index < lines.length; index++) {
     const line = lines[index];
     const header = parseFileHeader(line);
-    if (header) {
-      out.push(theme.fg("success", header.path) + theme.fg("dim", ` · ${header.summary}`));
-      // The file's rows follow its header until the first line that is not a row.
-      const group: { lineNo: string; content: string }[] = [];
-      let next = index + 1;
-      while (next < lines.length) {
-        const row = parseDisplayRow(lines[next]);
-        if (!row) break;
-        group.push(row);
-        next++;
-      }
-      // Indentation shared by every row is folded into one marker.
-      // A reduce, not Math.min(...rows): a spread of every row exceeds the call stack.
-      const base = group.length
-        ? group.reduce((min, { content }) => Math.min(min, indentation(content)), Infinity)
-        : 0;
-      const marker = base > 0 ? theme.fg("dim", "›") + " " : "";
-      for (const { lineNo, content } of group) {
-        out.push(
-          theme.fg("dim", `   ${lineNo.padStart(lineNoWidth)}: `) +
-            marker +
-            theme.fg("toolOutput", content.slice(base)),
-        );
-      }
-      index = next;
+    if (!header) {
+      blocks.push(line);
       continue;
     }
-    out.push(theme.fg("toolOutput", line));
-    index++;
+    const rows: Row[] = [];
+    while (index + 1 < lines.length) {
+      const row = parseDisplayRow(lines[index + 1]);
+      if (!row) break;
+      rows.push(row);
+      lineNoWidth = Math.max(lineNoWidth, row.lineNo.length);
+      index++;
+    }
+    blocks.push({ header, rows });
+  }
+
+  const out: string[] = [];
+  for (const group of blocks) {
+    if (typeof group === "string") {
+      out.push(theme.fg("toolOutput", group));
+      continue;
+    }
+    const { path, summary } = group.header;
+    out.push(theme.fg("success", path) + theme.fg("dim", ` · ${summary}`));
+    // Fold shared indentation without spreading an unbounded number of rows.
+    const base = group.rows.length
+      ? group.rows.reduce((min, { content }) => Math.min(min, indentation(content)), Infinity)
+      : 0;
+    const marker = base > 0 ? theme.fg("dim", "›") + " " : "";
+    for (const { lineNo, content } of group.rows) {
+      out.push(
+        theme.fg("dim", `   ${lineNo.padStart(lineNoWidth)}: `) +
+          marker +
+          theme.fg("toolOutput", content.slice(base)),
+      );
+    }
   }
   return out;
 }

@@ -394,6 +394,24 @@ test("Unicode line separators in grep paths → parses the full file header", as
   }
 });
 
+test("grep content groups with row-like filenames → headers do not affect row alignment", () => {
+  initTheme("dark");
+  const raw = [
+    "notes.txt · 1 match",
+    "9#ABCD│  topic · 1 match",
+    "",
+    "1234567890#ABCD│name · 1 match",
+    "2#ABCD│  hit",
+  ].join("\n");
+  assert.deepEqual(toDisplayLines(raw, theme).map(stripVTControlCharacters), [
+    "notes.txt · 1 match",
+    "   9: › topic · 1 match",
+    "",
+    "1234567890#ABCD│name · 1 match",
+    "   2: › hit",
+  ]);
+});
+
 test("grep files mode with header-like and anchor-like names → preserves complete paths", () => {
   initTheme("dark");
   const tool = makeGrepOverride(process.cwd(), DEFAULT_CONFIG);
