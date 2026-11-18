@@ -69,7 +69,7 @@ The extension replaces Pi's `read`, `grep`, `edit`, and `write`, and adds `repla
 
 | Tool | What it does |
 | --- | --- |
-| `read` | Shows UTF-8 text with anchors, paginated within the model's output budget. With `anchors: false`, for a file the model will not edit, it returns the lines alone, at about a third fewer tokens. Images and files containing NUL bytes go to Pi's built-in read. |
+| `read` | Shows UTF-8 text with anchors, paginated within the model's output budget. For a file the model will not edit, `anchors: false` omits the row prefixes, saving about a third of the tokens. The header stays and standalone CR displays as `␍`. Images and files containing NUL bytes go to Pi's built-in read without a Hashline header. |
 | `grep` | Searches files and directories with JavaScript regex or literal text; returns anchored matches, file paths, or counts in traversal order; a limit keeps the first matches in that order. Directory searches respect ignore rules and skip `.git` and linked directories, even beneath a directory named in `path`; naming an ignored file or one of those directories itself searches it. |
 | `edit` | Replaces, inserts, or deletes whole lines by anchor. All operations in one call apply to the same snapshot, or none apply. |
 | `replace` | Applies literal or regex substitutions across one file. Every rule must match, and overlapping matches reject the batch. |

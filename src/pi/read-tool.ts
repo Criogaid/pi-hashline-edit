@@ -1,7 +1,7 @@
 /**
  * Override read: recognized images and NUL-containing files delegate to Pi's
- * built-in read; valid UTF-8 text outputs "lineNo#hash│content", or the lines alone
- * when the caller sets `anchors: false` for a file it will not edit.
+ * built-in read; other valid UTF-8 text has a header and formatted rows.
+ * `anchors: false` omits the row prefixes.
  *
  * Hashes are computed from the current content on the fly — nothing is stored.
  * The hash is `(line number, content)`, recomputed and checked at edit time, so
@@ -155,7 +155,7 @@ export function makeReadOverride({
       anchors: Type.Optional(
         Type.Boolean({
           description:
-            "false returns the lines alone, without LINE#HASH│ prefixes, about a third fewer tokens; edit cannot cite them. Use it for a file you will not edit (default true).",
+            "false omits LINE#HASH│ prefixes for files you will not edit, saving about a third of the tokens. The header stays and standalone CR displays as ␍ (default true).",
         }),
       ),
     },
@@ -169,7 +169,7 @@ export function makeReadOverride({
       "Read a file. Images return as attachments. Text lines show as LINE#HASH│content anchors for edit; CRLF line endings show as LF.",
     promptSnippet: "Read files with editable line anchors",
     promptGuidelines: [
-      "In a codemode script, take raw file text from tools.bash (cat, git show); text read results and grep content-mode results add a header line and show CRLF as LF, and their rows carry a line prefix unless read's anchors is false.",
+      "In codemode, use tools.bash (cat, git show) for raw file text. Hashline-formatted read and grep content results include headers and show CRLF as LF. Files containing NUL go to native read without a Hashline header.",
     ],
     parameters: parameters as typeof builtin.parameters,
     // Codemode scripts receive structuredContent: Pi's image block for a delegated image, the

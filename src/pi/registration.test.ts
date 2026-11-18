@@ -75,7 +75,7 @@ test("registered tools with or without Fusion → expose prompt rules and conver
                   const [codemodeRule = "", ...sharedRules] = tool.promptGuidelines ?? [];
                   assert.match(
                     codemodeRule,
-                    /text read results and grep content-mode results add a header line/,
+                    /Files containing NUL go to native read without a Hashline header/,
                   );
                   assert.deepEqual(sharedRules, [NEXT_GUIDELINE]);
                 } else {
@@ -98,7 +98,7 @@ test("registered tools with or without Fusion → expose prompt rules and conver
                   anchors: {
                     type: "boolean",
                     description:
-                      "false returns the lines alone, without LINE#HASH│ prefixes, about a third fewer tokens; edit cannot cite them. Use it for a file you will not edit (default true).",
+                      "false omits LINE#HASH│ prefixes for files you will not edit, saving about a third of the tokens. The header stays and standalone CR displays as ␍ (default true).",
                   },
                 },
               });
