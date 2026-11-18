@@ -37,7 +37,7 @@ test("defaults come from the settings schema", () => {
     hashLen: 4,
     shiftRadius: 15,
     read: { defaultLimit: DEFAULT_MAX_LINES, maxKiB: undefined },
-    grep: { ...DEFAULT_CONFIG.grep, defaultLimit: 100, defaultContext: 0 },
+    grep: { defaultLimit: 100, defaultContext: 0, regexTimeoutMs: 5_000 },
     replace: { regexTimeoutMs: 5_000 },
   });
 });
