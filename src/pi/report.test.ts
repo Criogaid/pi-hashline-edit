@@ -368,16 +368,21 @@ test("grep preview from invalid UTF-8 → recovery selects bash for the listed p
   assert.match(next, /invalidUtf8.*bash/);
 });
 
-test("match and scan limits → recovery prioritizes the match limit", () => {
-  const next = OUTCOME_NEXT.find(([fact]) => fact === "matchLimit")?.[1];
-  assert.ok(next);
-  const result = reportResult({
-    tool: "grep",
-    matches: 1,
-    matchLimit: 1,
-    scanLimit: formatByteSize(MAX_UNNARROWED_SCAN_BYTES),
-  });
-  assert.equal(reportOf(result, "grep")?.next, next);
+test("grep limits coincide → recovery prioritizes output, then match, then scan", () => {
+  for (const key of ["matchLimit", "outputLimit"] as const) {
+    const next = OUTCOME_NEXT.find(([fact]) => fact === key)?.[1];
+    assert.ok(next);
+    const result = reportResult({
+      tool: "grep",
+      matches: 1,
+      matchLimit: 1,
+      scanLimit: formatByteSize(MAX_UNNARROWED_SCAN_BYTES),
+      ...(key === "outputLimit" && {
+        outputLimit: formatByteSize(DEFAULT_OUTPUT_BUDGETS.grepBytes),
+      }),
+    });
+    assert.equal(reportOf(result, "grep")?.next, typeof next === "string" ? next : next.default);
+  }
 });
 
 test("output limit with read next offset → recovery prioritizes the next offset", () => {
