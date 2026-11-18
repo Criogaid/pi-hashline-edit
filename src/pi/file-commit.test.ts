@@ -21,7 +21,6 @@ import { test } from "node:test";
 import { spawn } from "node:child_process";
 import {
   commitFile,
-  FileMutationError,
   readEditableSnapshot,
   type CommitResult,
   type FreshnessObservation,
@@ -32,9 +31,7 @@ import { createActionFusionExecutor } from "./action-fusion.ts";
 import { commandCompletion } from "./action-fusion.testing.ts";
 import { makeWriteOverride } from "./tool-factories.testing.ts";
 import { callTool } from "./tool-call.testing.ts";
-import { describeMutationFailure } from "./mutation-result.ts";
 import { reportOf } from "./report.ts";
-import { DEFAULT_OUTPUT_BUDGETS } from "./tool-factories.testing.ts";
 
 // Checked by tsc; this state cannot be returned by the commit layer.
 function invalidCommitStates() {
@@ -145,21 +142,19 @@ test("create never overwrites an existing target", async () =>
 test("short low-level reads → complete mutation snapshots before revision binding", async (t) =>
   withTemp(async (dir) => {
     const target = join(dir, "short-read.txt");
-    const expected = Buffer.from("x".repeat(66_722));
-    const shortRead = 65_512;
+    const expected = Buffer.from("abcDEF");
     await writeFile(target, expected);
     const nativeOpen = fsPromises.open;
-    let lowLevelReads = 0;
     t.mock.method(fsPromises, "open", async (...args: Parameters<typeof nativeOpen>) => {
       const handle = await nativeOpen(...args);
       if (args[0] !== target) return handle;
       const nativeRead = handle.read.bind(handle);
-      t.mock.method(handle, "read", async (...readArgs: Parameters<typeof nativeRead>) => {
-        const result = await nativeRead(...readArgs);
-        return lowLevelReads++ === 0
-          ? { ...result, bytesRead: Math.min(result.bytesRead, shortRead) }
-          : result;
-      });
+      t.mock.method(
+        handle,
+        "read",
+        (options: { buffer: Buffer; length: number; position: number }) =>
+          nativeRead({ ...options, length: Math.min(options.length, 3) }),
+      );
       return handle;
     });
     syncBuiltinESMExports();
@@ -167,7 +162,6 @@ test("short low-level reads → complete mutation snapshots before revision bind
       const snapshot = await readEditableSnapshot(target, undefined);
       assert.equal(snapshot.text, expected.toString("utf8"));
       assert.equal(snapshot.baseRevision, byteRevision(expected));
-      assert.ok(lowLevelReads >= 2);
     } finally {
       t.mock.restoreAll();
       syncBuiltinESMExports();
@@ -351,33 +345,30 @@ test("Windows shared access failure preserves the target, skips then_run, and re
     assert.equal(await readFile(target, "utf8"), "replacement\n");
   }));
 
-test("cancellation racing publication never reports a settled operation as unpublished after success", async () =>
+test("cancellation during rename → successful publication reports the new bytes as published", async (t) =>
   withTemp(async (dir) => {
     const target = join(dir, "cancel.txt");
-    const oldContent = "old\n";
-    const newContent = "new-".repeat(100_000);
-    await writeFile(target, oldContent);
+    await writeFile(target, "old\n");
     const controller = new AbortController();
-    const commit = commitFile(target, newContent, { mode: "overwrite", signal: controller.signal });
-    setImmediate(() => controller.abort());
-    let publication: "NOT_PUBLISHED" | "PUBLISHED" | "UNKNOWN";
+    const rename = fsPromises.rename;
+    t.mock.method(fsPromises, "rename", (...args: Parameters<typeof rename>) => {
+      const publishing = rename(...args);
+      controller.abort();
+      return publishing;
+    });
+    syncBuiltinESMExports();
     try {
-      const result = await commit;
-      publication = result.publication;
-      assert.equal(publication, "PUBLISHED");
-    } catch (error) {
-      assert.ok(error instanceof HashlineError);
-      if (!(error instanceof FileMutationError)) assert.equal(error.errorCode, "OPERATION_ABORTED");
-      const reported = describeMutationFailure("write", error, {
-        budget: DEFAULT_OUTPUT_BUDGETS,
-      }).publication;
-      assert.ok(reported);
-      publication = reported;
+      const result = await commitFile(target, "new\n", {
+        mode: "overwrite",
+        signal: controller.signal,
+      });
+      assert.equal(controller.signal.aborted, true);
+      assert.equal(result.publication, "PUBLISHED");
+      assert.equal(await readFile(target, "utf8"), "new\n");
+    } finally {
+      t.mock.restoreAll();
+      syncBuiltinESMExports();
     }
-    const finalContent = await readFile(target, "utf8");
-    assert.ok(finalContent === oldContent || finalContent === newContent);
-    if (publication === "NOT_PUBLISHED") assert.equal(finalContent, oldContent);
-    if (publication === "PUBLISHED") assert.equal(finalContent, newContent);
   }));
 
 test("bound overwrite → reports published and observed revisions for the published bytes", async () =>
