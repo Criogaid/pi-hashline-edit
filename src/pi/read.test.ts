@@ -5,7 +5,7 @@ import { mkdir, mkdtemp, rm, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { initTheme } from "@earendil-works/pi-coding-agent";
+import { createReadToolDefinition, initTheme } from "@earendil-works/pi-coding-agent";
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import { validateToolArguments } from "@earendil-works/pi-ai";
 import { makeReadOverride } from "./tool-factories.testing.ts";
@@ -176,6 +176,53 @@ test(
       );
     }),
 );
+
+test("read supported PNG → exposes the native image schema and structured image", async () =>
+  withDir(async (dir) => {
+    await writeFile(
+      join(dir, "image.png"),
+      Buffer.from(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+        "base64",
+      ),
+    );
+    const tool = makeReadOverride(dir, DEFAULT_CONFIG);
+    const result = await callTool(tool, { path: "image.png" });
+    assert.equal(result.isError, undefined);
+    const image = result.content.find((block) => block.type === "image");
+    assert.ok(image, JSON.stringify(result.content));
+    assert.equal(image.mimeType, "image/png");
+    assert.ok(image.data.length > 0);
+    assert.deepEqual(result.structuredContent, {
+      type: "image",
+      data: image.data,
+      mimeType: image.mimeType,
+      note: result.content.find((block) => block.type === "text")?.text,
+    });
+    const nativeSchema = createReadToolDefinition(dir).outputSchema;
+    assert.ok(nativeSchema);
+    assert.deepEqual(tool.outputSchema, nativeSchema);
+  }));
+
+test("read UTF-8 text with or without continuation → structured text includes every text block", async () =>
+  withDir(async (dir) => {
+    await writeFile(join(dir, "text.txt"), "第一行\r\nsecond\r\n");
+    const tool = makeReadOverride(dir, {
+      ...DEFAULT_CONFIG,
+      read: { ...DEFAULT_CONFIG.read, defaultLimit: 1 },
+    });
+    for (const limit of [undefined, 2]) {
+      const result = await callTool(tool, { path: "text.txt", limit });
+      assert.equal(result.isError, undefined);
+      const textBlocks = result.content.flatMap((block) =>
+        block.type === "text" ? [block.text] : [],
+      );
+      assert.equal(textBlocks.length, limit === undefined ? 2 : 1);
+      assert.equal(reportOf(result, "read")?.nextOffset, limit === undefined ? 2 : undefined);
+      assert.equal(typeof result.structuredContent, "string");
+      assert.equal(result.structuredContent, textBlocks.join("\n"));
+    }
+  }));
 
 test("read execute: Pi-supported images without NUL bypass text decoding", async () =>
   withDir(async (dir) => {
