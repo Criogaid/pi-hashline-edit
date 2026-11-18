@@ -66,6 +66,16 @@ test("canonicalPath follows Pi's Windows shell-path conventions", () => {
   }
 });
 
+test("Windows drive-rooted input → uses the workspace volume", {
+  skip: process.platform !== "win32",
+}, () => {
+  for (const drive of ["C:", "D:"]) {
+    for (const input of ["/docs/file.txt", "\\docs\\file.txt"]) {
+      assert.equal(canonicalPath(`${drive}/workspace`, input), `${drive}\\docs\\file.txt`);
+    }
+  }
+});
+
 test("Windows shell drive paths with Unicode line separators → preserve the filename", {
   skip: process.platform !== "win32",
 }, () => {

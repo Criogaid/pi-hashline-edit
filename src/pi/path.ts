@@ -45,7 +45,7 @@ export function canonicalPath(cwd: string, path: string): string {
         )
       : fileURLToPath(normalized);
   }
-  return isAbsolute(normalized) ? resolve(normalized) : resolve(cwd, normalized);
+  return resolve(cwd, normalized);
 }
 
 /** Return a readable path that resolves back to the same file through the tools' input syntax. */
