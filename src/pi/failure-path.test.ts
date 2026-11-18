@@ -1,5 +1,5 @@
 import { commandCompletion, type SessionCommand } from "./action-fusion.testing.ts";
-import fs, { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import fs, { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { syncBuiltinESMExports } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -28,6 +28,7 @@ test("temporary preparation and cleanup failures → preserve the commit failure
     const nativeOpen = fs.open;
     const original = Object.assign(new Error("temporary open failed"), { code: "EIO" });
     let failCleanup = false;
+    let cleanupFailed = false;
     try {
       t.mock.method(fs, "open", async (...args: Parameters<typeof nativeOpen>) => {
         if (String(args[0]).includes(".hashline-commit-") && args[1] === "w") throw original;
@@ -35,8 +36,10 @@ test("temporary preparation and cleanup failures → preserve the commit failure
       });
       const nativeRm = fs.rm;
       t.mock.method(fs, "rm", async (...args: Parameters<typeof nativeRm>) => {
-        if (failCleanup && String(args[0]).includes(".hashline-commit-"))
+        if (failCleanup && String(args[0]).includes(".hashline-commit-")) {
+          cleanupFailed = true;
           throw Object.assign(new Error("temporary cleanup failed"), { code: "EACCES" });
+        }
         return nativeRm(...args);
       });
       syncBuiltinESMExports();
@@ -52,6 +55,8 @@ test("temporary preparation and cleanup failures → preserve the commit failure
         assert.equal(report.publication, "NOT_PUBLISHED");
         assert.deepEqual(report.cause, { code: original.code, message: original.message });
         assert.equal(await readFile(target, "utf8"), "before\n");
+        assert.equal(cleanupFailed, failCleanup);
+        if (!failCleanup) assert.deepEqual(await readdir(dir), ["unpublished.txt"]);
       }
     } finally {
       t.mock.restoreAll();

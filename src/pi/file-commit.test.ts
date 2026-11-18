@@ -105,21 +105,28 @@ async function holdWindowsExclusive(
   };
 }
 
-test("independent create commits race at the no-replace publication primitive", async () =>
+test("another create commits immediately before publication → preserves the winner's bytes", async (t) =>
   withTemp(async (dir) => {
     const target = join(dir, "race.txt");
-    const results = await Promise.allSettled([
-      commitFile(target, "winner-a\n", { mode: "create" }),
-      commitFile(target, "winner-b\n", { mode: "create" }),
-    ]);
-    assert.equal(results.filter((result) => result.status === "fulfilled").length, 1);
-    assert.equal(results.filter((result) => result.status === "rejected").length, 1);
-    const rejected = results.find(
-      (result) => result.status === "rejected",
-    ) as PromiseRejectedResult;
-    assert.ok(rejected.reason instanceof HashlineError);
-    assert.equal(rejected.reason.errorCode, "TARGET_EXISTS");
-    assert.match(await readFile(target, "utf8"), /^winner-[ab]\n$/);
+    const nativeLink = fsPromises.link;
+    t.mock.method(fsPromises, "link", async (...args: Parameters<typeof nativeLink>) => {
+      t.mock.restoreAll();
+      syncBuiltinESMExports();
+      const winner = await commitFile(target, "winner\n", { mode: "create" });
+      assert.equal(winner.publication, "PUBLISHED");
+      return nativeLink(...args);
+    });
+    syncBuiltinESMExports();
+    try {
+      await assert.rejects(
+        commitFile(target, "loser\n", { mode: "create" }),
+        (error: unknown) => error instanceof HashlineError && error.errorCode === "TARGET_EXISTS",
+      );
+      assert.deepEqual(await readFile(target), Buffer.from("winner\n"));
+    } finally {
+      t.mock.restoreAll();
+      syncBuiltinESMExports();
+    }
   }));
 
 test("create never overwrites an existing target", async () =>
