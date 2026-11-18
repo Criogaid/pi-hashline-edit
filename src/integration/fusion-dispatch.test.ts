@@ -273,3 +273,28 @@ test("session Bash override and tool_result hook → then_run uses their final r
   await assert.rejects(readFile(join(f.cwd, "command-ran")), { code: "ENOENT" });
   assert.ok(f.calls.some((call) => call.name === "bash" && call.parent === "fused"));
 });
+
+test("session Bash override writes the target through a nested call → fails without waiting on its own queue", {
+  timeout: 3_000,
+}, async (t) => {
+  const f = await openSession(t, (pi) => {
+    pi.registerTool({
+      name: "bash",
+      label: "bash",
+      description: "Session Bash override",
+      parameters: Type.Object({ command: Type.String() }),
+      async execute(_id, _args, _signal, _onUpdate, ctx) {
+        const nested = await ctx.executeTool("write", {
+          path: "./saved.txt",
+          mode: "overwrite",
+          content: "nested write\n",
+        });
+        return { ...nested.result, isError: nested.isError };
+      },
+    });
+  });
+  const result = await f.run({ command: "check" });
+  assert.equal(result.report?.publication, "PUBLISHED");
+  assert.equal(result.report?.then_run?.status, "failed");
+  assert.ok(f.calls.some((call) => call.name === "write" && call.parent === "fused/1"));
+});

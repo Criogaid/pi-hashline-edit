@@ -9,8 +9,8 @@
  *   a later fused call on the same file waits until this command finishes and
  *   cannot change the revision the command started from. Its key resolves the nearest
  *   existing ancestor and folds case on Windows, so it is never looser than
- *   Pi's key. It is always taken first and Pi's queue never waits on it, so
- *   the nesting cannot deadlock.
+ *   Pi's key. Nested tool calls during the command cannot wait on an occupied
+ *   Fusion queue: they might be waiting for their own command to finish.
  *
  * Writers outside these queues are not blocked; the commit layer's freshness
  * observation against `publishedRevision` detects them, and the command is
@@ -21,6 +21,7 @@
  * @module pi-hashline-edit/pi
  */
 
+import { AsyncLocalStorage } from "node:async_hooks";
 import { realpath } from "node:fs/promises";
 import { basename, dirname, resolve } from "node:path";
 import type { AgentToolUpdateCallback } from "@earendil-works/pi-agent-core";
@@ -258,10 +259,16 @@ function createProgressTracker<TDetails extends object>({
 
 export function createActionFusionExecutor(onProgress: ProgressReporter) {
   const queueTails = new Map<string, Promise<void>>();
+  const commandScope = new AsyncLocalStorage<{ active: boolean }>();
 
   async function withQueue<T>(path: string, work: () => Promise<T>): Promise<T> {
     const key = await canonicalQueueKey(path);
     const previous = queueTails.get(key) ?? Promise.resolve();
+    if (queueTails.has(key) && commandScope.getStore()?.active) {
+      throw new Error(
+        "A then_run command cannot call a mutation tool for a target with a pending mutation.",
+      );
+    }
     let release!: () => void;
     const owned = new Promise<void>((resolve) => {
       release = resolve;
@@ -346,15 +353,19 @@ export function createActionFusionExecutor(onProgress: ProgressReporter) {
       if (before.freshness !== "unchanged") return settle(before, { status: "skipped" });
 
       progress.report("running", "unchanged");
+      const scope = { active: true };
       let command: CommandOutcome;
       try {
-        command = await runCommand(thenRun, signal, ctx, progress.followCommand);
+        command = await commandScope.run(scope, () =>
+          runCommand(thenRun, signal, ctx, progress.followCommand),
+        );
       } catch (error) {
         command = {
           status: signal?.aborted ? "cancelled" : "failed",
           result: { content: [{ type: "text", text: errorMessage(error) }] },
         };
       } finally {
+        scope.active = false;
         progress.stopHeartbeat();
       }
       progress.commandSettled(command.result);
