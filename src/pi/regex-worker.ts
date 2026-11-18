@@ -17,7 +17,11 @@ export async function withRegexWorker<Input, Result, Output>(
   resourceLimits?: ResourceLimits,
 ): Promise<Output> {
   throwIfCancelled(signal);
-  const worker = new Worker(entry, { resourceLimits });
+  // A data URL accepts inherited --input-type while the imported file retains its own module type.
+  const bootstrap = new URL(
+    `data:text/javascript,${encodeURIComponent(`import ${JSON.stringify(entry.href)};`)}`,
+  );
+  const worker = new Worker(bootstrap, { resourceLimits });
   let failure: Error | undefined;
   let pending: { resolve: (result: Result) => void; reject: (error: Error) => void } | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
