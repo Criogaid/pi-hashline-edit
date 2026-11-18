@@ -237,6 +237,16 @@ test("read execute: Pi-supported images without NUL bypass text decoding", async
     }
   }));
 
+test("missing canonical read path with a native filename variant → reports the missing target", async () =>
+  withDir(async (dir) => {
+    await writeFile(join(dir, "shot 9\u202fAM.txt"), "variant must not be read\n");
+    const result = await callTool(makeReadOverride(dir, DEFAULT_CONFIG), { path: "shot 9 AM.txt" });
+    assert.equal(result.isError, true);
+    const report = reportOf(result, "read");
+    assert.equal(report?.error, "PATH_NOT_FOUND");
+    assert.deepEqual(report?.missing, [join(dir, "shot 9 AM.txt")]);
+  }));
+
 test("file URLs escape special filenames → text and delegated reads open the exact file", async (t) => {
   await withDir(async (dir) => {
     const tool = makeReadOverride(dir, DEFAULT_CONFIG);

@@ -10,6 +10,9 @@
  * @module pi-hashline-edit/pi
  */
 
+import { constants } from "node:fs";
+import { access, readFile, stat } from "node:fs/promises";
+import { pathToFileURL } from "node:url";
 import {
   createReadToolDefinition,
   detectSupportedImageMimeTypeFromFile,
@@ -29,7 +32,7 @@ import { createAnchorFormatter, displayCarriageReturns, parseHashline } from "./
 import { canonicalPath, serializePath } from "./path.ts";
 import { renderToolError, reportLines, splitReport } from "./render.ts";
 import { POSITIVE_SAFE_INTEGER, STRICT_SAMPLING } from "./schema.ts";
-import { errnoCode } from "../core/errors.ts";
+import { HashlineError, PATH_ERROR_MESSAGES } from "../core/errors.ts";
 import { throwIfCancelled } from "./error-text.ts";
 import { reportResult, runTool, type ReportDetails } from "./report.ts";
 import { formatByteSize } from "./budgets.ts";
@@ -228,8 +231,23 @@ export function makeReadOverride({
             ? (_line: number, content: string) => displayCarriageReturns(content)
             : anchors.row;
         const report = { tool: "read" as const, path: params.path };
+        const absPath = canonicalPath(cwd, params.path);
         const readNative = async () => {
-          const result = await builtin.execute(toolCallId, params, signal, onUpdate, ctx);
+          // Bind I/O to our target: native resolution may normalize or try filename variants.
+          const native = createReadToolDefinition(cwd, {
+            operations: {
+              access: () => access(absPath, constants.R_OK),
+              readFile: () => readFile(absPath),
+              detectImageMimeType: () => detectSupportedImageMimeTypeFromFile(absPath),
+            },
+          });
+          const result = await native.execute(
+            toolCallId,
+            { ...params, path: pathToFileURL(absPath).href },
+            signal,
+            onUpdate,
+            ctx,
+          );
           return {
             ...reportResult(report, result.content, {
               ...result.details,
@@ -239,49 +257,36 @@ export function makeReadOverride({
           };
         };
 
-        const absPath = canonicalPath(cwd, params.path);
-        try {
-          if (await detectSupportedImageMimeTypeFromFile(absPath)) {
-            return readNative();
-          }
-        } catch {
-          return readNative();
+        if ((await stat(absPath)).isDirectory()) {
+          throw new HashlineError("NOT_REGULAR_FILE", PATH_ERROR_MESSAGES.NOT_REGULAR_FILE);
         }
+        if (await detectSupportedImageMimeTypeFromFile(absPath)) return readNative();
 
         const rows: string[] = [];
         const crExpansion = Buffer.byteLength(displayCarriageReturns("\r")) - 1;
         let outputBytes = 0;
         let truncated = false;
         let firstLineExceedsLimit = false;
-        let stats: Awaited<ReturnType<typeof scanTextLines>>;
-        try {
-          stats = await scanTextLines(
-            absPath,
-            (number) => number >= start && number - start < limit,
-            (line) => {
-              if (truncated) return;
-              const rowBytes =
-                line.byteLength +
-                line.carriageReturns * crExpansion +
-                Buffer.byteLength(formatRow(line.number, ""));
-              const nextBytes = outputBytes + rowBytes + (rows.length > 0 ? 1 : 0);
-              if (nextBytes > maxBytes) {
-                truncated = true;
-                firstLineExceedsLimit = rows.length === 0;
-                return;
-              }
-              rows.push(formatRow(line.number, line.text!));
-              outputBytes = nextBytes;
-            },
-            { signal, maxLineBytes: maxBytes },
-          );
-        } catch (error) {
-          // Keep native filesystem diagnostics without retrying decoding or cancellation failures.
-          if (!signal?.aborted && errnoCode(error) !== undefined) {
-            return readNative();
-          }
-          throw error;
-        }
+        const stats = await scanTextLines(
+          absPath,
+          (number) => number >= start && number - start < limit,
+          (line) => {
+            if (truncated) return;
+            const rowBytes =
+              line.byteLength +
+              line.carriageReturns * crExpansion +
+              Buffer.byteLength(formatRow(line.number, ""));
+            const nextBytes = outputBytes + rowBytes + (rows.length > 0 ? 1 : 0);
+            if (nextBytes > maxBytes) {
+              truncated = true;
+              firstLineExceedsLimit = rows.length === 0;
+              return;
+            }
+            rows.push(formatRow(line.number, line.text!));
+            outputBytes = nextBytes;
+          },
+          { signal, maxLineBytes: maxBytes },
+        );
         if (stats.hasNul) return readNative();
         // Rows were returned and more remain. A caller's own limit is a chosen window: its header
         // and rows already show where it ends, so only a window the extension cut (default limit
