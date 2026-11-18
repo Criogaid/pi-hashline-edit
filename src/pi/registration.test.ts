@@ -43,129 +43,124 @@ test("registered tools with or without Fusion → expose prompt rules and conver
     ],
   };
   await withDir(async (dir) => {
-    const previousCwd = process.cwd();
-    try {
-      await mkdir(join(dir, ".pi"));
-      process.chdir(dir);
-      for (const actionFusion of [false, true]) {
-        await writeFile(
-          join(dir, ".pi", "settings.json"),
-          JSON.stringify({ hashlineEdit: { enabled: true, actionFusion } }),
-        );
-        const tools: (Tool & Pick<ToolDefinition, "promptGuidelines">)[] = [];
-        const api: Pick<ExtensionAPI, "on" | "registerEntryRenderer" | "registerTool"> = {
-          on() {
-            return () => {};
-          },
-          registerEntryRenderer() {},
-          registerTool(tool) {
-            tools.push(tool);
-          },
-        };
-        // This fixture only registers tools; the three hooks cover every API call at registration.
-        registerHashline(api as ExtensionAPI);
-        assert.equal(tools.length, 5);
-        for (const tool of tools) {
-          const { name } = tool;
-          if (name === "read" || name === "edit" || name === "grep") {
-            await t.test(
-              `${name}/Fusion ${actionFusion} → registers the tool's prompt rules`,
-              () => {
-                if (name === "read") {
-                  const [codemodeRule = "", ...sharedRules] = tool.promptGuidelines ?? [];
-                  assert.match(
-                    codemodeRule,
-                    /Files containing NUL go to native read without a Hashline header/,
-                  );
-                  assert.deepEqual(sharedRules, [NEXT_GUIDELINE]);
-                } else {
-                  assert.deepEqual(tool.promptGuidelines, [
-                    ...guidelines[name],
-                    ...(name === "edit" && actionFusion ? ACTION_FUSION_GUIDELINES : []),
-                    NEXT_GUIDELINE,
-                  ]);
-                }
-              },
-            );
-          }
-          await t.test(`${tool.name}/Fusion ${actionFusion} → supports strict sampling`, () => {
-            assert.deepEqual(tool.constrainedSampling, STRICT_SAMPLING);
-            const strict = makeStrictJsonSchema(tool.parameters);
-            if (tool.name === "read") {
-              assert.partialDeepStrictEqual(tool.parameters, {
-                required: ["path"],
-                properties: {
-                  anchors: {
-                    type: "boolean",
-                    description:
-                      "false omits LINE#HASH│ prefixes for files you will not edit, saving about a third of the tokens. The header stays and standalone CR displays as ␍ (default true).",
-                  },
-                },
-              });
-              assert.partialDeepStrictEqual(strict, {
-                properties: { anchors: { anyOf: [{ type: "boolean" }, { type: "null" }] } },
-              });
-            }
-            if (tool.name === "edit") {
-              assert.partialDeepStrictEqual(strict, {
-                type: "object",
-                additionalProperties: false,
-                required: actionFusion ? ["path", "steps", "then_run"] : ["path", "steps"],
-                properties: {
-                  steps: {
-                    type: "array",
-                    items: {
-                      type: "object",
-                      additionalProperties: false,
-                      required: ["action", "anchor", "end", "lines"],
-                      properties: {
-                        anchor: { anyOf: [{ type: "string" }, { type: "null" }] },
-                        end: { anyOf: [{ type: "string" }, { type: "null" }] },
-                        lines: { anyOf: [{ type: "array" }, { type: "null" }] },
-                      },
-                    },
-                  },
-                  ...(actionFusion
-                    ? { then_run: { anyOf: [{ type: "object" }, { type: "null" }] } }
-                    : {}),
-                },
-              });
-              const properties = strict.properties as Record<
-                string,
-                { items?: { properties?: Record<string, unknown> } }
-              >;
-              assert.deepEqual(
-                Object.keys(properties),
-                actionFusion ? ["path", "steps", "then_run"] : ["path", "steps"],
+    await mkdir(join(dir, ".pi"));
+    for (const actionFusion of [false, true]) {
+      await writeFile(
+        join(dir, ".pi", "settings.json"),
+        JSON.stringify({ hashlineEdit: { enabled: true, actionFusion } }),
+      );
+      const tools: (Tool & Pick<ToolDefinition, "promptGuidelines">)[] = [];
+      const api: Pick<ExtensionAPI, "exec" | "on" | "registerEntryRenderer" | "registerTool"> = {
+        async exec() {
+          return { stdout: dir, stderr: "", code: 0, killed: false, truncated: false };
+        },
+        on() {
+          return () => {};
+        },
+        registerEntryRenderer() {},
+        registerTool(tool) {
+          tools.push(tool);
+        },
+      };
+      // The fixture implements the API methods used during registration.
+      await registerHashline(api as ExtensionAPI);
+      assert.equal(tools.length, 5);
+      for (const tool of tools) {
+        const { name } = tool;
+        if (name === "read" || name === "edit" || name === "grep") {
+          await t.test(`${name}/Fusion ${actionFusion} → registers the tool's prompt rules`, () => {
+            if (name === "read") {
+              const [codemodeRule = "", ...sharedRules] = tool.promptGuidelines ?? [];
+              assert.match(
+                codemodeRule,
+                /Files containing NUL go to native read without a Hashline header/,
               );
-              const stepProperties = properties.steps.items?.properties;
-              assert.ok(stepProperties);
-              assert.deepEqual(Object.keys(stepProperties), ["action", "anchor", "end", "lines"]);
+              assert.deepEqual(sharedRules, [NEXT_GUIDELINE]);
+            } else {
+              assert.deepEqual(tool.promptGuidelines, [
+                ...guidelines[name],
+                ...(name === "edit" && actionFusion ? ACTION_FUSION_GUIDELINES : []),
+                NEXT_GUIDELINE,
+              ]);
             }
           });
         }
+        await t.test(`${tool.name}/Fusion ${actionFusion} → supports strict sampling`, () => {
+          assert.deepEqual(tool.constrainedSampling, STRICT_SAMPLING);
+          const strict = makeStrictJsonSchema(tool.parameters);
+          if (tool.name === "read") {
+            assert.partialDeepStrictEqual(tool.parameters, {
+              required: ["path"],
+              properties: {
+                anchors: {
+                  type: "boolean",
+                  description:
+                    "false omits LINE#HASH│ prefixes for files you will not edit, saving about a third of the tokens. The header stays and standalone CR displays as ␍ (default true).",
+                },
+              },
+            });
+            assert.partialDeepStrictEqual(strict, {
+              properties: { anchors: { anyOf: [{ type: "boolean" }, { type: "null" }] } },
+            });
+          }
+          if (tool.name === "edit") {
+            assert.partialDeepStrictEqual(strict, {
+              type: "object",
+              additionalProperties: false,
+              required: actionFusion ? ["path", "steps", "then_run"] : ["path", "steps"],
+              properties: {
+                steps: {
+                  type: "array",
+                  items: {
+                    type: "object",
+                    additionalProperties: false,
+                    required: ["action", "anchor", "end", "lines"],
+                    properties: {
+                      anchor: { anyOf: [{ type: "string" }, { type: "null" }] },
+                      end: { anyOf: [{ type: "string" }, { type: "null" }] },
+                      lines: { anyOf: [{ type: "array" }, { type: "null" }] },
+                    },
+                  },
+                },
+                ...(actionFusion
+                  ? { then_run: { anyOf: [{ type: "object" }, { type: "null" }] } }
+                  : {}),
+              },
+            });
+            const properties = strict.properties as Record<
+              string,
+              { items?: { properties?: Record<string, unknown> } }
+            >;
+            assert.deepEqual(
+              Object.keys(properties),
+              actionFusion ? ["path", "steps", "then_run"] : ["path", "steps"],
+            );
+            const stepProperties = properties.steps.items?.properties;
+            assert.ok(stepProperties);
+            assert.deepEqual(Object.keys(stepProperties), ["action", "anchor", "end", "lines"]);
+          }
+        });
       }
-    } finally {
-      process.chdir(previousCwd);
     }
   });
 });
 
 test("mutation cards use Fusion by default and explicit false removes command support", async () => {
   const dir = await mkdtemp(join(tmpdir(), "hashline-registration-"));
-  const previousCwd = process.cwd();
   try {
     await mkdir(join(dir, ".pi"));
     await writeFile(
       join(dir, ".pi", "settings.json"),
       JSON.stringify({ hashlineEdit: { enabled: true } }),
     );
-    process.chdir(dir);
     const tools: any[] = [];
     const entries: any[] = [];
     const renderers = new Map<string, any>();
     let start: ((event: unknown, ctx: unknown) => void) | undefined;
-    registerHashline({
+    await registerHashline({
+      async exec() {
+        return { stdout: dir, stderr: "", code: 0, killed: false, truncated: false };
+      },
       on(event: string, handler: (event: unknown, ctx: unknown) => void) {
         if (event === "session_start") start = handler;
       },
@@ -406,7 +401,10 @@ test("mutation cards use Fusion by default and explicit false removes command su
       JSON.stringify({ hashlineEdit: { actionFusion: false } }),
     );
     const disabledTools: any[] = [];
-    registerHashline({
+    await registerHashline({
+      async exec() {
+        return { stdout: dir, stderr: "", code: 0, killed: false, truncated: false };
+      },
       on() {},
       registerEntryRenderer() {},
       registerTool(tool: any) {
@@ -438,7 +436,6 @@ test("mutation cards use Fusion by default and explicit false removes command su
       );
     }
   } finally {
-    process.chdir(previousCwd);
     await rm(dir, { recursive: true, force: true });
   }
 });
@@ -464,33 +461,35 @@ function anchorLine(block: string, line: number) {
 
 test("disabled config registers no tools — built-ins remain", async () => {
   await withDir(async (dir) => {
-    const oldCwd = process.cwd();
-    try {
-      await mkdir(join(dir, ".pi"));
-      await writeFile(
-        join(dir, ".pi", "settings.json"),
-        JSON.stringify({ hashlineEdit: { enabled: false } }),
-      );
-      await writeFile(join(dir, "f.txt"), "old value\n");
-      process.chdir(dir);
-      const registered: string[] = [];
-      registerHashline({
-        on() {},
-        registerTool(tool: { name: string }) {
-          registered.push(tool.name);
-        },
-      } as any);
-      assert.deepEqual(registered, []);
-      const builtin = createEditTool(dir);
-      const params = validateToolArguments(builtin, {
-        name: "edit",
-        arguments: { path: "f.txt", edits: [{ oldText: "old value", newText: "new value" }] },
-      } as any);
-      await call(builtin, params);
-      assert.equal(await readFile(join(dir, "f.txt"), "utf-8"), "new value\n");
-    } finally {
-      process.chdir(oldCwd);
-    }
+    await mkdir(join(dir, ".pi"));
+    await writeFile(
+      join(dir, ".pi", "settings.json"),
+      JSON.stringify({ hashlineEdit: { enabled: false } }),
+    );
+    await writeFile(join(dir, "f.txt"), "old value\n");
+    const registered: string[] = [];
+    await registerHashline({
+      async exec() {
+        return { stdout: dir, stderr: "", code: 0, killed: false, truncated: false };
+      },
+      on() {
+        assert.fail("Disabled extension must not subscribe to events");
+      },
+      registerEntryRenderer() {
+        assert.fail("Disabled extension must not register a replay renderer");
+      },
+      registerTool(tool: { name: string }) {
+        registered.push(tool.name);
+      },
+    } as any);
+    assert.deepEqual(registered, []);
+    const builtin = createEditTool(dir);
+    const params = validateToolArguments(builtin, {
+      name: "edit",
+      arguments: { path: "f.txt", edits: [{ oldText: "old value", newText: "new value" }] },
+    } as any);
+    await call(builtin, params);
+    assert.equal(await readFile(join(dir, "f.txt"), "utf-8"), "new value\n");
   });
 });
 

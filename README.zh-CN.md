@@ -171,7 +171,7 @@ grep 卡片原样显示返回的文件路径和计数行。只有 `content` 模�
 | `grep.defaultContext` | `0` | 每个匹配前后的上下文行数，0–20。 |
 | `grep.regexTimeoutMs` / `replace.regexTimeoutMs` | `5000` | 单次正则计算的时限，3000–300000 毫秒。 |
 
-项目中的 `hashlineEdit` 会整体替换全局配置；非法值回退为默认值。修改设置后需重新加载 Pi。以 [配置 schema](src/pi/config.ts) 为准。
+扩展以 Pi 的工作目录（嵌入时为 SDK 会话的 `cwd`）为基准读取 `.pi/settings.json`，也以它解析工具的相对路径。项目中的 `hashlineEdit` 会整体替换全局配置；非法值回退为默认值。修改设置后需重新加载 Pi。`enabled: false` 保留 Pi 内置工具；`actionFusion: false` 不再为新调用提供 `then_run`，但仍显示已保存的命令卡片。以 [配置 schema](src/pi/config.ts) 为准。
 
 ## 输出预算
 

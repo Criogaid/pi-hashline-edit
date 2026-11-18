@@ -171,7 +171,7 @@ Add `hashlineEdit` to Pi's global settings (`~/.pi/agent/settings.json`) or a pr
 | `grep.defaultContext` | `0` | Context lines around each match, 0–20. |
 | `grep.regexTimeoutMs` / `replace.regexTimeoutMs` | `5000` | Time limit for one regex evaluation, 3000–300000 ms. |
 
-A project's `hashlineEdit` replaces the global one as a whole; invalid values fall back to their defaults. Reload Pi after changing settings. The [configuration schema](src/pi/config.ts) is the source of truth.
+The Pi workspace (the SDK session's `cwd` when embedded) is the base for both `.pi/settings.json` and relative tool paths. A project's `hashlineEdit` replaces the global one as a whole; invalid values fall back to their defaults. Reload Pi after changing settings. `enabled: false` leaves the built-in tools in place; `actionFusion: false` removes `then_run` from new calls but keeps saved command cards visible. The [configuration schema](src/pi/config.ts) is the source of truth.
 
 ## Output budgets
 

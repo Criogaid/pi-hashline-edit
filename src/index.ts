@@ -10,6 +10,7 @@
  * @module pi-hashline-edit
  */
 
+import { isAbsolute } from "node:path";
 import type { ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import type { TSchema } from "typebox";
 import { loadConfig } from "./pi/config.ts";
@@ -23,8 +24,21 @@ import { createActionFusionExecutor } from "./pi/action-fusion.ts";
 import { registerFusionCards, withMutationStatus } from "./pi/fusion-card.ts";
 import { NEXT_GUIDELINE } from "./pi/report-schema.ts";
 
-export default function (pi: ExtensionAPI) {
-  const cwd = process.cwd();
+export default async function (pi: ExtensionAPI) {
+  // Pi runs exec in the extension loader's workspace, even before session_start.
+  // Replay on reload needs tools and entry renderers registered before that event.
+  const {
+    stdout: cwd,
+    stderr,
+    code,
+    killed,
+    truncated,
+  } = await pi.exec(process.execPath, ["-e", "process.stdout.write(process.cwd())"]);
+  if (code !== 0 || killed || truncated || !isAbsolute(cwd)) {
+    throw new Error(`Unable to resolve the Pi workspace (exit ${code})`, {
+      cause: stderr || undefined,
+    });
+  }
 
   // Tools capture this snapshot at registration; a reload registers them again.
   const config = loadConfig(cwd);

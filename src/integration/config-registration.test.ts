@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import type { ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-agent";
+import { Type } from "typebox";
 import registerHashline from "../index.ts";
 import { computeLineHash } from "../core/hash.ts";
 import { callTool } from "../pi/tool-call.testing.ts";
@@ -12,20 +13,75 @@ import { DEFAULT_CONFIG } from "../pi/tool-factories.testing.ts";
 import { reportOf } from "../pi/report.ts";
 import { formatByteSize } from "../pi/budgets.ts";
 import { expectToolFailure } from "../pi/report-failure.testing.ts";
+import { openTestSession } from "../testing/session.testing.ts";
+
+test("SDK cwd differs from process cwd → project settings and relative tools use the workspace", async (t) => {
+  const cwd = await mkdtemp(join(tmpdir(), "hashline-workspace-"));
+  t.after(() => rm(cwd, { recursive: true, force: true }));
+  const settings = join(cwd, ".pi", "settings.json");
+  await mkdir(join(cwd, ".pi"));
+  await writeFile(settings, JSON.stringify({ hashlineEdit: { hashLen: 8, actionFusion: false } }));
+  await writeFile(join(cwd, "workspace.txt"), "from the SDK workspace\n");
+  const hostCwd = process.cwd();
+  assert.notEqual(cwd, hostCwd);
+  const { session } = await openTestSession(t, {
+    cwd,
+    tools: ["read", "write", "edit"],
+    configure: registerHashline,
+  });
+  const read = session.getToolDefinition("read");
+  assert.ok(read);
+  const result = await callTool(read, { path: "workspace.txt" }, { ctx: { cwd } });
+  const anchor = `1#${computeLineHash(1, "from the SDK workspace", 8)}`;
+  assert.ok(
+    result.content.some((block) => block.type === "text" && block.text.includes(anchor)),
+    JSON.stringify(result.content),
+  );
+  const write = session.getToolDefinition("write");
+  assert.ok(write && Type.IsObject(write.parameters));
+  assert.ok(!("then_run" in write.parameters.properties));
+  const written = await callTool(
+    write,
+    { path: "workspace.txt", content: "written\n", mode: "overwrite" },
+    { ctx: { cwd } },
+  );
+  assert.equal(reportOf(written, "write")?.publication, "PUBLISHED");
+  assert.equal(await readFile(join(cwd, "workspace.txt"), "utf8"), "written\n");
+
+  await session.reload({
+    beforeSessionStart: () => {
+      assert.ok(session.getToolDefinition("edit")?.prepareArguments);
+      assert.ok(session.extensionRunner.getEntryRenderer("hashline-then-run"));
+    },
+  });
+
+  await writeFile(settings, JSON.stringify({ hashlineEdit: { enabled: false } }));
+  await session.reload({
+    beforeSessionStart: () => {
+      assert.equal(session.getToolDefinition("replace"), undefined);
+      assert.equal(session.extensionRunner.getEntryRenderer("hashline-then-run"), undefined);
+    },
+  });
+  const builtin = session.getToolDefinition("edit");
+  assert.ok(builtin && Type.IsObject(builtin.parameters));
+  assert.ok("edits" in builtin.parameters.properties);
+  assert.equal(process.cwd(), hostCwd);
+});
 
 test("registered tools retain their configuration when another tool set is registered", async (t) => {
   const directory = await mkdtemp(join(tmpdir(), "hashline-config-registration-"));
-  const previousCwd = process.cwd();
   try {
     await mkdir(join(directory, ".pi"));
-    process.chdir(directory);
     const register = async (config: HashlineEditConfig) => {
       await writeFile(
         join(directory, ".pi", "settings.json"),
         JSON.stringify({ hashlineEdit: config }),
       );
       const tools = new Map<string, ToolDefinition>();
-      registerHashline({
+      await registerHashline({
+        async exec() {
+          return { stdout: directory, stderr: "", code: 0, killed: false, truncated: false };
+        },
         on() {},
         registerEntryRenderer() {},
         registerTool(tool: ToolDefinition) {
@@ -212,7 +268,6 @@ test("registered tools retain their configuration when another tool set is regis
       );
     }
   } finally {
-    process.chdir(previousCwd);
     await rm(directory, { recursive: true, force: true });
   }
 });
