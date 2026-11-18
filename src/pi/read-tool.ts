@@ -172,6 +172,9 @@ export function makeReadOverride({
       "In a codemode script, take raw file text from tools.bash (cat, git show); read and grep results add a header line and show CRLF as LF, and their rows carry a line prefix unless read's anchors is false.",
     ],
     parameters: parameters as typeof builtin.parameters,
+    // Codemode scripts receive structuredContent: Pi's image block for a delegated image, the
+    // result text otherwise.
+    outputSchema: builtin.outputSchema,
     prepareArguments: createArgumentPreparer("read", parameters, undefined, budgets),
     constrainedSampling: STRICT_SAMPLING,
     renderShell: "default" as const,
@@ -227,10 +230,13 @@ export function makeReadOverride({
         const report = { tool: "read" as const, path: params.path };
         const readNative = async () => {
           const result = await builtin.execute(toolCallId, params, signal, onUpdate, ctx);
-          return reportResult(report, result.content, {
-            ...result.details,
-            nativeRead: true as const,
-          });
+          return {
+            ...reportResult(report, result.content, {
+              ...result.details,
+              nativeRead: true as const,
+            }),
+            structuredContent: result.structuredContent,
+          };
         };
 
         const absPath = canonicalPath(cwd, params.path);
@@ -289,7 +295,7 @@ export function makeReadOverride({
         const header = `${formatReadHeader(serializePath(cwd, absPath), stats.totalLines, start, stats.finalNewline)}\n`;
         const limitText = formatByteSize(maxBytes);
 
-        return reportResult(
+        const result = reportResult(
           {
             ...report,
             nextOffset,
@@ -298,6 +304,8 @@ export function makeReadOverride({
           },
           [{ type: "text" as const, text: header + rows.join("\n") }],
         );
+        const text = result.content.flatMap((block) => (block.type === "text" ? [block.text] : []));
+        return { ...result, structuredContent: text.join("\n") };
       });
     },
   };
