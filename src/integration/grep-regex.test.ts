@@ -28,8 +28,10 @@ function jsLines(
 ) {
   const lines = new Set<number>();
   const flags = `m${ignoreCase ? "i" : ""}`;
+  const physical = source.split("\n");
+  if (physical.at(-1) === "") physical.pop();
   if (!multiline) {
-    source.split("\n").forEach((line, index) => {
+    physical.forEach((line, index) => {
       if (patterns.some((pattern) => new RegExp(pattern, flags).test(line))) lines.add(index + 1);
     });
     return [...lines].sort((a, b) => a - b);
@@ -39,7 +41,8 @@ function jsLines(
     for (const match of source.matchAll(new RegExp(pattern, `${flags}g`))) {
       const start = match.index;
       const end = start + Math.max(match[0].length - 1, 0);
-      for (let line = lineAt(start); line <= lineAt(end); line++) lines.add(line);
+      for (let line = lineAt(start); line <= Math.min(lineAt(end), physical.length); line++)
+        lines.add(line);
     }
   }
   return [...lines].sort((a, b) => a - b);
@@ -193,6 +196,8 @@ const cases: readonly RegexCase[] = [
       ],
       ["JS identity escapes are not PCRE syntax", "\\K\\R\\A\\z", "KRAz\nother", false],
       ["empty default-engine matches", "(?:)", "\n\na", false],
+      ["EOF in an empty file", "^$", "", false],
+      ["EOF after an empty physical line", "^$", "a\n\n", false],
       ["consecutive empty lookahead matches", "(?=^$)", "\n\n\na", false],
     ] as const
   ).map(([name, pattern, source, ignoreCase]) => ({
