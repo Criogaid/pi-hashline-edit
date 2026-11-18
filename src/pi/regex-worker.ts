@@ -25,6 +25,8 @@ export async function withRegexWorker<Input, Result, Output>(
   let failure: Error | undefined;
   let pending: { resolve: (result: Result) => void; reject: (error: Error) => void } | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let termination: ReturnType<Worker["terminate"]> | undefined;
+  const terminate = () => (termination ??= worker.terminate());
   const clear = () => {
     clearTimeout(timer);
     const previous = pending;
@@ -68,15 +70,15 @@ export async function withRegexWorker<Input, Result, Output>(
       if (failure) throw failure;
       return new Promise<Result>((resolve, reject) => {
         pending = { resolve, reject };
-        timer = setTimeout(
-          () =>
-            fail(
-              new HashlineError("REGEX_TIMEOUT", "Regex evaluation timed out.", {
-                facts: { timeoutMs },
-              }),
-            ),
-          timeoutMs,
-        );
+        timer = setTimeout(() => {
+          fail(
+            new HashlineError("REGEX_TIMEOUT", "Regex evaluation timed out.", {
+              facts: { timeoutMs },
+            }),
+          );
+          // A grep caller may still be scanning for NUL after evaluation times out.
+          void terminate();
+        }, timeoutMs);
         worker.postMessage(input);
       });
     });
@@ -85,6 +87,6 @@ export async function withRegexWorker<Input, Result, Output>(
   } finally {
     clear();
     signal?.removeEventListener("abort", abort);
-    await worker.terminate();
+    await terminate();
   }
 }

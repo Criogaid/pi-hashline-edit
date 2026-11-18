@@ -94,7 +94,7 @@ function selectLines(source: string, offset: number, wanted: readonly number[], 
 
 /**
  * Match one file. Without multiline each line matches alone, so requests split after a
- * line feed; a multiline query sends the whole file. Undefined when the file has NUL.
+ * line feed; a multiline query sends the whole file. A skipped NUL file can leave a failed worker.
  */
 async function searchFile(
   { filePath, lines: wanted }: Candidate,
@@ -102,10 +102,11 @@ async function searchFile(
   fileLimit: number,
   run: Run,
   signal: AbortSignal,
-): Promise<{ rows: Rows; snapshot: SearchFileSnapshot } | undefined> {
+): Promise<{ rows: Rows; snapshot: SearchFileSnapshot } | { restartWorker: boolean }> {
   const rows: Rows = [];
   let lineOffset = 0;
   let nextWanted = 0;
+  let evaluationFailure: { error: unknown } | undefined;
   const send = async (source: string) => {
     const lines = countLines(source);
     let candidates = lines;
@@ -117,15 +118,18 @@ async function searchFile(
     const limit = fileLimit - rows.length;
     if (candidates > 0 && limit > 0) {
       // Selecting most lines costs more than matching them all, with the same results.
-      if (wanted && candidates * 2 <= lines) {
-        const selected = selectLines(source, lineOffset, wanted, nextWanted);
-        const found = await run({ lines: selected.lines, query, limit });
-        for (const { lineNumber, column } of found.lines)
-          rows.push({ lineNumber: lineOffset + selected.numbers[lineNumber - 1], column });
-      } else {
-        for (const { lineNumber, column } of (await run({ source, query, limit })).lines)
-          rows.push({ lineNumber: lineOffset + lineNumber, column });
-      }
+      const selected =
+        wanted && candidates * 2 <= lines
+          ? selectLines(source, lineOffset, wanted, nextWanted)
+          : undefined;
+      const found = await run(
+        selected ? { lines: selected.lines, query, limit } : { source, query, limit },
+      );
+      for (const { lineNumber, column } of found.lines)
+        rows.push({
+          lineNumber: lineOffset + (selected ? selected.numbers[lineNumber - 1] : lineNumber),
+          column,
+        });
     }
     if (wanted) nextWanted += candidates;
     lineOffset += lines;
@@ -139,7 +143,8 @@ async function searchFile(
   let oversized = false;
   const stats = await scanTextFile(filePath, {
     onChunk: async (text, bytesRead) => {
-      if (oversized) return;
+      // A later NUL makes earlier regex results and failures irrelevant.
+      if (oversized || evaluationFailure) return;
       if (query.multiline) {
         oversized = bytesRead > MAX_MULTILINE_SEARCH_BYTES;
         pending = oversized ? "" : pending + text;
@@ -172,13 +177,25 @@ async function searchFile(
         const source = pending.slice(0, complete);
         pending = pending.slice(complete);
         complete = 0;
-        await send(source);
+        try {
+          await send(source);
+        } catch (error) {
+          throwIfCancelled(signal);
+          evaluationFailure = { error };
+          pending = "";
+        }
       }
     },
     signal,
     decoding: "lossy",
+  }).catch((error: unknown) => {
+    throwIfCancelled(signal);
+    // A failed scan cannot clear the earlier worker failure.
+    if (evaluationFailure) throw evaluationFailure.error;
+    throw error;
   });
-  if (stats.hasNul) return undefined;
+  if (stats.hasNul) return { restartWorker: evaluationFailure !== undefined };
+  if (evaluationFailure) throw evaluationFailure.error;
   if (oversized || lineUnits > MAX_SEARCH_LINE_UNITS)
     throw new SearchFileLimitError(query.multiline);
   await send(pending);
@@ -255,10 +272,14 @@ export async function searchFiles(options: {
   const searchPath = async ({ candidate, position }: Queued, run: Run) => {
     const { filePath } = candidate;
     let result: Settled;
+    let restartWorker = false;
     try {
       // Use a fixed file budget so earlier commits cannot change which regex requests run.
       const found = await searchFile(candidate, query, limit, run, poolSignal);
-      result = found?.rows.length ? { file: { filePath, ...found } } : {};
+      if ("restartWorker" in found) {
+        restartWorker = found.restartWorker;
+        result = {};
+      } else result = found.rows.length ? { file: { filePath, ...found } } : {};
     } catch (error) {
       throwIfCancelled(poolSignal);
       const warning: SearchWarning | undefined =
@@ -269,26 +290,35 @@ export async function searchFiles(options: {
     }
     settled.set(position, result);
     commit();
-    // Nothing after a fatal candidate can be needed; retire its worker without reusing a failure.
-    return !("error" in result);
+    // A fatal result ends this slot; only a failed worker on a skipped file needs replacing.
+    return "error" in result ? "stop" : restartWorker ? "restart" : "next";
   };
 
   const workers: Promise<void>[] = [];
-  const startWorker = () =>
-    withRegexWorker<SearchInput | LineSearchInput, SearchResult, void>(
-      new URL("./grep-worker.mjs", import.meta.url),
-      decodeReply,
-      timeoutMs,
-      poolSignal,
-      async (run) => {
-        for (let file = await next(); file !== undefined; file = await next())
-          if (!(await searchPath(file, run))) break;
-      },
-      { maxOldGenerationSizeMb: MAX_SEARCH_HEAP_MB },
-    ).catch((error) => {
+  const startWorker = async () => {
+    try {
+      while (!stopped()) {
+        const restart = await withRegexWorker<SearchInput | LineSearchInput, SearchResult, boolean>(
+          new URL("./grep-worker.mjs", import.meta.url),
+          decodeReply,
+          timeoutMs,
+          poolSignal,
+          async (run) => {
+            for (let file = await next(); file !== undefined; file = await next()) {
+              const action = await searchPath(file, run);
+              if (action !== "next") return action === "restart";
+            }
+            return false;
+          },
+          { maxOldGenerationSizeMb: MAX_SEARCH_HEAP_MB },
+        );
+        if (!restart) break;
+      }
+    } catch (error) {
       fail(error);
       releaseAll();
-    });
+    }
+  };
 
   const enqueue = async (candidate: Candidate) => {
     if (stopped()) return false;

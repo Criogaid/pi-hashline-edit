@@ -406,3 +406,42 @@ test("partial budget consumed by an earlier file → later file has the same reg
     );
   }
 });
+
+test("regex request fails before a later NUL → skip that file and search the next candidate", async (t) => {
+  const { makeMockGrep } = await import("./grep-rg.testing.ts");
+  const dir = await fs.mkdtemp(join(os.tmpdir(), "hl-grep-late-nul-"));
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  const binaries = Array.from({ length: 4 }, (_, index) => join(dir, `binary-${index}.txt`));
+  const text = join(dir, "text.txt");
+  const binarySource = `${"binary request\n".repeat(100_000)}\0`;
+  await Promise.all(binaries.map((file) => fs.writeFile(file, binarySource)));
+  await fs.writeFile(text, "needle\n");
+  t.mock.method(
+    Worker.prototype,
+    "postMessage",
+    function (this: Worker, input: SearchInput | LineSearchInput) {
+      assert.ok("source" in input);
+      this.emit(
+        "message",
+        input.source.startsWith("binary request")
+          ? { error: REGEX_TIMEOUT }
+          : { result: searchText(input) },
+      );
+    },
+  );
+  const tool = makeMockGrep(dir, DEFAULT_CONFIG, {
+    runRgLines: async (_args, _signal, _maxLines, onFile) => {
+      for (const file of [...binaries, text]) if (!(await onFile(file, undefined))) break;
+      return { code: 0, stderr: "", stopped: false };
+    },
+  });
+  const result = await callTool(tool, {
+    path: dir,
+    pattern: "needle",
+    literal: true,
+    outputMode: "files",
+  });
+  assert.equal(result.isError, undefined, JSON.stringify(reportOf(result, "grep")));
+  assert.deepEqual(result.content[0], { type: "text", text: "text.txt" });
+  assert.equal(reportOf(result, "grep")?.diagnostics, undefined);
+});
