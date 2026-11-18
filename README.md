@@ -109,6 +109,8 @@ One call takes at most [64 operations](src/pi/edit-tool.ts). Ranges in one call 
 
 Range operations verify the cited `anchor` and `end`. Interior lines have no individual anchor check. Changes elsewhere before the call do not invalidate unchanged anchors; publication rechecks the bytes read while applying the call and rejects a detected change.
 
+`edit` preserves a leading UTF-8 BOM. A first-line replacement may copy that BOM without duplicating it; U+FEFF in a prepended or inserted line is content.
+
 An `edit` call puts its small locator first: `path`, `steps`, then optional `then_run`. Each step puts the operation and range before the replacement payload: `action`, `anchor`, optional `end`, then `lines`. This keeps the file and target range visible while arguments stream.
 
 ### Arguments

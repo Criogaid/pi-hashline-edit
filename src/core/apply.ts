@@ -247,9 +247,11 @@ export function applyEdits(
     for (let i = 0; i < op.newLines.length; i++) {
       const content = op.newLines[i];
       result.push({
-        // A copied first-line BOM denotes the existing file header, not a second BOM.
+        // Only a replacement of the original first line can carry its copied BOM.
         content:
-          bom && op.lo === 0 && i === 0 && content.startsWith(bom) ? content.slice(1) : content,
+          bom && op.lo === 0 && op.hi > 0 && i === 0 && content.startsWith(bom)
+            ? content.slice(1)
+            : content,
         separator:
           i === op.newLines.length - 1 && op.hi > op.lo
             ? (separators?.[op.hi - 1] ?? "")

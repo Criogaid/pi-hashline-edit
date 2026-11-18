@@ -564,6 +564,19 @@ test("BOM stays at byte zero through first-line edits while anchors retain their
   assert.equal(result.text, "\uFEFFchanged\ninside\uFEFFcontent\n");
 });
 
+test("inserting U+FEFF before the first line → keeps it as content beside the file BOM", () => {
+  const text = "\uFEFFfirst\n";
+  const body = ["\uFEFFnew"];
+  for (const edit of [
+    { op: "prepend", body },
+    { op: "insert_before", anchor: at(text, 1), body },
+  ] satisfies Edit[]) {
+    const result = applyEdits(text, [edit], 4, 0);
+    assert.ok(result.ok);
+    assert.equal(result.text, "\uFEFF\uFEFFnew\nfirst\n", edit.op);
+  }
+});
+
 test("replacing a first-line mixed-ending range → preserve gaps and keep one file BOM", () => {
   const text = "\uFEFFA\r\nB\nC\r\nD\n";
   const result = applyEdits(
