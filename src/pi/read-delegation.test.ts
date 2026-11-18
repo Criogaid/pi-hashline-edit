@@ -60,7 +60,7 @@ test("read delegation → only images and NUL use native read on the canonical t
       if (native) {
         assert.deepEqual(execute.mock.calls.at(-1)?.arguments[2], {
           ...params,
-          path: pathToFileURL(join(dir, path)).href,
+          path: join(dir, path),
         });
         assert.equal(result.details?.nativeRead, true);
       }

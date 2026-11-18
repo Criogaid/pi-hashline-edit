@@ -10,7 +10,9 @@ import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const UNICODE_SPACES = /[\u00A0\u2000-\u200A\u202F\u205F\u3000]/g;
-const WINDOWS_SHELL_DRIVE = /^\/(?:mnt\/|cygdrive\/)?([a-z])(?:\/(.*))?$/i;
+const WINDOWS_SHELL_DRIVE = /^\/(?:mnt\/|cygdrive\/)?([a-z])(?:\/(.*))?$/is;
+const LOCALHOST_UNC_PATH = /^\\\\(localhost)\\/i;
+const LOCALHOST_UNC_URL = /^file:\/\/\/\/localhost\//i;
 
 /** Resolve model-supplied paths with the same input conventions as Pi's built-in file tools. */
 export function canonicalPath(cwd: string, path: string): string {
@@ -32,7 +34,17 @@ export function canonicalPath(cwd: string, path: string): string {
   ) {
     normalized = join(homedir(), normalized.slice(2));
   }
-  if (normalized.startsWith("file://")) normalized = fileURLToPath(normalized);
+  if (normalized.startsWith("file://")) {
+    // Parse the four-slash UNC form with a dotted host so URL parsing retains the
+    // authority and fileURLToPath applies its Windows separator checks.
+    const localhost = process.platform === "win32" && LOCALHOST_UNC_URL.test(normalized);
+    normalized = localhost
+      ? fileURLToPath(normalized.replace(LOCALHOST_UNC_URL, "file://localhost./")).replace(
+          /^\\\\localhost\.\\/,
+          "\\\\localhost\\",
+        )
+      : fileURLToPath(normalized);
+  }
   return isAbsolute(normalized) ? resolve(normalized) : resolve(cwd, normalized);
 }
 
@@ -49,5 +61,7 @@ export function serializePath(cwd: string, path: string): string {
     if (canonicalPath(cwd, candidate) === absolute) return candidate;
     if (local && canonicalPath(cwd, `./${candidate}`) === absolute) return `./${candidate}`;
   }
-  return pathToFileURL(absolute).href;
+  const url = pathToFileURL(absolute);
+  const localhost = LOCALHOST_UNC_PATH.exec(absolute)?.[1];
+  return localhost === undefined ? url.href : `file:////${localhost}${url.pathname}`;
 }

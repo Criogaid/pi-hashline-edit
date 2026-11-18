@@ -66,6 +66,18 @@ test("canonicalPath follows Pi's Windows shell-path conventions", () => {
   }
 });
 
+test("Windows shell drive paths with Unicode line separators → preserve the filename", {
+  skip: process.platform !== "win32",
+}, () => {
+  const cwd = resolve("/cwd");
+  for (const prefix of ["/c", "/mnt/c", "/cygdrive/c"]) {
+    for (const separator of ["\u2028", "\u2029"]) {
+      const name = `before${separator}after.txt`;
+      assert.equal(canonicalPath(cwd, `${prefix}/src/${name}`), join("C:/src", name));
+    }
+  }
+});
+
 test("file tools share Pi-style URL and @ path resolution", async () => {
   const dir = await mkdtemp(join(tmpdir(), "hashline-path-"));
   try {

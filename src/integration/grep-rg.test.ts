@@ -19,7 +19,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, parse } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 
@@ -1530,6 +1530,51 @@ test("grep paths with input shorthand or literal separators still edit the searc
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
+});
+
+test("Windows localhost share → grep paths round-trip and native read opens the target", {
+  skip: process.platform !== "win32",
+}, async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "hl-localhost-path-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const { root } = parse(directory);
+  const share = join(`//localhost/${root[0]}$`, directory.slice(root.length));
+  try {
+    await stat(share);
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      "code" in error &&
+      ["ENOENT", "EACCES", "EPERM"].includes(String(error.code))
+    ) {
+      t.skip("The temporary directory is not accessible through the local administrative share");
+      return;
+    }
+    throw error;
+  }
+  await writeFile(join(directory, "space\u202fname.txt"), "needle\n");
+  await writeFile(join(directory, "data.bin"), "original\0bytes\n");
+  const read = makeReadOverride(share, DEFAULT_CONFIG);
+  await t.test("grep output identifies the exact text file", async () => {
+    const result = await callTool(makeGrepOverride(share, DEFAULT_CONFIG), {
+      pattern: ["needle"],
+      literal: true,
+      outputMode: "files",
+    });
+    assert.equal(result.isError, undefined);
+    const body = result.content[0];
+    assert.ok(body?.type === "text");
+    const reread = await callTool(read, { path: body.text, anchors: false });
+    assert.equal(reread.isError, undefined, JSON.stringify(reread.content));
+    const text = reread.content[0];
+    assert.ok(text?.type === "text" && text.text.endsWith("\nneedle"));
+  });
+  await t.test("NUL file is read through native read", async () => {
+    const result = await callTool(read, { path: "data.bin" });
+    assert.equal(result.isError, undefined, JSON.stringify(result.content));
+    assert.equal(result.details?.nativeRead, true);
+    assert.deepEqual(result.content[0], { type: "text", text: "original\0bytes\n" });
+  });
 });
 
 test("literal LF and CRLF queries match original valid and invalid UTF-8 files alike", async (t) => {

@@ -12,7 +12,6 @@
 
 import { constants } from "node:fs";
 import { access, readFile, stat } from "node:fs/promises";
-import { pathToFileURL } from "node:url";
 import {
   createReadToolDefinition,
   detectSupportedImageMimeTypeFromFile,
@@ -243,7 +242,7 @@ export function makeReadOverride({
           });
           const result = await native.execute(
             toolCallId,
-            { ...params, path: pathToFileURL(absPath).href },
+            { ...params, path: absPath },
             signal,
             onUpdate,
             ctx,
