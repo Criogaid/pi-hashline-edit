@@ -166,7 +166,7 @@ export function makeReadOverride({
     name: "read" as const,
     label: "read",
     description:
-      "Read a file. Text lines show as LINE#HASH│content anchors for edit; CRLF line endings show as LF.",
+      "Read a file. Images return as attachments. Text lines show as LINE#HASH│content anchors for edit; CRLF line endings show as LF.",
     promptSnippet: "Read files with editable line anchors",
     promptGuidelines: [
       "In a codemode script, take raw file text from tools.bash (cat, git show); read and grep results add a header line and show CRLF as LF, and their rows carry a line prefix unless read's anchors is false.",
