@@ -424,7 +424,8 @@ test("grep output byte limit → recovery follows output mode and effective cont
     await Promise.all(
       paths.map((path) => writeFile(path, "before\nneedle\nafter\nneedle\nafter\nneedle\nafter\n")),
     );
-    const budget = { ...DEFAULT_OUTPUT_BUDGETS, grepBytes: 32 };
+    // Room for the header and one hit, but not its preceding context as well.
+    const budget = { ...DEFAULT_OUTPUT_BUDGETS, grepBytes: 48 };
     const config = {
       ...DEFAULT_CONFIG,
       grep: { ...DEFAULT_CONFIG.grep, defaultContext: 2 },
@@ -451,6 +452,20 @@ test("grep output byte limit → recovery follows output mode and effective cont
       assert.equal(report.matchLimit, limit === 12 ? limit : undefined, scenario);
       assert.equal(report.next, expected, scenario);
     }
+  }));
+
+test("grep byte limit with every line matched → removing context is not suggested", async () =>
+  withDir(async (dir) => {
+    const path = join(dir, "all.txt");
+    await writeFile(path, `needle ${"x".repeat(100)}\n`.repeat(200));
+    const { backend } = fakeBackend({ paths: [path] });
+    const tool = makeMockGrep(dir, DEFAULT_CONFIG, backend, () => outputBudgetsFor(4096));
+    const args = { path, pattern: ["needle"], literal: true, limit: 200 };
+    const withContext = await callTool(tool, { ...args, context: 1 });
+    const withoutContext = await callTool(tool, { ...args, context: 0 });
+    assert.equal(text(withContext), text(withoutContext));
+    assert.ok(reportOf(withContext, "grep")?.outputLimit);
+    assert.equal(reportOf(withContext, "grep")?.next, reportOf(withoutContext, "grep")?.next);
   }));
 
 test("small grep payload and a long multibyte path → keeps the only anchored match", async () =>

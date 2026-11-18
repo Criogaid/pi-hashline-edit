@@ -96,6 +96,9 @@ interface FormatMatchesOptions {
 interface FormattedBlock {
   readonly lines: readonly string[];
   readonly invalidUtf8?: string;
+  /** Indices of hits in a context block; the first hit may have a tighter preview as row one. */
+  readonly hitIndices?: readonly number[];
+  readonly firstHitBytes?: number;
   /** Rows that establish a narrower displayed preview, indexed from the file header. */
   readonly previewMinimums?: readonly { index: number; units: number }[];
 }
@@ -106,7 +109,7 @@ interface FormattedBlock {
  */
 function contentBlock(
   { filePath, rows, snapshot }: GrepFileMatch,
-  { cwd, anchors, budget }: FormatMatchesOptions,
+  { cwd, anchors, budget, context }: FormatMatchesOptions,
 ): LineCollector<FormattedBlock> {
   const columns = new Map(rows.map((match) => [match.lineNumber, match.column]));
   const displayPath = serializePath(cwd, filePath);
@@ -114,6 +117,8 @@ function contentBlock(
   const lines = [header];
   const firstRowBytes = budget.grepBytes - Buffer.byteLength(header) - 1;
   const previewMinimums: { index: number; units: number }[] = [];
+  const hitIndices: number[] | undefined = context > 0 ? [] : undefined;
+  let firstHitBytes: number | undefined;
   return {
     onLine(number, text) {
       // Rows make CR visible one unit for one, so preview columns stay source columns.
@@ -121,7 +126,9 @@ function contentBlock(
       const row = (display: string) =>
         snapshot.validUtf8 ? anchors.row(number, text, display) : plainRow(number, display);
       let preview = previewLine(text, column, budget.grepPreviewUnits);
-      if (lines.length === 1) {
+      const regularPreview = preview;
+      const firstHit = hitIndices?.length === 0 && column !== undefined;
+      if (lines.length === 1 || firstHit) {
         // A row is its prefix followed by the CR-visible preview.
         const prefixBytes = Buffer.byteLength(row(""));
         const fits = (candidate: { text: string }) =>
@@ -152,7 +159,12 @@ function contentBlock(
             if (fits(compact)) preview = compact;
           }
         }
+        if (firstHit && lines.length !== 1) {
+          firstHitBytes = prefixBytes + Buffer.byteLength(displayCarriageReturns(preview.text));
+          preview = regularPreview;
+        }
       }
+      if (column !== undefined) hitIndices?.push(lines.length);
       if (
         preview.kept !== undefined &&
         preview.kept < (previewMinimums.at(-1)?.units ?? Infinity)
@@ -165,6 +177,8 @@ function contentBlock(
       lines,
       invalidUtf8: snapshot.validUtf8 ? undefined : displayPath,
       previewMinimums,
+      hitIndices,
+      firstHitBytes,
     }),
   };
 }
@@ -206,11 +220,30 @@ interface AssembleGrepOutputOptions {
   readonly cwd: string;
   readonly warnings: readonly SearchWarning[];
   readonly outputMode: GrepOutputMode;
-  readonly context: number;
   readonly matchLimitReached: boolean;
   readonly effectiveLimit: number;
   readonly searchFacts: SearchFacts;
   readonly budget: OutputBudgets;
+}
+
+/** Does the same byte budget reach an omitted hit if context rows are removed? */
+function contextHidesHit(
+  blocks: readonly FormattedBlock[],
+  shownLines: number,
+  bytes: number,
+): boolean {
+  for (const [i, block] of blocks.entries()) {
+    if (!block.hitIndices) return false;
+    bytes -= Buffer.byteLength(block.lines[0]) + (i ? 2 : 0);
+    for (const [j, index] of block.hitIndices.entries()) {
+      bytes -=
+        1 + ((j === 0 ? block.firstHitBytes : undefined) ?? Buffer.byteLength(block.lines[index]));
+      if (bytes < 0) return false;
+      if (index >= shownLines) return true;
+    }
+    shownLines -= block.lines.length + 1;
+  }
+  return false;
 }
 
 /** Join the payload within the call's byte budget and state each limit, omission, and diagnostic once. */
@@ -224,7 +257,6 @@ function assembleGrepOutput(options: AssembleGrepOutputOptions): {
     cwd,
     warnings,
     outputMode,
-    context,
     matchLimitReached,
     effectiveLimit,
     searchFacts,
@@ -270,8 +302,10 @@ function assembleGrepOutput(options: AssembleGrepOutputOptions): {
       invalidUtf8: invalidUtf8.length ? invalidUtf8 : undefined,
       diagnostics: warnings.length ? searchDiagnostics(warnings, cwd, budget) : undefined,
     },
-    // Only content mode with a nonzero context spends the byte budget on context rows.
-    next: outputMode === "content" && context > 0 ? "contextRows" : undefined,
+    next:
+      truncation.truncated && contextHidesHit(blocks, truncation.outputLines, budget.grepBytes)
+        ? "contextRows"
+        : undefined,
   };
 }
 
@@ -291,17 +325,8 @@ export async function grepOutput(
     readonly literalPipe: boolean;
   },
 ): Promise<{ payload?: string; facts: SuccessFacts<"grep">; next?: OutcomeVariant }> {
-  const {
-    cwd,
-    search,
-    warnings,
-    missing,
-    outputMode,
-    context,
-    effectiveLimit,
-    literalPipe,
-    budget,
-  } = options;
+  const { cwd, search, warnings, missing, outputMode, effectiveLimit, literalPipe, budget } =
+    options;
   const searchFacts: SearchFacts = {
     scanLimit: search.scanLimitReached ? formatByteSize(MAX_UNNARROWED_SCAN_BYTES) : undefined,
     missing: missing.length ? [...missing] : undefined,
@@ -323,7 +348,6 @@ export async function grepOutput(
     cwd,
     warnings: [...warnings, ...rereadWarnings],
     outputMode,
-    context,
     matchLimitReached: search.matchLimitReached,
     effectiveLimit,
     searchFacts,

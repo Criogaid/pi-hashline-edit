@@ -181,7 +181,7 @@ When model capacity is unknown or invalid, the defaults are 64 KiB for read rows
 
 Read reports `nextOffset` when its default line limit or byte budget cuts a window; a caller-supplied `limit` alone does not add a `nextOffset` report. A first row that cannot fit gets a `lineTooLong` byte-limit fact. Grep reports payload and preview truncation separately, and plain previews for invalid UTF-8 never carry edit anchors.
 
-For a truncated grep payload, the report says to retry with `context: 0` when the call returned context rows, and otherwise to narrow the search. Inspect full lines before rewriting partial previews: use Bash for paths listed in `invalidUtf8`, and `read` for valid UTF-8.
+For a truncated grep payload, the report says to retry with `context: 0` only when removing context would fit another matching line in the same byte budget; otherwise it suggests narrowing the search. Inspect full lines before rewriting partial previews: use Bash for paths listed in `invalidUtf8`, and `read` for valid UTF-8.
 
 If the first grep row has no room for a column range, the preview keeps a complete character with ellipses marking omitted text. When only the ellipsis fits, `linePreviewLimit` is zero.
 
