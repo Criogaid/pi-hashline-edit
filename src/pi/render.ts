@@ -235,13 +235,14 @@ export function renderToolError(
   expanded: boolean,
 ): Text {
   const report = reportOf(result, tool);
-  const lines = report
-    ? reportLines(report, theme)
-    : result.content.flatMap((block) =>
-        block.type === "text" && block.text
-          ? block.text.split("\n").map((line) => theme.fg("error", line))
-          : [],
-      );
+  const lines =
+    report?.error !== undefined
+      ? reportLines(report, theme)
+      : result.content.flatMap((block) =>
+          block.type === "text" && block.text
+            ? block.text.split("\n").map((line) => theme.fg("error", line))
+            : [],
+        );
   return renderOutputPreview(lines.length ? lines : [theme.fg("error", "Error")], expanded, theme);
 }
 

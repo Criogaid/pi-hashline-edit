@@ -153,20 +153,19 @@ export type ArgumentIssue = Static<typeof ARGUMENT_ISSUE_SCHEMA>;
  * facts must also state the decision their value changes; TUI-only facts omit it.
  */
 type FactAudience = "model" | "tui";
-type FactDefinition<T extends TSchema = TSchema> = {
+type FactDefinition<T extends TSchema = TSchema, A extends FactAudience = FactAudience> = {
   schema: T;
-  audience: FactAudience;
-  decision?: string;
-};
+  audience: A;
+} & (A extends "model" ? { decision: string } : { decision?: never });
 
 function modelFact<T extends TSchema, const D extends string>(
   schema: T,
   decision: D extends "" ? never : D,
-): FactDefinition<T> {
+): FactDefinition<T, "model"> {
   return { schema, audience: "model", decision };
 }
 
-function tuiFact<T extends TSchema>(schema: T): FactDefinition<T> {
+function tuiFact<T extends TSchema>(schema: T): FactDefinition<T, "tui"> {
   return { schema, audience: "tui" };
 }
 
@@ -567,9 +566,11 @@ export type MutationToolName = (typeof MUTATION_TOOLS)[number];
 /** Argument rejections may omit message; Pi supplies none for them. */
 const MESSAGE_OPTIONAL = "INVALID_ARGUMENTS" satisfies ErrorCode;
 
-const TOOL_SCHEMA = literalUnion(Object.keys(SUCCESS_DEFINITIONS) as ReportTool[]);
+const NON_MUTATION_TOOLS = (Object.keys(SUCCESS_DEFINITIONS) as ReportTool[]).filter(
+  (tool): tool is Exclude<ReportTool, MutationToolName> =>
+    !(MUTATION_TOOLS as readonly ReportTool[]).includes(tool),
+);
 const COMMON_WIRE_FIELDS = {
-  tool: TOOL_SCHEMA,
   path: REPORT_SCHEMA.properties.path,
   next: REPORT_SCHEMA.properties.next,
 };
@@ -580,17 +581,22 @@ const MUTATION_WIRE_FIELDS = {
   then_run: REPORT_SCHEMA.properties.then_run,
   progressError: REPORT_SCHEMA.properties.progressError,
 };
-const FAILURE_SCHEMAS = ERROR_CODES.map((code) =>
-  Type.Object(
-    {
-      ...COMMON_WIRE_FIELDS,
-      ...MUTATION_WIRE_FIELDS,
-      cause: REPORT_SCHEMA.properties.cause,
-      error: Type.Literal(code),
-      message: code === MESSAGE_OPTIONAL ? opt(Type.String()) : Type.String(),
-      ...ERROR_DEFINITIONS[code].facts.properties,
-    },
-    { additionalProperties: false },
+const FAILURE_SCHEMAS = [
+  { tool: literalUnion(NON_MUTATION_TOOLS) },
+  { tool: literalUnion(MUTATION_TOOLS), ...MUTATION_WIRE_FIELDS },
+].flatMap((toolFields) =>
+  ERROR_CODES.map((code) =>
+    Type.Object(
+      {
+        ...COMMON_WIRE_FIELDS,
+        ...toolFields,
+        cause: REPORT_SCHEMA.properties.cause,
+        error: Type.Literal(code),
+        message: code === MESSAGE_OPTIONAL ? REPORT_SCHEMA.properties.message : Type.String(),
+        ...ERROR_DEFINITIONS[code].facts.properties,
+      },
+      { additionalProperties: false },
+    ),
   ),
 );
 const SUCCESS_SCHEMAS = Object.entries(SUCCESS_DEFINITIONS).map(([tool, schema]) =>
@@ -622,14 +628,19 @@ type UnusedFactNames = Exclude<FactName, SuccessFactNames | ErrorFactNames | Mut
 
 // Static counterparts of the per-tool and per-code wire schemas above, built from the same fields.
 type Fields<P extends TProperties> = Static<TObject<P>>;
-type Envelope = Omit<Fields<typeof COMMON_WIRE_FIELDS>, "tool">;
+type Envelope = Fields<typeof COMMON_WIRE_FIELDS>;
 type MutationFields = Fields<typeof MUTATION_WIRE_FIELDS>;
+type FailureToolFields =
+  | ({ tool: MutationToolName } & MutationFields)
+  | { tool: (typeof NON_MUTATION_TOOLS)[number] };
 
 /** Facts owned by one successful tool, derived from its wire schema. */
 export type SuccessFacts<T extends ReportTool> = Static<(typeof SUCCESS_DEFINITIONS)[T]>;
 
 // Absent fields stay readable as undefined without admitting another variant's facts.
-type ReportVariant<T> = T & { [K in Exclude<keyof ReportFields, keyof T>]?: never };
+type ReportVariant<T> = T extends unknown
+  ? T & { [K in Exclude<keyof ReportFields, keyof T>]?: never }
+  : never;
 
 /** A success report a tool may produce: its own facts, and mutation facts only for mutation tools. */
 export type SuccessReport = {
@@ -642,8 +653,8 @@ export type SuccessReport = {
 /** A failure report: its code's facts, with message required except where MESSAGE_OPTIONAL allows. */
 export type FailureReport = {
   [C in ErrorCode]: ReportVariant<
-    Envelope & { tool: ReportTool; error: C } & MutationFields &
-      Pick<ReportFields, "cause"> &
+    Envelope &
+      FailureToolFields & { error: C } & Pick<ReportFields, "cause"> &
       (C extends typeof MESSAGE_OPTIONAL ? { message?: string } : { message: string }) &
       Static<Definitions[C]["facts"]>
   >;

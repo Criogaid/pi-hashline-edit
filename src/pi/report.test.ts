@@ -486,3 +486,24 @@ test("mutation freshness → retains the fact and requests reread only for an ex
     assert.equal(Object.hasOwn(JSON.parse(block.text), "next"), freshness !== "missing");
   }
 });
+
+test("text-only error resembles a success report → keeps the original diagnostic visible", () => {
+  const diagnostic = '{"matches":1}';
+  assert.equal(displayed({ content: [text(diagnostic)] }, "grep").trimEnd(), diagnostic);
+});
+
+test("read and grep failures cannot carry mutation state → reject invalid replay facts", () => {
+  for (const tool of ["read", "grep"] as const) {
+    const raw = {
+      error: "FILESYSTEM_ERROR",
+      message: "disk read failed",
+      publication: "PUBLISHED",
+    };
+    const content = [text(JSON.stringify(raw))];
+    assert.equal(reportOf({ content }, tool), undefined);
+    assert.equal(
+      splitReport({ details: { report: { tool, ...raw } }, content }, tool).report,
+      undefined,
+    );
+  }
+});
