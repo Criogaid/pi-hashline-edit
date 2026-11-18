@@ -15,6 +15,12 @@ import type { MockRg } from "./grep-rg.testing.ts";
 import type { WorkerError } from "./report-cause.ts";
 import { callTool } from "./tool-call.testing.ts";
 
+const REGEX_TIMEOUT: WorkerError = {
+  code: "REGEX_TIMEOUT",
+  message: "Regex evaluation timed out.",
+  facts: { timeoutMs: DEFAULT_CONFIG.grep.regexTimeoutMs },
+};
+
 test("out-of-order file completions → listing order fixes rows, warnings, and the limit cutoff", {
   timeout: 15_000,
 }, async (t) => {
@@ -205,16 +211,11 @@ test("file-associated failure → listing position decides failure or cutoff, wh
   t.after(() => fs.rm(dir, { recursive: true, force: true }));
   const names = ["a.txt", "z.txt"];
   for (const name of names) await fs.writeFile(join(dir, name), `needle ${name}\n`);
-  const timeout: WorkerError = {
-    code: "REGEX_TIMEOUT",
-    message: "Regex evaluation timed out.",
-    facts: { timeoutMs: DEFAULT_CONFIG.grep.regexTimeoutMs },
-  };
   const failures = [
     {
       name: "timeout",
-      code: timeout.code,
-      finish: (worker: Worker) => worker.emit("message", { error: timeout }),
+      code: REGEX_TIMEOUT.code,
+      finish: (worker: Worker) => worker.emit("message", { error: REGEX_TIMEOUT }),
     },
     {
       name: "worker error",
@@ -320,5 +321,88 @@ test("file-associated failure → listing position decides failure or cutoff, wh
       }
       if (outputs.length === 2) assert.deepEqual(outputs[0], outputs[1]);
     }
+  }
+});
+
+test("partial budget consumed by an earlier file → later file has the same regex timeout in either completion order", {
+  timeout: 15_000,
+}, async (t) => {
+  t.mock.method(os, "availableParallelism", () => 3);
+  syncBuiltinESMExports();
+  const { makeMockGrep } = await import("./grep-rg.testing.ts");
+  t.mock.restoreAll();
+  syncBuiltinESMExports();
+
+  const dir = await fs.mkdtemp(join(os.tmpdir(), "hl-grep-chunk-order-"));
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  const early = join(dir, "a.txt");
+  const late = join(dir, "z.txt");
+  // End the later file's first regex request after its first match.
+  const chunkUnits = 1024 * 1024;
+  await fs.writeFile(early, "needle early\n");
+  await fs.writeFile(late, `${"needle late".padEnd(chunkUnits - 1)}\nslow tail\n`);
+  const backend: MockRg = {
+    runRgPaths: async () => assert.fail("This query uses line candidates"),
+    runRgLines: async (_args, _signal, _maxLines, onFile) => {
+      for (const file of [early, late]) if (!(await onFile(file, undefined))) break;
+      return { code: 0, stderr: "", stopped: false };
+    },
+  };
+
+  for (const earlyFirst of [false, true]) {
+    await t.test(
+      earlyFirst ? "earlier file commits first" : "later file times out first",
+      async (t) => {
+        type Held = { worker: Worker; finish: () => void };
+        const earlyRequest = Promise.withResolvers<Held>();
+        const lateRequest = Promise.withResolvers<Held>();
+        const stopped = new Map<Worker, () => void>();
+        const terminate = Worker.prototype.terminate;
+        t.mock.method(Worker.prototype, "terminate", function (this: Worker) {
+          stopped.get(this)?.();
+          return terminate.call(this);
+        });
+        t.mock.method(
+          Worker.prototype,
+          "postMessage",
+          function (this: Worker, input: SearchInput | LineSearchInput) {
+            assert.ok("source" in input);
+            if (input.source === "slow tail\n") {
+              this.emit("message", { error: REGEX_TIMEOUT });
+            } else {
+              const request = input.source.startsWith("needle early") ? earlyRequest : lateRequest;
+              request.resolve({
+                worker: this,
+                finish: () => this.emit("message", { result: searchText(input) }),
+              });
+            }
+          },
+        );
+        const controller = new AbortController();
+        const running = callTool(
+          makeMockGrep(dir, DEFAULT_CONFIG, backend),
+          { path: dir, pattern: "needle", literal: true, limit: 2, outputMode: "files" },
+          { signal: controller.signal },
+        );
+        try {
+          const [a, z] = await Promise.race([
+            Promise.all([earlyRequest.promise, lateRequest.promise]),
+            running.then(() => assert.fail("Search finished before both requests were held")),
+          ]);
+          const [first, second] = earlyFirst ? [a, z] : [z, a];
+          const firstSettled = new Promise<void>((resolve) => stopped.set(first.worker, resolve));
+          first.finish();
+          await firstSettled;
+          second.finish();
+          const result = await running;
+          const report = reportOf(result, "grep");
+          assert.equal(report?.error, REGEX_TIMEOUT.code, JSON.stringify(report));
+          assert.equal(result.isError, true);
+        } finally {
+          controller.abort();
+          await running;
+        }
+      },
+    );
   }
 });

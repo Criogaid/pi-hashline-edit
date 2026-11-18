@@ -99,7 +99,7 @@ function selectLines(source: string, offset: number, wanted: readonly number[], 
 async function searchFile(
   { filePath, lines: wanted }: Candidate,
   query: GrepQuery,
-  room: () => number,
+  fileLimit: number,
   run: Run,
   signal: AbortSignal,
 ): Promise<{ rows: Rows; snapshot: SearchFileSnapshot } | undefined> {
@@ -114,7 +114,7 @@ async function searchFile(
       while (end < wanted.length && wanted[end] <= lineOffset + lines) end++;
       candidates = end - nextWanted;
     }
-    const limit = room() - rows.length;
+    const limit = fileLimit - rows.length;
     if (candidates > 0 && limit > 0) {
       // Selecting most lines costs more than matching them all, with the same results.
       if (wanted && candidates * 2 <= lines) {
@@ -205,7 +205,7 @@ export async function searchFiles(options: {
   const files: GrepFileMatch[] = [];
   /** File warnings in listing order, then the listing's own diagnostic. */
   const warnings: SearchWarning[] = [];
-  /** Committed matches; a file still searching gets at most the remaining room. */
+  /** Matches committed in listing order. */
   let matches = 0;
   let matchLimitReached = false;
   let failure: { error: unknown } | undefined;
@@ -256,7 +256,8 @@ export async function searchFiles(options: {
     const { filePath } = candidate;
     let result: Settled;
     try {
-      const found = await searchFile(candidate, query, () => limit - matches, run, poolSignal);
+      // Use a fixed file budget so earlier commits cannot change which regex requests run.
+      const found = await searchFile(candidate, query, limit, run, poolSignal);
       result = found?.rows.length ? { file: { filePath, ...found } } : {};
     } catch (error) {
       throwIfCancelled(poolSignal);
