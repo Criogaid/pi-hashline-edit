@@ -13,10 +13,6 @@ const GREP_PREVIEW_SHARE = 100;
 // Pi's built-in grep keeps this many characters of a line. A narrower preview cuts a row in
 // far more calls and keeps almost none of them within the payload budget.
 const MIN_GREP_PREVIEW_UNITS = 500;
-// The minimum yields where one full-width row would not fit the payload: a UTF-16 unit takes
-// up to three UTF-8 bytes, so a preview of one unit per this many payload bytes spends at most
-// three eighths of the payload and leaves the rest to the file header, anchor, and partial marker.
-const GREP_PREVIEW_ROW_SHARE = 8;
 const BLOCK_SHARE = 4;
 const FIELD_SHARE = 4;
 // Keep JSON envelopes and diagnostic omission markers usable for tiny declared windows.
@@ -54,10 +50,7 @@ export function outputBudgetsFor(contextWindow: number | undefined): OutputBudge
     grepBytes,
     blockBytes,
     fieldBytes,
-    grepPreviewUnits: Math.max(
-      Math.floor(grepBytes / GREP_PREVIEW_SHARE),
-      Math.min(MIN_GREP_PREVIEW_UNITS, Math.floor(grepBytes / GREP_PREVIEW_ROW_SHARE)),
-    ),
+    grepPreviewUnits: Math.max(MIN_GREP_PREVIEW_UNITS, Math.floor(grepBytes / GREP_PREVIEW_SHARE)),
   });
 }
 

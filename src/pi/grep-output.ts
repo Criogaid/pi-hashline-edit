@@ -6,7 +6,7 @@
  */
 import { truncateHead } from "@earendil-works/pi-coding-agent";
 import { DiagnosticBuffer } from "./diagnostic-buffer.ts";
-import { plainRow, type AnchorFormatter } from "./anchor-format.ts";
+import { displayCarriageReturns, plainRow, type AnchorFormatter } from "./anchor-format.ts";
 import type { GrepFileMatch, searchFiles } from "./grep-search.ts";
 import type { SearchWarning } from "./error-text.ts";
 import { MAX_UNNARROWED_SCAN_BYTES } from "./grep-candidates.ts";
@@ -101,34 +101,69 @@ interface FormattedBlock {
   readonly invalidUtf8?: string;
   /** Zero-based index within this block, including its file header. */
   readonly firstTruncatedLine?: number;
+  /** UTF-16 units kept in this block's narrowest cut preview. */
+  readonly previewUnits?: number;
 }
 
-/** One file's content block: its header, then a row for each line the second read shows. */
+/**
+ * One file's content block: its header, then a row for each line the second read shows. The
+ * first row is narrowed until the header and that row fit the payload, so a long path or a
+ * small budget never leaves a block with no row.
+ */
 function contentBlock(
   { filePath, rows, snapshot }: GrepFileMatch,
   { cwd, anchors, budget }: FormatMatchesOptions,
 ): LineCollector<FormattedBlock> {
   const columns = new Map(rows.map((match) => [match.lineNumber, match.column]));
   const displayPath = serializePath(cwd, filePath);
-  const lines = [formatFileHeader(displayPath, rows.length)];
+  const header = formatFileHeader(displayPath, rows.length);
+  const lines = [header];
+  const firstRowBytes = budget.grepBytes - Buffer.byteLength(header) - 1;
   let firstTruncatedLine: number | undefined;
+  let previewUnits: number | undefined;
   return {
     onLine(number, text) {
       // Rows make CR visible one unit for one, so preview columns stay source columns.
-      const { text: display, wasTruncated } = previewLine(
-        text,
-        columns.get(number),
-        budget.grepPreviewUnits,
-      );
-      if (wasTruncated) firstTruncatedLine ??= lines.length;
-      lines.push(
-        snapshot.validUtf8 ? anchors.row(number, text, display) : plainRow(number, display),
-      );
+      const column = columns.get(number);
+      const row = (display: string) =>
+        snapshot.validUtf8 ? anchors.row(number, text, display) : plainRow(number, display);
+      let units = budget.grepPreviewUnits;
+      let preview = previewLine(text, column, units);
+      if (lines.length === 1) {
+        // A row is its prefix followed by the CR-visible preview.
+        const prefixBytes = Buffer.byteLength(row(""));
+        const fits = (candidate: { text: string }) =>
+          prefixBytes + Buffer.byteLength(displayCarriageReturns(candidate.text)) <= firstRowBytes;
+        if (!fits(preview)) {
+          // The widest narrower preview that fits, or one unit when none does.
+          let low = 1;
+          let high = Math.min(units, text.length) - 1;
+          units = 1;
+          preview = previewLine(text, column, 1);
+          while (low <= high) {
+            const middle = Math.floor((low + high) / 2);
+            const candidate = previewLine(text, column, middle);
+            if (fits(candidate)) {
+              units = middle;
+              preview = candidate;
+              low = middle + 1;
+            } else {
+              high = middle - 1;
+            }
+          }
+        }
+      }
+      if (preview.wasTruncated) {
+        firstTruncatedLine ??= lines.length;
+        previewUnits = Math.min(previewUnits ?? units, units);
+      }
+      lines.push(row(preview.text));
     },
     finish: () => ({
       lines,
       invalidUtf8: snapshot.validUtf8 ? undefined : displayPath,
       firstTruncatedLine,
+      previewUnits,
     }),
   };
 }
@@ -210,13 +245,14 @@ function assembleGrepOutput(options: AssembleGrepOutputOptions): {
     { maxBytes: budget.grepBytes, maxLines: Number.MAX_SAFE_INTEGER },
   );
   const invalidUtf8: string[] = [];
-  let linesTruncated = false;
+  let previewLimit: number | undefined;
   let remainingLines = truncation.outputLines;
   for (const block of blocks) {
     if (remainingLines <= 0) break;
     if (block.invalidUtf8 && remainingLines > 1) invalidUtf8.push(block.invalidUtf8);
+    // Only a block's first row can be narrower than the others, and it is the first row shown.
     if (block.firstTruncatedLine !== undefined && remainingLines > block.firstTruncatedLine)
-      linesTruncated = true;
+      previewLimit = Math.min(previewLimit ?? Infinity, block.previewUnits!);
     remainingLines -= block.lines.length + (outputMode === "content" ? 1 : 0);
   }
   // One complete content or count block already states its path and match count.
@@ -228,7 +264,7 @@ function assembleGrepOutput(options: AssembleGrepOutputOptions): {
       ...searchFacts,
       matchLimit: matchLimitReached ? effectiveLimit : undefined,
       outputLimit: truncation.truncated ? formatByteSize(budget.grepBytes) : undefined,
-      linePreviewLimit: linesTruncated ? budget.grepPreviewUnits : undefined,
+      linePreviewLimit: previewLimit,
       invalidUtf8: invalidUtf8.length ? invalidUtf8 : undefined,
       diagnostics: warnings.length ? searchDiagnostics(warnings, cwd, budget) : undefined,
     },
