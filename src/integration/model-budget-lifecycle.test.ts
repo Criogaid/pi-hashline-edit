@@ -7,7 +7,7 @@ import { callTool } from "../pi/tool-call.testing.ts";
 import { outputBudgetsFor } from "../pi/budgets.ts";
 import { reportOf } from "../pi/report.ts";
 import type { Report } from "../pi/report-schema.ts";
-import { openTestSession } from "../testing/session.testing.ts";
+import { openTestSession, responseStream } from "../testing/session.testing.ts";
 
 // Budget invalidation relies on Pi publishing the new model before tool preparation.
 test("model selection → exposes the new limit and invalidates only on a selection change", async (t) => {
@@ -148,4 +148,39 @@ test("model switches before argument preparation → rejection uses the new budg
   }
   assert.ok(reports[0].omittedIssues);
   assert.equal(reports[1].omittedIssues, undefined);
+});
+
+test("headless SDK reload → tool results still use the selected model's budget", async (t) => {
+  const { session, cwd, model } = await openTestSession(t, {
+    tools: ["read"],
+    configure: (pi) => hashlineEdit(pi),
+  });
+  const capacity = 16_384;
+  const selected = { ...model, contextWindow: capacity };
+  await session.setModel(selected);
+  await session.reload();
+  const path = "long-line.txt";
+  await writeFile(join(cwd, path), "x".repeat(outputBudgetsFor(capacity).readBytes * 2));
+  let requests = 0;
+  session.agent.streamFunction = () => {
+    const first = requests++ === 0;
+    return responseStream(
+      selected,
+      first
+        ? {
+            stopReason: "toolUse",
+            content: [
+              { type: "toolCall", id: "read-after-reload", name: "read", arguments: { path } },
+            ],
+          }
+        : { stopReason: "stop", content: [{ type: "text", text: "Done." }] },
+    );
+  };
+  await session.prompt("Read the fixture after reload.");
+  const result = session.agent.state.messages.find(
+    (message) => message.role === "toolResult" && message.toolCallId === "read-after-reload",
+  );
+  assert.ok(result?.role === "toolResult");
+  assert.equal(result.isError, false);
+  assert.ok(reportOf(result, "read")?.lineTooLong);
 });
