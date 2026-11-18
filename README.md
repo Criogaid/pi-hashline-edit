@@ -194,7 +194,7 @@ If the first grep row has no room for a column range, the preview keeps a comple
 - Anchors are short checksums: they catch changed and shifted lines, but can collide and do not prove the model read the line.
 - Only UTF-8 text is edited; UTF-16 and legacy code pages are not supported.
 - Revision checks catch most concurrent changes, but there is no cross-process lock or multi-file transaction.
-- Overwrites keep symlinks pointing at their target; FIFOs, other non-regular files, and files with multiple hard links are not overwritten.
+- Overwrites keep symlinks pointing at their target. Before publishing, the tool checks that the path still resolves to the same location and that the target is a regular file with only one hard link.
 - Grep's [search limits](src/pi/grep-search.ts) allow multiline files up to 64 MiB and individual physical lines up to 64 × 1024² UTF-16 code units. Matching runs in at most four workers, each with a 512 MiB V8 old-generation heap limit; individual regex evaluations use the configured timeout.
 - When discovery falls back to every file in scope, it stops queuing files once their combined sizes reach the [256 MiB whole-scope budget](src/pi/grep-candidates.ts); the last queued file can cross that threshold. The report states when this prevents another file from being scanned. Ripgrep protocol records have a [16 MiB limit](src/pi/rg-process.ts), and its stderr is kept to 64 KiB, beginning and end. Unsupported or over-limit candidate analysis widens discovery; JavaScript still decides the matches.
 

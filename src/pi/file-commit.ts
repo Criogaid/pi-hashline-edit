@@ -120,8 +120,8 @@ async function readRegularFile(path: string, signal?: AbortSignal): Promise<Buff
   });
 }
 
-async function fileRevision(path: string): Promise<string> {
-  return byteRevision(await readRegularFile(path));
+async function fileRevision(path: string, signal?: AbortSignal): Promise<string> {
+  return byteRevision(await readRegularFile(path, signal));
 }
 
 /** Decode and bind a mutation snapshot to the exact bytes read. */
@@ -156,7 +156,7 @@ async function requireBaseRevision(
 ): Promise<void> {
   let currentRevision: string;
   try {
-    currentRevision = await fileRevision(path);
+    currentRevision = await fileRevision(path, signal);
   } catch (error) {
     throwIfCancelled(signal);
     throw stepError("Unable to recheck target revision.", error);
@@ -166,30 +166,29 @@ async function requireBaseRevision(
     throw new HashlineError("FILE_CHANGED", "File changed after it was read.");
 }
 
-type TargetInfo = { readonly publishPath: string } & (
-  | { readonly existed: true; readonly beforeRevision: string; readonly modeBits: number }
-  | { readonly existed: false; readonly beforeRevision?: never; readonly modeBits?: never }
-);
+interface TargetInfo {
+  readonly publishPath: string;
+  readonly modeBits: number;
+}
 
-/** The target's state before publication; a known revision stands in for hashing it again. */
-async function inspectTarget(path: string, knownRevision?: string): Promise<TargetInfo> {
+/** Resolve existing targets so staging and cleanup stay beside the inspected file. */
+async function inspectTarget(path: string): Promise<TargetInfo | undefined> {
   let entry;
   try {
     entry = await lstat(path);
   } catch (error) {
-    if (errnoCode(error) === "ENOENT") return { existed: false, publishPath: path };
+    if (errnoCode(error) === "ENOENT") return undefined;
     throw stepError("Unable to inspect target.", error);
   }
 
-  let publishPath = path;
-  if (entry.isSymbolicLink()) {
-    try {
-      publishPath = await realpath(path);
-    } catch (error) {
-      throw new HashlineError("SYMLINK_UNRESOLVED", "Target symlink cannot be resolved.", {
-        cause: error,
-      });
-    }
+  let publishPath: string;
+  try {
+    publishPath = await realpath(path);
+  } catch (error) {
+    if (!entry.isSymbolicLink()) throw stepError("Unable to resolve target.", error);
+    throw new HashlineError("SYMLINK_UNRESOLVED", "Target symlink cannot be resolved.", {
+      cause: error,
+    });
   }
 
   let target;
@@ -205,22 +204,18 @@ async function inspectTarget(path: string, knownRevision?: string): Promise<Targ
       "Target has multiple hard links; publishing would split the link set.",
     );
 
-  let beforeRevision: string;
-  if (knownRevision !== undefined) {
-    beforeRevision = knownRevision;
-  } else {
-    try {
-      beforeRevision = await fileRevision(publishPath);
-    } catch (error) {
-      throw stepError("Unable to read target revision.", error);
-    }
-  }
-  return {
-    existed: true,
-    publishPath,
-    beforeRevision,
-    modeBits: target.mode,
-  };
+  return { publishPath, modeBits: target.mode };
+}
+
+async function requireOverwriteTarget(path: string, baseRevision: string | undefined) {
+  const target = await inspectTarget(path);
+  if (!target)
+    throw new HashlineError("PATH_NOT_FOUND", PATH_ERROR_MESSAGES.PATH_NOT_FOUND, {
+      facts: { missing: [path] },
+      // Read-modify-write tools have no mode to change.
+      next: baseRevision === undefined ? "useCreate" : undefined,
+    });
+  return target;
 }
 
 async function writeAndSyncTemp(
@@ -317,22 +312,31 @@ export async function commitFile(
   const bytes = Buffer.from(content, "utf8");
   const { mode } = options;
   const baseRevision = mode === "overwrite" ? options.baseRevision : undefined;
-  const target = await inspectTarget(path, baseRevision);
-  if (mode === "create" && target.existed)
+  const target =
+    mode === "overwrite" ? await requireOverwriteTarget(path, baseRevision) : undefined;
+  if (mode === "create" && (await inspectTarget(path)))
     throw new HashlineError("TARGET_EXISTS", "Target already exists.");
-  if (mode === "overwrite" && !target.existed)
-    throw new HashlineError("PATH_NOT_FOUND", PATH_ERROR_MESSAGES.PATH_NOT_FOUND, {
-      facts: { missing: [path] },
-      // A read-modify-write target vanished after its read; those tools have no mode to change.
-      next: baseRevision === undefined ? "useCreate" : undefined,
-    });
   throwIfCancelled(options.signal);
   const publishedRevision = byteRevision(bytes);
-  // Mode, revision, target safety, and cancellation checks still apply to no-ops.
-  if (target.beforeRevision === publishedRevision) {
-    // A base revision was not hashed from the target here.
-    if (baseRevision !== undefined)
-      await requireBaseRevision(target.publishPath, baseRevision, options.signal);
+  const verifyOverwrite = async (initial: TargetInfo) => {
+    if (baseRevision !== undefined) await requireBaseRevision(path, baseRevision, options.signal);
+    const current = await requireOverwriteTarget(path, baseRevision);
+    throwIfCancelled(options.signal);
+    if (current.publishPath !== initial.publishPath)
+      throw new HashlineError("FILE_CHANGED", "Target path resolves to a different file.");
+  };
+  let beforeRevision = baseRevision;
+  if (target && beforeRevision === undefined) {
+    try {
+      beforeRevision = await fileRevision(path, options.signal);
+    } catch (error) {
+      throwIfCancelled(options.signal);
+      throw stepError("Unable to read target revision.", error);
+    }
+  }
+  // Check a bound snapshot even when the transformation produced no change.
+  if (target && beforeRevision === publishedRevision) {
+    await verifyOverwrite(target);
     return {
       publishedRevision,
       observedRevision: publishedRevision,
@@ -340,7 +344,7 @@ export async function commitFile(
     };
   }
 
-  const publishPath = target.publishPath;
+  const publishPath = target?.publishPath ?? path;
   const publishDirectory = dirname(publishPath);
   let tempDir: string;
   try {
@@ -353,11 +357,13 @@ export async function commitFile(
   const tempPath = join(tempDir, "content");
   let published = false;
   try {
-    await writeAndSyncTemp(tempPath, bytes, target.modeBits, options.signal);
-    if (baseRevision !== undefined)
-      await requireBaseRevision(publishPath, baseRevision, options.signal);
-    if (mode === "create") await publishCreate(tempPath, publishPath, options.signal);
-    else await publishReplace(tempPath, publishPath, options.signal);
+    await writeAndSyncTemp(tempPath, bytes, target?.modeBits, options.signal);
+    if (target) {
+      await verifyOverwrite(target);
+      await publishReplace(tempPath, publishPath, options.signal);
+    } else {
+      await publishCreate(tempPath, publishPath, options.signal);
+    }
     published = true;
     await syncDirectory(publishDirectory);
     const committed: CommitResult = {
@@ -365,7 +371,7 @@ export async function commitFile(
       publication: "PUBLISHED",
     };
     try {
-      return { ...committed, observedRevision: await fileRevision(publishPath) };
+      return { ...committed, observedRevision: await fileRevision(path) };
     } catch (error) {
       // Another writer is replacing the published bytes: report a changed target, not a failed
       // mutation whose retry would apply it again.

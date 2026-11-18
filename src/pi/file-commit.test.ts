@@ -371,6 +371,65 @@ test("cancellation during rename → successful publication reports the new byte
     }
   }));
 
+test("overwrite target changes during temporary staging → rejects before publishing", async (t) => {
+  const cases = [
+    { change: "remove", code: "PATH_NOT_FOUND" },
+    { change: "hard link", code: "MULTIPLE_HARD_LINKS" },
+    { change: "symlink retarget", code: "FILE_CHANGED" },
+  ] as const;
+  for (const { change, code } of cases) {
+    await t.test(change, () =>
+      withTemp(async (dir) => {
+        const firstDir = join(dir, "first");
+        const secondDir = join(dir, "second");
+        const alias = join(dir, "alias");
+        const original = join(firstDir, "file.txt");
+        const other = join(secondDir, "file.txt");
+        const retargets = change === "symlink retarget";
+        const target = retargets ? join(alias, "file.txt") : original;
+        const linkType = process.platform === "win32" ? "junction" : "dir";
+        await mkdir(firstDir);
+        await mkdir(secondDir);
+        await writeFile(original, "old\n");
+        if (retargets) {
+          await writeFile(other, "old\n");
+          await symlink(firstDir, alias, linkType);
+        }
+        const baseRevision = change === "remove" ? undefined : byteRevision(await readFile(target));
+        let staged = false;
+        const makeTemp = fsPromises.mkdtemp;
+        t.mock.method(fsPromises, "mkdtemp", async (...args: Parameters<typeof makeTemp>) => {
+          const temp = await makeTemp(...args);
+          staged = true;
+          if (change === "remove") await rm(original);
+          else if (change === "hard link") await createHardLink(original, other);
+          else {
+            await rm(alias);
+            await symlink(secondDir, alias, linkType);
+          }
+          return temp;
+        });
+        syncBuiltinESMExports();
+        try {
+          await assert.rejects(
+            commitFile(target, "new\n", { mode: "overwrite", baseRevision }),
+            (error: unknown) => error instanceof HashlineError && error.errorCode === code,
+          );
+          assert.equal(staged, true);
+          if (change === "remove") await assert.rejects(readFile(original), { code: "ENOENT" });
+          else {
+            assert.equal(await readFile(original, "utf8"), "old\n");
+            assert.equal(await readFile(other, "utf8"), "old\n");
+          }
+        } finally {
+          t.mock.restoreAll();
+          syncBuiltinESMExports();
+        }
+      }),
+    );
+  }
+});
+
 test("bound overwrite → reports published and observed revisions for the published bytes", async () =>
   withTemp(async (dir) => {
     const target = join(dir, "versions.txt");
