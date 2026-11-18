@@ -11,7 +11,7 @@ import { rgPath } from "@vscode/ripgrep";
 import { DiagnosticBuffer } from "./diagnostic-buffer.ts";
 import { spawn, type ChildProcessByStdio } from "node:child_process";
 import type { Readable } from "node:stream";
-import { HashlineError } from "../core/errors.ts";
+import { errnoCode, HashlineError } from "../core/errors.ts";
 import { throwIfCancelled, type SearchWarning } from "./error-text.ts";
 import { formatByteSize } from "./budgets.ts";
 
@@ -23,6 +23,14 @@ import { formatByteSize } from "./budgets.ts";
 export const COMMON_RG_ARGS = ["--no-config", "--color=never", "--sort=path"];
 /** Leave room for rg's arguments and paths on hosts with small command-line limits. */
 export const MAX_RG_PATTERN_UNITS = 24 * 1024;
+export const RG_PATTERN_FLAG = "-e";
+
+/** Command-line cost of a translated pattern and its flag, including separators. */
+export function rgPatternArgUnits(pattern: string): number {
+  // Translations use ASCII without whitespace or quotes; Windows quotes an empty argument.
+  return RG_PATTERN_FLAG.length + 2 + (pattern.length || 2);
+}
+
 const MAX_RG_RECORD_BYTES = 16 * 1024 * 1024;
 const RG_RECORD_LIMIT_MESSAGE = `ripgrep output record exceeds ${formatByteSize(MAX_RG_RECORD_BYTES)}.`;
 
@@ -58,8 +66,17 @@ export function searchDiagnostic(result: RgRunResult): SearchWarning | undefined
 }
 
 /** spawn reports a failure to start by throwing or by an error event, depending on the errno. */
-function startFailure(cause: unknown): HashlineError {
-  return new HashlineError("RIPGREP_FAILED", "Failed to run ripgrep.", { cause });
+class RgStartError extends HashlineError<"RIPGREP_FAILED"> {
+  constructor(cause: unknown) {
+    super("RIPGREP_FAILED", "Failed to run ripgrep.", { cause });
+  }
+}
+
+/** Whether rg could not start because the OS rejected its command line length. */
+export function isRgArgumentLimit(error: unknown): boolean {
+  if (!(error instanceof RgStartError)) return false;
+  const code = errnoCode(error.cause);
+  return code === "ENAMETOOLONG" || code === "E2BIG";
 }
 
 function startRg(args: readonly string[], signal?: AbortSignal): RunningProcess {
@@ -71,7 +88,7 @@ function startRg(args: readonly string[], signal?: AbortSignal): RunningProcess 
       shell: false,
     });
   } catch (cause) {
-    throw startFailure(cause);
+    throw new RgStartError(cause);
   }
   const stderr = new DiagnosticBuffer(MAX_RG_STDERR_BYTES);
   const stderrDecoder = new StringDecoder("utf8");
@@ -139,7 +156,7 @@ async function runRg(
     if (stopped) rg.kill();
     const result = await rg.done;
     throwIfCancelled(signal);
-    if (result.error) throw startFailure(result.error);
+    if (result.error) throw new RgStartError(result.error);
     return { code: result.code, stderr: result.stderr, stopped };
   } finally {
     rg.kill();

@@ -27,7 +27,7 @@ import {
 } from "../core/character-set.ts";
 import { analyzeQueryPattern } from "../core/search-analysis.ts";
 import { GREP_FLAGS, type GrepQuery } from "../core/search.ts";
-import { MAX_RG_PATTERN_UNITS } from "./rg-process.ts";
+import { MAX_RG_PATTERN_UNITS, rgPatternArgUnits } from "./rg-process.ts";
 
 const LF = 0x0a;
 const REPLACEMENT = 0xfffd;
@@ -293,16 +293,14 @@ export function lineCandidatePatterns(query: GrepQuery): string[] | undefined {
     repeated: false,
   };
   const patterns: string[] = [];
+  let argumentUnits = 0;
   for (const pattern of query.patterns) {
     const translated = analyzeQueryPattern(pattern, query.literal, (parsed) =>
       alternatives(parsed.alternatives, ctx, { first: true, last: true }),
     );
     if (translated === undefined) return undefined;
-    if (
-      translated.length + patterns.reduce((sum, value) => sum + value.length, 0) >
-      MAX_RG_PATTERN_UNITS
-    )
-      return undefined;
+    argumentUnits += rgPatternArgUnits(translated);
+    if (argumentUnits > MAX_RG_PATTERN_UNITS) return undefined;
     patterns.push(translated);
   }
   return patterns;

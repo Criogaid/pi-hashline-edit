@@ -37,6 +37,52 @@ for (const input of ["explicit paths", "globs"] as const) {
   });
 }
 
+test("many short grep patterns exceed the Windows command line → retain native matches", {
+  skip: process.platform !== "win32" ? "Requires the Windows command-line length limit" : false,
+}, async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "hl-rg-short-patterns-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  // 18,000 units of pattern text, but 36,000 with a flag and separators per pattern.
+  const pattern = Array.from({ length: 4_500 }, (_, index) => index.toString(36).padStart(4, "0"));
+  await writeFile(join(directory, "matches.txt"), `${pattern[0]}\n${pattern.at(-1)}\nother\n`);
+  const result = await callTool(makeGrepOverride(directory, DEFAULT_CONFIG), {
+    pattern,
+    literal: true,
+    ignoreCase: false,
+  });
+  assert.equal(result.isError, undefined, JSON.stringify(reportOf(result, "grep")));
+  assert.deepEqual(grepCounts(result), { matches: 2, files: 1 });
+});
+
+for (const multiline of [false, true]) {
+  test(`Windows command line fits scope but not ${multiline ? "file" : "line"} pattern args → retain scoped matches`, {
+    skip: process.platform !== "win32" ? "Requires the Windows command-line length limit" : false,
+  }, async (t) => {
+    const directory = await mkdtemp(join(tmpdir(), "hl-rg-pattern-launch-"));
+    t.after(() => rm(directory, { recursive: true, force: true }));
+    // The globs cost about 30,000 units. Either candidate mode adds over 4,000 units.
+    const glob = [
+      "*.txt",
+      ...Array.from({ length: 250 }, (_, index) => `**/${"q".repeat(100)}-${index}-*.txt`),
+    ];
+    const pattern = Array.from(
+      { length: 64 },
+      (_, index) => index.toString(36).padStart(2, "0") + "a".repeat(62),
+    );
+    await writeFile(join(directory, "included.txt"), `${pattern.at(-1)}\nother\n`);
+    await writeFile(join(directory, "excluded.log"), `${pattern[0]}\n`);
+    const result = await callTool(makeGrepOverride(directory, DEFAULT_CONFIG), {
+      glob,
+      pattern,
+      literal: true,
+      ignoreCase: false,
+      multiline,
+    });
+    assert.equal(result.isError, undefined, JSON.stringify(reportOf(result, "grep")));
+    assert.deepEqual(grepCounts(result), { matches: 1, files: 1 });
+  });
+}
+
 test("multiline prefilter exceeds the rg pattern budget → scan all files and retain native matches", async (t) => {
   const directory = await mkdtemp(join(tmpdir(), "hl-rg-prefilter-budget-"));
   t.after(() => rm(directory, { recursive: true, force: true }));

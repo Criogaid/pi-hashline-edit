@@ -9,12 +9,15 @@
 import { stat } from "node:fs/promises";
 import { resolve } from "node:path";
 import type { GrepQuery } from "../core/search.ts";
-import { extractPrefilter, type Literal, type Prefilter } from "../core/search-analysis.ts";
+import { extractPrefilter, type Literal } from "../core/search-analysis.ts";
 import { foldedPathKey, isListedFile, scopeArgs, type SearchScope } from "./grep-scope.ts";
 import {
   COMMON_RG_ARGS,
+  isRgArgumentLimit,
   LINE_LISTING_ARGS,
   MAX_RG_PATTERN_UNITS,
+  RG_PATTERN_FLAG,
+  rgPatternArgUnits,
   runRgLines,
   runRgPaths,
   type RgRunResult,
@@ -48,31 +51,10 @@ function literalPattern(literal: Literal): string {
 const literalAlternation = (literals: readonly Literal[]): string =>
   literals.map(literalPattern).join("|");
 
-/** Necessary literals too long for rg's command line widen to every file in scope. */
-function boundedPrefilter(prefilter: Prefilter): Prefilter {
-  return prefilter.kind === "literals" &&
-    literalAlternation(prefilter.literals).length > MAX_RG_PATTERN_UNITS
-    ? { kind: "all" }
-    : prefilter;
+function widenOnArgumentLimit(error: unknown): undefined {
+  if (isRgArgumentLimit(error)) return undefined;
+  throw error;
 }
-
-/**
- * List candidate files: those whose original bytes contain a prefilter literal, or every
- * file in scope. Literals never contain a line break, so line-oriented matching finds them.
- */
-function candidateArgs(prefilter: Prefilter): string[] {
-  if (prefilter.kind === "all") return [...COMMON_RG_ARGS, "--files"];
-  return [
-    ...COMMON_RG_ARGS,
-    "--files-with-matches",
-    ...BYTE_PATTERN_ARGS,
-    "-e",
-    literalAlternation(prefilter.literals),
-  ];
-}
-
-/** How candidates were selected: rg's candidate lines, or whole files (see Prefilter). */
-type CandidateSource = "lines" | "files" | "all";
 
 /**
  * Await each consumer for backpressure; false stops listing. The caller owns worker cleanup.
@@ -90,7 +72,7 @@ export async function listCandidates(options: {
 }> {
   const { scope, query, signal, stopped, onCandidate } = options;
   if (scope.searchPaths.length === 0) return { scanLimitReached: false };
-  let candidates: CandidateSource = "lines";
+  let scanAll = false;
   let listedAny = false;
   let scanned = 0;
   let scanLimitReached = false;
@@ -102,7 +84,7 @@ export async function listCandidates(options: {
     if (await isListedFile(filePath, seen)) return true;
     const key = foldedPathKey(filePath);
     seen.set(key, [...(seen.get(key) ?? []), filePath]);
-    if (candidates === "all") {
+    if (scanAll) {
       if (scanned >= MAX_UNNARROWED_SCAN_BYTES) {
         scanLimitReached = true;
         return false;
@@ -123,19 +105,38 @@ export async function listCandidates(options: {
           ...COMMON_RG_ARGS,
           ...BYTE_PATTERN_ARGS,
           ...LINE_LISTING_ARGS,
-          ...patterns.flatMap((pattern) => ["-e", pattern]),
+          ...patterns.flatMap((pattern) => [RG_PATTERN_FLAG, pattern]),
           ...scoped,
         ],
         signal,
         MAX_CANDIDATE_LINES,
         offer,
-      )
+      ).catch(widenOnArgumentLimit)
     : undefined;
-  // rg reports a pattern it cannot compile, such as one beyond its size limit, before any file.
+  // A launch limit or a pattern rejected by rg before listing any file allows a wider search.
   if (!listing || (listing.code === 2 && !listedAny)) {
-    const prefilter = boundedPrefilter(extractPrefilter(query));
-    candidates = prefilter.kind === "all" ? "all" : "files";
-    listing = await runRgPaths([...candidateArgs(prefilter), "--null", ...scoped], signal, offer);
+    const prefilter = extractPrefilter(query);
+    if (prefilter.kind === "literals") {
+      const pattern = literalAlternation(prefilter.literals);
+      if (rgPatternArgUnits(pattern) <= MAX_RG_PATTERN_UNITS) {
+        listing = await runRgPaths(
+          [
+            ...COMMON_RG_ARGS,
+            "--files-with-matches",
+            ...BYTE_PATTERN_ARGS,
+            RG_PATTERN_FLAG,
+            pattern,
+            "--null",
+            ...scoped,
+          ],
+          signal,
+          offer,
+        ).catch(widenOnArgumentLimit);
+        if (listing) return { listing, scanLimitReached };
+      }
+    }
+    scanAll = true;
+    listing = await runRgPaths([...COMMON_RG_ARGS, "--files", "--null", ...scoped], signal, offer);
   }
   return { listing, scanLimitReached };
 }
