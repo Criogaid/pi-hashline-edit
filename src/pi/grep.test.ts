@@ -491,6 +491,32 @@ test("small grep payload and a long multibyte path → keeps the only anchored m
     assert.equal(report.outputLimit, undefined);
   }));
 
+test("a tiny row budget at an astral match → shows the complete character or just an ellipsis", async () =>
+  withDir(async (dir) => {
+    const path = join(dir, "a.txt");
+    const pattern = "🍊";
+    await writeFile(path, pattern.repeat(20));
+    const { backend } = fakeBackend({ paths: [path] });
+    const args = { path, pattern, literal: true };
+    const full = await callTool(makeMockGrep(dir, DEFAULT_CONFIG, backend), args);
+    const prefix = text(full).split(pattern)[0];
+    for (const [preview, kept] of [
+      [`${pattern}…`, 2],
+      ["…", 0],
+    ] as const) {
+      const expected = prefix + preview;
+      const result = await callTool(
+        makeMockGrep(dir, DEFAULT_CONFIG, backend, () => ({
+          ...DEFAULT_OUTPUT_BUDGETS,
+          grepBytes: Buffer.byteLength(expected),
+        })),
+        args,
+      );
+      assert.equal(text(result), expected);
+      assert.equal(reportOf(result, "grep")?.linePreviewLimit, kept);
+    }
+  }));
+
 test("grep output truncates preview rows → reports only displayed preview facts", async () =>
   withDir(async (dir) => {
     const paths = [join(dir, "a.txt"), join(dir, "z.txt")];

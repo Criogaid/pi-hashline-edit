@@ -68,21 +68,18 @@ function searchIncompleteError(
   });
 }
 
-function previewLine(
-  text: string,
-  column = 0,
-  maxUnits: number,
-): { text: string; wasTruncated: boolean } {
-  if (text.length <= maxUnits) return { text, wasTruncated: false };
+function previewLine(text: string, column = 0, maxUnits: number): { text: string; kept?: number } {
+  if (text.length <= maxUnits) return { text };
   const lead = Math.min(GREP_PREVIEW_LEAD, Math.floor(maxUnits / 5));
   let start = Math.max(0, Math.min(column - lead, text.length - maxUnits));
   // Slice at UTF-16 boundaries without splitting an astral character.
   if (start > 0 && /[\uDC00-\uDFFF]/.test(text[start])) start++;
   let end = Math.min(text.length, start + maxUnits);
   if (end < text.length && /[\uDC00-\uDFFF]/.test(text[end])) end--;
+  if (end === start) return { text: "…", kept: 0 };
   return {
     text: `[partial, columns ${start + 1}-${end}] ${start ? "…" : ""}${text.slice(start, end)}${end < text.length ? "…" : ""}`,
-    wasTruncated: true,
+    kept: end - start,
   };
 }
 
@@ -99,16 +96,13 @@ interface FormatMatchesOptions {
 interface FormattedBlock {
   readonly lines: readonly string[];
   readonly invalidUtf8?: string;
-  /** Zero-based index within this block, including its file header. */
-  readonly firstTruncatedLine?: number;
-  /** UTF-16 units kept in this block's narrowest cut preview. */
-  readonly previewUnits?: number;
+  /** Rows that establish a narrower displayed preview, indexed from the file header. */
+  readonly previewMinimums?: readonly { index: number; units: number }[];
 }
 
 /**
  * One file's content block: its header, then a row for each line the second read shows. The
- * first row is narrowed until the header and that row fit the payload, so a long path or a
- * small budget never leaves a block with no row.
+ * first row is narrowed to the space remaining after its header.
  */
 function contentBlock(
   { filePath, rows, snapshot }: GrepFileMatch,
@@ -119,51 +113,58 @@ function contentBlock(
   const header = formatFileHeader(displayPath, rows.length);
   const lines = [header];
   const firstRowBytes = budget.grepBytes - Buffer.byteLength(header) - 1;
-  let firstTruncatedLine: number | undefined;
-  let previewUnits: number | undefined;
+  const previewMinimums: { index: number; units: number }[] = [];
   return {
     onLine(number, text) {
       // Rows make CR visible one unit for one, so preview columns stay source columns.
       const column = columns.get(number);
       const row = (display: string) =>
         snapshot.validUtf8 ? anchors.row(number, text, display) : plainRow(number, display);
-      let units = budget.grepPreviewUnits;
-      let preview = previewLine(text, column, units);
+      let preview = previewLine(text, column, budget.grepPreviewUnits);
       if (lines.length === 1) {
         // A row is its prefix followed by the CR-visible preview.
         const prefixBytes = Buffer.byteLength(row(""));
         const fits = (candidate: { text: string }) =>
           prefixBytes + Buffer.byteLength(displayCarriageReturns(candidate.text)) <= firstRowBytes;
         if (!fits(preview)) {
-          // The widest narrower preview that fits, or one unit when none does.
+          // Prefer a column range. If its label crowds out the match, keep the character alone.
           let low = 1;
-          let high = Math.min(units, text.length) - 1;
-          units = 1;
-          preview = previewLine(text, column, 1);
+          let high = Math.min(budget.grepPreviewUnits, text.length) - 1;
+          preview = { text: "…", kept: 0 };
           while (low <= high) {
             const middle = Math.floor((low + high) / 2);
             const candidate = previewLine(text, column, middle);
             if (fits(candidate)) {
-              units = middle;
               preview = candidate;
               low = middle + 1;
             } else {
               high = middle - 1;
             }
           }
+          if (preview.kept === 0 && text.length) {
+            let start = Math.min(column ?? 0, text.length - 1);
+            if (/[\uDC00-\uDFFF]/.test(text[start])) start--;
+            const character = String.fromCodePoint(text.codePointAt(start)!);
+            const compact = {
+              text: `${start ? "…" : ""}${character}${start + character.length < text.length ? "…" : ""}`,
+              kept: character.length,
+            };
+            if (fits(compact)) preview = compact;
+          }
         }
       }
-      if (preview.wasTruncated) {
-        firstTruncatedLine ??= lines.length;
-        previewUnits = Math.min(previewUnits ?? units, units);
+      if (
+        preview.kept !== undefined &&
+        preview.kept < (previewMinimums.at(-1)?.units ?? Infinity)
+      ) {
+        previewMinimums.push({ index: lines.length, units: preview.kept });
       }
       lines.push(row(preview.text));
     },
     finish: () => ({
       lines,
       invalidUtf8: snapshot.validUtf8 ? undefined : displayPath,
-      firstTruncatedLine,
-      previewUnits,
+      previewMinimums,
     }),
   };
 }
@@ -250,9 +251,10 @@ function assembleGrepOutput(options: AssembleGrepOutputOptions): {
   for (const block of blocks) {
     if (remainingLines <= 0) break;
     if (block.invalidUtf8 && remainingLines > 1) invalidUtf8.push(block.invalidUtf8);
-    // Only a block's first row can be narrower than the others, and it is the first row shown.
-    if (block.firstTruncatedLine !== undefined && remainingLines > block.firstTruncatedLine)
-      previewLimit = Math.min(previewLimit ?? Infinity, block.previewUnits!);
+    for (const { index, units } of block.previewMinimums ?? []) {
+      if (index >= remainingLines) break;
+      previewLimit = Math.min(previewLimit ?? Infinity, units);
+    }
     remainingLines -= block.lines.length + (outputMode === "content" ? 1 : 0);
   }
   // One complete content or count block already states its path and match count.

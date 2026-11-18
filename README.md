@@ -183,6 +183,8 @@ Read reports `nextOffset` when its default line limit or byte budget cuts a wind
 
 For a truncated grep payload, the report says to retry with `context: 0` when the call returned context rows, and otherwise to narrow the search. Inspect full lines before rewriting partial previews: use Bash for paths listed in `invalidUtf8`, and `read` for valid UTF-8.
 
+If the first grep row has no room for a column range, the preview keeps a complete character with ellipses marking omitted text. When only the ellipsis fits, `linePreviewLimit` is zero.
+
 ## Limits
 
 - Anchors are short checksums: they catch changed and shifted lines, but can collide and do not prove the model read the line.

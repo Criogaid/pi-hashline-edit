@@ -1157,7 +1157,7 @@ test("long-line previews preserve full-line anchors across literal and JavaScrip
       );
       assert.equal(
         reportOf(result, "grep")?.linePreviewLimit,
-        DEFAULT_OUTPUT_BUDGETS.grepPreviewUnits,
+        DEFAULT_OUTPUT_BUDGETS.grepPreviewUnits - 1,
       );
     }
   } finally {
