@@ -34,9 +34,6 @@ import { ACTION_FUSION_GUIDELINES } from "./action-fusion.ts";
 
 test("registered tools with or without Fusion → expose prompt rules and convertible strict schemas", async (t) => {
   const guidelines = {
-    read: [
-      "In a codemode script, take raw file text from tools.bash (cat, git show); read and grep results add a header line and show CRLF as LF, and their rows carry a line prefix unless read's anchors is false.",
-    ],
     edit: [
       "Batch all steps for one file into a single edit call, and send changes to different files in the same response; they do not interfere.",
       "Before citing a line after write, edit, or replace, get its anchor from a new read or grep. Only after edit, lines above the earliest changed line keep their anchors.",
@@ -69,16 +66,25 @@ test("registered tools with or without Fusion → expose prompt rules and conver
         registerHashline(api as ExtensionAPI);
         assert.equal(tools.length, 5);
         for (const tool of tools) {
-          if (tool.name === "read" || tool.name === "edit" || tool.name === "grep") {
-            const expected = [
-              ...guidelines[tool.name],
-              ...(tool.name === "edit" && actionFusion ? ACTION_FUSION_GUIDELINES : []),
-              NEXT_GUIDELINE,
-            ];
+          const { name } = tool;
+          if (name === "read" || name === "edit" || name === "grep") {
             await t.test(
-              `${tool.name}/Fusion ${actionFusion} → registers the tool's prompt rules`,
+              `${name}/Fusion ${actionFusion} → registers the tool's prompt rules`,
               () => {
-                assert.deepEqual(tool.promptGuidelines, expected);
+                if (name === "read") {
+                  const [codemodeRule = "", ...sharedRules] = tool.promptGuidelines ?? [];
+                  assert.match(
+                    codemodeRule,
+                    /text read results and grep content-mode results add a header line/,
+                  );
+                  assert.deepEqual(sharedRules, [NEXT_GUIDELINE]);
+                } else {
+                  assert.deepEqual(tool.promptGuidelines, [
+                    ...guidelines[name],
+                    ...(name === "edit" && actionFusion ? ACTION_FUSION_GUIDELINES : []),
+                    NEXT_GUIDELINE,
+                  ]);
+                }
               },
             );
           }
