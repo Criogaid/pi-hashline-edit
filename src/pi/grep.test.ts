@@ -21,7 +21,7 @@ import { Worker } from "node:worker_threads";
 const { makeEditOverride } = await import("./tool-factories.testing.ts");
 import { callTool } from "./tool-call.testing.ts";
 const { DEFAULT_CONFIG } = await import("./tool-factories.testing.ts");
-import { formatByteSize } from "./budgets.ts";
+import { formatByteSize, outputBudgetsFor } from "./budgets.ts";
 import { reportOf } from "./report.ts";
 const { grepCounts } = await import("./grep-output.testing.ts");
 const { parseFileHeader } = await import("./grep-output.ts");
@@ -451,6 +451,37 @@ test("grep output byte limit → recovery follows output mode and effective cont
       assert.equal(report.matchLimit, limit === 12 ? limit : undefined, scenario);
       assert.equal(report.next, expected, scenario);
     }
+  }));
+
+test("small grep payload and one long multibyte match → keeps the anchored preview", async () =>
+  withDir(async (dir) => {
+    const path = join(dir, "wide.txt");
+    const pattern = "命中";
+    const line = pattern + "文".repeat(600);
+    await writeFile(path, `${line}\n`);
+    const { backend } = fakeBackend({ paths: [path] });
+    const budget = outputBudgetsFor(4_096);
+    const result = await callTool(
+      makeMockGrep(dir, DEFAULT_CONFIG, backend, () => budget),
+      {
+        path,
+        pattern,
+        literal: true,
+        context: 0,
+        limit: 1,
+      },
+    );
+
+    const [, row = ""] = text(result).split("\n");
+    const width = budget.grepPreviewUnits;
+    assert.deepEqual(parseHashline(row), {
+      lineNo: "1",
+      content: `[partial, columns 1-${width}] ${line.slice(0, width)}…`,
+    });
+    const report = reportOf(result, "grep");
+    assert.ok(report);
+    assert.equal(report.linePreviewLimit, width);
+    assert.equal(report.outputLimit, undefined);
   }));
 
 test("grep output truncates preview rows → reports only displayed preview facts", async () =>
