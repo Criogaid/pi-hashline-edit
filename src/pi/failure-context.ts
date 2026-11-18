@@ -29,9 +29,8 @@ function selectAmbiguousCandidates(candidates: readonly Anchor[]): readonly Anch
   return candidates.slice(0, MAX_AMBIGUOUS_CANDIDATES);
 }
 
-type ContextRow = { line: number; text: string };
-
-function collectContextRows(
+/** Keep complete rows in contiguous neighborhoods, counting compact JSON bytes. */
+function collectNeighborhoods(
   lines: readonly string[],
   centers: readonly number[],
   anchors: AnchorFormatter,
@@ -45,44 +44,42 @@ function collectContextRows(
     ]),
   );
   const total = windows.reduce((sum, [start, end]) => sum + end - start, 0);
-  const rows: ContextRow[] = [];
-  let bytes = 0;
+  const groups: { lines: string; rows: string[] }[] = [];
+  let first = 0;
+  let previous = -1;
+  let shown = 0;
+  let bytes = Buffer.byteLength("[]");
 
   for (const [start, end] of windows) {
     for (let line = start; line < end; line++) {
       const text = anchors.row(line, lines[line - 1]);
-      const rowBytes = Buffer.byteLength(text, "utf8");
       // Neighborhoods must not bypass the standalone candidate's complete-row limit.
-      if (candidateLines.has(line) && rowBytes > budget.fieldBytes) continue;
-      if (bytes + rowBytes + 1 > budget.blockBytes) continue;
-      rows.push({ line, text });
-      bytes += rowBytes + 1;
+      if (candidateLines.has(line) && Buffer.byteLength(text) > budget.fieldBytes) continue;
+      const group = line === previous + 1 ? groups.at(-1) : undefined;
+      const range = `${group ? first : line}-${line}`;
+      const overhead = group
+        ? 1 + range.length - group.lines.length // Row comma and change in the ASCII range.
+        : Number(groups.length > 0) + Buffer.byteLength(JSON.stringify({ lines: range, rows: [] }));
+      const added = Buffer.byteLength(JSON.stringify(text)) + overhead;
+      if (bytes + added > budget.blockBytes) continue;
+      if (group) {
+        group.rows.push(text);
+        group.lines = range;
+      } else {
+        groups.push({ lines: range, rows: [text] });
+        first = line;
+      }
+      previous = line;
+      shown++;
+      bytes += added;
     }
   }
-  return { rows, omitted: total - rows.length };
-}
-
-/** Group shown rows into contiguous neighborhoods; gaps mark omitted rows. */
-function groupContextRows(rows: readonly ContextRow[]) {
-  const groups: { lines: string; rows: string[] }[] = [];
-  let previous: ContextRow | undefined;
-  let first = 0;
-  for (const row of rows) {
-    if (!previous || row.line !== previous.line + 1) {
-      groups.push({ lines: "", rows: [] });
-      first = row.line;
-    }
-    const group = groups[groups.length - 1];
-    group.rows.push(row.text);
-    group.lines = `${first}-${row.line}`;
-    previous = row;
-  }
-  return groups;
+  return { groups, omitted: total - shown };
 }
 
 /** Observation rows around listed ambiguous candidates, lowest lines first. */
 function ambiguousCandidateNeighborhoods(
-  currentText: string,
+  currentLines: readonly string[],
   failures: readonly AnchorFailure[],
   anchors: AnchorFormatter,
   budget: OutputBudgets,
@@ -98,15 +95,15 @@ function ambiguousCandidateNeighborhoods(
   for (const failure of failures) {
     if (failure.recovery.kind === "found") candidateLines.add(failure.recovery.newLine);
   }
-  const { rows, omitted } = collectContextRows(
-    splitLines(currentText),
+  const { groups, omitted } = collectNeighborhoods(
+    currentLines,
     centers,
     anchors,
     candidateLines,
     budget,
   );
   return {
-    candidateNeighborhoods: groupContextRows(rows),
+    candidateNeighborhoods: groups,
     ...(omitted ? { omittedNeighborhoodRows: omitted } : {}),
   };
 }
@@ -174,7 +171,7 @@ export function describeEditFailure(
   const currentLines = splitLines(currentText);
   // Leading entries whose compact JSON fits the block; whole entries are omitted, never cut.
   const kept: AnchorFailureFact[] = [];
-  let bytes = 0;
+  let bytes = 1; // Brackets less the comma charged to the first entry.
   for (const failure of failures) {
     const entry = failureEntry(failure, anchors, currentLines, budget);
     bytes += Buffer.byteLength(JSON.stringify(entry)) + 1;
@@ -186,7 +183,7 @@ export function describeEditFailure(
     facts: {
       failures: kept,
       ...(omitted ? { omittedFailures: omitted } : {}),
-      ...ambiguousCandidateNeighborhoods(currentText, failures, anchors, budget),
+      ...ambiguousCandidateNeighborhoods(currentLines, failures, anchors, budget),
     },
   });
 }

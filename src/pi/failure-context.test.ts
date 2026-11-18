@@ -113,7 +113,10 @@ test("more than eight ambiguous candidates → context uses the same candidate p
 });
 
 test("neighborhood exceeds byte budget → whole rows and explicit omission counts", () => {
-  const exact = "x".repeat(DEFAULT_OUTPUT_BUDGETS.blockBytes - Buffer.byteLength("1#XXXX│\n"));
+  const empty = [{ lines: "1-1", rows: ["1#XXXX│"] }];
+  const exact = "x".repeat(
+    DEFAULT_OUTPUT_BUDGETS.blockBytes - Buffer.byteLength(JSON.stringify(empty)),
+  );
   const cases = [
     { lines: [exact, "target", "last"], shown: [1], omitted: 2 },
     { lines: ["界".repeat(6000), "target", "last"], shown: [2, 3], omitted: 1 },
@@ -140,7 +143,7 @@ test("neighborhood exceeds byte budget → whole rows and explicit omission coun
     );
     assert.equal(result.omittedNeighborhoodRows, omitted);
     assert.ok(
-      Buffer.byteLength(rows(result).join("\n") + (rows(result).length ? "\n" : "")) <=
+      Buffer.byteLength(JSON.stringify(result.candidateNeighborhoods)) <=
         DEFAULT_OUTPUT_BUDGETS.blockBytes,
     );
   }
@@ -346,4 +349,22 @@ test("unresolved row out of range or oversized → omission facts contain no rec
       /\b(?:confirm|read|grep|retry|retries)\b/i,
     );
   }
+});
+
+test("escaped neighborhood rows → count their JSON bytes before reporting complete rows", () => {
+  const budget = outputBudgetsFor(1);
+  const report = rejectedEdit(
+    `current\n${"\\".repeat(Math.floor(budget.blockBytes * 0.75))}\nold\nold\n`,
+    [{ op: "delete", anchor: oldAnchor }],
+    4,
+    budget,
+  );
+  assert.ok(report.candidateNeighborhoods);
+  assert.ok(Buffer.byteLength(JSON.stringify(report.candidateNeighborhoods)) <= budget.blockBytes);
+  const shown = report.candidateNeighborhoods.flatMap((group) => group.rows);
+  assert.deepEqual(
+    shown.map((row) => Number(row.split("#")[0])),
+    [1, 3, 4],
+  );
+  assert.equal(report.omittedNeighborhoodRows, 1);
 });

@@ -26,7 +26,7 @@ import {
   type FailureContext,
   type ReportDetails,
 } from "./report.ts";
-import { causeOf } from "./report-cause.ts";
+import { boundedText, causeOf } from "./report-cause.ts";
 import type { OutputBudgets } from "./budgets.ts";
 
 /** Final success carries tool details; final failure carries only its report; neither carries progress. */
@@ -136,7 +136,12 @@ export function finalizeMutation<TDetails extends object, TTool extends Mutation
     ...facts,
     freshness: fresh ? undefined : observation.freshness,
     freshnessError: causeOf(observation.error, budget.fieldBytes),
-    then_run: command ? { status: command.status, ...(output ? { output } : {}) } : undefined,
+    then_run: command
+      ? {
+          status: command.status,
+          ...(output ? { output: boundedText(output, budget.fieldBytes) } : {}),
+        }
+      : undefined,
     progressError: causeOf(command?.progressError, budget.fieldBytes),
   } as SuccessReport;
   return reportResult(report, [], details);

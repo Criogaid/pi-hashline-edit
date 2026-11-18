@@ -8,7 +8,7 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createActionFusionExecutor } from "./action-fusion.ts";
-import { makeWriteOverride } from "./tool-factories.testing.ts";
+import { makeWriteOverride, DEFAULT_OUTPUT_BUDGETS } from "./tool-factories.testing.ts";
 import { makeReplaceTool } from "./tool-factories.testing.ts";
 import type { SuccessReport } from "./report-schema.ts";
 import { callTool, createToolContext } from "./tool-call.testing.ts";
@@ -50,6 +50,30 @@ test("command content includes images → report text joins only text blocks", a
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
+});
+
+test("oversized command diagnostic → bounds model output and retains the original command card", async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), "hashline-command-budget-"));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const budget = DEFAULT_OUTPUT_BUDGETS;
+  const output = `opening\n${"x".repeat(budget.fieldBytes * 2)}\nlast line`;
+  const executeTool: SessionCommand = async () =>
+    commandCompletion({ content: [{ type: "text", text: output }] }, true);
+  let displayedOutput: unknown;
+  const fusion = createActionFusionExecutor((progress) => {
+    if (progress.command === "failed") displayedOutput = progress.result?.content[0];
+  });
+  const result = await callTool(
+    makeWriteOverride(dir, fusion),
+    { path: "file.txt", content: "saved", mode: "create", then_run: { command: "check" } },
+    { ctx: { ...(await createToolContext(dir, t)), executeTool } },
+  );
+  const report = reportOf({ content: result.content }, "write");
+  assert.equal(report?.then_run?.status, "failed");
+  const shown = report.then_run.output;
+  assert.ok(shown && Buffer.byteLength(shown) <= budget.fieldBytes);
+  assert.ok(shown.startsWith("opening\n") && shown.endsWith("\nlast line"));
+  assert.deepEqual(displayedOutput, { type: "text", text: output });
 });
 
 for (const [name, before, after] of [
