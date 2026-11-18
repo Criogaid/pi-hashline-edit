@@ -12,7 +12,7 @@ import { syncBuiltinESMExports } from "node:module";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import fsPromises from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, toNamespacedPath } from "node:path";
 import { initTheme } from "@earendil-works/pi-coding-agent";
 import { theme } from "../../node_modules/@earendil-works/pi-coding-agent/dist/modes/interactive/theme/theme.js";
 import { computeLineHash } from "../core/hash.ts";
@@ -270,6 +270,24 @@ test("some grep paths are missing → searches existing paths and reports missin
         if (limit === 1) assert.equal(report?.matchLimit, 1);
       });
     }
+  }));
+
+test("question mark in the workspace path → a missing relative name does not hide existing matches", async () =>
+  withDir(async (dir) => {
+    const cwd = process.platform === "win32" ? toNamespacedPath(dir) : join(dir, "work?");
+    if (process.platform !== "win32") await mkdir(cwd);
+    const file = join(cwd, "present.txt");
+    await writeFile(file, "value\n");
+    const { backend } = fakeBackend({ paths: [file] });
+    const result = await callTool(makeMockGrep(cwd, DEFAULT_CONFIG, backend), {
+      literal: true,
+      pattern: "value",
+      path: ["missing.txt", "present.txt"],
+      outputMode: "count",
+    });
+    assert.equal(result.isError, undefined, JSON.stringify(reportOf(result, "grep")));
+    assert.equal(grepCounts(result).matches, 1);
+    assert.deepEqual(reportOf(result, "grep")?.missing, [join(cwd, "missing.txt")]);
   }));
 
 test("every grep path is missing → reports all resolved paths with default recovery", async (t) =>

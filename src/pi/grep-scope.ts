@@ -39,6 +39,7 @@ interface SearchPathInfo {
 export async function resolveSearchPaths(cwd: string, path: readonly string[] | undefined) {
   const pathInfo: SearchPathInfo[] = [];
   const missing: string[] = [];
+  let wildcard = false;
   for (const value of path ?? ["."]) {
     const searchPath = canonicalPath(cwd, value);
     try {
@@ -47,9 +48,11 @@ export async function resolveSearchPaths(cwd: string, path: readonly string[] | 
       // Only a missing path is PATH_NOT_FOUND; other filesystem errors keep their cause.
       if (errnoCode(error) !== "ENOENT") throw error;
       missing.push(searchPath);
+      // The working directory and Windows namespace syntax are not caller globs.
+      const name = process.platform === "win32" ? value.replace(/^@?\\\\\?\\/, "") : value;
+      wildcard ||= !name.startsWith("file://") && /[*?]/.test(name);
     }
   }
-  const wildcard = missing.some((path) => /[*?]/.test(path));
   if (wildcard || (missing.length && pathInfo.length === 0))
     throw new HashlineError("PATH_NOT_FOUND", PATH_ERROR_MESSAGES.PATH_NOT_FOUND, {
       facts: { missing },
