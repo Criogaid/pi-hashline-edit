@@ -97,6 +97,9 @@ export async function listCandidates(options: {
     }
     return onCandidate({ filePath, lines });
   };
+  // A failed optimization can be retried only before it has offered any candidates.
+  const canWiden = (listing: RgRunResult | undefined) =>
+    !listing || (listing.code === 2 && !listedAny);
   const scoped = [...scopeArgs(scope), "--", ...scope.searchPaths];
   const patterns = query.multiline ? undefined : lineCandidatePatterns(query);
   let listing = patterns
@@ -113,8 +116,7 @@ export async function listCandidates(options: {
         offer,
       ).catch(widenOnArgumentLimit)
     : undefined;
-  // A launch limit or a pattern rejected by rg before listing any file allows a wider search.
-  if (!listing || (listing.code === 2 && !listedAny)) {
+  if (canWiden(listing)) {
     const prefilter = extractPrefilter(query);
     if (prefilter.kind === "literals") {
       const pattern = literalAlternation(prefilter.literals);
@@ -132,7 +134,7 @@ export async function listCandidates(options: {
           signal,
           offer,
         ).catch(widenOnArgumentLimit);
-        if (listing) return { listing, scanLimitReached };
+        if (!canWiden(listing)) return { listing, scanLimitReached };
       }
     }
     scanAll = true;

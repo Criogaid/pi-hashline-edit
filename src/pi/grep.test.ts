@@ -1527,7 +1527,7 @@ test("line discovery status and emitted files → fallback only for code 2 befor
     for (const [code, paths, kinds] of [
       [0, [file], ["lines"]],
       [1, [], ["lines"]],
-      [2, [], ["lines", "paths"]],
+      [2, [], ["lines", "paths", "paths"]],
       [2, [file], ["lines"]],
     ] as const) {
       const fake = fakeBackend({ code, paths: [...paths], lines: [1] });
@@ -1622,4 +1622,24 @@ test("rg rejects line patterns before listing files → successful file fallback
       [...lines.calls, ...paths.calls].map(({ kind }) => kind),
       ["lines", "paths"],
     );
+  }));
+
+test("file prefilter fails before listing any path → search unfiltered candidates", async () =>
+  withDir(async (dir) => {
+    const file = join(dir, "input.txt");
+    await writeFile(file, "needle\n");
+    const rejected = fakeBackend({ code: 2, stderr: "prefilter rejected" });
+    const unfiltered = fakeBackend({ paths: [file] });
+    const result = await callTool(
+      makeMockGrep(dir, DEFAULT_CONFIG, {
+        runRgPaths: (...args) =>
+          (args[0].includes("--files-with-matches") ? rejected : unfiltered).backend.runRgPaths(
+            ...args,
+          ),
+      }),
+      { path: dir, pattern: "needle", literal: true, multiline: true },
+    );
+    assert.equal(result.isError, undefined, JSON.stringify(reportOf(result, "grep")));
+    assert.equal(grepCounts(result).matches, 1);
+    assert.equal(reportOf(result, "grep")?.diagnostics, undefined);
   }));
