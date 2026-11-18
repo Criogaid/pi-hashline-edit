@@ -148,8 +148,16 @@ async function searchFile(
       let start = 0;
       for (;;) {
         const lf = text.indexOf("\n", start);
-        lineUnits += (lf === -1 ? text.length : lf) - start;
-        if (lineUnits > MAX_SEARCH_LINE_UNITS) {
+        const end = lf === -1 ? text.length : lf;
+        lineUnits += end - start;
+        // One extra CR can belong to the terminator, including across scan chunks.
+        if (
+          lineUnits > MAX_SEARCH_LINE_UNITS &&
+          !(
+            lineUnits === MAX_SEARCH_LINE_UNITS + 1 &&
+            (end === 0 ? pending.endsWith("\r") : text[end - 1] === "\r")
+          )
+        ) {
           oversized = true;
           pending = "";
           return;
@@ -171,7 +179,8 @@ async function searchFile(
     decoding: "lossy",
   });
   if (stats.hasNul) return undefined;
-  if (oversized) throw new SearchFileLimitError(query.multiline);
+  if (oversized || lineUnits > MAX_SEARCH_LINE_UNITS)
+    throw new SearchFileLimitError(query.multiline);
   await send(pending);
   return {
     rows,

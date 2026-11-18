@@ -91,6 +91,33 @@ test("JS grep: malformed UTF-8 matches the preview text without editable anchors
   assert.doesNotMatch(body.text, /\d+#[0-9A-Z]+/);
 });
 
+test("line length at the limit → only LF and CRLF terminators are excluded", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "hl-grep-line-bound-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const path = join(directory, "large.txt");
+  const tool = makeGrepOverride(directory, DEFAULT_CONFIG);
+  const maxLineUnits = 64 * 1024 * 1024;
+  const body = Buffer.alloc(maxLineUnits, 0x61);
+  // Put CR at the end of a 64 KiB scan chunk in the split case.
+  const prefix = "x".repeat(64 * 1024 - 2) + "\n";
+  for (const [leading, ending, accepted] of [
+    ["", "\n", true],
+    ["", "\r\n", true],
+    [prefix, "\r\n", true],
+    ["", "\r", false],
+    ["", "a\r\n", false],
+  ] as const) {
+    await writeFile(path, Buffer.concat([Buffer.from(leading), body, Buffer.from(ending)]));
+    const result = await callTool(tool, { path, pattern: "a", literal: true, outputMode: "count" });
+    if (accepted) {
+      assert.equal(result.isError, undefined, JSON.stringify(reportOf(result, "grep")));
+      assert.equal(grepCounts(result).matches, 1);
+    } else {
+      assert.equal(reportOf(result, "grep")?.error, "SEARCH_INCOMPLETE");
+    }
+  }
+});
+
 test("oversized line or multiline input → explicit incomplete-search diagnostics", async (t) => {
   const directory = await mkdtemp(join(tmpdir(), "hl-grep-js-bound-"));
   t.after(() => rm(directory, { recursive: true, force: true }));
