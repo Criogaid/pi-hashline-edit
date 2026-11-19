@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { test } from "node:test";
 import type { ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
@@ -34,7 +34,7 @@ test("relative Node preload → registration uses the workspace", async (t) => {
 });
 
 test("SDK cwd differs from process cwd → project settings and relative tools use the workspace", async (t) => {
-  const cwd = await mkdtemp(join(tmpdir(), "hashline-workspace-"));
+  const cwd = await mkdtemp(join(tmpdir(), "hashline-目录 % & 😀-"));
   t.after(() => rm(cwd, { recursive: true, force: true }));
   const settings = join(cwd, ".pi", "settings.json");
   await mkdir(join(cwd, ".pi"));
@@ -42,11 +42,25 @@ test("SDK cwd differs from process cwd → project settings and relative tools u
   await writeFile(join(cwd, "workspace.txt"), "from the SDK workspace\n");
   const hostCwd = process.cwd();
   assert.notEqual(cwd, hostCwd);
+  const workspaceQueries: { command: string; code: number }[] = [];
   const { session } = await openTestSession(t, {
     cwd,
     tools: ["read", "write", "edit"],
-    configure: registerHashline,
+    configure: (pi) =>
+      registerHashline({
+        ...pi,
+        async exec(command, args, options) {
+          const result = await pi.exec(command, args, options);
+          workspaceQueries.push({ command: basename(command), code: result.code });
+          return result;
+        },
+      }),
   });
+  if (process.platform === "win32") {
+    assert.equal(workspaceQueries[0]?.command, "cscript.exe");
+    if (workspaceQueries[0]?.code === 0) assert.equal(workspaceQueries.length, 1);
+  }
+  await session.bindExtensions({ onError: ({ error }) => assert.fail(error) });
   const read = session.getToolDefinition("read");
   assert.ok(read);
   const result = await callTool(read, { path: "workspace.txt" }, { ctx: { cwd } });
@@ -66,10 +80,12 @@ test("SDK cwd differs from process cwd → project settings and relative tools u
   assert.equal(reportOf(written, "write")?.publication, "PUBLISHED");
   assert.equal(await readFile(join(cwd, "workspace.txt"), "utf8"), "written\n");
 
+  let replayChecks = 0;
   await session.reload({
     beforeSessionStart: () => {
       assert.ok(session.getToolDefinition("edit")?.prepareArguments);
       assert.ok(session.extensionRunner.getEntryRenderer("hashline-then-run"));
+      replayChecks++;
     },
   });
 
@@ -78,8 +94,10 @@ test("SDK cwd differs from process cwd → project settings and relative tools u
     beforeSessionStart: () => {
       assert.equal(session.getToolDefinition("replace"), undefined);
       assert.equal(session.extensionRunner.getEntryRenderer("hashline-then-run"), undefined);
+      replayChecks++;
     },
   });
+  assert.equal(replayChecks, 2);
   const builtin = session.getToolDefinition("edit");
   assert.ok(builtin && Type.IsObject(builtin.parameters));
   assert.ok("edits" in builtin.parameters.properties);
