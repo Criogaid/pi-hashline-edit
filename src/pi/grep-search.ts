@@ -272,6 +272,7 @@ export async function searchFiles(options: {
     releaseAll();
   };
 
+  // A fatal result ends this slot; only a failed worker on a skipped file needs replacing.
   const consume = async (run: Run): Promise<"restart" | void> => {
     for (let item = await next(); item !== undefined; item = await next()) {
       const { candidate, position } = item;
