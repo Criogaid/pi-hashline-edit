@@ -5,15 +5,17 @@ import type { HashlineEditConfig } from "./config.ts";
 import type { OutputBudgetProvider } from "./budgets.ts";
 
 import * as real from "./rg-process.ts";
-export type MockRg = Pick<typeof real, "runRgPaths" | "runRgLines">;
-const overrides = new AsyncLocalStorage<Partial<MockRg>>();
+export type MockRg = Partial<Pick<typeof real, "runRgPaths" | "runRgLines" | "rgRejectsPatterns">>;
+const overrides = new AsyncLocalStorage<MockRg>();
 const moduleMock = mock.module("./rg-process.ts", {
   namedExports: {
     ...real,
-    runRgPaths: (...args: Parameters<MockRg["runRgPaths"]>) =>
+    runRgPaths: (...args: Parameters<typeof real.runRgPaths>) =>
       (overrides.getStore()?.runRgPaths ?? real.runRgPaths)(...args),
-    runRgLines: (...args: Parameters<MockRg["runRgLines"]>) =>
+    runRgLines: (...args: Parameters<typeof real.runRgLines>) =>
       (overrides.getStore()?.runRgLines ?? real.runRgLines)(...args),
+    rgRejectsPatterns: (...args: Parameters<typeof real.rgRejectsPatterns>) =>
+      (overrides.getStore()?.rgRejectsPatterns ?? real.rgRejectsPatterns)(...args),
   },
 });
 
@@ -27,7 +29,7 @@ const { listCandidates } = await import("./grep-candidates.ts");
 export function makeMockGrep(
   cwd: string,
   config: HashlineEditConfig,
-  rg: Partial<MockRg>,
+  rg: MockRg,
   budgets?: OutputBudgetProvider,
 ) {
   const tool = factories.makeGrepOverride(cwd, config, budgets);
@@ -41,7 +43,7 @@ export function makeMockGrep(
 export function searchWithMockRg({
   backend,
   ...options
-}: Parameters<typeof searchFiles>[0] & { readonly backend: Partial<MockRg> }) {
+}: Parameters<typeof searchFiles>[0] & { readonly backend: MockRg }) {
   return overrides.run(backend, () => searchFiles(options));
 }
 
@@ -51,6 +53,7 @@ export async function fileCandidateArgs(query: GrepQuery): Promise<string[]> {
   await overrides.run(
     {
       runRgLines: async () => ({ code: 2, stderr: "", stopped: false }),
+      rgRejectsPatterns: async () => true,
       runRgPaths: async (args) => {
         captured = args.slice(0, args.indexOf("--null"));
         return { code: 1, stderr: "", stopped: false };

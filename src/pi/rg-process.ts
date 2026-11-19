@@ -179,6 +179,25 @@ export function runRgPaths(
   });
 }
 
+/**
+ * Whether rg rejects pattern arguments. Exit code 2 also covers paths rg could not read, so the
+ * patterns run alone against empty standard input, where only a pattern error fails.
+ */
+export async function rgRejectsPatterns(
+  patternArgs: readonly string[],
+  signal: AbortSignal | undefined,
+): Promise<boolean> {
+  const result = await runRg(
+    [...COMMON_RG_ARGS, ...patternArgs, "--", "-"],
+    signal,
+    async (stdout) => {
+      for await (const _ of stdout);
+      return true;
+    },
+  );
+  return result.code === 2;
+}
+
 /** A path rg reported; one that is not valid UTF-8 cannot be addressed by tools. */
 function decodePath(record: Buffer): string {
   const path = record.toString("utf8");

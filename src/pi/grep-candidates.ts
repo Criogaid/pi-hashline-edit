@@ -18,6 +18,7 @@ import {
   MAX_RG_PATTERN_UNITS,
   RG_PATTERN_FLAG,
   rgPatternArgUnits,
+  rgRejectsPatterns,
   runRgLines,
   runRgPaths,
   type RgRunResult,
@@ -97,18 +98,25 @@ export async function listCandidates(options: {
     }
     return onCandidate({ filePath, lines });
   };
-  // A failed optimization can be retried only before it has offered any candidates.
-  const canWiden = (listing: RgRunResult | undefined) =>
-    !listing || (listing.code === 2 && !listedAny);
+  /**
+   * A failed optimization can be retried only before it has offered any candidates, and only
+   * when rg could not run its patterns. A completed search that hit unreadable paths stands.
+   */
+  const canWiden = async (listing: RgRunResult | undefined, patternArgs: readonly string[]) =>
+    !listing ||
+    (listing.code === 2 &&
+      !listedAny &&
+      (await rgRejectsPatterns([...BYTE_PATTERN_ARGS, ...patternArgs], signal)));
   const scoped = [...scopeArgs(scope), "--", ...scope.searchPaths];
   const patterns = query.multiline ? undefined : lineCandidatePatterns(query);
-  let listing = patterns
+  const linePatternArgs = patterns?.flatMap((pattern) => [RG_PATTERN_FLAG, pattern]);
+  let listing = linePatternArgs
     ? await runRgLines(
         [
           ...COMMON_RG_ARGS,
           ...BYTE_PATTERN_ARGS,
           ...LINE_LISTING_ARGS,
-          ...patterns.flatMap((pattern) => [RG_PATTERN_FLAG, pattern]),
+          ...linePatternArgs,
           ...scoped,
         ],
         signal,
@@ -116,25 +124,25 @@ export async function listCandidates(options: {
         offer,
       ).catch(widenOnArgumentLimit)
     : undefined;
-  if (canWiden(listing)) {
+  if (!linePatternArgs || (await canWiden(listing, linePatternArgs))) {
     const prefilter = extractPrefilter(query);
     if (prefilter.kind === "literals") {
       const pattern = literalAlternation(prefilter.literals);
       if (rgPatternArgUnits(pattern) <= MAX_RG_PATTERN_UNITS) {
+        const filePatternArgs = [RG_PATTERN_FLAG, pattern];
         listing = await runRgPaths(
           [
             ...COMMON_RG_ARGS,
             "--files-with-matches",
             ...BYTE_PATTERN_ARGS,
-            RG_PATTERN_FLAG,
-            pattern,
+            ...filePatternArgs,
             "--null",
             ...scoped,
           ],
           signal,
           offer,
         ).catch(widenOnArgumentLimit);
-        if (!canWiden(listing)) return { listing, scanLimitReached };
+        if (!(await canWiden(listing, filePatternArgs))) return { listing, scanLimitReached };
       }
     }
     scanAll = true;

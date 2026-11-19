@@ -41,6 +41,7 @@ type FakeOptions = {
   onRun?: () => void | Promise<void>;
   paths?: string[];
   lines?: readonly number[];
+  rejectsPatterns?: boolean;
 };
 
 async function withDir<T>(fn: (dir: string) => Promise<T>): Promise<T> {
@@ -53,7 +54,7 @@ async function withDir<T>(fn: (dir: string) => Promise<T>): Promise<T> {
 }
 
 function fakeBackend(options: FakeOptions = {}) {
-  const calls: { kind: "paths" | "lines"; args: readonly string[] }[] = [];
+  const calls: { kind: "paths" | "lines" | "probe"; args: readonly string[] }[] = [];
   const run = async (
     kind: "paths" | "lines",
     args: readonly string[],
@@ -71,11 +72,15 @@ function fakeBackend(options: FakeOptions = {}) {
       stopped: false,
     };
   };
-  const backend: MockRg = {
+  const backend = {
     runRgPaths: (args, _signal, onPath) => run("paths", args, onPath),
     runRgLines: (args, _signal, _maxLines, onFile) =>
       run("lines", args, (file) => onFile(file, options.lines)),
-  };
+    rgRejectsPatterns: async (args) => {
+      calls.push({ kind: "probe", args });
+      return options.rejectsPatterns ?? false;
+    },
+  } satisfies MockRg;
   return { backend, calls };
 }
 
@@ -1096,7 +1101,7 @@ test("reports empty output and ripgrep execution failures", async () => {
     assert.equal(reportOf(noMatches, "grep")?.matches, 0);
     assert.equal(reportOf(noMatches, "grep")?.files, 0);
 
-    const failed = fakeBackend({ code: 2, stderr: "bad regex" });
+    const failed = fakeBackend({ code: 2, stderr: "bad regex", rejectsPatterns: true });
     await expectToolFailure(
       call(makeMockGrep(dir, DEFAULT_CONFIG, failed.backend), {
         pattern: "x",
@@ -1278,17 +1283,6 @@ test("candidate listing reports errors → all output modes retain confirmed mat
         );
       }
     }
-    const fake = fakeBackend({ code: 2, stderr: "Permission denied" });
-    await expectToolFailure(
-      call(makeMockGrep(dir, DEFAULT_CONFIG, fake.backend), {
-        literal: true,
-        pattern: "needle",
-      }),
-      "SEARCH_INCOMPLETE",
-      (report) => {
-        assert.match(JSON.stringify(report.diagnostics), /Permission denied/);
-      },
-    );
   });
 });
 
@@ -1520,15 +1514,14 @@ test("non-multiline or multiline query → use line candidates or the file prefi
     }
   }));
 
-test("line discovery status and emitted files → fallback only for code 2 before any file", async () =>
+test("line listing succeeds or reports a file → no pattern probe or fallback", async () =>
   withDir(async (dir) => {
     const file = join(dir, "input.txt");
     await writeFile(file, "needle\n");
-    for (const [code, paths, kinds] of [
-      [0, [file], ["lines"]],
-      [1, [], ["lines"]],
-      [2, [], ["lines", "paths", "paths"]],
-      [2, [file], ["lines"]],
+    for (const [code, paths] of [
+      [0, [file]],
+      [1, []],
+      [2, [file]],
     ] as const) {
       const fake = fakeBackend({ code, paths: [...paths], lines: [1] });
       const result = await callTool(makeMockGrep(dir, DEFAULT_CONFIG, fake.backend), {
@@ -1538,12 +1531,35 @@ test("line discovery status and emitted files → fallback only for code 2 befor
       });
       assert.deepEqual(
         fake.calls.map(({ kind }) => kind),
-        kinds,
+        ["lines"],
       );
-      if (code === 2 && paths.length === 0) assert.equal(result.isError, true);
-      else assert.equal(grepCounts(result).matches, paths.length);
+      assert.equal(grepCounts(result).matches, paths.length);
     }
   }));
+
+for (const multiline of [false, true]) {
+  const stage = multiline ? "file prefilter" : "line listing";
+  test(`${stage} exits 2 without candidates and its patterns are accepted → keep the path diagnostic without widening`, async () =>
+    withDir(async (dir) => {
+      const fake = fakeBackend({ code: 2, stderr: "unreadable.txt: Permission denied" });
+      await expectToolFailure(
+        callTool(makeMockGrep(dir, DEFAULT_CONFIG, fake.backend), {
+          path: dir,
+          pattern: "needle",
+          literal: true,
+          multiline,
+        }),
+        "SEARCH_INCOMPLETE",
+        (report) => {
+          assert.match(report.diagnostics ?? "", /unreadable\.txt: Permission denied/);
+        },
+      );
+      assert.deepEqual(
+        fake.calls.map(({ kind }) => kind),
+        [multiline ? "paths" : "lines", "probe"],
+      );
+    }));
+}
 
 test("sparse, dense, or overflowed candidate lines → matching preserves original line numbers and CR", async () =>
   withDir(async (dir) => {
@@ -1606,11 +1622,12 @@ test("rg rejects line patterns before listing files → successful file fallback
   withDir(async (dir) => {
     const file = join(dir, "input.txt");
     await writeFile(file, "needle\n");
-    const lines = fakeBackend({ code: 2, stderr: "regex too large" });
+    const lines = fakeBackend({ code: 2, stderr: "regex too large", rejectsPatterns: true });
     const paths = fakeBackend({ paths: [file] });
     const result = await callTool(
       makeMockGrep(dir, DEFAULT_CONFIG, {
         runRgLines: lines.backend.runRgLines,
+        rgRejectsPatterns: lines.backend.rgRejectsPatterns,
         runRgPaths: paths.backend.runRgPaths,
       }),
       { path: dir, pattern: "needle", literal: true },
@@ -1620,18 +1637,20 @@ test("rg rejects line patterns before listing files → successful file fallback
     assert.equal(reportOf(result, "grep")?.diagnostics, undefined);
     assert.deepEqual(
       [...lines.calls, ...paths.calls].map(({ kind }) => kind),
-      ["lines", "paths"],
+      ["lines", "probe", "paths"],
     );
+    assert.ok(paths.calls[0].args.includes("--files-with-matches"));
   }));
 
-test("file prefilter fails before listing any path → search unfiltered candidates", async () =>
+test("rg rejects file prefilter patterns before listing paths → search unfiltered candidates", async () =>
   withDir(async (dir) => {
     const file = join(dir, "input.txt");
     await writeFile(file, "needle\n");
-    const rejected = fakeBackend({ code: 2, stderr: "prefilter rejected" });
+    const rejected = fakeBackend({ code: 2, stderr: "prefilter rejected", rejectsPatterns: true });
     const unfiltered = fakeBackend({ paths: [file] });
     const result = await callTool(
       makeMockGrep(dir, DEFAULT_CONFIG, {
+        rgRejectsPatterns: rejected.backend.rgRejectsPatterns,
         runRgPaths: (...args) =>
           (args[0].includes("--files-with-matches") ? rejected : unfiltered).backend.runRgPaths(
             ...args,
@@ -1642,4 +1661,10 @@ test("file prefilter fails before listing any path → search unfiltered candida
     assert.equal(result.isError, undefined, JSON.stringify(reportOf(result, "grep")));
     assert.equal(grepCounts(result).matches, 1);
     assert.equal(reportOf(result, "grep")?.diagnostics, undefined);
+    assert.deepEqual(
+      rejected.calls.map(({ kind }) => kind),
+      ["paths", "probe"],
+    );
+    assert.equal(unfiltered.calls.length, 1);
+    assert.ok(unfiltered.calls[0].args.includes("--files"));
   }));

@@ -1,3 +1,4 @@
+import { listCandidates } from "../pi/grep-candidates.ts";
 import assert from "node:assert/strict";
 import { chmod, mkdir, mkdtemp, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -48,3 +49,29 @@ for (const condition of ["permission denied", "symlink loop"] as const) {
     );
   });
 }
+
+test("dangling link with no prefilter matches → do not offer unfiltered candidates", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "hashline-grep-dangling-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  await writeFile(join(directory, "nonmatch.txt"), "other text\n");
+  await symlink(
+    join(directory, "missing"),
+    join(directory, "dangling"),
+    process.platform === "win32" ? "junction" : "file",
+  );
+
+  const offered: string[] = [];
+  const { listing } = await listCandidates({
+    scope: { searchPaths: [directory], globs: [] },
+    query: { patterns: ["needle"], literal: true, ignoreCase: false, multiline: true },
+    signal: new AbortController().signal,
+    stopped: () => false,
+    onCandidate: async ({ filePath }) => {
+      offered.push(filePath);
+      return true;
+    },
+  });
+  assert.deepEqual(offered, []);
+  assert.equal(listing?.code, 2);
+  assert.match(listing.stderr, /dangling/);
+});
