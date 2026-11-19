@@ -102,7 +102,7 @@ async function searchFile(
   fileLimit: number,
   run: Run,
   signal: AbortSignal,
-): Promise<{ rows: Rows; snapshot: SearchFileSnapshot } | { restartWorker: boolean }> {
+): Promise<GrepFileMatch | "restart" | undefined> {
   const rows: Rows = [];
   let lineOffset = 0;
   let nextWanted = 0;
@@ -194,12 +194,14 @@ async function searchFile(
     if (evaluationFailure) throw evaluationFailure.error;
     throw error;
   });
-  if (stats.hasNul) return { restartWorker: evaluationFailure !== undefined };
+  if (stats.hasNul) return evaluationFailure ? "restart" : undefined;
   if (evaluationFailure) throw evaluationFailure.error;
   if (oversized || lineUnits > MAX_SEARCH_LINE_UNITS)
     throw new SearchFileLimitError(query.multiline);
   await send(pending);
+  if (!rows.length) return undefined;
   return {
+    filePath,
     rows,
     snapshot: { revision: stats.revision, validUtf8: stats.validUtf8 },
   };
@@ -253,7 +255,8 @@ export async function searchFiles(options: {
   const settled = new Map<number, Settled>();
   let enqueued = 0;
   let committed = 0;
-  const commit = () => {
+  const commit = (position: number, outcome: Settled) => {
+    settled.set(position, outcome);
     for (let result = settled.get(committed); result && !stopped(); ) {
       settled.delete(committed++);
       if ("error" in result) fail(result.error);
@@ -269,50 +272,48 @@ export async function searchFiles(options: {
     releaseAll();
   };
 
-  const searchPath = async ({ candidate, position }: Queued, run: Run) => {
-    const { filePath } = candidate;
-    let result: Settled;
-    let restartWorker = false;
-    try {
-      // Use a fixed file budget so earlier commits cannot change which regex requests run.
-      const found = await searchFile(candidate, query, limit, run, poolSignal);
-      if ("restartWorker" in found) {
-        restartWorker = found.restartWorker;
-        result = {};
-      } else result = found.rows.length ? { file: { filePath, ...found } } : {};
-    } catch (error) {
-      throwIfCancelled(poolSignal);
-      const warning: SearchWarning | undefined =
-        error instanceof SearchFileLimitError
-          ? { path: filePath, reason: error.message }
-          : fileReadWarning(filePath, error);
-      result = warning ? { warning } : { error };
+  const consume = async (run: Run): Promise<"restart" | void> => {
+    for (let item = await next(); item !== undefined; item = await next()) {
+      const { candidate, position } = item;
+      let found: Awaited<ReturnType<typeof searchFile>>;
+      try {
+        // Use a fixed file budget so earlier commits cannot change which regex requests run.
+        found = await searchFile(candidate, query, limit, run, poolSignal);
+      } catch (error) {
+        throwIfCancelled(poolSignal);
+        const warning =
+          error instanceof SearchFileLimitError
+            ? { path: candidate.filePath, reason: error.message }
+            : fileReadWarning(candidate.filePath, error);
+        commit(position, warning ? { warning } : { error });
+        if (!warning) return;
+        continue;
+      }
+      if (found === "restart") {
+        commit(position, {});
+        return found;
+      }
+      commit(position, { file: found });
     }
-    settled.set(position, result);
-    commit();
-    // A fatal result ends this slot; only a failed worker on a skipped file needs replacing.
-    return "error" in result ? "stop" : restartWorker ? "restart" : "next";
   };
 
   const workers: Promise<void>[] = [];
   const startWorker = async () => {
     try {
       while (!stopped()) {
-        const restart = await withRegexWorker<SearchInput | LineSearchInput, SearchResult, boolean>(
+        const outcome = await withRegexWorker<
+          SearchInput | LineSearchInput,
+          SearchResult,
+          Awaited<ReturnType<typeof consume>>
+        >(
           new URL("./grep-worker.mjs", import.meta.url),
           decodeReply,
           timeoutMs,
           poolSignal,
-          async (run) => {
-            for (let file = await next(); file !== undefined; file = await next()) {
-              const action = await searchPath(file, run);
-              if (action !== "next") return action === "restart";
-            }
-            return false;
-          },
+          consume,
           { maxOldGenerationSizeMb: MAX_SEARCH_HEAP_MB },
         );
-        if (!restart) break;
+        if (outcome !== "restart") break;
       }
     } catch (error) {
       fail(error);
