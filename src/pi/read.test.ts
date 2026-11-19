@@ -474,13 +474,17 @@ test("read schema rejects empty paths and unknown fields before file access", as
 
 test("read byte truncation retains its budget and a continuation after complete returned rows", async () =>
   withDir(async (dir) => {
-    await writeFile(join(dir, "large.txt"), `first\n${"x".repeat(DEFAULT_READ_MAX_BYTES)}\ntail\n`);
-    const result = await call(makeReadOverride(dir, DEFAULT_CONFIG), {
-      path: "large.txt",
-      limit: 2,
-    });
-    assert.equal(reportOf(result, "read")?.nextOffset, 2);
-    assert.equal(reportOf(result, "read")?.outputLimit, formatByteSize(DEFAULT_READ_MAX_BYTES));
+    const first = "x".repeat(Math.floor(DEFAULT_READ_MAX_BYTES / 2));
+    await writeFile(join(dir, "large.txt"), `skip\n${first}\n${first}y\ntail\n`);
+    const tool = makeReadOverride(dir, DEFAULT_CONFIG);
+    const result = await call(tool, { path: "large.txt", offset: 2, limit: 2 });
+    const report = reportOf(result, "read");
+    assert.equal(report?.nextOffset, 3);
+    assert.equal(report.outputLimit, formatByteSize(DEFAULT_READ_MAX_BYTES));
+    assert.match(result.content[0].text, /^2#[0-9A-Z]+│x+$/m);
+    const resumed = await call(tool, { path: "large.txt", offset: report.nextOffset, limit: 1 });
+    assert.match(resumed.content[0].text, /^3#[0-9A-Z]+│x+y$/m);
+    assert.equal(reportOf(resumed, "read")?.nextOffset, undefined);
     assert.match(reportOf(result, "read")?.next ?? "", /offset.*nextOffset/);
     assert.doesNotMatch(result.content[0].text, /showing lines|to continue/);
   }));
