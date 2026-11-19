@@ -264,21 +264,19 @@ export function makeReadOverride({
         const rows: string[] = [];
         const crExpansion = Buffer.byteLength(displayCarriageReturns("\r")) - 1;
         let outputBytes = 0;
-        let truncated = false;
-        let firstLineExceedsLimit = false;
+        let firstOmittedLine: number | undefined;
         const stats = await scanTextLines(
           absPath,
           (number) => number >= start && number - start < limit,
           (line) => {
-            if (truncated) return;
+            if (firstOmittedLine !== undefined) return;
             const rowBytes =
               line.byteLength +
               line.carriageReturns * crExpansion +
               Buffer.byteLength(formatRow(line.number, ""));
             const nextBytes = outputBytes + rowBytes + (rows.length > 0 ? 1 : 0);
             if (nextBytes > maxBytes) {
-              truncated = true;
-              firstLineExceedsLimit = rows.length === 0;
+              firstOmittedLine = line.number;
               return;
             }
             rows.push(formatRow(line.number, line.text!));
@@ -287,15 +285,15 @@ export function makeReadOverride({
           { signal, maxLineBytes: maxBytes },
         );
         if (stats.hasNul) return readNative();
-        // Rows were returned and more remain. A caller's own limit is a chosen window: its header
-        // and rows already show where it ends, so only a window the extension cut (default limit
-        // or byte budget) gets a report.
-        const nextOffset =
-          (params.limit === undefined || truncated) &&
-          rows.length > 0 &&
-          start + rows.length <= stats.totalLines
+        // A byte cutoff can shorten any window; a caller's line limit alone needs no continuation.
+        const firstLineTooLong = firstOmittedLine === start;
+        const nextAfterDefaultLimit =
+          params.limit === undefined && rows.length > 0 && start + rows.length <= stats.totalLines
             ? start + rows.length
             : undefined;
+        const nextOffset = firstLineTooLong
+          ? undefined
+          : (firstOmittedLine ?? nextAfterDefaultLimit);
         const header = `${formatReadHeader(serializePath(cwd, absPath), stats.totalLines, start, stats.finalNewline)}\n`;
         const limitText = formatByteSize(maxBytes);
 
@@ -303,8 +301,9 @@ export function makeReadOverride({
           {
             ...report,
             nextOffset,
-            outputLimit: truncated && !firstLineExceedsLimit ? limitText : undefined,
-            lineTooLong: firstLineExceedsLimit ? limitText : undefined,
+            outputLimit:
+              firstOmittedLine !== undefined && !firstLineTooLong ? limitText : undefined,
+            lineTooLong: firstLineTooLong ? limitText : undefined,
           },
           [{ type: "text" as const, text: header + rows.join("\n") }],
         );
