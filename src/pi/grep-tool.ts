@@ -16,7 +16,6 @@ import { filterExplicitFilesByGlob, resolveSearchPaths } from "./grep-scope.ts";
 import { searchFiles } from "./grep-search.ts";
 import { toDisplayLines } from "./grep-render.ts";
 import { smartIgnoreCase } from "../core/search-analysis.ts";
-import { checkRegexArguments } from "../core/regex.ts";
 import { GREP_FLAGS } from "../core/search.ts";
 import {
   GREP_CONTEXT_RANGE,
@@ -27,7 +26,11 @@ import {
 import { throwIfCancelled } from "./error-text.ts";
 import { reportResult, runTool, type ReportDetails } from "./report.ts";
 import type { HashlineEditConfig, ToolEnvironment } from "./config.ts";
-import { createArgumentPreparer, type ReportArgumentIssue } from "./argument-validation.ts";
+import {
+  checkRegexArguments,
+  createArgumentPreparer,
+  type ReportArgumentIssue,
+} from "./argument-validation.ts";
 
 /** A list field: arrays only, because strict sampling cannot take a string-or-array union. */
 const nonEmptyStrings = (description: string) =>

@@ -10,6 +10,7 @@ import { compile } from "@earendil-works/pi-schema";
 import { formats } from "@earendil-works/pi-schema/formats";
 import type { Static, TObject } from "typebox";
 import { errorMessage } from "../core/errors.ts";
+import { buildRegex } from "../core/regex.ts";
 import { diagnoseArguments } from "./argument-diagnostics.ts";
 import { formatArgumentError } from "./argument-error.ts";
 import type { OutputBudgetProvider } from "./budgets.ts";
@@ -18,6 +19,39 @@ import type { ArgumentIssue, ReportTool } from "./report-schema.ts";
 /** Report one semantic issue: what is wrong (a fact), and how to correct it when the fact alone does not say. */
 export type ReportArgumentIssue = (field: string, reason: string, fix?: string) => void;
 export type CheckArguments = (args: unknown, report: ReportArgumentIssue) => void;
+
+/**
+ * Report V8's diagnostics for a rule's flags and, in regex mode, for each pattern that
+ * buildRegex would reject. Invalid flags stop the check, since every pattern compiles with
+ * them; values that are not strings are left to schema validation.
+ */
+export function checkRegexArguments(
+  flagsField: string,
+  flags: string | undefined,
+  literal: boolean,
+  patterns: readonly (readonly [field: string, value: unknown])[],
+  report: ReportArgumentIssue,
+): void {
+  try {
+    buildRegex("", true, flags);
+  } catch (error) {
+    report(flagsField, errorMessage(error));
+    return;
+  }
+  if (literal) return;
+  for (const [field, value] of patterns) {
+    if (typeof value !== "string") continue;
+    try {
+      buildRegex(value, false, flags);
+    } catch (error) {
+      report(
+        field,
+        errorMessage(error),
+        "For an exact-text match, set literal to true; otherwise correct the regex syntax.",
+      );
+    }
+  }
+}
 
 /** Inspect arrays and the singleton objects Pi may coerce, without changing input. */
 export function argumentItems(value: unknown): readonly unknown[] {

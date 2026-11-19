@@ -27,7 +27,6 @@
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import { Type, type Static } from "typebox";
 import { applyReplacements } from "../core/replace.ts";
-import { checkRegexArguments } from "../core/regex.ts";
 import { REPLACEMENTS_SCHEMA } from "../core/replace-schema.ts";
 import { runRegexReplacements } from "./replace-regex.ts";
 import { unwritableTextError } from "../core/text.ts";
@@ -44,7 +43,11 @@ import {
   type MutationTarget,
   type MutationToolEnvironment,
 } from "./mutation-runner.ts";
-import { argumentItems, type ReportArgumentIssue } from "./argument-validation.ts";
+import {
+  argumentItems,
+  checkRegexArguments,
+  type ReportArgumentIssue,
+} from "./argument-validation.ts";
 import { filePathField } from "./schema.ts";
 
 const replaceSchema = Type.Object(
