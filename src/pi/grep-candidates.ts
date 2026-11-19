@@ -52,6 +52,12 @@ function literalPattern(literal: Literal): string {
 const literalAlternation = (literals: readonly Literal[]): string =>
   literals.map(literalPattern).join("|");
 
+/** A listing that narrows candidates with rg patterns; the next stage replaces it when rg cannot run them. */
+interface PatternStage {
+  readonly patternArgs: readonly string[];
+  readonly list: () => Promise<RgRunResult>;
+}
+
 function widenOnArgumentLimit(error: unknown): undefined {
   if (isRgArgumentLimit(error)) return undefined;
   throw error;
@@ -98,55 +104,70 @@ export async function listCandidates(options: {
     }
     return onCandidate({ filePath, lines });
   };
-  /**
-   * A failed optimization can be retried only before it has offered any candidates, and only
-   * when rg could not run its patterns. A completed search that hit unreadable paths stands.
-   */
-  const canWiden = async (listing: RgRunResult | undefined, patternArgs: readonly string[]) =>
-    !listing ||
-    (listing.code === 2 &&
-      !listedAny &&
-      (await rgRejectsPatterns([...BYTE_PATTERN_ARGS, ...patternArgs], signal)));
   const scoped = [...scopeArgs(scope), "--", ...scope.searchPaths];
-  const patterns = query.multiline ? undefined : lineCandidatePatterns(query);
-  const linePatternArgs = patterns?.flatMap((pattern) => [RG_PATTERN_FLAG, pattern]);
-  let listing = linePatternArgs
-    ? await runRgLines(
-        [
-          ...COMMON_RG_ARGS,
-          ...BYTE_PATTERN_ARGS,
-          ...LINE_LISTING_ARGS,
-          ...linePatternArgs,
-          ...scoped,
-        ],
-        signal,
-        MAX_CANDIDATE_LINES,
-        offer,
-      ).catch(widenOnArgumentLimit)
-    : undefined;
-  if (!linePatternArgs || (await canWiden(listing, linePatternArgs))) {
+
+  /** Narrowing listings, most selective first; each is derived only when the one before gives way. */
+  function* patternStages(): Generator<PatternStage> {
+    const patterns = query.multiline ? undefined : lineCandidatePatterns(query);
+    if (patterns) {
+      const patternArgs = patterns.flatMap((pattern) => [RG_PATTERN_FLAG, pattern]);
+      yield {
+        patternArgs,
+        list: () =>
+          runRgLines(
+            [
+              ...COMMON_RG_ARGS,
+              ...BYTE_PATTERN_ARGS,
+              ...LINE_LISTING_ARGS,
+              ...patternArgs,
+              ...scoped,
+            ],
+            signal,
+            MAX_CANDIDATE_LINES,
+            offer,
+          ),
+      };
+    }
     const prefilter = extractPrefilter(query);
-    if (prefilter.kind === "literals") {
-      const pattern = literalAlternation(prefilter.literals);
-      if (rgPatternArgUnits(pattern) <= MAX_RG_PATTERN_UNITS) {
-        const filePatternArgs = [RG_PATTERN_FLAG, pattern];
-        listing = await runRgPaths(
+    if (prefilter.kind !== "literals") return;
+    const pattern = literalAlternation(prefilter.literals);
+    if (rgPatternArgUnits(pattern) > MAX_RG_PATTERN_UNITS) return;
+    const patternArgs = [RG_PATTERN_FLAG, pattern];
+    yield {
+      patternArgs,
+      list: () =>
+        runRgPaths(
           [
             ...COMMON_RG_ARGS,
             "--files-with-matches",
             ...BYTE_PATTERN_ARGS,
-            ...filePatternArgs,
+            ...patternArgs,
             "--null",
             ...scoped,
           ],
           signal,
           offer,
-        ).catch(widenOnArgumentLimit);
-        if (!(await canWiden(listing, filePatternArgs))) return { listing, scanLimitReached };
-      }
-    }
-    scanAll = true;
-    listing = await runRgPaths([...COMMON_RG_ARGS, "--files", "--null", ...scoped], signal, offer);
+        ),
+    };
   }
+
+  // A stage gives way when its arguments exceed the command line, or when rg exits with code 2
+  // before offering any candidate because it rejects the patterns. A completed listing that only
+  // hit unreadable paths also exits with 2, and stands.
+  for (const { patternArgs, list } of patternStages()) {
+    const listing = await list().catch(widenOnArgumentLimit);
+    const givesWay =
+      !listing ||
+      (listing.code === 2 &&
+        !listedAny &&
+        (await rgRejectsPatterns([...BYTE_PATTERN_ARGS, ...patternArgs], signal)));
+    if (!givesWay) return { listing, scanLimitReached };
+  }
+  scanAll = true;
+  const listing = await runRgPaths(
+    [...COMMON_RG_ARGS, "--files", "--null", ...scoped],
+    signal,
+    offer,
+  );
   return { listing, scanLimitReached };
 }
