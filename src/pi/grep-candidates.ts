@@ -10,7 +10,7 @@ import { stat } from "node:fs/promises";
 import { resolve } from "node:path";
 import type { GrepQuery } from "../core/search.ts";
 import { extractPrefilter, type Literal } from "../core/search-analysis.ts";
-import { foldedPathKey, isListedFile, scopeArgs, type SearchScope } from "./grep-scope.ts";
+import { ListedFiles, scopeArgs, type SearchScope } from "./grep-scope.ts";
 import {
   COMMON_RG_ARGS,
   isRgArgumentLimit,
@@ -83,14 +83,13 @@ export async function listCandidates(options: {
   let listedAny = false;
   let scanned = 0;
   let scanLimitReached = false;
-  const seen = new Map<string, string[]>();
+  const seen = new ListedFiles();
   const offer = async (path: string, lines?: readonly number[]) => {
     listedAny = true;
     if (stopped()) return false;
     const filePath = resolve(path);
-    if (await isListedFile(filePath, seen)) return true;
-    const key = foldedPathKey(filePath);
-    seen.set(key, [...(seen.get(key) ?? []), filePath]);
+    if (await seen.has(filePath)) return true;
+    seen.add(filePath);
     if (scanAll) {
       if (scanned >= MAX_UNNARROWED_SCAN_BYTES) {
         scanLimitReached = true;

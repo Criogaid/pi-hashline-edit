@@ -61,24 +61,39 @@ export async function resolveSearchPaths(cwd: string, path: readonly string[] | 
   return { paths: pathInfo, missing };
 }
 
-/** Groups spellings that a case-insensitive filesystem may treat as one file. */
-export const foldedPathKey = (path: string): string => resolve(path).toLowerCase();
+/**
+ * Listed file spellings, grouped by the folded path that a case-insensitive filesystem may treat
+ * as one file. A lookup finds the same file without folding distinct files together.
+ */
+export class ListedFiles {
+  private readonly spellings = new Map<string, string[]>();
 
-/** Whether the listed spellings include the same file, without folding distinct files together. */
-export async function isListedFile(path: string, listed: ReadonlyMap<string, readonly string[]>) {
-  const spellings = listed.get(foldedPathKey(path)) ?? [];
-  const absolute = resolve(path);
-  if (spellings.some((spelling) => resolve(spelling) === absolute)) return true;
-  if (!spellings.length) return false;
-  const identity = (spelling: string) =>
-    stat(spelling, { bigint: true }).then(
-      ({ dev, ino }) => `${dev}:${ino}`,
-      () => undefined,
-    );
-  const named = await identity(path);
-  for (const spelling of spellings)
-    if (named !== undefined && (await identity(spelling)) === named) return true;
-  return false;
+  private static key(path: string): string {
+    return resolve(path).toLowerCase();
+  }
+
+  add(path: string): void {
+    const key = ListedFiles.key(path);
+    const spellings = this.spellings.get(key);
+    if (spellings) spellings.push(path);
+    else this.spellings.set(key, [path]);
+  }
+
+  async has(path: string): Promise<boolean> {
+    const spellings = this.spellings.get(ListedFiles.key(path)) ?? [];
+    const absolute = resolve(path);
+    if (spellings.some((spelling) => resolve(spelling) === absolute)) return true;
+    if (!spellings.length) return false;
+    const identity = (spelling: string) =>
+      stat(spelling, { bigint: true }).then(
+        ({ dev, ino }) => `${dev}:${ino}`,
+        () => undefined,
+      );
+    const named = await identity(path);
+    for (const spelling of spellings)
+      if (named !== undefined && (await identity(spelling)) === named) return true;
+    return false;
+  }
 }
 
 /**
@@ -95,7 +110,7 @@ export async function filterExplicitFilesByGlob(
     return { searchPaths: paths.map(({ path }) => path), warnings: [] };
 
   const parents = [...new Set(explicitFiles.map(({ path }) => dirname(path)))];
-  const allowed = new Map<string, string[]>();
+  const allowed = new ListedFiles();
   // Direct file arguments bypass ignore and symlink traversal; let only the ordered globs decide admission.
   const args = [
     ...COMMON_RG_ARGS,
@@ -110,12 +125,11 @@ export async function filterExplicitFilesByGlob(
     ...parents,
   ];
   const listed = await runRgPaths(args, signal, async (path) => {
-    const key = foldedPathKey(path);
-    allowed.set(key, [...(allowed.get(key) ?? []), path]);
+    allowed.add(path);
     return true;
   });
   const admitted = new Set<string>();
-  for (const { path } of explicitFiles) if (await isListedFile(path, allowed)) admitted.add(path);
+  for (const { path } of explicitFiles) if (await allowed.has(path)) admitted.add(path);
   // Listing diagnostics about sibling entries matter only when they may explain an exclusion.
   const diagnostic = admitted.size < explicitFiles.length ? searchDiagnostic(listed) : undefined;
   return {
