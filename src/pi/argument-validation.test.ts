@@ -640,6 +640,24 @@ test("one field violates independent constraints → combine its reasons without
   );
 });
 
+test("edit receives a forbidden field with the wrong type → reports the field prohibition", async () => {
+  const tool = makeEditOverride(process.cwd(), DEFAULT_CONFIG);
+  await assert.rejects(
+    callTool(tool, {
+      path: "unused.txt",
+      steps: [{ action: "append", lines: ["text"], anchor: {} }],
+    }),
+    (error: unknown) => {
+      const { issues } = argumentError(error);
+      assert.equal(issues.length, 1);
+      assert.equal(issues[0].field, "steps[0].anchor");
+      assert.equal(issues[0].reason, "is not allowed");
+      assert.ok(issues[0].fix);
+      return true;
+    },
+  );
+});
+
 test("edit fields contain semantic errors → checks only fields accepted by their action", async (t) => {
   const tool = makeEditOverride(process.cwd(), DEFAULT_CONFIG);
   for (const scenario of actionCases) {

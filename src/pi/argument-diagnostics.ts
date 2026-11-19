@@ -63,6 +63,11 @@ function projectValueSchema(
     }
     return schema;
   }
+  // A field can be forbidden by the operation regardless of its value's type.
+  if (!IsObject(schema) && projection.explained.has(path)) {
+    projection.applicable.add(path);
+    return Type.Unknown();
+  }
   if ("type" in schema && !Value.Check(Type.Unknown({ type: schema.type }), value)) return schema;
   projection.applicable.add(path);
   // An issue on a whole object, such as a choice between its fields, explains
@@ -79,7 +84,6 @@ function projectValueSchema(
     );
     return Type.Object(properties, ObjectOptions(schema));
   }
-  if (projection.explained.has(path)) return Type.Unknown();
   if (IsArray(schema) && Array.isArray(value)) {
     const items = value.map((item, index) =>
       projectSchema(schema.items, item, `${path}[${index}]`, projection),
