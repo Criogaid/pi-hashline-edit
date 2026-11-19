@@ -50,15 +50,19 @@ for (const condition of ["permission denied", "symlink loop"] as const) {
   });
 }
 
-test("dangling link with no prefilter matches → do not offer unfiltered candidates", async (t) => {
-  const directory = await mkdtemp(join(tmpdir(), "hashline-grep-dangling-"));
+test("prefilter hits an unreadable path without matches → preserves the diagnostic and offers no unfiltered candidates", {
+  skip: process.getuid?.() === 0 ? "POSIX permission fixture requires a non-root user" : false,
+}, async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "hashline-grep-prefilter-error-"));
   t.after(() => rm(directory, { recursive: true, force: true }));
   await writeFile(join(directory, "nonmatch.txt"), "other text\n");
-  await symlink(
-    join(directory, "missing"),
-    join(directory, "dangling"),
-    process.platform === "win32" ? "junction" : "file",
-  );
+  const inaccessible = join(directory, "inaccessible");
+  if (process.platform === "win32") {
+    await symlink(join(directory, "missing"), inaccessible, "junction");
+  } else {
+    await writeFile(inaccessible, "needle\n");
+    await chmod(inaccessible, 0);
+  }
 
   const offered: string[] = [];
   const { listing } = await listCandidates({
@@ -73,5 +77,5 @@ test("dangling link with no prefilter matches → do not offer unfiltered candid
   });
   assert.deepEqual(offered, []);
   assert.equal(listing?.code, 2);
-  assert.match(listing.stderr, /dangling/);
+  assert.match(listing.stderr, /inaccessible/);
 });
