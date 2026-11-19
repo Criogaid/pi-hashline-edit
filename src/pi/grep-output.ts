@@ -68,19 +68,61 @@ function searchIncompleteError(
   });
 }
 
-function previewLine(text: string, column = 0, maxUnits: number): { text: string; kept?: number } {
+/** A row's displayed text; `kept` counts the UTF-16 units shown when the line was cut. */
+interface Preview {
+  readonly text: string;
+  readonly kept?: number;
+}
+
+/** Slices start and end on this so an astral character is never split. */
+const LOW_SURROGATE = /[\uDC00-\uDFFF]/;
+
+function previewLine(text: string, column = 0, maxUnits: number): Preview {
   if (text.length <= maxUnits) return { text };
   const lead = Math.min(GREP_PREVIEW_LEAD, Math.floor(maxUnits / 5));
   let start = Math.max(0, Math.min(column - lead, text.length - maxUnits));
-  // Slice at UTF-16 boundaries without splitting an astral character.
-  if (start > 0 && /[\uDC00-\uDFFF]/.test(text[start])) start++;
+  if (start > 0 && LOW_SURROGATE.test(text[start])) start++;
   let end = Math.min(text.length, start + maxUnits);
-  if (end < text.length && /[\uDC00-\uDFFF]/.test(text[end])) end--;
+  if (end < text.length && LOW_SURROGATE.test(text[end])) end--;
   if (end === start) return { text: "…", kept: 0 };
   return {
     text: `[partial, columns ${start + 1}-${end}] ${start ? "…" : ""}${text.slice(start, end)}${end < text.length ? "…" : ""}`,
     kept: end - start,
   };
+}
+
+/**
+ * The widest preview narrower than `maxUnits` that `fits`: a column range, or, when the range
+ * label crowds out the match, the matched character alone.
+ */
+function narrowPreview(
+  text: string,
+  column: number | undefined,
+  maxUnits: number,
+  fits: (preview: Preview) => boolean,
+): Preview {
+  let preview: Preview = { text: "…", kept: 0 };
+  let low = 1;
+  let high = Math.min(maxUnits, text.length) - 1;
+  while (low <= high) {
+    const middle = Math.floor((low + high) / 2);
+    const candidate = previewLine(text, column, middle);
+    if (fits(candidate)) {
+      preview = candidate;
+      low = middle + 1;
+    } else {
+      high = middle - 1;
+    }
+  }
+  if (preview.kept !== 0 || !text.length) return preview;
+  let start = Math.min(column ?? 0, text.length - 1);
+  if (LOW_SURROGATE.test(text[start])) start--;
+  const character = String.fromCodePoint(text.codePointAt(start)!);
+  const compact = {
+    text: `${start ? "…" : ""}${character}${start + character.length < text.length ? "…" : ""}`,
+    kept: character.length,
+  };
+  return fits(compact) ? compact : preview;
 }
 
 interface FormatMatchesOptions {
@@ -126,43 +168,20 @@ function contentBlock(
       const row = (display: string) =>
         snapshot.validUtf8 ? anchors.row(number, text, display) : plainRow(number, display);
       let preview = previewLine(text, column, budget.grepPreviewUnits);
-      const regularPreview = preview;
       const firstHit = hitIndices?.length === 0 && column !== undefined;
       if (lines.length === 1 || firstHit) {
         // A row is its prefix followed by the CR-visible preview.
         const prefixBytes = Buffer.byteLength(row(""));
-        const fits = (candidate: { text: string }) =>
-          prefixBytes + Buffer.byteLength(displayCarriageReturns(candidate.text)) <= firstRowBytes;
-        if (!fits(preview)) {
-          // Prefer a column range. If its label crowds out the match, keep the character alone.
-          let low = 1;
-          let high = Math.min(budget.grepPreviewUnits, text.length) - 1;
-          preview = { text: "…", kept: 0 };
-          while (low <= high) {
-            const middle = Math.floor((low + high) / 2);
-            const candidate = previewLine(text, column, middle);
-            if (fits(candidate)) {
-              preview = candidate;
-              low = middle + 1;
-            } else {
-              high = middle - 1;
-            }
-          }
-          if (preview.kept === 0 && text.length) {
-            let start = Math.min(column ?? 0, text.length - 1);
-            if (/[\uDC00-\uDFFF]/.test(text[start])) start--;
-            const character = String.fromCodePoint(text.codePointAt(start)!);
-            const compact = {
-              text: `${start ? "…" : ""}${character}${start + character.length < text.length ? "…" : ""}`,
-              kept: character.length,
-            };
-            if (fits(compact)) preview = compact;
-          }
-        }
-        if (firstHit && lines.length !== 1) {
-          firstHitBytes = prefixBytes + Buffer.byteLength(displayCarriageReturns(preview.text));
-          preview = regularPreview;
-        }
+        const rowBytes = (candidate: Preview) =>
+          prefixBytes + Buffer.byteLength(displayCarriageReturns(candidate.text));
+        const fits = (candidate: Preview) => rowBytes(candidate) <= firstRowBytes;
+        const fitted = fits(preview)
+          ? preview
+          : narrowPreview(text, column, budget.grepPreviewUnits, fits);
+        // Row one shows the fitted preview. A later first hit keeps its regular preview here and
+        // records the fitted size it would take as row one once context rows are removed.
+        if (lines.length === 1) preview = fitted;
+        else firstHitBytes = rowBytes(fitted);
       }
       if (column !== undefined) hitIndices?.push(lines.length);
       if (
