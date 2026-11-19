@@ -1,5 +1,5 @@
 import { commandCompletion, type SessionCommand } from "./action-fusion.testing.ts";
-import fs, { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import fs, { mkdtemp, readdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { syncBuiltinESMExports } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -15,7 +15,7 @@ import { makeWriteOverride } from "./tool-factories.testing.ts";
 async function withTemp<T>(run: (dir: string) => Promise<T>): Promise<T> {
   const dir = await mkdtemp(join(tmpdir(), "hashline-failure-"));
   try {
-    return await run(dir);
+    return await run(await realpath(dir));
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
