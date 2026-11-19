@@ -639,16 +639,22 @@ test("explicit file with a dangling sibling link and a glob → returns complete
       return listed;
     },
   });
-  const result = await callTool(tool, {
-    path: file,
-    glob: "*.txt",
-    literal: true,
-    pattern: "needle",
-  });
-  assert.match(listingDiagnostics, /broken\.txt/);
-  assert.equal(result.isError, undefined, JSON.stringify(reportOf(result, "grep")));
-  assert.equal(grepCounts(result).matches, 1);
-  assert.equal(reportOf(result, "grep")?.diagnostics, undefined);
+  for (const path of [[file], [file, file]]) {
+    await t.test(`${path.length} explicit path entries`, async () => {
+      listingDiagnostics = "";
+      const result = await callTool(tool, {
+        path,
+        glob: "*.txt",
+        literal: true,
+        pattern: "needle",
+      });
+      assert.match(listingDiagnostics, /broken\.txt/);
+      const report = reportOf(result, "grep");
+      assert.equal(result.isError, undefined, JSON.stringify(report));
+      assert.deepEqual(grepCounts(result), { matches: 1, files: 1 });
+      assert.equal(report?.diagnostics, undefined);
+    });
+  }
 });
 
 test("explicit file paths obey ordered glob filters without inheriting ignore rules", async () => {

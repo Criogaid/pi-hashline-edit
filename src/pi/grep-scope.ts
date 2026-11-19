@@ -130,12 +130,13 @@ export async function filterExplicitFilesByGlob(
   });
   const admitted = new Set<string>();
   for (const { path } of explicitFiles) if (await allowed.has(path)) admitted.add(path);
+  const searchPaths = paths
+    .filter(({ path, isFile }) => !isFile || admitted.has(path))
+    .map(({ path }) => path);
   // Listing diagnostics about sibling entries matter only when they may explain an exclusion.
-  const diagnostic = admitted.size < explicitFiles.length ? searchDiagnostic(listed) : undefined;
+  const diagnostic = searchPaths.length < paths.length ? searchDiagnostic(listed) : undefined;
   return {
-    searchPaths: paths
-      .filter(({ path, isFile }) => !isFile || admitted.has(path))
-      .map(({ path }) => path),
+    searchPaths,
     warnings: diagnostic ? [diagnostic] : [],
   };
 }
