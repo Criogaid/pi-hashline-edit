@@ -576,10 +576,13 @@ const COMMON_WIRE_FIELDS = {
 };
 const MUTATION_WIRE_FIELDS = {
   publication: REPORT_SCHEMA.properties.publication,
-  freshness: REPORT_SCHEMA.properties.freshness,
-  freshnessError: REPORT_SCHEMA.properties.freshnessError,
   then_run: REPORT_SCHEMA.properties.then_run,
   progressError: REPORT_SCHEMA.properties.progressError,
+};
+const MUTATION_SUCCESS_WIRE_FIELDS = {
+  ...MUTATION_WIRE_FIELDS,
+  freshness: REPORT_SCHEMA.properties.freshness,
+  freshnessError: REPORT_SCHEMA.properties.freshnessError,
 };
 const FAILURE_SCHEMAS = [
   { tool: literalUnion(NON_MUTATION_TOOLS) },
@@ -604,7 +607,7 @@ const SUCCESS_SCHEMAS = Object.entries(SUCCESS_DEFINITIONS).map(([tool, schema])
     {
       ...COMMON_WIRE_FIELDS,
       tool: Type.Literal(tool),
-      ...((MUTATION_TOOLS as readonly string[]).includes(tool) ? MUTATION_WIRE_FIELDS : {}),
+      ...((MUTATION_TOOLS as readonly string[]).includes(tool) ? MUTATION_SUCCESS_WIRE_FIELDS : {}),
       ...schema.properties,
     },
     { additionalProperties: false },
@@ -621,7 +624,7 @@ type ErrorFactNames = {
   [Code in ErrorCode]: keyof Static<(typeof ERROR_DEFINITIONS)[Code]["facts"]>;
 }[ErrorCode] &
   string;
-type MutationWireFactNames = keyof Fields<typeof MUTATION_WIRE_FIELDS> & string;
+type MutationWireFactNames = keyof Fields<typeof MUTATION_SUCCESS_WIRE_FIELDS> & string;
 type UnusedFactNames = Exclude<FactName, SuccessFactNames | ErrorFactNames | MutationWireFactNames>;
 // Compilation fails here, naming the fact, when no tool, code, or mutation field carries it.
 ({}) satisfies Record<UnusedFactNames, never>;
@@ -629,9 +632,8 @@ type UnusedFactNames = Exclude<FactName, SuccessFactNames | ErrorFactNames | Mut
 // Static counterparts of the per-tool and per-code wire schemas above, built from the same fields.
 type Fields<P extends TProperties> = Static<TObject<P>>;
 type Envelope = Fields<typeof COMMON_WIRE_FIELDS>;
-type MutationFields = Fields<typeof MUTATION_WIRE_FIELDS>;
 type FailureToolFields =
-  | ({ tool: MutationToolName } & MutationFields)
+  | ({ tool: MutationToolName } & Fields<typeof MUTATION_WIRE_FIELDS>)
   | { tool: (typeof NON_MUTATION_TOOLS)[number] };
 
 /** Facts owned by one successful tool, derived from its wire schema. */
@@ -645,7 +647,9 @@ type ReportVariant<T> = T extends unknown
 /** A success report a tool may produce: its own facts, and mutation facts only for mutation tools. */
 export type SuccessReport = {
   [T in ReportTool]: ReportVariant<
-    Envelope & { tool: T } & (T extends MutationToolName ? MutationFields : unknown) &
+    Envelope & { tool: T } & (T extends MutationToolName
+        ? Fields<typeof MUTATION_SUCCESS_WIRE_FIELDS>
+        : unknown) &
       SuccessFacts<T>
   >;
 }[ReportTool];

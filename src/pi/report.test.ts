@@ -507,3 +507,27 @@ test("read and grep failures cannot carry mutation state → reject invalid repl
     );
   }
 });
+
+test("mutation failure carries a freshness fact → rejects the invalid replay report", () => {
+  const tool = "edit";
+  const failure = {
+    error: "PUBLISH_FAILED",
+    message: "Publication failed.",
+    publication: "NOT_PUBLISHED",
+  };
+  const valid = {
+    content: [text(JSON.stringify(failure))],
+    details: { report: { tool, ...failure } },
+  };
+  assert.deepEqual(reportOf(valid, tool), valid.details.report);
+  for (const facts of [
+    { freshness: "changed" },
+    { freshnessError: { message: "Could not inspect target." } },
+  ]) {
+    const raw = { ...failure, ...facts };
+    const content = [text(JSON.stringify(raw))];
+    const details = { report: { tool, ...raw } };
+    assert.equal(splitReport({ content, details }, tool).report, undefined);
+    assert.equal(reportOf({ content }, tool), undefined);
+  }
+});
