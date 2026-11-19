@@ -44,7 +44,7 @@ async function openSession(
     calls,
     progress,
     abort: () => session.abort(),
-    async run(thenRun: ThenRunInput) {
+    async run(thenRun: ThenRunInput, expectedFile: string | null = "saved\n") {
       let responses = 0;
       session.agent.streamFunction = () => {
         const first = responses++ === 0;
@@ -75,7 +75,9 @@ async function openSession(
       );
       assert.ok(result?.role === "toolResult");
       assert.equal(result.isError, false, "A command failure must not fail the completed mutation");
-      assert.equal(await readFile(join(cwd, "saved.txt"), "utf8"), "saved\n");
+      const saved = readFile(join(cwd, "saved.txt"), "utf8");
+      if (expectedFile === null) await assert.rejects(saved, { code: "ENOENT" });
+      else assert.equal(await saved, expectedFile);
       return {
         modelRequests: responses,
         report: reportOf(result, "write"),
@@ -137,6 +139,24 @@ for (const { name, source, timeout, command, diagnostic } of commandCases) {
     assert.equal(result.report?.freshness, undefined);
     assert.match(result.text, diagnostic);
     assert.equal(f.progress.at(-1)?.command, command);
+  });
+}
+
+for (const [freshness, source, expectedFile, status] of [
+  ["changed", "fs.writeFileSync('saved.txt', 'after'); process.exitCode = 7;", "after", "failed"],
+  ["missing", "fs.unlinkSync('saved.txt');", null, "succeeded"],
+] as const) {
+  test(`real session command leaves target ${freshness} → reports publication, command status and final freshness`, async (t) => {
+    const f = await openSession(t);
+    await writeFile(join(f.cwd, "command.mjs"), `import fs from 'node:fs';\n${source}`);
+    const result = await f.run({ command: "node command.mjs" }, expectedFile);
+    assert.equal(result.report?.publication, "PUBLISHED");
+    assert.equal(result.report.then_run?.status, status);
+    assert.equal(result.report.freshness, freshness);
+    const wire = reportOf({ content: [{ type: "text", text: result.text }] }, "write");
+    assert.equal(wire?.freshness, freshness);
+    if (freshness === "changed") assert.match(wire.next ?? "", /Read the file/);
+    else assert.equal(wire.next, undefined);
   });
 }
 
