@@ -76,6 +76,31 @@ for (const [name, oldHead, newHead, shared, oldTail, newTail] of [
   });
 }
 
+test("range diff with sparse changes inside one large replacement → retains interior rows across a shift", () => {
+  const old = Array.from({ length: 96 }, (_, i) => `const option${i + 1} = true;\n`);
+  old[44] = 'const region = "us-east-1";\n';
+  const next = [...old];
+  next[9] = "const retryLimit = 4;\n";
+  next[85] = "const timeoutMs = 6000;\n";
+  next.splice(10, 0, "const backoffMs = 200;\n");
+  const head = old.slice(0, 9).join("");
+  const tail = old.slice(86).join("");
+  const before = old.join("");
+  const after = next.join("");
+  const spans: CopiedSpan[] = [
+    { sourceStart: 0, targetStart: 0, length: head.length },
+    {
+      sourceStart: before.length - tail.length,
+      targetStart: after.length - tail.length,
+      length: tail.length,
+    },
+  ];
+  assert.deepEqual(
+    partitions(generateRangeDiff(before, after, spans)),
+    partitions(generateDiffString(before, after).diff),
+  );
+});
+
 test("range diff with a dense gap → shows actual removed and added rows", () => {
   const count = 1_000;
   const removed = Array.from({ length: count }, (_, i) => `old ${i}`);

@@ -65,7 +65,7 @@ The model copies an anchor into `edit`:
 
 The edit succeeds only if line 2 still has that content. The TUI shows the diff; the model receives a short JSON report.
 
-The `edit` and `replace` cards use unchanged rows from the mutation to bound the diff. Pi aligns lines within small changed ranges. Large ranges show their original and replacement rows as a block.
+The `edit` and `replace` cards use unchanged rows from the mutation to bound the diff. Each changed range aligns up to 128 line additions and deletions combined. If alignment exceeds that limit, the card shows the original and replacement rows as a block.
 
 ## Tools
 

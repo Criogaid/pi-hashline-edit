@@ -1,11 +1,10 @@
-import { generateDiffString } from "@earendil-works/pi-coding-agent";
+import { diffLines } from "diff";
 import type { CopiedSpan } from "../core/copy-span.ts";
 import { indexSourceLines, normalizeLineEndings } from "../core/lines.ts";
 
 const CONTEXT_LINES = 4;
-// Cap both the search over line pairs and the size of the text sent to Pi.
-const MAX_NATIVE_LINES = 128;
-const MAX_NATIVE_CODE_UNITS = 64 * 1024;
+// Bound the search by changed lines so large ranges with a few edits can still align.
+const MAX_ALIGNMENT_EDITS = 128;
 
 type LineIndex = ReturnType<typeof indexSourceLines>;
 
@@ -93,22 +92,16 @@ export function generateRangeDiff(
     const newOffset = target.start(newStart);
     const oldLimit = source.start(oldEnd);
     const newLimit = target.start(newEnd);
-    if (
-      oldCount + newCount <= MAX_NATIVE_LINES &&
-      oldLimit - oldOffset + newLimit - newOffset <= MAX_NATIVE_CODE_UNITS
-    ) {
-      const oldText = normalizeLineEndings(before.slice(oldOffset, oldLimit));
-      const newText = normalizeLineEndings(after.slice(newOffset, newLimit));
-      // Request every equal row so context can be applied once across the entire file.
-      const { diff } = generateDiffString(oldText, newText, Math.max(oldCount, newCount));
-      if (!diff) {
-        equalRows += oldCount;
-        return;
-      }
-      for (const line of diff.split("\n")) {
-        const kind = line[0];
-        if (kind === "-" || kind === "+") emitChange(kind, 1);
-        else equalRows++;
+    const parts = diffLines(
+      normalizeLineEndings(before.slice(oldOffset, oldLimit)),
+      normalizeLineEndings(after.slice(newOffset, newLimit)),
+      { maxEditLength: MAX_ALIGNMENT_EDITS },
+    );
+    if (parts) {
+      for (const part of parts) {
+        if (part.removed) emitChange("-", part.count);
+        else if (part.added) emitChange("+", part.count);
+        else equalRows += part.count;
       }
       return;
     }
