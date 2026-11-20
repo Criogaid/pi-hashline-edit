@@ -155,6 +155,19 @@ for (const [name, before, after, copied, expected] of [
   });
 }
 
+test("equal row counts with a copied EOF body → mark the changed occurrence in either direction", () => {
+  const before = "same\nsame";
+  const after = "same\nother";
+  assert.deepEqual(
+    partitions(generateRangeDiff(before, after, [{ sourceStart: 5, targetStart: 0, length: 4 }])),
+    { before: [[1, "same"]], after: [[2, "other"]], context: [[2, "same"]] },
+  );
+  assert.deepEqual(
+    partitions(generateRangeDiff(after, before, [{ sourceStart: 0, targetStart: 5, length: 4 }])),
+    { before: [[2, "other"]], after: [[1, "same"]], context: [[1, "same"]] },
+  );
+});
+
 test("EOF body identity beyond the alignment budget → fallback keeps the proven row", () => {
   const repeated = Array<string>(1_001).fill("same");
   const before = repeated.join("\n");

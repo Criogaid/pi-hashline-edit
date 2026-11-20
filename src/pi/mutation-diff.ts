@@ -22,23 +22,23 @@ function boundaryAtOrAfter(lines: LineIndex, offset: number): number {
 // Match a copied EOF body to its original row when adding or removing its neighbor
 // also adds or removes the separator. A terminator-only change still shows as an edit.
 function copiedEofBody(
-  shorter: LineIndex,
-  longer: LineIndex,
-  shorterStart: number,
-  longerStart: number,
+  eof: LineIndex,
+  other: LineIndex,
+  eofStart: number,
+  otherStart: number,
   length: number,
 ): number | undefined {
-  const eofRow = shorter.length - 1;
-  const bodyEnd = shorter.start(shorter.length);
-  if (shorterStart + length !== bodyEnd || shorter.end(eofRow) !== bodyEnd) return;
-  const skip = shorter.start(eofRow) - shorterStart;
+  const eofRow = eof.length - 1;
+  const bodyEnd = eof.start(eof.length);
+  if (eofStart + length !== bodyEnd || eof.end(eofRow) !== bodyEnd) return;
+  const skip = eof.start(eofRow) - eofStart;
   if (skip < 0) return;
-  const start = longerStart + skip;
-  const row = boundaryAtOrAfter(longer, start);
+  const start = otherStart + skip;
+  const row = boundaryAtOrAfter(other, start);
   if (
-    row < longer.length - 1 &&
-    longer.start(row) === start &&
-    longer.end(row) === longerStart + length
+    row < other.length - 1 &&
+    other.start(row) === start &&
+    other.end(row) === otherStart + length
   )
     return row;
 }
@@ -135,19 +135,17 @@ export function generateRangeDiff(
     const newRows = rowTokens(target, newStart, newEnd);
     let oldIdentity = -1;
     let newIdentity = -1;
-    if (eofSpan && oldCount !== newCount) {
+    if (eofSpan) {
       const { sourceStart, targetStart, length } = eofSpan;
-      if (oldCount > newCount) {
-        const row = copiedEofBody(target, source, targetStart, sourceStart, length);
-        if (row !== undefined && row >= oldStart) {
-          oldIdentity = row - oldStart;
-          newIdentity = newCount - 1;
-        }
+      const newMatch = copiedEofBody(source, target, sourceStart, targetStart, length);
+      if (newMatch !== undefined && newMatch >= newStart) {
+        oldIdentity = oldCount - 1;
+        newIdentity = newMatch - newStart;
       } else {
-        const row = copiedEofBody(source, target, sourceStart, targetStart, length);
-        if (row !== undefined && row >= newStart) {
-          oldIdentity = oldCount - 1;
-          newIdentity = row - newStart;
+        const oldMatch = copiedEofBody(target, source, targetStart, sourceStart, length);
+        if (oldMatch !== undefined && oldMatch >= oldStart) {
+          oldIdentity = oldMatch - oldStart;
+          newIdentity = newCount - 1;
         }
       }
     }
