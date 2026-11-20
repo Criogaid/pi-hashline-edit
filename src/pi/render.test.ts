@@ -13,8 +13,9 @@ import {
   resetCapabilitiesCache,
   setCapabilities,
   visibleWidth,
+  Text,
 } from "@earendil-works/pi-tui";
-import { initTheme, type ToolDefinition } from "@earendil-works/pi-coding-agent";
+import { initTheme, renderDiff, type ToolDefinition } from "@earendil-works/pi-coding-agent";
 import type { TSchema } from "typebox";
 import { theme } from "../../node_modules/@earendil-works/pi-coding-agent/dist/modes/interactive/theme/theme.js";
 import { makeEditOverride } from "./tool-factories.testing.ts";
@@ -703,6 +704,48 @@ test("collapsed diff or output that hides rows → shows the host's expand hint,
     assert.ok(card(false).at(-1)?.includes(hint));
     assert.ok(card(true).every((line) => !line.includes(hint)));
     assert.ok(card(false).length < card(true).length);
+  }
+});
+
+test("collapsed replayed diff → keeps Pi's themed rows when a change crosses the cutoff", () => {
+  const visible = 24;
+  const { renderCall, renderResult } = diffCardRenderers(
+    "edit",
+    "Editing…",
+    (_args, theme, _cwd, counts) =>
+      counts ? `${theme.fg("toolDiffAdded", `+${counts.added}`)} -${counts.removed}` : "edit",
+  );
+  const width = 100;
+  for (const themeName of ["dark", "light"]) {
+    initTheme(themeName);
+    for (const change of [
+      ["-24 same  words old", "+24 same words new", " 25 context"],
+      ["-24 same  words old", "+24 same words new", "+25 extra"],
+      ["-24 same  words old", "-25 extra", "+24 same words new"],
+    ]) {
+      const diff = [
+        ...Array.from({ length: visible - 1 }, (_, i) => ` ${i + 1} context`),
+        ...change,
+        " 99 tail",
+      ].join("\n");
+      const result = { content: [], details: { diff } };
+      const context = { isError: false, args: {}, state: {}, cwd: process.cwd(), ...hints };
+      const header = renderCall(context.args, theme, context);
+      const render = (expanded: boolean) =>
+        renderResult(result, { isPartial: false, expanded }, theme, context).render(width);
+      const full = renderDiff(diff);
+      const preview = new Text(full.split("\n").slice(0, visible).join("\n"), 0, 0);
+      const collapsed = render(false);
+      assert.deepEqual(collapsed.slice(0, -1), preview.render(width));
+      assert.match(stripVTControlCharacters(collapsed.at(-1) ?? ""), /3 more lines/);
+      const added = change.filter((line) => line.startsWith("+")).length;
+      const removed = change.filter((line) => line.startsWith("-")).length;
+      assert.equal(
+        stripVTControlCharacters(header.render(width)[0]).trimEnd(),
+        `+${added} -${removed}`,
+      );
+      assert.deepEqual(render(true), new Text(full, 0, 0).render(width));
+    }
   }
 });
 

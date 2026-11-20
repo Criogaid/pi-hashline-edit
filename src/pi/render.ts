@@ -36,27 +36,21 @@ function hiddenRowsMarker(hidden: number, theme: Theme, hints: ExpandHints): str
   return `${theme.fg("muted", `... (${hidden} more lines,`)} ${hints.keyHint("app.tools.expand", "to expand")}${theme.fg("muted", ")")}`;
 }
 
-/**
- * Render a pi-format diff (`+N`/`-N`/` N` content) for the TUI, reusing pi's
- * built-in renderer: semantic diff colors plus intra-line (word-level) change
- * highlighting on single-line modifications. When not expanded, collapse to the
- * first rendered lines with an overflow marker — truncating after rendering
- * keeps `-`/`+` pairs intact so the intra-line highlight never dangles.
- */
+/** Bound the input to Pi's highlighter while preserving the full diff's visible rows. */
 function renderDiffPreview(
   diff: string,
+  rows: readonly string[],
   expanded: boolean,
   theme: Theme,
   hints: ExpandHints,
 ): string {
-  const rendered = renderDiff(diff);
-  if (expanded) return rendered;
-  const allLines = rendered.split("\n");
-  const more =
-    allLines.length > MAX_COLLAPSED_DIFF_LINES
-      ? `\n${hiddenRowsMarker(allLines.length - MAX_COLLAPSED_DIFF_LINES, theme, hints)}`
-      : "";
-  return allLines.slice(0, MAX_COLLAPSED_DIFF_LINES).join("\n") + more;
+  const hidden = rows.length - MAX_COLLAPSED_DIFF_LINES;
+  if (expanded || hidden <= 0) return renderDiff(diff);
+  // Pi emits one row per input row and highlights only a run of one deletion followed by
+  // one addition. Two lookahead rows distinguish an offscreen partner from a longer run.
+  const prefix = rows.slice(0, MAX_COLLAPSED_DIFF_LINES + 2).join("\n");
+  const shown = renderDiff(prefix).split("\n", MAX_COLLAPSED_DIFF_LINES).join("\n");
+  return `${shown}\n${hiddenRowsMarker(hidden, theme, hints)}`;
 }
 
 /** Added/removed line counts of a pi-format diff string (`+N`/`-N` leading char). */
@@ -72,10 +66,10 @@ export interface MutationRenderState {
 }
 
 /** Count added/removed lines in a pi-format diff (`+N content` / `-N content` / ` N content`). */
-function countDiffLines(diff: string): DiffCounts {
+function countDiffLines(rows: readonly string[]): DiffCounts {
   let added = 0;
   let removed = 0;
-  for (const line of diff.split("\n")) {
+  for (const line of rows) {
     if (line.startsWith("+")) added++;
     else if (line.startsWith("-")) removed++;
   }
@@ -121,12 +115,11 @@ export function formatDiffCounts(counts: DiffCounts, theme: Theme): string {
  * component after the nested one — the diff renders twice.
  */
 function publishDiffCounts(
-  diff: string | undefined,
+  rows: readonly string[],
   context: { state: MutationRenderState },
   refreshHeader: (counts: DiffCounts) => void,
 ): void {
-  if (!diff) return;
-  const counts = countDiffLines(diff);
+  const counts = countDiffLines(rows);
   const prev = context.state.diffCounts;
   context.state.diffCounts = counts;
   if (!prev || prev.added !== counts.added || prev.removed !== counts.removed)
@@ -317,22 +310,24 @@ export function diffCardRenderers<TArgs>(
       if (isPartial) return new Text(theme.fg("warning", pending), 0, 0);
       if (context.isError) return renderToolError(result, tool, theme, expanded, context);
       const diff = result.details?.diff;
-      // Refresh in place: invalidation inside a renderer re-enters updateDisplay.
-      publishDiffCounts(diff, context, (counts) => {
-        context.state.callText?.setText(header(context.args, theme, context.cwd, counts));
-      });
       const { report } = splitReport(result, tool);
       const facts = report ? reportLines(report, theme, MUTATION_CARD_SHOWN) : [];
+      if (diff) {
+        const rows = diff.split("\n");
+        // Refresh in place: invalidation inside a renderer re-enters updateDisplay.
+        publishDiffCounts(rows, context, (counts) => {
+          context.state.callText?.setText(header(context.args, theme, context.cwd, counts));
+        });
+        const body = renderDiffPreview(diff, rows, expanded, theme, context);
+        return new Text([body, ...facts].join("\n"), 0, 0);
+      }
       const emptyDiff =
         report?.publication === "NOT_PUBLISHED"
           ? "No net change"
           : report?.publication === "PUBLISHED"
             ? "Updated; no logical line diff"
             : "No diff available";
-      const body = diff
-        ? renderDiffPreview(diff, expanded, theme, context)
-        : theme.fg("success", emptyDiff);
-      return new Text([body, ...facts].join("\n"), 0, 0);
+      return new Text([theme.fg("success", emptyDiff), ...facts].join("\n"), 0, 0);
     },
   };
 }
