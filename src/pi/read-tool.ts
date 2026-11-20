@@ -1,7 +1,7 @@
 /**
  * Override read: recognized images and NUL-containing files delegate to Pi's
- * built-in read; other valid UTF-8 text has a header and formatted rows.
- * `anchors: false` omits the row prefixes.
+ * built-in read; other valid UTF-8 text is a header and anchored rows, or with
+ * `anchors: false` the lines alone.
  *
  * Hashes are computed from the current content on the fly — nothing is stored.
  * The hash is `(line number, content)`, recomputed and checked at edit time, so
@@ -40,17 +40,24 @@ import { createArgumentPreparer } from "./argument-validation.ts";
 
 const DEFAULT_OFFSET = 1;
 
-/** Pi's read details for a delegated native read; the report states this read's own facts. */
-type ReadDetails = (ReadToolDetails & { nativeRead?: true }) & Partial<ReportDetails>;
+/**
+ * Pi's read details for a delegated native read; the report states this read's own facts.
+ * `header` is the header line of a read with `anchors: false`: the TUI shows it and the
+ * result text omits it.
+ */
+type ReadDetails = (ReadToolDetails & { nativeRead?: true; header?: string }) &
+  Partial<ReportDetails>;
 
 /** Pi's read arguments plus this override's own. */
 type ReadInput = ReadToolInput & { anchors?: boolean };
 
 /**
- * First result line: `<path> · <N> lines`, optionally ` (from line <offset>)` and
+ * Header line: `<path> · <N> lines`, optionally ` (from line <offset>)` and
  * ` · no trailing newline`. A missing final newline is a byte-level fact the
  * numbered rows cannot show, so the header, which the model never copies into an
- * edit `lines`, states it. READ_HEADER is the TUI's parser for this exact line.
+ * edit `lines`, states it. An anchored read's text starts with this line; a read with
+ * `anchors: false` carries it in `details`. READ_HEADER is the TUI's parser for this
+ * exact line.
  */
 function formatReadHeader(
   path: string,
@@ -157,7 +164,7 @@ export function makeReadOverride({
       anchors: Type.Optional(
         Type.Boolean({
           description:
-            "false omits LINE#HASH│ prefixes for files you will not edit, saving about a third of the tokens. The header stays and standalone CR displays as ␍ (default true).",
+            "false returns the lines as they are in the file, with no header or LINE#HASH│ prefixes, for text you will read or parse but not edit; about a third fewer tokens. Standalone CR displays as ␍ (default true).",
         }),
       ),
     },
@@ -168,11 +175,9 @@ export function makeReadOverride({
     name: "read" as const,
     label: "read",
     description:
-      "Read a file. Images return as attachments. Text lines show as LINE#HASH│content anchors for edit; CRLF line endings show as LF.",
-    promptSnippet: "Read files with editable line anchors",
-    promptGuidelines: [
-      "In codemode, tools.read with anchors: false resolves to a `<path> · <N> lines` header line followed by the lines read. Files containing NUL go to native read without a Hashline header.",
-    ],
+      "Read a file's text; images return as attachments. Lines show as LINE#HASH│content anchors for edit after one header line; anchors: false returns the lines alone. CRLF line endings show as LF.",
+    promptSnippet: "Read file text, with line anchors for edit",
+    promptGuidelines: ["Files containing NUL go to native read without a Hashline header."],
     parameters: parameters as typeof builtin.parameters,
     // Codemode scripts receive structuredContent: Pi's image block for a delegated image, the
     // result text otherwise.
@@ -193,11 +198,12 @@ export function makeReadOverride({
       // Collapsed (not expanded): show nothing — the call line carries the
       // title, matching the built-in read's fold behavior.
       if (!expanded) return new Text("", 0, 0);
-      const raw = content[0]?.type === "text" ? content[0].text : "";
+      const text = content[0]?.type === "text" ? content[0].text : "";
+      const header = result.details?.header;
       return new Text(
         [
           renderReadBody(
-            raw,
+            header === undefined ? text : `${header}\n${text}`,
             String(context.args?.path ?? ""),
             (context.args as ReadInput | undefined)?.anchors !== false,
             report !== undefined && "lineTooLong" in report && report.lineTooLong !== undefined,
@@ -294,7 +300,13 @@ export function makeReadOverride({
         const nextOffset = firstLineTooLong
           ? undefined
           : (firstOmittedLine ?? nextAfterDefaultLimit);
-        const header = `${formatReadHeader(serializePath(cwd, absPath), stats.totalLines, start, stats.finalNewline)}\n`;
+        const header = formatReadHeader(
+          serializePath(cwd, absPath),
+          stats.totalLines,
+          start,
+          stats.finalNewline,
+        );
+        const body = rows.join("\n");
         const limitText = formatByteSize(maxBytes);
 
         const result = reportResult(
@@ -305,7 +317,8 @@ export function makeReadOverride({
               firstOmittedLine !== undefined && !firstLineTooLong ? limitText : undefined,
             lineTooLong: firstLineTooLong ? limitText : undefined,
           },
-          [{ type: "text" as const, text: header + rows.join("\n") }],
+          [{ type: "text" as const, text: anchored === false ? body : `${header}\n${body}` }],
+          anchored === false ? { header } : undefined,
         );
         const text = result.content.flatMap((block) => (block.type === "text" ? [block.text] : []));
         return { ...result, structuredContent: text.join("\n") };

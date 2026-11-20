@@ -1572,8 +1572,7 @@ test("Windows localhost share → grep paths round-trip and native read opens th
     assert.ok(body?.type === "text");
     const reread = await callTool(read, { path: body.text, anchors: false });
     assert.equal(reread.isError, undefined, JSON.stringify(reread.content));
-    const text = reread.content[0];
-    assert.ok(text?.type === "text" && text.text.endsWith("\nneedle"));
+    assert.deepEqual(reread.content[0], { type: "text", text: "needle" });
   });
   await t.test("NUL file is read through native read", async () => {
     const result = await callTool(read, { path: "data.bin" });

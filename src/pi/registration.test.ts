@@ -34,6 +34,7 @@ import { ACTION_FUSION_GUIDELINES } from "./action-fusion.ts";
 
 test("registered tools with or without Fusion → expose prompt rules and convertible strict schemas", async (t) => {
   const guidelines = {
+    read: ["Files containing NUL go to native read without a Hashline header."],
     edit: [
       "Batch all steps for one file into a single edit call, and send changes to different files in the same response; they do not interfere.",
       "Before citing a line after write, edit, or replace, get its anchor from a new read or grep. Only after edit, lines above the earliest changed line keep their anchors.",
@@ -69,20 +70,11 @@ test("registered tools with or without Fusion → expose prompt rules and conver
         const { name } = tool;
         if (name === "read" || name === "edit" || name === "grep") {
           await t.test(`${name}/Fusion ${actionFusion} → registers the tool's prompt rules`, () => {
-            if (name === "read") {
-              const [codemodeRule = "", ...sharedRules] = tool.promptGuidelines ?? [];
-              assert.match(
-                codemodeRule,
-                /Files containing NUL go to native read without a Hashline header/,
-              );
-              assert.deepEqual(sharedRules, [NEXT_GUIDELINE]);
-            } else {
-              assert.deepEqual(tool.promptGuidelines, [
-                ...guidelines[name],
-                ...(name === "edit" && actionFusion ? ACTION_FUSION_GUIDELINES : []),
-                NEXT_GUIDELINE,
-              ]);
-            }
+            assert.deepEqual(tool.promptGuidelines, [
+              ...guidelines[name],
+              ...(name === "edit" && actionFusion ? ACTION_FUSION_GUIDELINES : []),
+              NEXT_GUIDELINE,
+            ]);
           });
         }
         await t.test(`${tool.name}/Fusion ${actionFusion} → supports strict sampling`, () => {
@@ -95,7 +87,7 @@ test("registered tools with or without Fusion → expose prompt rules and conver
                 anchors: {
                   type: "boolean",
                   description:
-                    "false omits LINE#HASH│ prefixes for files you will not edit, saving about a third of the tokens. The header stays and standalone CR displays as ␍ (default true).",
+                    "false returns the lines as they are in the file, with no header or LINE#HASH│ prefixes, for text you will read or parse but not edit; about a third fewer tokens. Standalone CR displays as ␍ (default true).",
                 },
               },
             });

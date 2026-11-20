@@ -52,7 +52,7 @@ test("read anchors omitted, true, or null → preserves anchored text output", a
   });
 });
 
-test("read without anchors → preserves the header and raw window with LF and visible standalone CR", async () =>
+test("read without anchors → returns the window's lines alone with LF and visible standalone CR", async () =>
   withDir(async (dir) => {
     const tool = makeReadOverride(dir, DEFAULT_CONFIG);
     const lines = ["first", "second␍third", "", "12#ABCD│literal"];
@@ -70,10 +70,9 @@ test("read without anchors → preserves the header and raw window with LF and v
         const result = await callTool(tool, { path: "raw.txt", anchors: false, offset, limit });
         assert.equal(result.isError, undefined);
         assert.equal(result.content[0].type, "text");
-        const header = `raw.txt · 4 lines${start > 1 ? ` (from line ${start})` : ""}${ending ? "" : " · no trailing newline"}`;
         assert.equal(
           result.content[0].text,
-          `${header}\n${lines.slice(start - 1, limit === undefined ? undefined : start - 1 + limit).join("\n")}`,
+          lines.slice(start - 1, limit === undefined ? undefined : start - 1 + limit).join("\n"),
         );
         const report = reportOf(result, "read");
         assert.equal(report?.nextOffset, undefined);
@@ -95,10 +94,7 @@ test("read without anchors at the same byte cap → fits more complete rows and 
     const raw = await callTool(tool, { path: "raw.txt", limit: totalLines, anchors: false });
     assert.equal(raw.isError, undefined);
     assert.equal(raw.content[0].type, "text");
-    assert.equal(
-      raw.content[0].text,
-      `raw.txt · ${totalLines} lines · no trailing newline\n${Array(rowCount).fill(visibleLine).join("\n")}`,
-    );
+    assert.equal(raw.content[0].text, Array(rowCount).fill(visibleLine).join("\n"));
     const report = reportOf(raw, "read");
     const anchoredReport = reportOf(anchored, "read");
     assert.equal(report?.nextOffset, rowCount + 1);
@@ -114,10 +110,7 @@ test("read without anchors at the same byte cap → fits more complete rows and 
       offset: report.nextOffset,
     });
     assert.equal(next.content[0].type, "text");
-    assert.equal(
-      next.content[0].text,
-      `raw.txt · ${totalLines} lines (from line ${rowCount + 1}) · no trailing newline\n${visibleLine}\n${visibleLine}`,
-    );
+    assert.equal(next.content[0].text, `${visibleLine}\n${visibleLine}`);
     assert.equal(reportOf(next, "read")?.nextOffset, undefined);
     assert.equal(reportOf(next, "read")?.outputLimit, undefined);
   }));
@@ -137,10 +130,7 @@ test("read without anchors first row at or beyond the byte cap → counts UTF-8 
       const result = await callTool(tool, { path: "raw.txt", anchors: false });
       assert.equal(result.isError, undefined);
       assert.equal(result.content[0].type, "text");
-      assert.equal(
-        result.content[0].text,
-        `raw.txt · 1 lines · no trailing newline\n${fits ? source : ""}`,
-      );
+      assert.equal(result.content[0].text, fits ? source : "");
       const report = reportOf(result, "read");
       assert.equal(report?.lineTooLong, fits ? undefined : formatByteSize(budget.readBytes));
       assert.equal(report?.outputLimit, undefined);
