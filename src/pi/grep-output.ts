@@ -12,7 +12,7 @@ import { MAX_UNNARROWED_SCAN_BYTES } from "./grep-candidates.ts";
 import { rereadMatches, type LineCollector } from "./grep-reread.ts";
 import { formatByteSize, type OutputBudgets } from "./budgets.ts";
 import { HashlineError } from "../core/errors.ts";
-import { serializePath } from "./path.ts";
+import { serializeAbsolutePath, serializePath } from "./path.ts";
 import type { OutcomeVariant, Report, SuccessFacts } from "./report-schema.ts";
 
 /** How grep presents matches; the tool's schema offers these and this module formats each. */
@@ -53,6 +53,14 @@ function searchDiagnostics(
 
 /** How the search was bounded and which named paths it skipped; stated with success and failure alike. */
 type SearchFacts = Pick<Report, "scanLimit" | "missing">;
+
+/**
+ * A success's search facts, its missing paths spelled as headers spell paths. A failure keeps
+ * them resolved, because describeFailure spells every failure's missing paths.
+ */
+function statedSearchFacts(facts: SearchFacts): SearchFacts {
+  return { ...facts, missing: facts.missing?.map(serializeAbsolutePath) };
+}
 
 /** No result can be returned from an incomplete search: report it rather than "no matches". */
 function searchIncompleteError(
@@ -346,7 +354,7 @@ function assembleGrepOutput(options: AssembleGrepOutputOptions): {
     payload: kept.join("\n"),
     facts: {
       ...(countsShown ? {} : { matches, files }),
-      ...searchFacts,
+      ...statedSearchFacts(searchFacts),
       matchLimit: matchLimitReached ? effectiveLimit : undefined,
       outputLimit: truncated ? formatByteSize(budget.grepBytes) : undefined,
       linePreviewLimit: previewLimit,
@@ -391,7 +399,12 @@ export async function grepOutput(
       throw searchIncompleteError("No matches confirmed.", warnings, cwd, budget, searchFacts);
     return {
       // A literal `|` finding nothing most likely meant alternatives.
-      facts: { matches: 0, files: 0, ...searchFacts, literalPipe: literalPipe || undefined },
+      facts: {
+        matches: 0,
+        files: 0,
+        ...statedSearchFacts(searchFacts),
+        literalPipe: literalPipe || undefined,
+      },
     };
   }
   const { warnings: rereadWarnings, ...formatted } = await formatMatches({

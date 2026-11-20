@@ -293,7 +293,7 @@ test("missing canonical read path with a native filename variant → reports the
     assert.equal(result.isError, true);
     const report = reportOf(result, "read");
     assert.equal(report?.error, "PATH_NOT_FOUND");
-    assert.deepEqual(report?.missing, [join(dir, "shot 9 AM.txt")]);
+    assert.deepEqual(report?.missing, [join(dir, "shot 9 AM.txt").replaceAll("\\", "/")]);
   }));
 
 test("file URLs escape special filenames → text and delegated reads open the exact file", async (t) => {

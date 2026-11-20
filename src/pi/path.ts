@@ -77,3 +77,9 @@ export function shortenHomePath(path: string): string {
   if (rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel)) return path;
   return rel ? `~${sep}${rel}` : "~";
 }
+
+/** serializePath's absolute form, for a report that states where a path led. */
+export function serializeAbsolutePath(absolute: string): string {
+  // No path lies inside itself, so serializePath keeps this one absolute.
+  return serializePath(absolute, absolute);
+}

@@ -83,7 +83,7 @@ greet.ts · 3 lines
 
 文件路径支持相对路径、绝对路径、`~`、可选的前导 `@` 和 `file://` URL。Windows 还支持 `/c/work/file.txt`、`/mnt/c/work/file.txt`、`/cygdrive/c/work/file.txt` 等 shell 盘符路径。相对路径以工作区目录为基准解析。
 
-路径输入会把 U+202F 等部分 Unicode 空格归一化为普通空格。要精确读取文件名中含有 Unicode 空格的文件，请传入经过百分号编码的文件 URL，例如 `file:///home/me/space%E2%80%AFname.txt` 对应含有 U+202F 的文件名。`read` 和 `grep` 返回的路径可以直接传回工具；请保留返回的写法，包括 URL 转义。`read` 将图片和含 NUL 字节的文件交给 Pi 时，也使用相同的路径语法。
+路径输入会把 U+202F 等部分 Unicode 空格归一化为普通空格。要精确读取文件名中含有 Unicode 空格的文件，请传入经过百分号编码的文件 URL，例如 `file:///home/me/space%E2%80%AFname.txt` 对应含有 U+202F 的文件名。`read` 和 `grep` 返回的路径，以及报告的 `missing` 里列出的路径，都可以直接传回工具，在所有平台上都用 `/` 作分隔符；请保留返回的写法，包括 URL 转义。`read` 将图片和含 NUL 字节的文件交给 Pi 时，也使用相同的路径语法。
 
 ### grep
 

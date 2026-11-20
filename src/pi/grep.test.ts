@@ -257,7 +257,7 @@ test("some grep paths are missing → searches existing paths and reports missin
         const report = reportOf(result, "grep");
         assert.deepEqual(
           report?.missing,
-          missing.map((name) => join(dir, name)),
+          missing.map((name) => join(dir, name).replaceAll("\\", "/")),
         );
         assert.match(report?.next ?? "", /Correct the paths in missing/);
         const payload = text(result);
@@ -293,7 +293,9 @@ test("question mark in the workspace path → a missing relative name does not h
     });
     assert.equal(result.isError, undefined, JSON.stringify(reportOf(result, "grep")));
     assert.equal(grepCounts(result).matches, 1);
-    assert.deepEqual(reportOf(result, "grep")?.missing, [join(cwd, "missing.txt")]);
+    assert.deepEqual(reportOf(result, "grep")?.missing, [
+      join(cwd, "missing.txt").replaceAll("\\", "/"),
+    ]);
   }));
 
 test("every grep path is missing → reports all resolved paths with default recovery", async (t) =>
@@ -308,7 +310,7 @@ test("every grep path is missing → reports all resolved paths with default rec
           (report) => {
             assert.deepEqual(
               report.missing,
-              path.map((name) => join(dir, name)),
+              path.map((name) => join(dir, name).replaceAll("\\", "/")),
             );
             assert.match(report.next ?? "", /Check the path/);
           },
@@ -340,7 +342,7 @@ test("a missing grep path contains a wildcard alongside an existing path → rep
           (report) => {
             assert.deepEqual(
               report.missing,
-              missing.map((name) => join(dir, name)),
+              missing.map((name) => join(dir, name).replaceAll("\\", "/")),
             );
             assert.match(report.next ?? "", /directory.*path.*wildcard.*glob/);
           },
@@ -368,7 +370,7 @@ test("existing grep paths have no matches alongside a missing path → succeeds 
         const report = reportOf(result, "grep");
         assert.equal(report?.matches, 0);
         assert.equal(report?.files, 0);
-        assert.deepEqual(report?.missing, [join(dir, "missing.txt")]);
+        assert.deepEqual(report?.missing, [join(dir, "missing.txt").replaceAll("\\", "/")]);
         assert.match(report?.next ?? "", /Correct the paths in missing/);
       });
     }

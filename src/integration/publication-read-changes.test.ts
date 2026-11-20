@@ -365,7 +365,10 @@ test("target disappears or becomes a directory before publication → keeps the 
                 report.message,
                 disturbance === "missing" ? "Path not found." : "Path is not a regular file.",
               );
-              assert.deepEqual(report.missing, disturbance === "missing" ? [path] : undefined);
+              assert.deepEqual(
+                report.missing,
+                disturbance === "missing" ? [path.replaceAll("\\", "/")] : undefined,
+              );
               assert.equal(report.publication, "NOT_PUBLISHED");
               assert.equal(report.cause, undefined);
             },

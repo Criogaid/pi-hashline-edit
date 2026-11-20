@@ -83,7 +83,7 @@ Scripts that call these tools, such as Pi's codemode, receive each successful re
 
 File paths accept relative or absolute paths, `~`, an optional leading `@`, and `file://` URLs. On Windows, shell drive paths such as `/c/work/file.txt`, `/mnt/c/work/file.txt`, and `/cygdrive/c/work/file.txt` are also accepted. Relative paths resolve from the workspace directory.
 
-Path input normalizes several Unicode space characters, including U+202F, to ordinary spaces. To address a filename containing a literal Unicode space, pass a percent-encoded file URL, such as `file:///home/me/space%E2%80%AFname.txt` for a name containing U+202F. Paths returned by `read` and `grep` use a spelling that can be passed back to the tools; keep that spelling, including any URL escapes. The same path syntax applies when `read` delegates images or NUL-containing files to Pi.
+Path input normalizes several Unicode space characters, including U+202F, to ordinary spaces. To address a filename containing a literal Unicode space, pass a percent-encoded file URL, such as `file:///home/me/space%E2%80%AFname.txt` for a name containing U+202F. Paths returned by `read` and `grep`, and the paths a report lists in `missing`, use a spelling that can be passed back to the tools, with `/` as the separator on every platform; keep that spelling, including any URL escapes. The same path syntax applies when `read` delegates images or NUL-containing files to Pi.
 
 ### grep
 

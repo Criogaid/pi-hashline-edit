@@ -31,6 +31,7 @@ import {
 import { boundedText, causeOf } from "./report-cause.ts";
 import type { OutputBudgets } from "./budgets.ts";
 import { cancellationError } from "./error-text.ts";
+import { serializeAbsolutePath } from "./path.ts";
 import {
   ERROR_DEFINITIONS,
   MODEL_OMITTED_FIELDS,
@@ -234,6 +235,8 @@ export function describeFailure(
 ): FailureReport {
   const failure = classify(caught, context.signal);
   const budget = context.budget;
+  const facts = failure.facts;
+  const missing = facts && "missing" in facts ? facts.missing : undefined;
   // HashlineError's constructor ties its facts to its code; the union cannot carry that link.
   return {
     error: failure.errorCode,
@@ -243,6 +246,8 @@ export function describeFailure(
     message: boundedText(failure.message, budget.fieldBytes),
     cause: causeOf(failure.cause, budget.fieldBytes),
     ...failure.facts,
+    // Throw sites state resolved paths; the report spells them as headers spell paths.
+    ...(missing ? { missing: missing.map(serializeAbsolutePath) } : {}),
     then_run: mutation?.then_run,
     progressError: mutation?.progressError,
     next: failureNext(failure, mutation?.publication),

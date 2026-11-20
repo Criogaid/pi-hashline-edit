@@ -113,7 +113,7 @@ test("read delegation → only images and NUL use native read on the canonical t
       beforeNative = undefined;
       assert.equal(result.isError, true);
       assert.equal(reportOf(result, "read")?.error, "PATH_NOT_FOUND");
-      assert.deepEqual(reportOf(result, "read")?.missing, [target]);
+      assert.deepEqual(reportOf(result, "read")?.missing, [target.replaceAll("\\", "/")]);
     },
   );
 });

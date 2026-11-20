@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { test } from "node:test";
 import { stripVTControlCharacters } from "node:util";
 import { Value } from "typebox/value";
@@ -207,14 +209,16 @@ test("native filesystem failure → reports its diagnostic once without a synthe
   }
 });
 
-test("native path errors → classify fixed messages and retain the missing path", () => {
+test("native path errors → classify fixed messages and state the missing path as headers spell paths", () => {
+  // Node reports the resolved path the call used, with the platform's separator.
+  const resolved = join(tmpdir(), "resolved", "source");
   for (const [code, expected, missing] of [
-    ["ENOENT", "PATH_NOT_FOUND", ["resolved/source"]],
+    ["ENOENT", "PATH_NOT_FOUND", [resolved.replaceAll("\\", "/")]],
     ["EISDIR", "NOT_REGULAR_FILE", undefined],
   ] as const) {
     const native = Object.assign(new Error(`${code}: native diagnostic`), {
       code,
-      path: "resolved/source",
+      path: resolved,
     });
     const report = describeFailure("read", native, {
       path: "source",

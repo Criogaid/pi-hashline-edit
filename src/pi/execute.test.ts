@@ -716,7 +716,7 @@ test("missing or directory targets → tools share path diagnostics without file
           assert.equal(report.error, target.code);
           assert.equal(report.message, PATH_ERROR_MESSAGES[target.code]);
           if (target.code === "PATH_NOT_FOUND") {
-            assert.deepEqual(report.missing, [join(dir, "missing.txt")]);
+            assert.deepEqual(report.missing, [join(dir, "missing.txt").replaceAll("\\", "/")]);
             assert.equal(
               report.next,
               ERROR_DEFINITIONS.PATH_NOT_FOUND.next[
