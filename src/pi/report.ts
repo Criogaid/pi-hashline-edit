@@ -9,6 +9,8 @@
  * one model-facing serialization: one JSON object in schema order, without the
  * call's own tool and path. A success puts it after the content payload;
  * a failure is the report alone. The TUI receives the full report in details.
+ * Scripts receive a success as one object with the same fields; a failure
+ * carries none, so their call rejects with the report text.
  *
  * Throw sites classify failures as `HashlineError` (core/errors.ts); a failure
  * beneath the failing step becomes structured `cause`, never part of `message`.
@@ -34,6 +36,7 @@ import {
   OUTCOME_NEXT,
   PUBLICATION_NEXT,
   REPORT_SCHEMA,
+  SCRIPT_OUTPUT_SCHEMAS,
   WIRE_REPORT_SCHEMA,
   type ErrorCode,
   type FailureReport,
@@ -64,12 +67,16 @@ export function reportEntries(report: ReportText): [string, unknown][] {
   });
 }
 
-/** Serialize facts in schema order; a result never repeats its call's tool and path. */
-export function renderReport(report: ReportText): string {
-  const entries = reportEntries(report).filter(
-    ([key]) => !MODEL_OMITTED_FIELDS.has(key as ModelOmittedField),
+/** The fields a report's text states, in schema order: a result never repeats its call's tool and path. */
+function statedFields(report: ReportText): Record<string, unknown> {
+  return Object.fromEntries(
+    reportEntries(report).filter(([key]) => !MODEL_OMITTED_FIELDS.has(key as ModelOmittedField)),
   );
-  return JSON.stringify(Object.fromEntries(entries), null, 2);
+}
+
+/** Serialize the stated fields as the one JSON object a result's text carries. */
+export function renderReport(report: ReportText): string {
+  return JSON.stringify(statedFields(report), null, 2);
 }
 
 /** Decode a text report; the text omits its tool, which the originating call supplies. */
@@ -136,7 +143,9 @@ function outcomeNext(report: Report, variant: OutcomeVariant | undefined): strin
 /**
  * A successful result: the tool's payload, then its report when it states
  * anything beyond tool and path or when there is no payload. `variant` is the recovery
- * alternative the producing layer selected.
+ * alternative the producing layer selected. Scripts receive the same facts as one object
+ * (`SCRIPT_OUTPUT_SCHEMAS`): the stated fields, after the payload's text as `text` for a tool
+ * that has a payload.
  */
 export function reportResult<TDetails extends object | undefined>(
   report: SuccessReport,
@@ -147,15 +156,20 @@ export function reportResult<TDetails extends object | undefined>(
   const complete = Object.fromEntries(
     reportEntries({ ...report, next: outcomeNext(report, variant) }),
   ) as SuccessReport;
-  const stated = Object.keys(complete).some(
-    (key) => !MODEL_OMITTED_FIELDS.has(key as ModelOmittedField),
-  );
+  const fields = statedFields(complete);
+  const stated = Object.keys(fields).length > 0;
+  const text = payload.flatMap((block) => (block.type === "text" ? [block.text] : [])).join("\n");
   return {
     content:
       stated || payload.length === 0
         ? [...payload, { type: "text", text: renderReport(complete) }]
         : payload,
     details: { ...details, report: complete } as TDetails & ReportDetails<SuccessReport>,
+    // Report fields are JSON values: the wire schema admits nothing else.
+    structuredContent: {
+      ...("text" in SCRIPT_OUTPUT_SCHEMAS[report.tool].properties ? { text } : {}),
+      ...fields,
+    } as NonNullable<AgentToolResult<unknown>["structuredContent"]>,
   };
 }
 

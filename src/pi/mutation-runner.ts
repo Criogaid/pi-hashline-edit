@@ -34,7 +34,7 @@ import {
   type ThenRunInput,
 } from "./action-fusion.ts";
 import { createArgumentPreparer, type CheckArguments } from "./argument-validation.ts";
-import type { MutationToolName } from "./report-schema.ts";
+import { SCRIPT_OUTPUT_SCHEMAS, type MutationToolName } from "./report-schema.ts";
 import {
   commitFile,
   commitFreshness,
@@ -119,6 +119,7 @@ export function mutationToolBase<
       ...(actionFusion ? ACTION_FUSION_GUIDELINES : []),
     ],
     parameters,
+    outputSchema: SCRIPT_OUTPUT_SCHEMAS[tool],
     prepareArguments: createArgumentPreparer(tool, parameters, spec.check, budgets),
     constrainedSampling: STRICT_SAMPLING,
     renderShell: "default" as const,

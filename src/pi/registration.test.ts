@@ -50,7 +50,7 @@ test("registered tools with or without Fusion → expose prompt rules and conver
         join(dir, ".pi", "settings.json"),
         JSON.stringify({ hashlineEdit: { enabled: true, actionFusion } }),
       );
-      const tools: (Tool & Pick<ToolDefinition, "promptGuidelines">)[] = [];
+      const tools: (Tool & Pick<ToolDefinition, "promptGuidelines" | "outputSchema">)[] = [];
       const api: Pick<ExtensionAPI, "exec" | "on" | "registerEntryRenderer" | "registerTool"> = {
         async exec() {
           return { stdout: dir, stderr: "", code: 0, killed: false, truncated: false };
@@ -77,6 +77,9 @@ test("registered tools with or without Fusion → expose prompt rules and conver
             ]);
           });
         }
+        await t.test(`${tool.name}/Fusion ${actionFusion} → declares what scripts receive`, () => {
+          assert.ok(tool.outputSchema);
+        });
         await t.test(`${tool.name}/Fusion ${actionFusion} → supports strict sampling`, () => {
           assert.deepEqual(tool.constrainedSampling, STRICT_SAMPLING);
           const strict = makeStrictJsonSchema(tool.parameters);

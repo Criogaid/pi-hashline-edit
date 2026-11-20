@@ -25,7 +25,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import type { AgentToolUpdateCallback } from "@earendil-works/pi-agent-core";
 import { Text } from "@earendil-works/pi-tui";
-import { IsString, IsUnion, Type, type Static, type TSchema } from "typebox";
+import { IsString, IsUnion, Type, type TSchema } from "typebox";
 import { scanTextLines } from "./text-stream.ts";
 import { createAnchorFormatter, displayCarriageReturns, parseHashline } from "./anchor-format.ts";
 import { canonicalPath, serializePath } from "./path.ts";
@@ -34,7 +34,7 @@ import { POSITIVE_SAFE_INTEGER, STRICT_SAMPLING } from "./schema.ts";
 import { HashlineError, PATH_ERROR_MESSAGES } from "../core/errors.ts";
 import { throwIfCancelled } from "./error-text.ts";
 import { reportResult, runTool, type ReportDetails } from "./report.ts";
-import { REPORT_SCHEMA } from "./report-schema.ts";
+import { SCRIPT_OUTPUT_SCHEMAS } from "./report-schema.ts";
 import { formatByteSize } from "./budgets.ts";
 import type { ToolEnvironment } from "./config.ts";
 import { createArgumentPreparer } from "./argument-validation.ts";
@@ -52,25 +52,11 @@ type ReadDetails = (ReadToolDetails & { nativeRead?: true; header?: string }) &
 /** Pi's read arguments plus this override's own. */
 type ReadInput = ReadToolInput & { anchors?: boolean };
 
-/**
- * What a script receives for text: the payload as `text`, and the report's `nextOffset` and
- * `lineTooLong` as fields in place of a trailing report block.
- */
-const TEXT_OUTPUT_SCHEMA = Type.Object(
-  {
-    text: Type.String(),
-    nextOffset: REPORT_SCHEMA.properties.nextOffset,
-    lineTooLong: REPORT_SCHEMA.properties.lineTooLong,
-  },
-  { additionalProperties: false },
-);
-type ReadTextOutput = Static<typeof TEXT_OUTPUT_SCHEMA>;
-
 /** This read's output schema: its own text result, and each result of Pi's read other than plain text. */
 function readOutputSchema(native: TSchema | undefined): TSchema {
   const nativeVariants = native !== undefined && IsUnion(native) ? native.anyOf : [];
   return Type.Union([
-    TEXT_OUTPUT_SCHEMA,
+    SCRIPT_OUTPUT_SCHEMAS.read,
     ...nativeVariants.filter((variant) => !IsString(variant)),
   ]);
 }
@@ -203,8 +189,7 @@ export function makeReadOverride({
     promptSnippet: "Read file text, with line anchors for edit",
     promptGuidelines: ["Files containing NUL go to native read without a Hashline header."],
     parameters: parameters as typeof builtin.parameters,
-    // Scripts receive structuredContent in place of the result text: the text with the report's
-    // facts as fields, or Pi's image block for a delegated image.
+    // Scripts receive the report's object for text, and Pi's image block for a delegated image.
     outputSchema: readOutputSchema(builtin.outputSchema),
     prepareArguments: createArgumentPreparer("read", parameters, undefined, budgets),
     constrainedSampling: STRICT_SAMPLING,
@@ -280,17 +265,15 @@ export function makeReadOverride({
             onUpdate,
             ctx,
           );
-          const structured = result.structuredContent;
-          return {
-            ...reportResult(report, result.content, {
-              ...result.details,
-              nativeRead: true as const,
-            }),
-            structuredContent:
-              typeof structured === "string"
-                ? ({ text: structured } satisfies ReadTextOutput)
-                : structured,
-          };
+          const delegated = reportResult(report, result.content, {
+            ...result.details,
+            nativeRead: true as const,
+          });
+          // Pi gives scripts an image as its image block; delegated text is the report's `text`.
+          const image = result.structuredContent;
+          return typeof image === "object" && image !== null
+            ? { ...delegated, structuredContent: image }
+            : delegated;
         };
 
         if ((await stat(absPath)).isDirectory()) {
@@ -346,25 +329,18 @@ export function makeReadOverride({
         );
         const text = anchored === false ? rows.join("\n") : `${header}\n${rows.join("\n")}`;
         const limitText = formatByteSize(maxBytes);
-        const lineTooLong = firstLineTooLong ? limitText : undefined;
 
-        const result = reportResult(
+        return reportResult(
           {
             ...report,
             nextOffset,
             outputLimit:
               firstOmittedLine !== undefined && !firstLineTooLong ? limitText : undefined,
-            lineTooLong,
+            lineTooLong: firstLineTooLong ? limitText : undefined,
           },
           [{ type: "text" as const, text }],
           anchored === false ? { header } : undefined,
         );
-        const structuredContent: ReadTextOutput = {
-          text,
-          ...(nextOffset === undefined ? {} : { nextOffset }),
-          ...(lineTooLong === undefined ? {} : { lineTooLong }),
-        };
-        return { ...result, structuredContent };
       });
     },
   };

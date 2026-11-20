@@ -14,6 +14,7 @@ import fsPromises from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, toNamespacedPath } from "node:path";
 import { initTheme } from "@earendil-works/pi-coding-agent";
+import { Value } from "typebox/value";
 import { theme } from "../../node_modules/@earendil-works/pi-coding-agent/dist/modes/interactive/theme/theme.js";
 import { computeLineHash } from "../core/hash.ts";
 import { makeMockGrep } from "./grep-rg.testing.ts";
@@ -830,6 +831,18 @@ test("context preserves logical CRLF anchors around a matched line", async () =>
         `5#${computeLineHash(5, "after survivor", 4)}│after survivor`,
       ].join("\n"),
     );
+  });
+});
+
+test("files mode with a match → scripts receive the paths as text and the counts as fields", async () => {
+  await withDir(async (dir) => {
+    const a = join(dir, "a.ts");
+    await writeFile(a, "foo\n");
+    const tool = makeMockGrep(dir, DEFAULT_CONFIG, fakeBackend({ paths: [a] }).backend);
+    const result = await call(tool, { pattern: ["foo"], literal: true, outputMode: "files" });
+    assert.deepEqual(result.structuredContent, { text: "a.ts", matches: 1, files: 1 });
+    assert.ok(tool.outputSchema);
+    assert.ok(Value.Check(tool.outputSchema, result.structuredContent));
   });
 });
 

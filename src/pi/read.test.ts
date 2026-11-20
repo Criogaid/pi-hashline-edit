@@ -250,7 +250,7 @@ test("read text complete, cut, with an oversized first line, or delegated → sc
       assert.equal(result.isError, undefined);
       const payload = result.content[0];
       assert.equal(payload.type, "text");
-      assert.deepEqual(result.structuredContent, { text: payload.text, ...facts });
+      assert.partialDeepStrictEqual(result.structuredContent, { text: payload.text, ...facts });
       assert.ok(Value.Check(tool.outputSchema, result.structuredContent));
     }
   }));

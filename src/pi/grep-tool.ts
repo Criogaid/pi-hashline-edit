@@ -25,6 +25,7 @@ import {
 } from "./schema.ts";
 import { throwIfCancelled } from "./error-text.ts";
 import { reportResult, runTool, type ReportDetails } from "./report.ts";
+import { SCRIPT_OUTPUT_SCHEMAS } from "./report-schema.ts";
 import type { HashlineEditConfig, ToolEnvironment } from "./config.ts";
 import {
   checkRegexArguments,
@@ -127,6 +128,7 @@ export function makeGrepOverride({ cwd, config, budgets }: ToolEnvironment) {
       "When you need several independent searches, send them as separate grep calls in one response; they run in parallel.",
     ],
     parameters: grepSchema,
+    outputSchema: SCRIPT_OUTPUT_SCHEMAS.grep,
     prepareArguments: createArgumentPreparer("grep", grepSchema, checkGrepArguments, budgets),
     constrainedSampling: STRICT_SAMPLING,
 

@@ -9,6 +9,7 @@ import { join } from "node:path";
 import { initTheme } from "@earendil-works/pi-coding-agent";
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import { validateToolArguments } from "@earendil-works/pi-ai";
+import { Value } from "typebox/value";
 import { makeEditOverride } from "./tool-factories.testing.ts";
 import { makeReadOverride } from "./tool-factories.testing.ts";
 import { makeWriteOverride } from "./tool-factories.testing.ts";
@@ -273,6 +274,31 @@ test("native read and write renderers preserve resource titles, previews, and fu
       { ...context, isError: true } as Parameters<typeof write.renderResult>[3],
     );
     assert.match(error.render(120).join("\n"), /first error[\s\S]*second error/);
+  }));
+
+test("successful write, edit, or replace → scripts receive the report's stated fields", async () =>
+  withDir(async (dir) => {
+    const text = "a\nb\n";
+    const cases = [
+      [makeWriteOverride(dir), { path: "new.txt", content: text, mode: "create" }],
+      [
+        makeEditOverride(dir, DEFAULT_CONFIG),
+        { path: "new.txt", steps: [{ action: "replace", anchor: h(text, 1), lines: ["A"] }] },
+      ],
+      [
+        makeReplaceTool(dir, DEFAULT_CONFIG),
+        { path: "new.txt", replacements: [{ find: "b", literal: true, replace: "B" }] },
+      ],
+    ] as const;
+    for (const [tool, args] of cases) {
+      const result = await call(tool, args);
+      assert.equal(result.isError, undefined);
+      assert.equal(result.content.length, 1);
+      assert.deepEqual(result.structuredContent, JSON.parse(result.content[0].text));
+      assert.ok(tool.outputSchema);
+      assert.ok(Value.Check(tool.outputSchema, result.structuredContent));
+    }
+    assert.equal(await readFile(join(dir, "new.txt"), "utf8"), "A\nB\n");
   }));
 
 test("edit schema rejects misspelled range fields and invalid operation shapes", async () =>

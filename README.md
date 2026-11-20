@@ -77,6 +77,8 @@ The extension replaces Pi's `read`, `grep`, `edit`, and `write`, and adds `repla
 | `replace` | Applies literal or regex substitutions across one file. Every rule must match, and overlapping matches reject the batch. |
 | `write` | Creates a file (`mode: "create"`) or overwrites one (`mode: "overwrite"`), using the content exactly as given. Missing parent directories are created. |
 
+Scripts that call these tools, such as Pi's codemode, receive each successful result as one object in place of the result text: the fields its report states, preceded for `read` and `grep` by the payload as `text`. For example, a read cut by its default line limit is `{ text, nextOffset, next }` and a created file is `{ publication }`; reading an image gives Pi's image block. A failed call rejects with its report text.
+
 ### Paths
 
 File paths accept relative or absolute paths, `~`, an optional leading `@`, and `file://` URLs. On Windows, shell drive paths such as `/c/work/file.txt`, `/mnt/c/work/file.txt`, and `/cygdrive/c/work/file.txt` are also accepted. Relative paths resolve from the workspace directory.
@@ -185,7 +187,7 @@ Argument rejections fit their diagnostic block as serialized JSON. In edit failu
 
 When model capacity is unknown or invalid, the defaults are 64 KiB for read rows, 50 KiB for grep payloads, 16 KiB per diagnostic block, 4 KiB per free-text field, and 500 UTF-16 code units per grep preview. An explicit `read.maxKiB` overrides only the read cap. Each execution keeps the budget snapshot it started with.
 
-Read reports `nextOffset` when its default line limit or byte budget cuts a window; a caller-supplied `limit` alone does not add a `nextOffset` report. A first row that cannot fit gets a `lineTooLong` byte-limit fact. With `anchors: false`, an `offset` past the last line fails with `OFFSET_PAST_END` and the file's `totalLines`; an empty file read from its first line returns empty text. Scripts that call `read`, such as Pi's codemode, receive `{ text, nextOffset?, lineTooLong? }` in place of the text and its report, and Pi's image block for an image. Grep reports payload and preview truncation separately, and plain previews for invalid UTF-8 never carry edit anchors.
+Read reports `nextOffset` when its default line limit or byte budget cuts a window; a caller-supplied `limit` alone does not add a `nextOffset` report. A first row that cannot fit gets a `lineTooLong` byte-limit fact. With `anchors: false`, an `offset` past the last line fails with `OFFSET_PAST_END` and the file's `totalLines`; an empty file read from its first line returns empty text. Grep reports payload and preview truncation separately, and plain previews for invalid UTF-8 never carry edit anchors.
 
 For a truncated grep payload, the report says to retry with `context: 0` only when removing context would fit another matching line in the same byte budget; otherwise it suggests narrowing the search. Inspect full lines before rewriting partial previews: use Bash for paths listed in `invalidUtf8`, and `read` for valid UTF-8.
 

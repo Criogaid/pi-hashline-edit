@@ -576,7 +576,8 @@ export type MutationToolName = (typeof MUTATION_TOOLS)[number];
 /** Argument rejections may omit message; Pi supplies none for them. */
 const MESSAGE_OPTIONAL = "INVALID_ARGUMENTS" satisfies ErrorCode;
 
-const NON_MUTATION_TOOLS = (Object.keys(SUCCESS_DEFINITIONS) as ReportTool[]).filter(
+const REPORT_TOOLS = Object.keys(SUCCESS_DEFINITIONS) as ReportTool[];
+const NON_MUTATION_TOOLS = REPORT_TOOLS.filter(
   (tool): tool is Exclude<ReportTool, MutationToolName> =>
     !(MUTATION_TOOLS as readonly ReportTool[]).includes(tool),
 );
@@ -612,17 +613,43 @@ const FAILURE_SCHEMAS = [
     ),
   ),
 );
-const SUCCESS_SCHEMAS = Object.entries(SUCCESS_DEFINITIONS).map(([tool, schema]) =>
+/** The fields a success report of `tool` may carry beside its tool. */
+const successFields = (tool: ReportTool): TProperties => ({
+  ...COMMON_WIRE_FIELDS,
+  ...((MUTATION_TOOLS as readonly ReportTool[]).includes(tool) ? MUTATION_SUCCESS_WIRE_FIELDS : {}),
+  ...SUCCESS_DEFINITIONS[tool].properties,
+});
+const SUCCESS_SCHEMAS = REPORT_TOOLS.map((tool) =>
   Type.Object(
-    {
-      ...COMMON_WIRE_FIELDS,
-      tool: Type.Literal(tool),
-      ...((MUTATION_TOOLS as readonly string[]).includes(tool) ? MUTATION_SUCCESS_WIRE_FIELDS : {}),
-      ...schema.properties,
-    },
+    { ...successFields(tool), tool: Type.Literal(tool) },
     { additionalProperties: false },
   ),
 );
+
+/**
+ * What a script receives from a successful call, by tool: one object with the fields the report
+ * text states, in output order, after the content payload of read and grep as `text`.
+ */
+export const SCRIPT_OUTPUT_SCHEMAS = Object.fromEntries(
+  REPORT_TOOLS.map((tool) => {
+    const fields = successFields(tool);
+    const stated = Object.keys(REPORT_SCHEMA.properties).filter(
+      (name) => name in fields && !MODEL_OMITTED_FIELDS.has(name as ModelOmittedField),
+    );
+    return [
+      tool,
+      Type.Object(
+        {
+          ...((NON_MUTATION_TOOLS as readonly ReportTool[]).includes(tool)
+            ? { text: Type.String() }
+            : {}),
+          ...Object.fromEntries(stated.map((name) => [name, fields[name]])),
+        },
+        { additionalProperties: false },
+      ),
+    ];
+  }),
+) as Record<ReportTool, TObject>;
 /** Closed records after the originating call supplies the tool; failure facts remain code-specific. */
 export const WIRE_REPORT_SCHEMA = Type.Union([...FAILURE_SCHEMAS, ...SUCCESS_SCHEMAS]);
 

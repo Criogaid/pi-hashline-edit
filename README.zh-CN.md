@@ -77,6 +77,8 @@ greet.ts · 3 lines
 | `replace` | 在单个文件内批量执行字面或正则替换。每条规则都必须有匹配，匹配区域重叠时整批拒绝。 |
 | `write` | 新建文件（`mode: "create"`）或覆盖文件（`mode: "overwrite"`），内容原样写入，缺失的父目录会一并创建。 |
 
+调用这些工具的脚本（例如 Pi 的 codemode）拿到的每个成功结果是一个对象，而不是结果文本：对象里是报告的各个字段，`read` 和 `grep` 另把正文放在 `text` 里。例如，被默认行数截断的读取是 `{ text, nextOffset, next }`，新建文件是 `{ publication }`；读图片时拿到 Pi 的图片块。调用失败时脚本收到异常，内容是报告文本。
+
 ### 路径
 
 文件路径支持相对路径、绝对路径、`~`、可选的前导 `@` 和 `file://` URL。Windows 还支持 `/c/work/file.txt`、`/mnt/c/work/file.txt`、`/cygdrive/c/work/file.txt` 等 shell 盘符路径。相对路径以工作区目录为基准解析。
@@ -185,7 +187,7 @@ grep 卡片原样显示返回的文件路径和计数行。只有 `content` 模�
 
 模型容量未知或非法时，默认上限为 read 行 64 KiB、grep 载荷 50 KiB、每个诊断块 16 KiB、每个自由文本字段 4 KiB、每条 grep 预览 500 个 UTF-16 单元。显式设置 `read.maxKiB` 只覆盖 read 上限。每次执行使用开始时取得的预算快照。
 
-Read 因默认行数或字节预算截断窗口时会报告 `nextOffset`；只有调用方指定的 `limit` 生效时不额外报告 `nextOffset`。首行放不下时报告 `lineTooLong`，其值为字节上限。传 `anchors: false` 时，`offset` 超过最后一行会以 `OFFSET_PAST_END` 失败，并给出文件的 `totalLines`；从第一行读空文件返回空文本。调用 `read` 的脚本（例如 Pi 的 codemode）拿到的是 `{ text, nextOffset?, lineTooLong? }`，不再是文本加报告；读图片时拿到 Pi 的图片块。Grep 分别报告载荷和行预览的截断，非法 UTF-8 的普通预览不带编辑锚点。
+Read 因默认行数或字节预算截断窗口时会报告 `nextOffset`；只有调用方指定的 `limit` 生效时不额外报告 `nextOffset`。首行放不下时报告 `lineTooLong`，其值为字节上限。传 `anchors: false` 时，`offset` 超过最后一行会以 `OFFSET_PAST_END` 失败，并给出文件的 `totalLines`；从第一行读空文件返回空文本。Grep 分别报告载荷和行预览的截断，非法 UTF-8 的普通预览不带编辑锚点。
 
 grep 载荷被截断时，只有去掉上下文后能在相同字节预算内多显示至少一条匹配行，报告才提示用 `context: 0` 重试；否则提示缩小搜索范围。依据部分预览重写前需检查完整行：`invalidUtf8` 列出的路径使用 Bash，有效 UTF-8 使用 `read`。
 

@@ -100,11 +100,11 @@ for (const entry of ["direct", "codemode"] as const) {
   });
 }
 
-test("codemode script reads text without anchors → receives the lines and the report's facts as fields", {
+test("codemode script reads and writes → receives each success as an object and a failure as a rejection", {
   timeout: SESSION_TIMEOUT_MS,
 }, async (t) => {
   const { cwd, session, model } = await openTestSession(t, {
-    tools: ["read", "codemode"],
+    tools: ["read", "write", "codemode"],
     configure(pi, cwd) {
       pi.registerTool(
         makeReadOverride(cwd, {
@@ -112,6 +112,7 @@ test("codemode script reads text without anchors → receives the lines and the 
           read: { ...DEFAULT_CONFIG.read, defaultLimit: 2 },
         }),
       );
+      pi.registerTool(makeWriteOverride(cwd));
       pi.registerTool(createCodemodeToolDefinition());
     },
   });
@@ -125,7 +126,8 @@ test("codemode script reads text without anchors → receives the lines and the 
     "} catch (error) {",
     "  pastEnd = String(error);",
     "}",
-    "text(JSON.stringify({ cut, rest, pastEnd }));",
+    'const saved = await tools.write({ path: "new.txt", mode: "create", content: "x\\n" });',
+    "text(JSON.stringify({ cut, rest, pastEnd, saved }));",
   ].join("\n");
   let requests = 0;
   session.agent.streamFunction = () => {
@@ -149,10 +151,12 @@ test("codemode script reads text without anchors → receives the lines and the 
     .map((block) => block.text)
     .join("\n");
   assert.equal(result.isError, false, output);
-  const { cut, rest, pastEnd } = JSON.parse(
+  const { cut, rest, pastEnd, saved } = JSON.parse(
     output.slice(output.indexOf("{"), output.lastIndexOf("}") + 1),
   );
-  assert.deepEqual(cut, { text: "one\ntwo", nextOffset: 3 });
+  assert.partialDeepStrictEqual(cut, { text: "one\ntwo", nextOffset: 3 });
   assert.deepEqual(rest, { text: "three" });
   assert.match(pastEnd, /OFFSET_PAST_END[\s\S]*"totalLines": 3/);
+  assert.deepEqual(saved, { publication: "PUBLISHED" });
+  assert.equal(await readFile(join(cwd, "new.txt"), "utf8"), "x\n");
 });

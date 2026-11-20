@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { stripVTControlCharacters } from "node:util";
+import { Value } from "typebox/value";
 import { initTheme } from "@earendil-works/pi-coding-agent";
 import { theme } from "../../node_modules/@earendil-works/pi-coding-agent/dist/modes/interactive/theme/theme.js";
 import { HashlineError, PATH_ERROR_MESSAGES } from "../core/errors.ts";
@@ -16,6 +17,7 @@ import { MAX_UNNARROWED_SCAN_BYTES } from "./grep-candidates.ts";
 import {
   ERROR_DEFINITIONS,
   OUTCOME_NEXT,
+  SCRIPT_OUTPUT_SCHEMAS,
   type Report,
   type ReportTool,
   type SuccessReport,
@@ -261,6 +263,28 @@ test("success reports → omit repeated call fields while retaining details and 
   assert.deepEqual(result.details.report, report);
   assert.deepEqual(splitReport(result, "write"), { content: payload, report });
   assert.equal(result.content.length, 2);
+});
+
+test("success results → scripts receive the stated fields, after the payload text for read and grep", () => {
+  const cases: [SuccessReport, string | undefined][] = [
+    [{ tool: "read", path: "a.txt", nextOffset: 3 }, "one\ntwo"],
+    [{ tool: "read", path: "a.txt" }, "one"],
+    [{ tool: "grep", path: ["src"], matches: 2, files: 1 }, "src/a.ts"],
+    [{ tool: "grep", path: ["src"], matches: 0, files: 0 }, undefined],
+    [{ tool: "replace", path: "a.txt", publication: "PUBLISHED", matches: 2 }, undefined],
+    [{ tool: "write", path: "a.txt", publication: "PUBLISHED" }, undefined],
+  ];
+  for (const [report, payload] of cases) {
+    const result = reportResult(report, payload === undefined ? [] : [text(payload)]);
+    const stated = JSON.parse(renderReport(result.details.report));
+    assert.deepEqual(
+      result.structuredContent,
+      report.tool === "read" || report.tool === "grep"
+        ? { text: payload ?? "", ...stated }
+        : stated,
+    );
+    assert.ok(Value.Check(SCRIPT_OUTPUT_SCHEMAS[report.tool], result.structuredContent));
+  }
 });
 
 test("success facts without a tool → use call context and enforce tool-specific fields", () => {
