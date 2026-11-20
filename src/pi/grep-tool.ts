@@ -159,7 +159,7 @@ export function makeGrepOverride({ cwd, config, budgets }: ToolEnvironment) {
       context: Parameters<NonNullable<GrepTool["renderResult"]>>[3],
     ) {
       if (isPartial) return new Text(theme.fg("warning", "Searching…"), 0, 0);
-      if (context.isError) return renderToolError(result, "grep", theme, expanded);
+      if (context.isError) return renderToolError(result, "grep", theme, expanded, context);
       const { content, report } = splitReport(result, "grep");
       const payload = content[0];
       const mode = context.args?.outputMode ?? "content";
@@ -169,7 +169,13 @@ export function makeGrepOverride({ cwd, config, budgets }: ToolEnvironment) {
           : mode === "content"
             ? toDisplayLines(payload.text, theme)
             : payload.text.split("\n").map((line) => theme.fg("toolOutput", line));
-      return renderOutputPreview(lines, expanded, theme, report ? reportLines(report, theme) : []);
+      return renderOutputPreview(
+        lines,
+        expanded,
+        theme,
+        context,
+        report ? reportLines(report, theme) : [],
+      );
     },
 
     async execute(

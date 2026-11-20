@@ -78,7 +78,8 @@ export function makeWriteOverride(env: MutationToolEnvironment) {
       theme: Theme,
       context: WriteRenderContext,
     ) {
-      if (context.isError) return renderToolError(result, "write", theme, options.expanded);
+      if (context.isError)
+        return renderToolError(result, "write", theme, options.expanded, context);
       const { report } = splitReport(result, "write");
       const facts = report ? reportLines(report, theme, WRITE_CARD_SHOWN) : [];
       if (facts.length) return new Text(facts.join("\n"), 0, 0);

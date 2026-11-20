@@ -566,9 +566,13 @@ test("failed commands preserve mutation results and stay out of all main card re
                 result,
                 { expanded: true, isPartial: false },
                 stubTheme as Theme,
-                { args, state: {}, cwd: dir, isError: false } as Parameters<
-                  typeof tool.renderResult
-                >[3],
+                {
+                  args,
+                  state: {},
+                  cwd: dir,
+                  isError: false,
+                  keyHint: (_key: string, description: string) => description,
+                } as Parameters<typeof tool.renderResult>[3],
               )
               .render(120)
               .join("\n"),
@@ -597,9 +601,13 @@ test("failed commands preserve mutation results and stay out of all main card re
                 result,
                 { expanded: true, isPartial: false },
                 stubTheme as Theme,
-                { args, state: {}, cwd: dir, isError: false } as Parameters<
-                  typeof tool.renderResult
-                >[3],
+                {
+                  args,
+                  state: {},
+                  cwd: dir,
+                  isError: false,
+                  keyHint: (_key: string, description: string) => description,
+                } as Parameters<typeof tool.renderResult>[3],
               )
               .render(120)
               .join("\n"),

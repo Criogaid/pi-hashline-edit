@@ -48,7 +48,9 @@ const reportFromText = (value: string, tool: ReportTool) =>
 function displayed(result: Parameters<typeof renderToolError>[0], tool: ReportTool) {
   initTheme("dark");
   return stripVTControlCharacters(
-    renderToolError(result, tool, theme, true).render(200).join("\n"),
+    renderToolError(result, tool, theme, true, { keyHint: (_key, description) => description })
+      .render(200)
+      .join("\n"),
   );
 }
 

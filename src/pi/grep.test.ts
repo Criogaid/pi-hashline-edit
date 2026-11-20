@@ -983,7 +983,11 @@ test("collapsed card with more rows than its preview → hides rows but still sh
         result,
         { isPartial: false, expanded },
         plain as any,
-        { args, isError: false } as any,
+        {
+          args,
+          isError: false,
+          keyHint: (_key: string, description: string) => description,
+        } as any,
       )
         .render(200)
         .map((line: string) => line.trimEnd());

@@ -31,6 +31,9 @@ import { renderReport } from "./report.ts";
 import { MAX_CONTENT_KIB, outputBudgetsFor } from "./budgets.ts";
 import { DEFAULT_OUTPUT_BUDGETS } from "./tool-factories.testing.ts";
 
+/** Stands in for the host's keybinding formatter by naming the keybinding it was asked for. */
+const hints = { keyHint: (key: string) => `<${key}>` };
+
 const mutationDetails = (
   report: Pick<SuccessReport, "publication" | "freshness" | "then_run">,
 ) => ({
@@ -92,7 +95,7 @@ test("empty logical diff → render according to confirmed publication state", (
           },
           { isPartial: false, expanded: true },
           theme,
-          { isError: false, args: {}, state: {} },
+          { isError: false, args: {}, state: {}, ...hints },
         )
         .render(100)
         .join("\n"),
@@ -360,7 +363,7 @@ test("diff previews retain standalone CR and literal control-picture characters"
     { content: [], details: { diff: "-1 old␍\n+1 new␍" } },
     { isPartial: false, expanded: true },
     theme,
-    { isError: false, args: {}, state: {} },
+    { isError: false, args: {}, state: {}, ...hints },
   );
   assert.match(preview.render(160).join("\n"), /␍/);
 });
@@ -566,12 +569,44 @@ test("expanded errors retain every text block while collapsed errors stay bounde
       { type: "text" as const, text: "Final cause: permission denied" },
     ],
   };
-  const collapsed = renderToolError(result, "edit", theme, false).render(120).join("\n");
-  const expanded = renderToolError(result, "edit", theme, true).render(120).join("\n");
+  const collapsed = renderToolError(result, "edit", theme, false, hints).render(120).join("\n");
+  const expanded = renderToolError(result, "edit", theme, true, hints).render(120).join("\n");
   assert.match(collapsed, /Error header/);
   assert.doesNotMatch(collapsed, /Final cause/);
   assert.match(expanded, /Final cause: permission denied/);
   assert.ok(collapsed.split("\n").length < expanded.split("\n").length);
+});
+
+test("collapsed diff or output that hides rows → shows the host's expand hint, which the expanded card omits", () => {
+  initTheme("dark");
+  const rows = (word: string) => Array.from({ length: 40 }, (_, i) => `${word} ${i}\n`).join("");
+  const details = {
+    ...generateMutationDetails(rows("old"), rows("new")),
+    report: { tool: "edit" as const, path: "a.txt", publication: "PUBLISHED" as const },
+  };
+  const diffCard = (expanded: boolean) =>
+    diffCardRenderers("edit", "Editing…", () => "")
+      .renderResult({ content: [], details }, { isPartial: false, expanded }, theme, {
+        isError: false,
+        args: {},
+        state: {},
+        ...hints,
+      })
+      .render(100);
+  const errorCard = (expanded: boolean) =>
+    renderToolError(
+      { content: [{ type: "text" as const, text: rows("diagnostic") }] },
+      "edit",
+      theme,
+      expanded,
+      hints,
+    ).render(100);
+  const hint = hints.keyHint("app.tools.expand");
+  for (const card of [diffCard, errorCard]) {
+    assert.ok(card(false).at(-1)?.includes(hint));
+    assert.ok(card(true).every((line) => !line.includes(hint)));
+    assert.ok(card(false).length < card(true).length);
+  }
 });
 
 test("argument cards preserve omission notices and all expanded issues", () => {
@@ -588,10 +623,10 @@ test("argument cards preserve omission notices and all expanded issues", () => {
   };
   const original = structuredClone(result);
   const collapsed = stripVTControlCharacters(
-    renderToolError(result, "edit", theme, false).render(100).join("\n"),
+    renderToolError(result, "edit", theme, false, hints).render(100).join("\n"),
   );
   const expanded = stripVTControlCharacters(
-    renderToolError(result, "edit", theme, true).render(100).join("\n"),
+    renderToolError(result, "edit", theme, true, hints).render(100).join("\n"),
   );
   for (const displayed of [collapsed, expanded]) {
     assert.match(displayed, /Schema diagnostic limit/);
@@ -616,7 +651,7 @@ test("unrecognized or malformed JSON errors retain their original diagnostic", (
   ]) {
     const result = { content: [{ type: "text" as const, text: diagnostic }] };
     const displayed = stripVTControlCharacters(
-      renderToolError(result, "edit", theme, true).render(300).join("\n"),
+      renderToolError(result, "edit", theme, true, hints).render(300).join("\n"),
     );
     assert.ok(displayed.includes(diagnostic || "Error"));
   }
@@ -631,7 +666,7 @@ test("argument diagnostics wrap Unicode and multiline reasons at narrow terminal
     initTheme(appearance);
     for (const width of [24, 80]) {
       for (const expanded of [false, true]) {
-        const lines = renderToolError(result, "edit", theme, expanded).render(width);
+        const lines = renderToolError(result, "edit", theme, expanded, hints).render(width);
         assert.ok(lines.every((line) => visibleWidth(line) <= width));
         const displayed = stripVTControlCharacters(lines.join("\n")).replace(/\s/g, "");
         for (const value of [field, reason, "edit not executed"]) {

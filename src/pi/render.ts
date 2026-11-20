@@ -12,6 +12,7 @@
 
 import {
   renderDiff,
+  type KeybindingHints,
   type Theme,
   type ToolRenderResultOptions,
 } from "@earendil-works/pi-coding-agent";
@@ -25,9 +26,12 @@ const MAX_COLLAPSED_DIFF_LINES = 24;
 /** Collapsed tool output and errors share a bounded preview. */
 const MAX_COLLAPSED_OUTPUT_LINES = 15;
 
-/** The last row of a collapsed preview that hides rows; every card states them the same way. */
-function hiddenRowsMarker(hidden: number, theme: Theme): string {
-  return theme.fg("muted", `… (${hidden} more lines)`);
+/** The host's keybinding formatter, which every tool render context carries. */
+type ExpandHints = Pick<KeybindingHints, "keyHint">;
+
+/** The last row of a collapsed preview that hides rows, in the form Pi's built-in cards use. */
+function hiddenRowsMarker(hidden: number, theme: Theme, hints: ExpandHints): string {
+  return `${theme.fg("muted", `... (${hidden} more lines,`)} ${hints.keyHint("app.tools.expand", "to expand")}${theme.fg("muted", ")")}`;
 }
 
 /**
@@ -37,13 +41,18 @@ function hiddenRowsMarker(hidden: number, theme: Theme): string {
  * first rendered lines with an overflow marker — truncating after rendering
  * keeps `-`/`+` pairs intact so the intra-line highlight never dangles.
  */
-function renderDiffPreview(diff: string, expanded: boolean, theme: Theme): string {
+function renderDiffPreview(
+  diff: string,
+  expanded: boolean,
+  theme: Theme,
+  hints: ExpandHints,
+): string {
   const rendered = renderDiff(diff);
   if (expanded) return rendered;
   const allLines = rendered.split("\n");
   const more =
     allLines.length > MAX_COLLAPSED_DIFF_LINES
-      ? `\n${hiddenRowsMarker(allLines.length - MAX_COLLAPSED_DIFF_LINES, theme)}`
+      ? `\n${hiddenRowsMarker(allLines.length - MAX_COLLAPSED_DIFF_LINES, theme, hints)}`
       : "";
   return allLines.slice(0, MAX_COLLAPSED_DIFF_LINES).join("\n") + more;
 }
@@ -123,11 +132,14 @@ export function renderOutputPreview(
   lines: readonly string[],
   expanded: boolean,
   theme: Theme,
+  hints: ExpandHints,
   facts: readonly string[] = [],
 ): Text {
   const shown = expanded ? lines : lines.slice(0, MAX_COLLAPSED_OUTPUT_LINES);
   const more =
-    shown.length < lines.length ? [hiddenRowsMarker(lines.length - shown.length, theme)] : [];
+    shown.length < lines.length
+      ? [hiddenRowsMarker(lines.length - shown.length, theme, hints)]
+      : [];
   return new Text([...shown, ...more, ...facts].join("\n"), 0, 0);
 }
 
@@ -240,6 +252,7 @@ export function renderToolError(
   tool: ReportTool,
   theme: Theme,
   expanded: boolean,
+  hints: ExpandHints,
 ): Text {
   const report = reportOf(result, tool);
   const lines =
@@ -250,7 +263,12 @@ export function renderToolError(
             ? block.text.split("\n").map((line) => theme.fg("error", line))
             : [],
         );
-  return renderOutputPreview(lines.length ? lines : [theme.fg("error", "Error")], expanded, theme);
+  return renderOutputPreview(
+    lines.length ? lines : [theme.fg("error", "Error")],
+    expanded,
+    theme,
+    hints,
+  );
 }
 
 /** Facts a mutation card presents another way: the command card owns then_run. */
@@ -279,11 +297,11 @@ export function diffCardRenderers<TArgs>(
       result: AgentToolResult<{ diff?: string; report?: Report } | undefined>,
       { isPartial, expanded }: ToolRenderResultOptions,
       theme: Theme,
-      context: { isError: boolean; args: TArgs; state: MutationRenderState },
+      context: { isError: boolean; args: TArgs; state: MutationRenderState } & ExpandHints,
     ) {
       // withMutationStatus has already cleared isPartial once a fused mutation completed.
       if (isPartial) return new Text(theme.fg("warning", pending), 0, 0);
-      if (context.isError) return renderToolError(result, tool, theme, expanded);
+      if (context.isError) return renderToolError(result, tool, theme, expanded, context);
       const diff = result.details?.diff;
       // Refresh in place: invalidation inside a renderer re-enters updateDisplay.
       publishDiffCounts(diff, context, (counts) => {
@@ -297,7 +315,9 @@ export function diffCardRenderers<TArgs>(
           : report?.publication === "PUBLISHED"
             ? "Updated; no logical line diff"
             : "No diff available";
-      const body = diff ? renderDiffPreview(diff, expanded, theme) : theme.fg("success", emptyDiff);
+      const body = diff
+        ? renderDiffPreview(diff, expanded, theme, context)
+        : theme.fg("success", emptyDiff);
       return new Text([body, ...facts].join("\n"), 0, 0);
     },
   };
