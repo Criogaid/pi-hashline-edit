@@ -57,13 +57,11 @@ const copies = fc.constantFrom(
 test("fast-check header and body captures → preserve their distinct BOM provenance", () => {
   fc.assert(
     fc.property(copies, fragment, retainedTail, ({ prefix, bodyMarks }, text, tail) => {
-      const result = applyReplacements(`${BOM.repeat(2)}keep${tail}`, [
+      const { text: actual, count } = applyReplacements(`${BOM.repeat(2)}keep${tail}`, [
         { literal: false, find: `^(?<header>${BOM})(?<body>${BOM})`, replace: prefix + text },
       ]);
-      assert.deepEqual(result, {
-        text: `${BOM.repeat(1 + bodyMarks)}${text}keep${tail}`,
-        count: 1,
-      });
+      assert.equal(actual, `${BOM.repeat(1 + bodyMarks)}${text}keep${tail}`);
+      assert.equal(count, 1);
     }),
     { numRuns: PROPERTY_RUNS, seed: 4317 },
   );
@@ -98,10 +96,11 @@ test("fast-check capture templates on LF input → agree with native JavaScript 
     fc.property(plain, plain, plain, replacement, (start, middle, end, template) => {
       const text = `${start}x7${middle}x${end}`;
       const regex = /(?<letter>x)(\d)?/g;
-      assert.deepEqual(
-        applyReplacements(text, [{ literal: false, find: regex.source, replace: template }]),
-        { text: text.replace(regex, template), count: 2 },
-      );
+      const { text: actual, count } = applyReplacements(text, [
+        { literal: false, find: regex.source, replace: template },
+      ]);
+      assert.equal(actual, text.replace(regex, template));
+      assert.equal(count, 2);
     }),
     { numRuns: PROPERTY_RUNS, seed: 5717 },
   );

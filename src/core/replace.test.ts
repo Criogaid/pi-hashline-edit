@@ -198,8 +198,7 @@ test("replacement adds CR at a copied LF boundary → copied spans use raw UTF-1
   ]);
   assert.equal(result.text, "\uFEFF🙂\r\nleft\rX\r\r\nright");
   assert.deepEqual(result.copied, [
-    { sourceStart: 0, targetStart: 0, length: 1 },
-    { sourceStart: 1, targetStart: 1, length: 9 },
+    { sourceStart: 0, targetStart: 0, length: 10 },
     { sourceStart: 11, targetStart: 13, length: 6 },
   ]);
 });

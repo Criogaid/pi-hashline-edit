@@ -27,6 +27,12 @@ export function generateRangeDiff(
 ): string {
   const source = indexSourceLines(before);
   const target = indexSourceLines(after);
+  // The card shows net logical changes even when edit operations rearrange identical rows.
+  if (
+    source.length === target.length &&
+    normalizeLineEndings(before) === normalizeLineEndings(after)
+  )
+    return "";
   // Pi's number column includes the empty slot after a final LF (or in an empty file).
   const width = String(
     Math.max(

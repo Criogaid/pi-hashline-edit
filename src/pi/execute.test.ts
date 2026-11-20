@@ -6,6 +6,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, readdir, rm, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { stripVTControlCharacters } from "node:util";
 import { initTheme } from "@earendil-works/pi-coding-agent";
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import { validateToolArguments } from "@earendil-works/pi-ai";
@@ -240,6 +241,44 @@ const stubTheme = { fg: (_k: string, s: string) => s, bold: (s: string) => s } a
 // renderResult delegates to pi's renderDiff, which reads the global TUI theme
 // singleton — initialize it once for this test process (watcher off by default).
 initTheme();
+
+test("deleting the first repeated row → the edit card marks the anchored deletion", async (t) => {
+  for (const [name, before, after, displayedRow] of [
+    ["LF", "\n\nsame\nsame\n", "\n\nsame\n", "same"],
+    [
+      "BOM, mixed endings, and standalone CR",
+      "\uFEFF🙂\r\nkeep\rX\nsame\r\r\nsame\r\r\n",
+      "\uFEFF🙂\r\nkeep\rX\nsame\r\r\n",
+      "same␍",
+    ],
+  ] as const) {
+    await t.test(name, async () =>
+      withDir(async (dir) => {
+        const path = "duplicate.txt";
+        const file = join(dir, path);
+        await writeFile(file, before);
+        const tool = makeEditOverride(dir, DEFAULT_CONFIG);
+        const args = { path, steps: [{ action: "delete" as const, anchor: h(before, 3) }] };
+        const result = await callTool(tool, args);
+        assert.equal(result.isError, undefined);
+        assert.deepEqual(await readFile(file), Buffer.from(after));
+        const card = tool.renderResult(result, { expanded: true, isPartial: false }, stubTheme, {
+          cwd: dir,
+          args,
+          state: {},
+          isError: false,
+          keyHint: (_key, description) => description,
+        });
+        const rows = card.render(120).map((row) => stripVTControlCharacters(row).trimEnd());
+        assert.deepEqual(
+          rows.filter((row) => row.startsWith("-")),
+          [`-3 ${displayedRow}`],
+        );
+        assert.ok(rows.includes(` 4 ${displayedRow}`));
+      }),
+    );
+  }
+});
 
 test("native read and write renderers preserve resource titles, previews, and full errors", async () =>
   withDir(async (dir) => {

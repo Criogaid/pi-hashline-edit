@@ -47,7 +47,7 @@ export interface TextFragment {
   readonly sourceStart?: number;
 }
 
-/** Join raw fragments and map their copied slices past any CR inserted at a boundary. */
+/** Join raw fragments and report contiguous copied slices past any inserted CR. */
 export function joinTextFragments(parts: readonly TextFragment[]): {
   text: string;
   copied: CopiedSpan[];
@@ -60,10 +60,20 @@ export function joinTextFragments(parts: readonly TextFragment[]): {
     if (!text) continue;
     const part = preserveBoundaryCarriageReturn(previous, text);
     joined.push(part);
-    targetEnd += part.length;
     if (sourceStart !== undefined) {
-      copied.push({ sourceStart, targetStart: targetEnd - text.length, length: text.length });
+      const targetStart = targetEnd + part.length - text.length;
+      const last = copied[copied.length - 1];
+      if (
+        last &&
+        last.sourceStart + last.length === sourceStart &&
+        last.targetStart + last.length === targetStart
+      ) {
+        copied[copied.length - 1] = { ...last, length: last.length + text.length };
+      } else {
+        copied.push({ sourceStart, targetStart, length: text.length });
+      }
     }
+    targetEnd += part.length;
     previous = text;
   }
   return { text: joined.join(""), copied };
