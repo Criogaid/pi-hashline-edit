@@ -198,7 +198,10 @@ export function makeReadOverride({
       // Collapsed (not expanded): show nothing — the call line carries the
       // title, matching the built-in read's fold behavior.
       if (!expanded) return new Text("", 0, 0);
-      const text = content[0]?.type === "text" ? content[0].text : "";
+      // The payload is the first block and a report follows it only when it states a fact, so
+      // text that equals a report with no facts (`{}`) is the payload, not the block to strip.
+      const payload = result.content[0];
+      const text = payload?.type === "text" ? payload.text : "";
       const header = result.details?.header;
       return new Text(
         [

@@ -641,6 +641,24 @@ test("raw read rendering with an offset → numbers every source line from the h
     }
   }));
 
+test("unanchored read whose text equals a report with no facts → expanded rendering keeps the row", async () =>
+  withDir(async (dir) => {
+    const tool = makeReadOverride(dir, DEFAULT_CONFIG);
+    await writeFile(join(dir, "braces.txt"), "{}\n");
+    const args = { path: "braces.txt", anchors: false };
+    const result = await callTool(tool, args);
+    assert.equal(result.content.length, 1);
+    const rendered = tool.renderResult!(
+      JSON.parse(JSON.stringify(result)),
+      { expanded: true, isPartial: false },
+      stubTheme,
+      { args, state: {}, cwd: dir, isError: false } as any,
+    )
+      .render(120)
+      .map((line: string) => line.trimEnd());
+    assert.deepEqual(rendered, ["braces.txt · 1 lines", "   1: {}"]);
+  }));
+
 test("unanchored read with no rows or a real empty row → expanded rendering preserves the selected rows", async (t) =>
   withDir(async (dir) => {
     const budget = outputBudgetsFor(4_000);
