@@ -244,9 +244,9 @@ function toCoreEdits(ops: readonly EditOpInput[]): Edit[] {
 }
 
 /** Call header with total/per-kind operation counts and the result's diff counts. */
-function editHeader(args: EditParams, theme: Theme, counts?: DiffCounts): string {
+function editHeader(args: EditParams, theme: Theme, cwd: string, counts?: DiffCounts): string {
   let t = theme.fg("toolTitle", theme.bold("edit "));
-  t += formatHeaderPath(args.path, theme);
+  t += formatHeaderPath(args.path, theme, cwd);
   const steps = Array.isArray(args.steps) ? args.steps : [];
   const n = steps.length;
   if (n) {

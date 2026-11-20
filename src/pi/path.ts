@@ -1,6 +1,6 @@
 /**
  * Path canonicalization and lossless re-serialization for cross-platform tool
- * input.
+ * input, and the form a path takes in a card's call line.
  *
  * @module pi-hashline-edit/pi
  */
@@ -64,4 +64,16 @@ export function serializePath(cwd: string, path: string): string {
   const url = pathToFileURL(absolute);
   const localhost = LOCALHOST_UNC_PATH.exec(absolute)?.[1];
   return localhost === undefined ? url.href : `file:////${localhost}${url.pathname}`;
+}
+
+/**
+ * A path inside the home directory with `~` in place of that directory, the form Pi's built-in
+ * cards display; a relative path or a path elsewhere is returned unchanged.
+ */
+export function shortenHomePath(path: string): string {
+  const home = homedir();
+  if (!home || !isAbsolute(path)) return path;
+  const rel = relative(home, path);
+  if (rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel)) return path;
+  return rel ? `~${sep}${rel}` : "~";
 }

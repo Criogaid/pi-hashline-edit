@@ -10,6 +10,7 @@ import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Type, type Static } from "typebox";
 import { Text } from "@earendil-works/pi-tui";
 import { renderOutputPreview, renderToolError, reportLines, splitReport } from "./render.ts";
+import { shortenHomePath } from "./path.ts";
 import { createAnchorFormatter } from "./anchor-format.ts";
 import { GREP_OUTPUT_MODES, grepOutput, type GrepOutputMode } from "./grep-output.ts";
 import { filterExplicitFilesByGlob, resolveSearchPaths } from "./grep-scope.ts";
@@ -143,7 +144,7 @@ export function makeGrepOverride({ cwd, config, budgets }: ToolEnvironment) {
       let text =
         theme.fg("toolTitle", theme.bold("grep ")) +
         theme.fg("accent", `/${streamedList(args?.pattern).join(" | ")}/`) +
-        theme.fg("toolOutput", ` in ${paths.length ? paths.join(" ") : "."}`);
+        theme.fg("toolOutput", ` in ${paths.length ? paths.map(shortenHomePath).join(" ") : "."}`);
       if (globs.length) text += theme.fg("toolOutput", ` (${globs.join(", ")})`);
       if (args?.outputMode && args.outputMode !== "content")
         text += theme.fg("success", ` → ${args.outputMode}`);

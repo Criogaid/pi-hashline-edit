@@ -61,9 +61,14 @@ const replaceSchema = Type.Object(
 type ReplaceParams = Static<typeof replaceSchema>;
 
 /** Call-header line: `replace path — N rules`, plus `+N -N` once diff counts are known. */
-function replaceHeader(args: ReplaceParams, theme: Theme, counts?: DiffCounts): string {
+function replaceHeader(
+  args: ReplaceParams,
+  theme: Theme,
+  cwd: string,
+  counts?: DiffCounts,
+): string {
   let t = theme.fg("toolTitle", theme.bold("replace "));
-  t += formatHeaderPath(args.path, theme);
+  t += formatHeaderPath(args.path, theme, cwd);
   const count = args.replacements?.length ?? 0;
   t += theme.fg("dim", ` — ${count} rule${count === 1 ? "" : "s"}`);
   if (counts && (counts.added || counts.removed)) t += formatDiffCounts(counts, theme);

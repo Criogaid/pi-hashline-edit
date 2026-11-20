@@ -17,7 +17,9 @@ import {
   type ToolRenderResultOptions,
 } from "@earendil-works/pi-coding-agent";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
-import { Text, type Component } from "@earendil-works/pi-tui";
+import { getCapabilities, hyperlink, Text, type Component } from "@earendil-works/pi-tui";
+import { pathToFileURL } from "node:url";
+import { canonicalPath, shortenHomePath } from "./path.ts";
 import type { MutationToolName, Report, ReportTool } from "./report-schema.ts";
 import { renderReport, reportEntries, reportOf, detailsReport } from "./report.ts";
 
@@ -81,13 +83,20 @@ function countDiffLines(diff: string): DiffCounts {
 }
 
 /**
- * The call header's path. Arguments stream in the provider's key order, so the
- * path may arrive after the operations; until then it shows Pi's `...` placeholder.
+ * The call header's path as Pi's built-in cards show it: the home directory as `~`, linked to
+ * the file where the terminal supports links. Arguments stream in the provider's key order, so
+ * the path may arrive after the operations; until then it shows Pi's `...` placeholder.
  */
-export function formatHeaderPath(path: unknown, theme: Theme): string {
-  return typeof path === "string" && path
-    ? theme.fg("accent", path)
-    : theme.fg("toolOutput", "...");
+export function formatHeaderPath(path: unknown, theme: Theme, cwd: string): string {
+  if (typeof path !== "string" || !path) return theme.fg("toolOutput", "...");
+  const styled = theme.fg("accent", shortenHomePath(path));
+  if (!getCapabilities().hyperlinks) return styled;
+  try {
+    return hyperlink(styled, pathToFileURL(canonicalPath(cwd, path)).href);
+  } catch {
+    // A path that is still streaming can be an incomplete file URL, which names no file to link.
+    return styled;
+  }
 }
 
 /** Format `+N -N` with the theme's diff colors for the tool call header. */
@@ -278,18 +287,18 @@ export const MUTATION_CARD_SHOWN = new Set(["then_run"]);
 export function diffCardRenderers<TArgs>(
   tool: MutationToolName,
   pending: string,
-  header: (args: TArgs, theme: Theme, counts?: DiffCounts) => string,
+  header: (args: TArgs, theme: Theme, cwd: string, counts?: DiffCounts) => string,
 ) {
   return {
     /** Reuse the call component and retain it for the result's in-place count refresh. */
     renderCall(
       args: TArgs,
       theme: Theme,
-      context: { lastComponent?: Component; state: MutationRenderState },
+      context: { lastComponent?: Component; state: MutationRenderState; cwd: string },
     ) {
       const text = (context.lastComponent as Text | undefined) ?? new Text("", 0, 0);
       context.state.callText = text;
-      text.setText(header(args, theme, context.state.diffCounts));
+      text.setText(header(args, theme, context.cwd, context.state.diffCounts));
       return text;
     },
     /** Render mutation status or a diff, refreshing the call header's counts in place. */
@@ -297,7 +306,12 @@ export function diffCardRenderers<TArgs>(
       result: AgentToolResult<{ diff?: string; report?: Report } | undefined>,
       { isPartial, expanded }: ToolRenderResultOptions,
       theme: Theme,
-      context: { isError: boolean; args: TArgs; state: MutationRenderState } & ExpandHints,
+      context: {
+        isError: boolean;
+        args: TArgs;
+        state: MutationRenderState;
+        cwd: string;
+      } & ExpandHints,
     ) {
       // withMutationStatus has already cleared isPartial once a fused mutation completed.
       if (isPartial) return new Text(theme.fg("warning", pending), 0, 0);
@@ -305,7 +319,7 @@ export function diffCardRenderers<TArgs>(
       const diff = result.details?.diff;
       // Refresh in place: invalidation inside a renderer re-enters updateDisplay.
       publishDiffCounts(diff, context, (counts) => {
-        context.state.callText?.setText(header(context.args, theme, counts));
+        context.state.callText?.setText(header(context.args, theme, context.cwd, counts));
       });
       const { report } = splitReport(result, tool);
       const facts = report ? reportLines(report, theme, MUTATION_CARD_SHOWN) : [];

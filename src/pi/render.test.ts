@@ -4,9 +4,16 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { stripVTControlCharacters } from "node:util";
 import { readFile, unlink, writeFile } from "node:fs/promises";
+import { homedir } from "node:os";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
-import { visibleWidth } from "@earendil-works/pi-tui";
+import {
+  getCapabilities,
+  resetCapabilitiesCache,
+  setCapabilities,
+  visibleWidth,
+} from "@earendil-works/pi-tui";
 import { initTheme, type ToolDefinition } from "@earendil-works/pi-coding-agent";
 import type { TSchema } from "typebox";
 import { theme } from "../../node_modules/@earendil-works/pi-coding-agent/dist/modes/interactive/theme/theme.js";
@@ -95,7 +102,7 @@ test("empty logical diff → render according to confirmed publication state", (
           },
           { isPartial: false, expanded: true },
           theme,
-          { isError: false, args: {}, state: {}, ...hints },
+          { isError: false, args: {}, state: {}, cwd: process.cwd(), ...hints },
         )
         .render(100)
         .join("\n"),
@@ -202,7 +209,7 @@ test("missing or empty mutation path → show a themed placeholder until the pat
     makeEditOverride(process.cwd(), DEFAULT_CONFIG),
     makeReplaceTool(process.cwd(), DEFAULT_CONFIG),
   ]) {
-    const context = { state: {} } as Parameters<
+    const context = { state: {}, cwd: process.cwd() } as Parameters<
       ReturnType<typeof makeEditOverride>["renderCall"]
     >[2] &
       Parameters<ReturnType<typeof makeReplaceTool>["renderCall"]>[2];
@@ -220,6 +227,84 @@ test("missing or empty mutation path → show a themed placeholder until the pat
       assert.ok(output.includes(theme.fg(path ? "accent" : "toolOutput", path || "...")));
       assert.ok(stripVTControlCharacters(output).startsWith(`${tool.name} ${path || "..."}`));
     }
+  }
+});
+
+/** A tool's call line as Pi draws it once the arguments are complete. */
+function callLine(tool: { renderCall?: unknown }, args: object): string {
+  // Pi renders call lines with each tool's argument type erased.
+  const renderCall = tool.renderCall as NonNullable<ToolDefinition<TSchema>["renderCall"]>;
+  return renderCall(args, theme, {
+    args,
+    state: {},
+    toolCallId: "call-line",
+    invalidate() {},
+    lastComponent: undefined,
+    cwd: process.cwd(),
+    executionStarted: true,
+    durationMs: undefined,
+    outputPad: 1,
+    keyText: () => "",
+    keyHint: (_key: string, description: string) => description,
+    argsComplete: true,
+    isPartial: false,
+    expanded: false,
+    showImages: false,
+    isError: false,
+  })
+    .render(200)
+    .join("\n");
+}
+
+test("call line path inside the home directory → every tool shows it from ~", () => {
+  initTheme("dark");
+  const cwd = process.cwd();
+  const path = join(homedir(), "notes", "a.txt");
+  const calls: [{ name: string; renderCall?: unknown }, object][] = [
+    [makeReadOverride(cwd, DEFAULT_CONFIG), { path }],
+    [makeWriteOverride(cwd), { path, mode: "create", content: "" }],
+    [makeEditOverride(cwd, DEFAULT_CONFIG), { path, steps: [] }],
+    [makeReplaceTool(cwd, DEFAULT_CONFIG), { path, replacements: [] }],
+    [makeGrepOverride(cwd, DEFAULT_CONFIG), { pattern: ["x"], literal: true, path: [path] }],
+  ];
+  for (const [tool, args] of calls) {
+    const line = stripVTControlCharacters(callLine(tool, args));
+    assert.ok(line.includes(join("~", "notes", "a.txt")), `${tool.name}: ${line}`);
+    assert.ok(!line.includes(homedir()), `${tool.name}: ${line}`);
+  }
+});
+
+test("terminal with or without link support → edit and replace link the call line path to its file only with it", (t) => {
+  initTheme("dark");
+  t.after(resetCapabilitiesCache);
+  const cwd = process.cwd();
+  const target = pathToFileURL(join(cwd, "a.txt")).href;
+  for (const tool of [
+    makeEditOverride(cwd, DEFAULT_CONFIG),
+    makeReplaceTool(cwd, DEFAULT_CONFIG),
+  ]) {
+    for (const hyperlinks of [true, false]) {
+      setCapabilities({ ...getCapabilities(), hyperlinks });
+      const line = callLine(tool, { path: "a.txt", steps: [], replacements: [] });
+      assert.equal(line.includes(target), hyperlinks, tool.name);
+      assert.ok(stripVTControlCharacters(line).includes(`${tool.name} a.txt`));
+    }
+  }
+});
+
+test("path streamed as an incomplete file URL → the call line shows it without a link", (t) => {
+  initTheme("dark");
+  t.after(resetCapabilitiesCache);
+  setCapabilities({ ...getCapabilities(), hyperlinks: true });
+  const cwd = process.cwd();
+  const path = "file:///tmp/a%";
+  for (const tool of [
+    makeEditOverride(cwd, DEFAULT_CONFIG),
+    makeReplaceTool(cwd, DEFAULT_CONFIG),
+  ]) {
+    const line = callLine(tool, { path, steps: [], replacements: [] });
+    assert.ok(stripVTControlCharacters(line).includes(`${tool.name} ${path}`));
+    assert.ok(!line.includes("\x1b]8;"), tool.name);
   }
 });
 
@@ -363,7 +448,7 @@ test("diff previews retain standalone CR and literal control-picture characters"
     { content: [], details: { diff: "-1 old␍\n+1 new␍" } },
     { isPartial: false, expanded: true },
     theme,
-    { isError: false, args: {}, state: {}, ...hints },
+    { isError: false, args: {}, state: {}, cwd: process.cwd(), ...hints },
   );
   assert.match(preview.render(160).join("\n"), /␍/);
 });
@@ -590,6 +675,7 @@ test("collapsed diff or output that hides rows → shows the host's expand hint,
         isError: false,
         args: {},
         state: {},
+        cwd: process.cwd(),
         ...hints,
       })
       .render(100);
