@@ -444,6 +444,37 @@ test("grep payload blocks → only a single complete content or count block omit
     }
   }));
 
+test("grep byte limit before a file header → keeps the separator with the header", async () =>
+  withDir(async (dir) => {
+    const paths = [join(dir, "a.txt"), join(dir, "b.txt")];
+    await Promise.all(paths.map((path) => writeFile(path, "needle\n")));
+    const { backend } = fakeBackend({ paths });
+    const args = { path: dir, pattern: ["needle"], literal: true, context: 0 };
+    const find = (grepBytes: number) =>
+      callTool(
+        makeMockGrep(dir, DEFAULT_CONFIG, backend, () => ({
+          ...DEFAULT_OUTPUT_BUDGETS,
+          grepBytes,
+        })),
+        args,
+      );
+    const [first, second] = text(await find(DEFAULT_OUTPUT_BUDGETS.grepBytes)).split("\n\n");
+    const secondHeader = second.split("\n")[0];
+    for (const [bytes, expected] of [
+      [Buffer.byteLength(first) + 1, first],
+      [
+        Buffer.byteLength(first) + 2 + Buffer.byteLength(secondHeader),
+        `${first}\n\n${secondHeader}`,
+      ],
+    ] as const) {
+      const result = await find(bytes);
+      assert.equal(result.isError, undefined);
+      assert.equal(text(result), expected);
+      assert.ok(reportOf(result, "grep")?.outputLimit);
+      assert.deepEqual(grepCounts(result), { matches: 2, files: 2 });
+    }
+  }));
+
 test("grep output byte limit → recovery follows output mode and effective context before match limit", async () =>
   withDir(async (dir) => {
     const paths = Array.from({ length: 8 }, (_, index) => join(dir, `file-${index}.txt`));

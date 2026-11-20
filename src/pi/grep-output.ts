@@ -266,11 +266,6 @@ interface AssembleGrepOutputOptions {
   readonly budget: OutputBudgets;
 }
 
-/**
- * The blocks' lines that fit in `maxBytes` when joined by line feeds, kept in order until the first
- * that does not fit; content blocks are separated by an empty line. `shown` counts each reached
- * block's kept lines, its separator excluded.
- */
 /** A block's lines as the payload shows them: a gap row leads each row that opens a later group. */
 function payloadLines({ lines, gapIndices }: FormattedBlock): readonly string[] {
   if (!gapIndices?.length) return lines;
@@ -279,23 +274,20 @@ function payloadLines({ lines, gapIndices }: FormattedBlock): readonly string[] 
   return lines.map((line, index) => (gaps.has(index) ? `${CONTEXT_GAP}\n${line}` : line));
 }
 
+/** Keep the longest prefix of whole rows, with any file separator attached to its header. */
 function fitPayload(blocks: readonly (readonly string[])[], separated: boolean, maxBytes: number) {
   const kept: string[] = [];
   const shown: number[] = [];
   let bytes = 0;
-  const keep = (line: string) => {
-    const cost = Buffer.byteLength(line) + (kept.length ? 1 : 0);
-    if (bytes + cost > maxBytes) return false;
-    kept.push(line);
-    bytes += cost;
-    return true;
-  };
-  for (const lines of blocks) {
-    if (separated && shown.length && !keep("")) return { kept, shown, truncated: true };
+  for (const [blockIndex, lines] of blocks.entries()) {
     shown.push(0);
-    for (const line of lines) {
-      if (!keep(line)) return { kept, shown, truncated: true };
-      shown[shown.length - 1]++;
+    for (const [index, line] of lines.entries()) {
+      const row = separated && blockIndex > 0 && index === 0 ? `\n${line}` : line;
+      const cost = Buffer.byteLength(row) + (kept.length ? 1 : 0);
+      if (bytes + cost > maxBytes) return { kept, shown, truncated: true };
+      kept.push(row);
+      bytes += cost;
+      shown[blockIndex]++;
     }
   }
   return { kept, shown, truncated: false };
