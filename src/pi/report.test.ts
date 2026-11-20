@@ -287,6 +287,35 @@ test("success results → scripts receive the stated fields, after the payload t
   }
 });
 
+test("facts the payload or the call already shows → scripts receive them while text and details stay the same", () => {
+  const payload = [text("a.ts · 2 matches")];
+  const plain = reportResult({ tool: "grep", path: ["a.ts"], matchLimit: 2 }, payload);
+  const counted = reportResult(
+    { tool: "grep", path: ["a.ts"], matchLimit: 2 },
+    payload,
+    undefined,
+    undefined,
+    { matches: 2, files: 1 },
+  );
+  assert.deepEqual(counted.content, plain.content);
+  assert.deepEqual(counted.details, plain.details);
+  assert.deepEqual(counted.structuredContent, {
+    text: "a.ts · 2 matches",
+    matches: 2,
+    files: 1,
+    matchLimit: 2,
+    next: plain.details.report.next,
+  });
+  assert.ok(Value.Check(SCRIPT_OUTPUT_SCHEMAS.grep, counted.structuredContent));
+
+  const read = reportResult({ tool: "read", path: "a.txt" }, [text("one")], undefined, undefined, {
+    nextOffset: 2,
+  });
+  assert.deepEqual(read.content, [text("one")]);
+  assert.deepEqual(read.structuredContent, { text: "one", nextOffset: 2 });
+  assert.ok(Value.Check(SCRIPT_OUTPUT_SCHEMAS.read, read.structuredContent));
+});
+
 test("success facts without a tool → use call context and enforce tool-specific fields", () => {
   const report: Report = { tool: "write", publication: "PUBLISHED" };
   const serialized = renderReport(report);

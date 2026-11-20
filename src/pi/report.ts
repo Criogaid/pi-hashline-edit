@@ -9,7 +9,8 @@
  * one model-facing serialization: one JSON object in schema order, without the
  * call's own tool and path. A success puts it after the content payload;
  * a failure is the report alone. The TUI receives the full report in details.
- * Scripts receive a success as one object with the same fields; a failure
+ * Scripts receive a success as one object with the same fields, and the facts
+ * the text omits because the payload or the call already shows them; a failure
  * carries none, so their call rejects with the report text.
  *
  * Throw sites classify failures as `HashlineError` (core/errors.ts); a failure
@@ -44,6 +45,7 @@ import {
   type ModelOmittedField,
   type Report,
   type ReportTool,
+  type SuccessFacts,
   type SuccessReport,
 } from "./report-schema.ts";
 
@@ -143,21 +145,25 @@ function outcomeNext(report: Report, variant: OutcomeVariant | undefined): strin
 /**
  * A successful result: the tool's payload, then its report when it states
  * anything beyond tool and path or when there is no payload. `variant` is the recovery
- * alternative the producing layer selected. Scripts receive the same facts as one object
- * (`SCRIPT_OUTPUT_SCHEMAS`): the stated fields, after the payload's text as `text` for a tool
- * that has a payload.
+ * alternative the producing layer selected. Scripts receive one object
+ * (`SCRIPT_OUTPUT_SCHEMAS`): the payload's text as `text` for a tool that has a payload, then
+ * the stated fields and `implied`, the facts the payload or the call already shows the model.
+ * The text, its `next`, and the details leave `implied` out.
  */
-export function reportResult<TDetails extends object | undefined>(
-  report: SuccessReport,
+export function reportResult<
+  TDetails extends object | undefined,
+  TTool extends ReportTool = ReportTool,
+>(
+  report: SuccessReport & { tool: TTool },
   payload: Content = [],
   details?: TDetails,
   variant?: OutcomeVariant,
+  implied?: Partial<SuccessFacts<TTool>>,
 ): AgentToolResult<TDetails & ReportDetails<SuccessReport>> {
   const complete = Object.fromEntries(
     reportEntries({ ...report, next: outcomeNext(report, variant) }),
   ) as SuccessReport;
-  const fields = statedFields(complete);
-  const stated = Object.keys(fields).length > 0;
+  const stated = Object.keys(statedFields(complete)).length > 0;
   const text = payload.flatMap((block) => (block.type === "text" ? [block.text] : [])).join("\n");
   return {
     content:
@@ -168,7 +174,7 @@ export function reportResult<TDetails extends object | undefined>(
     // Report fields are JSON values: the wire schema admits nothing else.
     structuredContent: {
       ...("text" in SCRIPT_OUTPUT_SCHEMAS[report.tool].properties ? { text } : {}),
-      ...fields,
+      ...statedFields({ ...complete, ...implied }),
     } as NonNullable<AgentToolResult<unknown>["structuredContent"]>,
   };
 }

@@ -834,15 +834,18 @@ test("context preserves logical CRLF anchors around a matched line", async () =>
   });
 });
 
-test("files mode with a match → scripts receive the paths as text and the counts as fields", async () => {
+test("one matching file in each output mode → scripts receive its counts, which only files mode states in text", async () => {
   await withDir(async (dir) => {
     const a = join(dir, "a.ts");
     await writeFile(a, "foo\n");
     const tool = makeMockGrep(dir, DEFAULT_CONFIG, fakeBackend({ paths: [a] }).backend);
-    const result = await call(tool, { pattern: ["foo"], literal: true, outputMode: "files" });
-    assert.deepEqual(result.structuredContent, { text: "a.ts", matches: 1, files: 1 });
     assert.ok(tool.outputSchema);
-    assert.ok(Value.Check(tool.outputSchema, result.structuredContent));
+    for (const outputMode of ["content", "count", "files"] as const) {
+      const result = await call(tool, { pattern: ["foo"], literal: true, outputMode });
+      assert.equal(result.content.length, outputMode === "files" ? 2 : 1);
+      assert.deepEqual(result.structuredContent, { text: text(result), matches: 1, files: 1 });
+      assert.ok(Value.Check(tool.outputSchema, result.structuredContent));
+    }
   });
 });
 

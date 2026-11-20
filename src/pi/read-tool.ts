@@ -312,15 +312,15 @@ export function makeReadOverride({
             facts: { totalLines: stats.totalLines },
           });
         }
-        // A byte cutoff can shorten any window; a caller's line limit alone needs no continuation.
         const firstLineTooLong = firstOmittedLine === start;
-        const nextAfterDefaultLimit =
-          params.limit === undefined && rows.length > 0 && start + rows.length <= stats.totalLines
+        // Rows stop before the last line: at the byte budget, the default line limit, or the caller's.
+        const nextOffset =
+          rows.length > 0 && start + rows.length <= stats.totalLines
             ? start + rows.length
             : undefined;
-        const nextOffset = firstLineTooLong
-          ? undefined
-          : (firstOmittedLine ?? nextAfterDefaultLimit);
+        // A caller's line limit alone tells the model where its window ended, so the text states no
+        // continuation for it; scripts receive nextOffset either way.
+        const callerLimitOnly = params.limit !== undefined && firstOmittedLine === undefined;
         const header = formatReadHeader(
           serializePath(cwd, absPath),
           stats.totalLines,
@@ -333,13 +333,15 @@ export function makeReadOverride({
         return reportResult(
           {
             ...report,
-            nextOffset,
+            nextOffset: callerLimitOnly ? undefined : nextOffset,
             outputLimit:
               firstOmittedLine !== undefined && !firstLineTooLong ? limitText : undefined,
             lineTooLong: firstLineTooLong ? limitText : undefined,
           },
           [{ type: "text" as const, text }],
           anchored === false ? { header } : undefined,
+          undefined,
+          callerLimitOnly ? { nextOffset } : undefined,
         );
       });
     },

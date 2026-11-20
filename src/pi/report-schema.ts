@@ -627,12 +627,25 @@ const SUCCESS_SCHEMAS = REPORT_TOOLS.map((tool) =>
 );
 
 /**
- * What a script receives from a successful call, by tool: one object with the fields the report
- * text states, in output order, after the content payload of read and grep as `text`.
+ * Facts a script receives from every success of a tool. The report text states them only when
+ * the payload does not already show them.
+ */
+const SCRIPT_REQUIRED_FACTS: {
+  readonly [T in ReportTool]?: readonly (keyof SuccessFacts<T>)[];
+} = { grep: ["matches", "files"] };
+
+/**
+ * What a script receives from a successful call, by tool: one object with the content payload of
+ * read and grep as `text`, then the tool's success fields in output order. A field is present
+ * when the report text states it, or when the payload or the call already shows the model that
+ * fact.
  */
 export const SCRIPT_OUTPUT_SCHEMAS = Object.fromEntries(
   REPORT_TOOLS.map((tool) => {
     const fields = successFields(tool);
+    const required: TProperties = Object.fromEntries(
+      (SCRIPT_REQUIRED_FACTS[tool] ?? []).map((name) => [name, FACT_FIELDS[name].schema]),
+    );
     const stated = Object.keys(REPORT_SCHEMA.properties).filter(
       (name) => name in fields && !MODEL_OMITTED_FIELDS.has(name as ModelOmittedField),
     );
@@ -643,7 +656,7 @@ export const SCRIPT_OUTPUT_SCHEMAS = Object.fromEntries(
           ...((NON_MUTATION_TOOLS as readonly ReportTool[]).includes(tool)
             ? { text: Type.String() }
             : {}),
-          ...Object.fromEntries(stated.map((name) => [name, fields[name]])),
+          ...Object.fromEntries(stated.map((name) => [name, required[name] ?? fields[name]])),
         },
         { additionalProperties: false },
       ),

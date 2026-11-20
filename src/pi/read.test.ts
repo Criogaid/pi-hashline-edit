@@ -255,6 +255,24 @@ test("read text complete, cut, with an oversized first line, or delegated → sc
     }
   }));
 
+test("caller's line limit ends the window before the last line → only scripts receive nextOffset", async () =>
+  withDir(async (dir) => {
+    const tool = makeReadOverride(dir, DEFAULT_CONFIG);
+    await writeFile(join(dir, "rows.txt"), "one\ntwo\nthree\n");
+    for (const anchors of [true, false]) {
+      const cut = await callTool(tool, { path: "rows.txt", anchors, limit: 2 });
+      const [cutRows, ...cutReport] = cut.content;
+      assert.equal(cutRows.type, "text");
+      assert.deepEqual(cutReport, []);
+      assert.equal(reportOf(cut, "read")?.nextOffset, undefined);
+      assert.deepEqual(cut.structuredContent, { text: cutRows.text, nextOffset: 3 });
+      const last = await callTool(tool, { path: "rows.txt", anchors, offset: 3, limit: 2 });
+      const [lastRows] = last.content;
+      assert.equal(lastRows.type, "text");
+      assert.deepEqual(last.structuredContent, { text: lastRows.text });
+    }
+  }));
+
 test("read execute: Pi-supported images without NUL bypass text decoding", async () =>
   withDir(async (dir) => {
     for (const [name, bytes, mime] of [

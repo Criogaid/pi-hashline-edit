@@ -119,6 +119,7 @@ test("codemode script reads and writes → receives each success as an object an
   await writeFile(join(cwd, "rows.txt"), "one\ntwo\nthree\n");
   const code = [
     'const cut = await tools.read({ path: "rows.txt", anchors: false });',
+    'const head = await tools.read({ path: "rows.txt", anchors: false, limit: 1 });',
     'const rest = await tools.read({ path: "rows.txt", anchors: false, offset: cut.nextOffset });',
     'let pastEnd = "resolved";',
     "try {",
@@ -127,7 +128,7 @@ test("codemode script reads and writes → receives each success as an object an
     "  pastEnd = String(error);",
     "}",
     'const saved = await tools.write({ path: "new.txt", mode: "create", content: "x\\n" });',
-    "text(JSON.stringify({ cut, rest, pastEnd, saved }));",
+    "text(JSON.stringify({ cut, head, rest, pastEnd, saved }));",
   ].join("\n");
   let requests = 0;
   session.agent.streamFunction = () => {
@@ -151,10 +152,11 @@ test("codemode script reads and writes → receives each success as an object an
     .map((block) => block.text)
     .join("\n");
   assert.equal(result.isError, false, output);
-  const { cut, rest, pastEnd, saved } = JSON.parse(
+  const { cut, head, rest, pastEnd, saved } = JSON.parse(
     output.slice(output.indexOf("{"), output.lastIndexOf("}") + 1),
   );
   assert.partialDeepStrictEqual(cut, { text: "one\ntwo", nextOffset: 3 });
+  assert.deepEqual(head, { text: "one", nextOffset: 2 });
   assert.deepEqual(rest, { text: "three" });
   assert.match(pastEnd, /OFFSET_PAST_END[\s\S]*"totalLines": 3/);
   assert.deepEqual(saved, { publication: "PUBLISHED" });

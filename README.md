@@ -77,7 +77,7 @@ The extension replaces Pi's `read`, `grep`, `edit`, and `write`, and adds `repla
 | `replace` | Applies literal or regex substitutions across one file. Every rule must match, and overlapping matches reject the batch. |
 | `write` | Creates a file (`mode: "create"`) or overwrites one (`mode: "overwrite"`), using the content exactly as given. Missing parent directories are created. |
 
-Scripts that call these tools, such as Pi's codemode, receive each successful result as one object in place of the result text: the fields its report states, preceded for `read` and `grep` by the payload as `text`. For example, a read cut by its default line limit is `{ text, nextOffset, next }` and a created file is `{ publication }`; reading an image gives Pi's image block. A failed call rejects with its report text.
+Scripts that call these tools, such as Pi's codemode, receive each successful result as one object in place of the result text: the fields its report states, preceded for `read` and `grep` by the payload as `text`. The object also has the facts the report leaves out because the payload or the call already shows them: every `grep` result has `matches` and `files`, and a `read` has `nextOffset` whenever lines remain after its window, including a window ended by the caller's `limit`. For example, a read cut by its default line limit is `{ text, nextOffset, next }` and a created file is `{ publication }`; reading an image gives Pi's image block. A failed call rejects with its report text.
 
 ### Paths
 

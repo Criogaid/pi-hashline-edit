@@ -293,10 +293,14 @@ function contextHidesHit(
   return withoutContext.reduce((sum, count) => sum + Math.max(0, count - 1), 0) > shownHits;
 }
 
-/** Join the payload within the call's byte budget and state each limit, omission, and diagnostic once. */
+/**
+ * Join the payload within the call's byte budget and state each limit, omission, and diagnostic
+ * once. `implied` holds the counts the payload already shows, which the report leaves out.
+ */
 function assembleGrepOutput(options: AssembleGrepOutputOptions): {
   payload: string;
   facts: SuccessFacts<"grep">;
+  implied?: Partial<SuccessFacts<"grep">>;
   next?: OutcomeVariant;
 } {
   const {
@@ -349,13 +353,15 @@ function assembleGrepOutput(options: AssembleGrepOutputOptions): {
       invalidUtf8: invalidUtf8.length ? invalidUtf8 : undefined,
       diagnostics: warnings.length ? searchDiagnostics(warnings, cwd, budget) : undefined,
     },
+    implied: countsShown ? { matches, files } : undefined,
     next: truncated && contextHidesHit(blocks, shown, budget.grepBytes) ? "contextRows" : undefined,
   };
 }
 
 /**
- * grep's payload and report facts for a finished search. The payload is absent when nothing
- * matched; a search that cannot confirm any result fails with SEARCH_INCOMPLETE instead.
+ * grep's payload and report facts for a finished search, with the counts the payload already
+ * shows as `implied`. The payload is absent when nothing matched; a search that cannot confirm
+ * any result fails with SEARCH_INCOMPLETE instead.
  */
 export async function grepOutput(
   options: Omit<FormatMatchesOptions, "files"> & {
@@ -368,7 +374,12 @@ export async function grepOutput(
     /** A literal pattern contains `|`, which matches only that character. */
     readonly literalPipe: boolean;
   },
-): Promise<{ payload?: string; facts: SuccessFacts<"grep">; next?: OutcomeVariant }> {
+): Promise<{
+  payload?: string;
+  facts: SuccessFacts<"grep">;
+  implied?: Partial<SuccessFacts<"grep">>;
+  next?: OutcomeVariant;
+}> {
   const { cwd, search, warnings, missing, outputMode, effectiveLimit, literalPipe, budget } =
     options;
   const searchFacts: SearchFacts = {
