@@ -879,7 +879,7 @@ test("success renderers receive replayed or hooked reports → display only sche
       return output;
     };
     const payload = (text: string) =>
-      name === "read" && !nativeRead ? `a.txt · 1 lines\n1#ABCD│${text}` : text;
+      name === "read" && !nativeRead ? `a.txt · 1 line\n1#ABCD│${text}` : text;
     const report: SuccessReport = { tool: name, next: "CHECKED_REPORT_RECOVERY" };
     const checked = show(report, renderReport(report));
     assert.doesNotMatch(checked, /"next"/);

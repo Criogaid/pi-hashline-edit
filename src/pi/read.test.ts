@@ -738,7 +738,7 @@ test("unanchored read whose text equals a report with no facts → expanded rend
     )
       .render(120)
       .map((line: string) => line.trimEnd());
-    assert.deepEqual(rendered, ["braces.txt · 1 lines", "   1: {}"]);
+    assert.deepEqual(rendered, ["braces.txt · 1 line", "   1: {}"]);
   }));
 
 test("unanchored read with no rows or a real empty row → expanded rendering preserves the selected rows", async (t) =>
@@ -753,7 +753,7 @@ test("unanchored read with no rows or a real empty row → expanded rendering pr
         name: "first line exceeds the byte budget",
         path: "long.txt",
         content: "x".repeat(budget.readBytes + 1) + "\n",
-        header: "long.txt · 1 lines",
+        header: "long.txt · 1 line",
         lineTooLong: true,
       },
       {

@@ -62,7 +62,7 @@ function readOutputSchema(native: TSchema | undefined): TSchema {
 }
 
 /**
- * Header line: `<path> · <N> lines`, optionally ` (from line <offset>)` and
+ * Header line: `<path> · <N> line(s)`, optionally ` (from line <offset>)` and
  * ` · no trailing newline`. A missing final newline is a byte-level fact the
  * numbered rows cannot show, so the header, which the model never copies into an
  * edit `lines`, states it. An anchored read's text starts with this line; a read with
@@ -76,9 +76,10 @@ function formatReadHeader(
   finalNewline: boolean,
 ): string {
   const shownFrom = start > DEFAULT_OFFSET ? ` (from line ${start})` : "";
-  return `${path} · ${totalLines} lines${shownFrom}${finalNewline ? "" : " · no trailing newline"}`;
+  const count = `${totalLines} line${totalLines === 1 ? "" : "s"}`;
+  return `${path} · ${count}${shownFrom}${finalNewline ? "" : " · no trailing newline"}`;
 }
-const READ_HEADER = /^(.+?) · (\d+ lines(?: \(from line \d+\))?(?: · no trailing newline)?)$/s;
+const READ_HEADER = /^(.+?) · (\d+ lines?(?: \(from line \d+\))?(?: · no trailing newline)?)$/s;
 
 /**
  * Render the expanded read body for the TUI: color the header, strip the
@@ -98,7 +99,7 @@ function renderReadBody(
   const lines = raw.split("\n");
   const out: string[] = [];
 
-  // Header: "<path> · <N> lines", optionally followed by " (from line <offset>)"
+  // Header: "<path> · <N> line(s)", optionally followed by " (from line <offset>)"
   // and/or " · no trailing newline".
   let bodyStart = 0;
   const h = lines[0].match(READ_HEADER);
@@ -111,7 +112,7 @@ function renderReadBody(
   const lineNos: string[] = [];
   const codeContents: string[] = [];
   const firstLine = Number(/\(from line (\d+)\)/.exec(h?.[2] ?? "")?.[1] ?? DEFAULT_OFFSET);
-  const totalLines = Number(/^(\d+) lines/.exec(h?.[2] ?? "")?.[1] ?? 0);
+  const totalLines = Number(/^(\d+) lines?/.exec(h?.[2] ?? "")?.[1] ?? 0);
   // Unanchored rows carry no marker, so no rows and one empty row are the same text: a window
   // past the last line or a first line over the byte limit shows no row.
   if (!anchored && (lineTooLong || firstLine > totalLines)) bodyStart = lines.length;
