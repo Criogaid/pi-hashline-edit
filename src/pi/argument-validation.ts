@@ -1,8 +1,7 @@
 /**
- * Shared tool argument boundary. Pi owns preparation and acceptance; tool checks
- * report semantic issues. Failure-only diagnostics use pi-schema's public coercer,
- * then project and aggregate the declared schema in argument-diagnostics.ts.
- * Pi still validates returned arguments in its mandatory tool-call pipeline.
+ * Shared tool argument boundary. Prepare with Pi's schema engine so semantic
+ * checks and bounded diagnostics see the same coerced value, including on
+ * schema failure. Pi still validates the original arguments after preparation.
  * Tool schemas have no cross-field constraints.
  */
 import { validateToolArguments, type ToolCall } from "@earendil-works/pi-ai";
@@ -58,25 +57,48 @@ export function argumentItems(value: unknown): readonly unknown[] {
   return Array.isArray(value) ? value : value !== null && typeof value === "object" ? [value] : [];
 }
 
+function preparationError(cause: unknown, limited: boolean, budgets: OutputBudgetProvider): Error {
+  return new Error(
+    formatArgumentError([{ field: "$", reason: errorMessage(cause) }], limited, budgets()),
+    { cause },
+  );
+}
+
 export function createArgumentPreparer<T extends TObject>(
   name: ReportTool,
   parameters: T,
   check: CheckArguments | undefined,
   budgets: OutputBudgetProvider,
 ): (args: unknown) => Static<T> {
-  const diagnosticValidator = compile(parameters, {
-    formats,
-    coerce: true,
-    unresolvedRefs: "reject",
-  });
+  // Match pi-ai's validateToolArguments compile options.
+  const validator = compile(parameters, { formats, coerce: true, unresolvedRefs: "reject" });
 
   return (args) => {
-    let checked: unknown = args;
-    let schemaFailure: unknown;
+    let checked: unknown;
+    let schemaFailed: boolean;
     try {
-      checked = validateToolArguments(
+      // parse() only returns errors on failure. Keep the coerced value for both
+      // semantic checks and the bounded, per-field diagnostic pass.
+      checked = validator.coerce(structuredClone(args));
+      schemaFailed = !validator.check(checked);
+    } catch (error) {
+      throw preparationError(error, false, budgets);
+    }
+    const issues: ArgumentIssue[] = [];
+    check?.(checked, (field, reason, fix) =>
+      issues.push(fix === undefined ? { field, reason } : { field, reason, fix }),
+    );
+    // Keep Pi's preparation contract: the framework performs its own coercion next.
+    if (!schemaFailed && issues.length === 0) return args as Static<T>;
+    const result = diagnoseArguments(parameters, checked, issues, schemaFailed);
+    if (result.issues.length > 0) {
+      throw new Error(formatArgumentError(result.issues, result.limited, budgets()));
+    }
+
+    // Preserve Pi's original failure when projection has no issue to report.
+    try {
+      validateToolArguments(
         { name, parameters, description: "" },
-        // Pi owns shape checking and coercion at this external boundary.
         {
           type: "toolCall",
           id: "argument-validation",
@@ -85,36 +107,8 @@ export function createArgumentPreparer<T extends TObject>(
         },
       );
     } catch (error) {
-      schemaFailure = error;
+      throw preparationError(error, result.limited, budgets);
     }
-    if (schemaFailure !== undefined) {
-      try {
-        checked = diagnosticValidator.coerce(structuredClone(args));
-      } catch {
-        // Preparation failures retain Pi's original cause in the shared error envelope.
-        throw new Error(
-          formatArgumentError(
-            [{ field: "$", reason: errorMessage(schemaFailure) }],
-            false,
-            budgets(),
-          ),
-          { cause: schemaFailure },
-        );
-      }
-    }
-    const issues: ArgumentIssue[] = [];
-    check?.(checked, (field, reason, fix) =>
-      issues.push(fix === undefined ? { field, reason } : { field, reason, fix }),
-    );
-    // Keep Pi's preparation contract: the framework performs its own coercion next.
-    if (schemaFailure === undefined && issues.length === 0) return args as Static<T>;
-    const result = diagnoseArguments(parameters, checked, issues, schemaFailure !== undefined);
-    const reported =
-      result.issues.length > 0
-        ? result.issues
-        : [{ field: "$", reason: errorMessage(schemaFailure) }];
-    throw new Error(formatArgumentError(reported, result.limited, budgets()), {
-      cause: schemaFailure,
-    });
+    return args as Static<T>;
   };
 }

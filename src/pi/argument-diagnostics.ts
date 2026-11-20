@@ -257,6 +257,9 @@ export function diagnoseArguments(
   semanticIssues: readonly ArgumentIssue[],
   schemaFailed: boolean,
 ): ArgumentDiagnostics {
+  // On schema success every path reported by a tool check is applicable.
+  if (!schemaFailed) return { issues: combineIssues(semanticIssues), limited: false };
+
   const projection: Projection = {
     explained: new Set(semanticIssues.map((issue) => issue.field)),
     applicable: new Set<string>(),
@@ -266,7 +269,6 @@ export function diagnoseArguments(
   const retained = combineIssues(
     semanticIssues.filter((issue) => projection.applicable.has(issue.field)),
   );
-  if (!schemaFailed) return { issues: retained, limited: false };
   const batches =
     IsObject(projected) &&
     typeof prepared === "object" &&
