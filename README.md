@@ -147,6 +147,8 @@ Argument mistakes, including a reversed range, are reported per field, with what
 
 The command runs through the session's own Bash tool, so approvals, overrides, and hooks still apply. Fusion checks that the change succeeded and the file is still as written before handing the command to the session. It checks the file again after the command settles; an outside writer can still change it while approval is pending or while the command runs. A failing command never rolls back the file. The result shows the model the command's output as plain text, followed by the change's report, whose `then_run` states the command's status. A Bash override that calls a mutation tool for a target already in the Fusion queue receives an error rather than waiting on that queue. The TUI shows the change and the command as separate cards, with a live countdown when a timeout is set.
 
+Cancelling a mutation while it waits in the Fusion queue stops that call before it writes. The earlier mutation and command keep their place in the queue.
+
 Command cards use Pi's native tool component for mouse clicks and the global expand shortcut. Each card keeps its own expansion while output streams or the screen redraws. The built-in Bash renderer displays the command's original content and details, which are also saved for session restore; custom Bash renderer overrides are not exposed by the supported Pi API.
 
 ## Configuration

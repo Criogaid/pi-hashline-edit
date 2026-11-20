@@ -22,6 +22,7 @@
  */
 
 import { AsyncLocalStorage } from "node:async_hooks";
+import { addAbortListener } from "node:events";
 import { realpath } from "node:fs/promises";
 import { basename, dirname, resolve } from "node:path";
 import type { AgentToolUpdateCallback } from "@earendil-works/pi-agent-core";
@@ -35,8 +36,8 @@ import {
   type MutationOutcome,
   type MutationResultDetails,
 } from "./mutation-result.ts";
-import { errnoCode, errorMessage } from "../core/errors.ts";
-import { throwIfCancelled } from "./error-text.ts";
+import { errnoCode, errorMessage, HashlineError } from "../core/errors.ts";
+import { cancellationError, throwIfCancelled } from "./error-text.ts";
 import type {
   ActionFusionProgress,
   CommandResult,
@@ -261,26 +262,41 @@ export function createActionFusionExecutor(onProgress: ProgressReporter) {
   const queueTails = new Map<string, Promise<void>>();
   const commandScope = new AsyncLocalStorage<{ active: boolean }>();
 
-  async function withQueue<T>(path: string, work: () => Promise<T>): Promise<T> {
+  async function withQueue<T>(
+    path: string,
+    signal: AbortSignal | undefined,
+    work: () => Promise<T>,
+  ): Promise<T> {
     const key = await canonicalQueueKey(path);
-    const previous = queueTails.get(key) ?? Promise.resolve();
-    if (queueTails.has(key) && commandScope.getStore()?.active) {
+    const previous = queueTails.get(key);
+    if (previous && commandScope.getStore()?.active) {
       throw new Error(
         "A then_run command cannot call a mutation tool for a target with a pending mutation.",
       );
     }
-    let release!: () => void;
-    const owned = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    const tail = previous.then(() => owned);
+    const owned = Promise.withResolvers<void>();
+    const tail = previous ? previous.then(() => owned.promise) : owned.promise;
     queueTails.set(key, tail);
-    await previous;
+    // A cancelled waiter releases its own turn, while its predecessor still owns the queue.
+    void tail.then(() => {
+      if (queueTails.get(key) === tail) queueTails.delete(key);
+    });
     try {
+      if (previous && signal) {
+        const cancelled = Promise.withResolvers<never>();
+        const subscription = addAbortListener(signal, () => cancelled.reject(cancellationError()));
+        try {
+          await Promise.race([previous, cancelled.promise]);
+        } finally {
+          subscription[Symbol.dispose]();
+        }
+      } else {
+        await previous;
+      }
+      throwIfCancelled(signal);
       return await work();
     } finally {
-      release();
-      if (queueTails.get(key) === tail) queueTails.delete(key);
+      owned.resolve();
     }
   }
 
@@ -303,8 +319,7 @@ export function createActionFusionExecutor(onProgress: ProgressReporter) {
   }): Promise<FusedMutation<TDetails, TTool>> {
     // Without a command, the mutation still waits for a fused call on the same file.
     if (thenRun === undefined) {
-      return withQueue(absolutePath, async () => {
-        throwIfCancelled(signal);
+      return withQueue(absolutePath, signal, async () => {
         const outcome = await mutate();
         return { outcome, observation: commitFreshness(outcome.commit) };
       });
@@ -322,12 +337,7 @@ export function createActionFusionExecutor(onProgress: ProgressReporter) {
       return new CommandNotRun(error, command, progress.failure());
     };
     progress.report("waiting", "unknown");
-    return withQueue(absolutePath, async () => {
-      try {
-        throwIfCancelled(signal);
-      } catch (error) {
-        throw notRun(error, "cancelled");
-      }
+    return withQueue(absolutePath, signal, async () => {
       let outcome: MutationOutcome<TDetails, TTool>;
       try {
         outcome = await mutate();
@@ -377,9 +387,9 @@ export function createActionFusionExecutor(onProgress: ProgressReporter) {
         ? settled
         : { ...settled, terminate: command.terminate };
     }).catch((error: unknown) => {
-      // Failures before the mutation started (such as resolving the queue key) also skip the command.
       if (error instanceof CommandNotRun) throw error;
-      throw notRun(error, "skipped");
+      const cancelled = error instanceof HashlineError && error.errorCode === "OPERATION_ABORTED";
+      throw notRun(error, cancelled ? "cancelled" : "skipped");
     });
   };
 }

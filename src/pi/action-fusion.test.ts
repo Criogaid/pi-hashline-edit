@@ -1,5 +1,7 @@
 import { argumentError, rejectsArguments } from "./argument-error.testing.ts";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import fs from "node:fs/promises";
+import { syncBuiltinESMExports } from "node:module";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -489,6 +491,88 @@ test("case-differing paths on Windows → the Fusion queue serializes mutation s
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
+});
+
+test("cancelled write waiting for a fused command → returns before the command and preserves its queue", async (t) => {
+  const dir = await tempDir();
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const commandStarted = Promise.withResolvers<void>();
+  const releaseCommand = Promise.withResolvers<void>();
+  const controller = new AbortController();
+  const tool = makeWriteOverride(
+    dir,
+    createActionFusionExecutor(() => {}),
+  );
+  const path = "queue.txt";
+  let nestedRejected = false;
+  let commands = 0;
+  const context = await createFusionContext(dir, t, async () => {
+    commands++;
+    commandStarted.resolve();
+    await releaseCommand.promise;
+    const nested = await callTool(tool, { path, mode: "overwrite", content: "nested\n" });
+    nestedRejected = nested.isError === true;
+    return commandCompletion({ content: [] });
+  });
+  const first = callTool(
+    tool,
+    { path, mode: "create", content: "first\n", then_run: { command: "hold" } },
+    { ctx: context, toolCallId: "first" },
+  );
+  let second: typeof first | undefined;
+  try {
+    await Promise.race([
+      commandStarted.promise,
+      first.then(() => assert.fail("The first command did not start")),
+    ]);
+    const lookedUp = Promise.withResolvers<void>();
+    const realpath = fs.realpath;
+    const observeKey = t.mock.method(fs, "realpath", (target: string) =>
+      realpath(target).finally(() => {
+        // Resume after the resolved key has reached the queue.
+        if (target === join(dir, path)) setImmediate(lookedUp.resolve);
+      }),
+    );
+    syncBuiltinESMExports();
+    try {
+      second = callTool(
+        tool,
+        { path, mode: "overwrite", content: "second\n", then_run: { command: "unreachable" } },
+        { ctx: context, toolCallId: "second", signal: controller.signal },
+      );
+      await Promise.race([
+        lookedUp.promise,
+        second.then(() => assert.fail("The waiting write finished before cancellation")),
+      ]);
+    } finally {
+      observeKey.mock.restore();
+      syncBuiltinESMExports();
+    }
+    controller.abort();
+    const deadline = Promise.withResolvers<never>();
+    const timer = setTimeout(
+      () => deadline.reject(new Error("The cancelled call still waits")),
+      1_000,
+    );
+    try {
+      const result = await Promise.race([second, deadline.promise]);
+      const report = reportOf(result, "write");
+      assert.equal(report?.error, "OPERATION_ABORTED");
+      assert.equal(report?.publication, "NOT_PUBLISHED");
+      assert.equal(report?.then_run?.status, "cancelled");
+      assert.equal(commands, 1);
+    } finally {
+      clearTimeout(timer);
+    }
+  } finally {
+    releaseCommand.resolve();
+    await Promise.all([first, second]);
+  }
+  assert.equal(nestedRejected, true);
+  assert.equal(await readFile(join(dir, path), "utf8"), "first\n");
+  const third = await callTool(tool, { path, mode: "overwrite", content: "third\n" });
+  assert.equal(third.isError, undefined);
+  assert.equal(await readFile(join(dir, path), "utf8"), "third\n");
 });
 
 test("timed command stays silent → heartbeat preserves output and stops after every terminal outcome", async (t) => {
