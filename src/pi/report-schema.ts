@@ -244,6 +244,12 @@ const FACT_FIELDS = {
   ),
   exitCode: tuiFact(Type.Union([Type.Integer(), Type.Null()])),
 
+  // read window (read-tool.ts).
+  totalLines: modelFact(
+    Type.Integer({ minimum: 0, description: "Lines in the file." }),
+    "Set offset to a line the file has.",
+  ),
+
   // read outcome; outputLimit below is shared with grep.
   nextOffset: modelFact(Type.Integer({ minimum: 1 }), "Use nextOffset to continue reading."),
   lineTooLong: modelFact(
@@ -415,6 +421,10 @@ export const ERROR_DEFINITIONS = {
       default:
         'Check the path and read the existing file. Use mode "overwrite" only if replacing that file is intended.',
     },
+  },
+  OFFSET_PAST_END: {
+    facts: facts(["totalLines"]),
+    next: { default: "Set offset to at most totalLines, or omit it." },
   },
   NOT_REGULAR_FILE: {
     facts: NONE,

@@ -185,7 +185,7 @@ grep 卡片原样显示返回的文件路径和计数行。只有 `content` 模�
 
 模型容量未知或非法时，默认上限为 read 行 64 KiB、grep 载荷 50 KiB、每个诊断块 16 KiB、每个自由文本字段 4 KiB、每条 grep 预览 500 个 UTF-16 单元。显式设置 `read.maxKiB` 只覆盖 read 上限。每次执行使用开始时取得的预算快照。
 
-Read 因默认行数或字节预算截断窗口时会报告 `nextOffset`；只有调用方指定的 `limit` 生效时不额外报告 `nextOffset`。首行放不下时报告 `lineTooLong`，其值为字节上限。Grep 分别报告载荷和行预览的截断，非法 UTF-8 的普通预览不带编辑锚点。
+Read 因默认行数或字节预算截断窗口时会报告 `nextOffset`；只有调用方指定的 `limit` 生效时不额外报告 `nextOffset`。首行放不下时报告 `lineTooLong`，其值为字节上限。传 `anchors: false` 时，`offset` 超过最后一行会以 `OFFSET_PAST_END` 失败，并给出文件的 `totalLines`；从第一行读空文件返回空文本。调用 `read` 的脚本（例如 Pi 的 codemode）拿到的是 `{ text, nextOffset?, lineTooLong? }`，不再是文本加报告；读图片时拿到 Pi 的图片块。Grep 分别报告载荷和行预览的截断，非法 UTF-8 的普通预览不带编辑锚点。
 
 grep 载荷被截断时，只有去掉上下文后能在相同字节预算内多显示至少一条匹配行，报告才提示用 `context: 0` 重试；否则提示缩小搜索范围。依据部分预览重写前需检查完整行：`invalidUtf8` 列出的路径使用 Bash，有效 UTF-8 使用 `read`。
 

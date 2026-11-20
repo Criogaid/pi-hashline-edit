@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
 import { Type } from "typebox";
 import { createCodemodeToolDefinition } from "../../node_modules/@earendil-works/pi-coding-agent/dist/extensions/codemode/tool.js";
 import { openTestSession, responseStream, SESSION_TIMEOUT_MS } from "../testing/session.testing.ts";
 import { createActionFusionExecutor } from "./action-fusion.ts";
-import { makeWriteOverride } from "./tool-factories.testing.ts";
+import { DEFAULT_CONFIG, makeReadOverride, makeWriteOverride } from "./tool-factories.testing.ts";
 
 for (const entry of ["direct", "codemode"] as const) {
   test(`${entry} mutation waits on then_run → the call and model continuation stay pending`, {
@@ -99,3 +99,60 @@ for (const entry of ["direct", "codemode"] as const) {
     }
   });
 }
+
+test("codemode script reads text without anchors → receives the lines and the report's facts as fields", {
+  timeout: SESSION_TIMEOUT_MS,
+}, async (t) => {
+  const { cwd, session, model } = await openTestSession(t, {
+    tools: ["read", "codemode"],
+    configure(pi, cwd) {
+      pi.registerTool(
+        makeReadOverride(cwd, {
+          ...DEFAULT_CONFIG,
+          read: { ...DEFAULT_CONFIG.read, defaultLimit: 2 },
+        }),
+      );
+      pi.registerTool(createCodemodeToolDefinition());
+    },
+  });
+  await writeFile(join(cwd, "rows.txt"), "one\ntwo\nthree\n");
+  const code = [
+    'const cut = await tools.read({ path: "rows.txt", anchors: false });',
+    'const rest = await tools.read({ path: "rows.txt", anchors: false, offset: cut.nextOffset });',
+    'let pastEnd = "resolved";',
+    "try {",
+    '  await tools.read({ path: "rows.txt", anchors: false, offset: 4 });',
+    "} catch (error) {",
+    "  pastEnd = String(error);",
+    "}",
+    "text(JSON.stringify({ cut, rest, pastEnd }));",
+  ].join("\n");
+  let requests = 0;
+  session.agent.streamFunction = () => {
+    const first = requests++ === 0;
+    assert.ok(requests <= 2, "Unexpected model continuation");
+    return responseStream(model, {
+      content: first
+        ? [{ type: "toolCall", id: "script", name: "codemode", arguments: { code } }]
+        : [{ type: "text", text: "Done." }],
+      stopReason: first ? "toolUse" : "stop",
+    });
+  };
+  await session.prompt("Read the file in a script.");
+  assert.equal(session.agent.state.errorMessage, undefined);
+  const result = session.agent.state.messages.find(
+    (message) => message.role === "toolResult" && message.toolCallId === "script",
+  );
+  assert.ok(result?.role === "toolResult");
+  const output = result.content
+    .filter((block) => block.type === "text")
+    .map((block) => block.text)
+    .join("\n");
+  assert.equal(result.isError, false, output);
+  const { cut, rest, pastEnd } = JSON.parse(
+    output.slice(output.indexOf("{"), output.lastIndexOf("}") + 1),
+  );
+  assert.deepEqual(cut, { text: "one\ntwo", nextOffset: 3 });
+  assert.deepEqual(rest, { text: "three" });
+  assert.match(pastEnd, /OFFSET_PAST_END[\s\S]*"totalLines": 3/);
+});

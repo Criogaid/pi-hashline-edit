@@ -5,9 +5,10 @@ import { mkdir, mkdtemp, rm, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { createReadToolDefinition, initTheme } from "@earendil-works/pi-coding-agent";
+import { initTheme } from "@earendil-works/pi-coding-agent";
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import { validateToolArguments } from "@earendil-works/pi-ai";
+import { Value } from "typebox/value";
 import { makeReadOverride } from "./tool-factories.testing.ts";
 import { computeLineHash } from "../core/hash.ts";
 import { callTool } from "./tool-call.testing.ts";
@@ -138,6 +139,39 @@ test("read without anchors first row at or beyond the byte cap → counts UTF-8 
     }
   }));
 
+test("read without anchors starting past the last line → fails with the file's line count", async () =>
+  withDir(async (dir) => {
+    const tool = makeReadOverride(dir, DEFAULT_CONFIG);
+    await writeFile(join(dir, "rows.txt"), "a\n\nb\n");
+    await writeFile(join(dir, "empty.txt"), "");
+    for (const [path, offset, totalLines] of [
+      ["rows.txt", 4, 3],
+      ["empty.txt", 2, 0],
+    ] as const) {
+      const result = await callTool(tool, { path, anchors: false, offset });
+      assert.equal(result.isError, true);
+      const report = reportOf(result, "read");
+      assert.equal(report?.error, "OFFSET_PAST_END");
+      assert.equal(report?.totalLines, totalLines);
+    }
+  }));
+
+test("read without anchors of an empty file or from the last line → returns that text", async () =>
+  withDir(async (dir) => {
+    const tool = makeReadOverride(dir, DEFAULT_CONFIG);
+    await writeFile(join(dir, "rows.txt"), "a\n\nb\n");
+    await writeFile(join(dir, "empty.txt"), "");
+    for (const [path, offset, text] of [
+      ["empty.txt", undefined, ""],
+      ["empty.txt", 1, ""],
+      ["rows.txt", 3, "b"],
+    ] as const) {
+      const result = await callTool(tool, { path, anchors: false, offset });
+      assert.equal(result.isError, undefined);
+      assert.deepEqual(result.content, [{ type: "text", text }]);
+    }
+  }));
+
 test("absolute path inside cwd → read header uses relative spelling", async () =>
   withDir(async (dir) => {
     const path = join(dir, "f.txt");
@@ -167,7 +201,7 @@ test(
     }),
 );
 
-test("read supported PNG → exposes the native image schema and structured image", async () =>
+test("read supported PNG → scripts receive Pi's image block, which the output schema admits", async () =>
   withDir(async (dir) => {
     await writeFile(
       join(dir, "image.png"),
@@ -189,28 +223,35 @@ test("read supported PNG → exposes the native image schema and structured imag
       mimeType: image.mimeType,
       note: result.content.find((block) => block.type === "text")?.text,
     });
-    const nativeSchema = createReadToolDefinition(dir).outputSchema;
-    assert.ok(nativeSchema);
-    assert.deepEqual(tool.outputSchema, nativeSchema);
+    assert.ok(tool.outputSchema);
+    assert.ok(Value.Check(tool.outputSchema, result.structuredContent));
   }));
 
-test("read UTF-8 text with or without continuation → structured text includes every text block", async () =>
+test("read text complete, cut, with an oversized first line, or delegated → scripts receive the text and those facts as fields", async () =>
   withDir(async (dir) => {
+    const budget = outputBudgetsFor(2_048);
+    const tool = makeReadOverride(
+      dir,
+      { ...DEFAULT_CONFIG, read: { ...DEFAULT_CONFIG.read, defaultLimit: 1 } },
+      () => budget,
+    );
+    assert.ok(tool.outputSchema);
     await writeFile(join(dir, "text.txt"), "第一行\r\nsecond\r\n");
-    const tool = makeReadOverride(dir, {
-      ...DEFAULT_CONFIG,
-      read: { ...DEFAULT_CONFIG.read, defaultLimit: 1 },
-    });
-    for (const limit of [undefined, 2]) {
-      const result = await callTool(tool, { path: "text.txt", limit });
+    await writeFile(join(dir, "long.txt"), "x".repeat(budget.readBytes + 1));
+    await writeFile(join(dir, "nul.txt"), "first\0\nsecond\n");
+    for (const [args, facts] of [
+      [{ path: "text.txt", anchors: false }, { nextOffset: 2 }],
+      [{ path: "text.txt", anchors: false, limit: 2 }, {}],
+      [{ path: "text.txt" }, { nextOffset: 2 }],
+      [{ path: "long.txt", anchors: false }, { lineTooLong: formatByteSize(budget.readBytes) }],
+      [{ path: "nul.txt" }, {}],
+    ] as const) {
+      const result = await callTool(tool, args);
       assert.equal(result.isError, undefined);
-      const textBlocks = result.content.flatMap((block) =>
-        block.type === "text" ? [block.text] : [],
-      );
-      assert.equal(textBlocks.length, limit === undefined ? 2 : 1);
-      assert.equal(reportOf(result, "read")?.nextOffset, limit === undefined ? 2 : undefined);
-      assert.equal(typeof result.structuredContent, "string");
-      assert.equal(result.structuredContent, textBlocks.join("\n"));
+      const payload = result.content[0];
+      assert.equal(payload.type, "text");
+      assert.deepEqual(result.structuredContent, { text: payload.text, ...facts });
+      assert.ok(Value.Check(tool.outputSchema, result.structuredContent));
     }
   }));
 
@@ -667,13 +708,6 @@ test("unanchored read with no rows or a real empty row → expanded rendering pr
     assert.ok(render);
     const cases = [
       { name: "empty file", path: "empty.txt", content: "", header: "empty.txt · 0 lines" },
-      {
-        name: "offset past EOF",
-        path: "blank.txt",
-        content: "a\n\nb\n",
-        offset: 9,
-        header: "blank.txt · 3 lines (from line 9)",
-      },
       {
         name: "first line exceeds the byte budget",
         path: "long.txt",

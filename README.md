@@ -185,7 +185,7 @@ Argument rejections fit their diagnostic block as serialized JSON. In edit failu
 
 When model capacity is unknown or invalid, the defaults are 64 KiB for read rows, 50 KiB for grep payloads, 16 KiB per diagnostic block, 4 KiB per free-text field, and 500 UTF-16 code units per grep preview. An explicit `read.maxKiB` overrides only the read cap. Each execution keeps the budget snapshot it started with.
 
-Read reports `nextOffset` when its default line limit or byte budget cuts a window; a caller-supplied `limit` alone does not add a `nextOffset` report. A first row that cannot fit gets a `lineTooLong` byte-limit fact. Grep reports payload and preview truncation separately, and plain previews for invalid UTF-8 never carry edit anchors.
+Read reports `nextOffset` when its default line limit or byte budget cuts a window; a caller-supplied `limit` alone does not add a `nextOffset` report. A first row that cannot fit gets a `lineTooLong` byte-limit fact. With `anchors: false`, an `offset` past the last line fails with `OFFSET_PAST_END` and the file's `totalLines`; an empty file read from its first line returns empty text. Scripts that call `read`, such as Pi's codemode, receive `{ text, nextOffset?, lineTooLong? }` in place of the text and its report, and Pi's image block for an image. Grep reports payload and preview truncation separately, and plain previews for invalid UTF-8 never carry edit anchors.
 
 For a truncated grep payload, the report says to retry with `context: 0` only when removing context would fit another matching line in the same byte budget; otherwise it suggests narrowing the search. Inspect full lines before rewriting partial previews: use Bash for paths listed in `invalidUtf8`, and `read` for valid UTF-8.
 
