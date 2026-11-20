@@ -24,6 +24,7 @@ import { DEFAULT_CONFIG } from "./tool-factories.testing.ts";
 import { formatByteSize } from "./budgets.ts";
 import { DEFAULT_OUTPUT_BUDGETS } from "./tool-factories.testing.ts";
 import { detailsReport, reportOf } from "./report.ts";
+import type { diffCardRenderers } from "./render.ts";
 import type { Report } from "./report-schema.ts";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import { PATH_ERROR_MESSAGES } from "../core/errors.ts";
@@ -277,6 +278,56 @@ test("deleting the first repeated row → the edit card marks the anchored delet
         assert.ok(rows.includes(` 4 ${displayedRow}`));
       }),
     );
+  }
+});
+
+test("deleting either repeated row without a final LF → edit and replace cards mark the chosen row", async (t) => {
+  const before = "same\nsame";
+  const path = "duplicate.txt";
+  for (const line of [1, 2]) {
+    const editArgs = { path, steps: [{ action: "delete" as const, anchor: h(before, line) }] };
+    const replaceArgs = {
+      path,
+      replacements: [{ literal: true, find: line === 1 ? "same\n" : "\nsame", replace: "" }],
+    };
+    for (const [name, invoke] of [
+      ["edit", (dir: string) => runCard(makeEditOverride(dir, DEFAULT_CONFIG), editArgs, dir)],
+      ["replace", (dir: string) => runCard(makeReplaceTool(dir, DEFAULT_CONFIG), replaceArgs, dir)],
+    ] as const) {
+      await t.test(`${name} line ${line}`, () =>
+        withDir(async (dir) => {
+          const file = join(dir, path);
+          await writeFile(file, before);
+          const rows = await invoke(dir);
+          assert.deepEqual(await readFile(file), Buffer.from("same"));
+          assert.deepEqual(
+            rows.filter((row) => /^[ +\-]\d+ /.test(row)),
+            line === 1 ? ["-1 same", " 2 same"] : [" 1 same", "-2 same"],
+          );
+        }),
+      );
+    }
+  }
+
+  async function runCard<TArgs>(
+    tool: Omit<
+      ReturnType<typeof makeEditOverride> | ReturnType<typeof makeReplaceTool>,
+      "renderResult"
+    > &
+      Pick<ReturnType<typeof diffCardRenderers<TArgs>>, "renderResult">,
+    args: TArgs,
+    cwd: string,
+  ) {
+    const result = await callTool(tool, args);
+    assert.equal(result.isError, undefined);
+    const card = tool.renderResult(result, { expanded: true, isPartial: false }, stubTheme, {
+      cwd,
+      args,
+      state: {},
+      isError: false,
+      keyHint: (_key, description) => description,
+    });
+    return card.render(120).map((row) => stripVTControlCharacters(row).trimEnd());
   }
 });
 

@@ -1,4 +1,4 @@
-import { diffLines } from "diff";
+import { diffArrays } from "diff";
 import type { CopiedSpan } from "../core/copy-span.ts";
 import { indexSourceLines, normalizeLineEndings } from "../core/lines.ts";
 
@@ -17,6 +17,45 @@ function boundaryAtOrAfter(lines: LineIndex, offset: number): number {
     else high = middle;
   }
   return low;
+}
+
+// Match a copied EOF body to its original row when adding or removing its neighbor
+// also adds or removes the separator. A terminator-only change still shows as an edit.
+function copiedEofBody(
+  shorter: LineIndex,
+  longer: LineIndex,
+  shorterStart: number,
+  longerStart: number,
+  length: number,
+): number | undefined {
+  const eofRow = shorter.length - 1;
+  const bodyEnd = shorter.start(shorter.length);
+  if (shorterStart + length !== bodyEnd || shorter.end(eofRow) !== bodyEnd) return;
+  const skip = shorter.start(eofRow) - shorterStart;
+  if (skip < 0) return;
+  const start = longerStart + skip;
+  const row = boundaryAtOrAfter(longer, start);
+  if (
+    row < longer.length - 1 &&
+    longer.start(row) === start &&
+    longer.end(row) === longerStart + length
+  )
+    return row;
+}
+
+type RowToken = string | symbol;
+
+function rowTokens(index: LineIndex, start: number, end: number): RowToken[] {
+  const tokens: RowToken[] = [];
+  for (let row = start; row < end; row++) {
+    const content = index.content(row);
+    tokens.push(index.end(row) < index.start(row + 1) ? `${content}\n` : content);
+  }
+  return tokens;
+}
+
+function sameRow(before: RowToken, after: RowToken): boolean {
+  return before === after;
 }
 
 /** Render copied full rows at their proven positions and diff the gaps in the logical LF view. */
@@ -74,16 +113,7 @@ export function generateRangeDiff(
     }
   }
 
-  function rowsEqual(sourceRow: number, targetRow: number): boolean {
-    const sourceTerminated = source.end(sourceRow) < source.start(sourceRow + 1);
-    const targetTerminated = target.end(targetRow) < target.start(targetRow + 1);
-    return (
-      sourceTerminated === targetTerminated &&
-      source.content(sourceRow) === target.content(targetRow)
-    );
-  }
-
-  function diffGap(oldEnd: number, newEnd: number): void {
+  function diffGap(oldEnd: number, newEnd: number, eofSpan?: CopiedSpan): void {
     const oldStart = oldRow + equalRows;
     const newStart = newRow + equalRows;
     const oldCount = oldEnd - oldStart;
@@ -94,16 +124,38 @@ export function generateRangeDiff(
       return;
     }
 
-    const oldOffset = source.start(oldStart);
-    const newOffset = target.start(newStart);
-    const oldLimit = source.start(oldEnd);
-    const newLimit = target.start(newEnd);
-    const parts = diffLines(
-      normalizeLineEndings(before.slice(oldOffset, oldLimit)),
-      normalizeLineEndings(after.slice(newOffset, newLimit)),
-      { maxEditLength: MAX_ALIGNMENT_EDITS },
-    );
-    if (parts) {
+    const oldRows = rowTokens(source, oldStart, oldEnd);
+    const newRows = rowTokens(target, newStart, newEnd);
+    let oldIdentity = -1;
+    let newIdentity = -1;
+    if (eofSpan && oldCount !== newCount) {
+      const { sourceStart, targetStart, length } = eofSpan;
+      if (oldCount > newCount) {
+        const row = copiedEofBody(target, source, targetStart, sourceStart, length);
+        if (row !== undefined && row >= oldStart) {
+          oldIdentity = row - oldStart;
+          newIdentity = newCount - 1;
+        }
+      } else {
+        const row = copiedEofBody(source, target, sourceStart, targetStart, length);
+        if (row !== undefined && row >= newStart) {
+          oldIdentity = oldCount - 1;
+          newIdentity = row - newStart;
+        }
+      }
+    }
+    // A proven row must not compare equal to an unrelated occurrence of the same text.
+    const identity = Symbol();
+    if (oldIdentity >= 0) oldRows[oldIdentity] = newRows[newIdentity] = identity;
+    const parts = diffArrays(oldRows, newRows, {
+      comparator: sameRow,
+      maxEditLength: MAX_ALIGNMENT_EDITS,
+    });
+    if (
+      parts &&
+      (oldIdentity < 0 ||
+        parts.some((part) => !part.added && !part.removed && part.value.includes(identity)))
+    ) {
       for (const part of parts) {
         if (part.removed) emitChange("-", part.count);
         else if (part.added) emitChange("+", part.count);
@@ -112,20 +164,31 @@ export function generateRangeDiff(
       return;
     }
 
-    // A dense gap still shows both real ranges, with any equal edges kept as context.
-    let prefix = 0;
-    while (prefix < Math.min(oldCount, newCount) && rowsEqual(oldStart + prefix, newStart + prefix))
-      prefix++;
-    let suffix = 0;
-    while (
-      suffix < Math.min(oldCount, newCount) - prefix &&
-      rowsEqual(oldEnd - suffix - 1, newEnd - suffix - 1)
-    )
-      suffix++;
-    equalRows += prefix;
-    emitChange("-", oldCount - prefix - suffix);
-    emitChange("+", newCount - prefix - suffix);
-    equalRows += suffix;
+    // Keep proven identity even if the search is exhausted or its shortest path skips the pair.
+    if (oldIdentity >= 0) {
+      emitBlock(0, oldIdentity, 0, newIdentity);
+      equalRows++;
+      emitBlock(oldIdentity + 1, oldCount, newIdentity + 1, newCount);
+    } else {
+      emitBlock(0, oldCount, 0, newCount);
+    }
+
+    function emitBlock(fromOld: number, toOld: number, fromNew: number, toNew: number) {
+      const commonLimit = Math.min(toOld - fromOld, toNew - fromNew);
+      let prefix = 0;
+      while (prefix < commonLimit && sameRow(oldRows[fromOld + prefix], newRows[fromNew + prefix]))
+        prefix++;
+      let suffix = 0;
+      while (
+        suffix < commonLimit - prefix &&
+        sameRow(oldRows[toOld - suffix - 1], newRows[toNew - suffix - 1])
+      )
+        suffix++;
+      equalRows += prefix;
+      emitChange("-", toOld - fromOld - prefix - suffix);
+      emitChange("+", toNew - fromNew - prefix - suffix);
+      equalRows += suffix;
+    }
   }
 
   for (const { sourceStart, targetStart, length } of copied) {
@@ -147,7 +210,7 @@ export function generateRangeDiff(
     diffGap(oldAnchor, newAnchor);
     equalRows += count;
   }
-  diffGap(source.length, target.length);
+  diffGap(source.length, target.length, copied.at(-1));
   flushEqual(false);
   return output.join("\n");
 }

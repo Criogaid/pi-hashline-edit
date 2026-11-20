@@ -126,3 +126,72 @@ test("range diff with a dense gap → shows actual removed and added rows", () =
     ],
   });
 });
+
+for (const [name, before, after, copied, expected] of [
+  [
+    "copied EOF body and CRLF with a standalone CR",
+    "same\r\r\nsame\r",
+    "same\r",
+    [{ sourceStart: 0, targetStart: 0, length: "same\r".length }],
+    { before: [[2, "same\r"]], after: [], context: [[1, "same\r"]] },
+  ],
+  [
+    "partial body without row identity",
+    "same\nsame",
+    "same",
+    [{ sourceStart: 1, targetStart: 1, length: "ame".length }],
+    { before: [[1, "same"]], after: [], context: [[2, "same"]] },
+  ],
+  [
+    "only the final LF removed",
+    "same\n",
+    "same",
+    [{ sourceStart: 0, targetStart: 0, length: "same".length }],
+    { before: [[1, "same"]], after: [[1, "same"]], context: [] },
+  ],
+] as const) {
+  test(`range diff with ${name} → aligns only eligible EOF bodies by identity`, () => {
+    assert.deepEqual(partitions(generateRangeDiff(before, after, copied)), expected);
+  });
+}
+
+test("EOF body identity beyond the alignment budget → fallback keeps the proven row", () => {
+  const repeated = Array<string>(1_001).fill("same");
+  const before = repeated.join("\n");
+  const after = "same";
+  const retained = 501;
+  const copied = [
+    { sourceStart: (retained - 1) * "same\n".length, targetStart: 0, length: after.length },
+  ];
+  const actual = partitions(generateRangeDiff(before, after, copied));
+  const removed = repeated.flatMap((line, i) => (i + 1 === retained ? [] : [[i + 1, line]]));
+  assert.deepEqual(actual, { before: removed, after: [], context: [[retained, "same"]] });
+  const reverse = copied.map(({ sourceStart, targetStart, length }) => ({
+    sourceStart: targetStart,
+    targetStart: sourceStart,
+    length,
+  }));
+  assert.deepEqual(partitions(generateRangeDiff(after, before, reverse)), {
+    before: [],
+    after: removed,
+    context: [[1, "same"]],
+  });
+});
+
+test("shorter textual alignment skips the copied EOF body → fallback preserves the copy", () => {
+  const before = "same\nx\ny\nsame";
+  const after = "x\ny\nsame";
+  const copied = [{ sourceStart: 0, targetStart: "x\ny\n".length, length: "same".length }];
+  assert.deepEqual(partitions(generateRangeDiff(before, after, copied)), {
+    before: [
+      [2, "x"],
+      [3, "y"],
+      [4, "same"],
+    ],
+    after: [
+      [1, "x"],
+      [2, "y"],
+    ],
+    context: [[1, "same"]],
+  });
+});
