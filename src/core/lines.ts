@@ -100,6 +100,30 @@ export function splitLines(text: string): string[] {
   return (normalized.endsWith("\n") ? normalized.slice(0, -1) : normalized).split("\n");
 }
 
+/**
+ * Index zero-based lines in raw UTF-16 offsets. end(line) excludes its terminator.
+ * start(length) is the EOF boundary.
+ */
+export function indexSourceLines(text: string) {
+  const starts = [0];
+  for (let at = text.indexOf("\n"); at !== -1; at = text.indexOf("\n", at + 1)) {
+    starts.push(at + 1);
+  }
+  if (starts[starts.length - 1] !== text.length) starts.push(text.length);
+
+  const end = (line: number) => {
+    const next = starts[line + 1];
+    if (text[next - 1] !== "\n") return next;
+    return next - (text[next - 2] === "\r" ? 2 : 1);
+  };
+  return {
+    length: starts.length - 1,
+    start: (line: number) => starts[line],
+    end,
+    content: (line: number) => text.slice(starts[line], end(line)),
+  };
+}
+
 /** Whether the text uses CRLF at all (any `\r\n` counts; mixed files report "crlf"). */
 export function detectLineEnding(text: string): "lf" | "crlf" {
   return text.includes("\r\n") ? "crlf" : "lf";

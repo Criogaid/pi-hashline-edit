@@ -245,6 +245,22 @@ test("editing a mixed-ending file preserves untouched separators", () => {
   if (result.ok) assert.equal(result.text, "first\r\nSECOND\nthird\r\n");
 });
 
+test("splicing across mixed endings → preserve raw spans and recompute only the boundaries", () => {
+  const text = "\uFEFFα\r\nkeep\r\r\nchange\n\n🙂\r\nleave\nlast";
+  const result = applyEdits(
+    text,
+    [
+      { op: "delete", anchor: at(text, 7) },
+      { op: "replace", anchor: at(text, 3), body: ["X", "Y\r"] },
+      { op: "prepend", body: ["head"] },
+    ],
+    4,
+    0,
+  );
+  assert(result.ok);
+  assert.equal(result.text, "\uFEFFhead\r\nα\r\nkeep\r\r\nX\r\nY\r\r\n\n🙂\r\nleave");
+});
+
 test("inserting and deleting in mixed-ending files preserves surviving separators", () => {
   const before = "a\r\nb\nc\r\nlast";
   const inserted = applyEdits(

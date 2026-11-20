@@ -33,10 +33,9 @@ import { computeLineHash } from "./hash.ts";
 import {
   detectLineEnding,
   hasFinalNewline,
+  indexSourceLines,
   joinTextFragments,
-  lineSeparators,
-  replacementSeparator,
-  splitLines,
+  restoreLineEndings,
 } from "./lines.ts";
 import type { Anchor, AnchorFailure, AnchorRecovery, ApplyResult, Edit } from "./types.ts";
 import { HashlineError } from "./errors.ts";
@@ -61,7 +60,7 @@ interface SpanOp {
  * hash computed for that line, so it verifies on retry.
  */
 function verifyAnchor(
-  lines: readonly string[],
+  lines: ReturnType<typeof indexSourceLines>,
   cited: Anchor,
   which: AnchorFailure["which"],
   opIndex: number,
@@ -70,14 +69,16 @@ function verifyAnchor(
   radius: number,
 ): AnchorFailure | null {
   const { line, hash } = cited;
-  if (line <= lines.length && computeLineHash(line, lines[line - 1], hashLen) === hash) return null;
+  if (line <= lines.length && computeLineHash(line, lines.content(line - 1), hashLen) === hash)
+    return null;
 
   const candidates: { line: number; hash: string }[] = [];
   const scan = (start: number, end: number) => {
     for (let c = start; c <= end; c++) {
       if (c === line) continue;
-      if (computeLineHash(line, lines[c - 1], hashLen) === hash) {
-        candidates.push({ line: c, hash: computeLineHash(c, lines[c - 1], hashLen) });
+      const content = lines.content(c - 1);
+      if (computeLineHash(line, content, hashLen) === hash) {
+        candidates.push({ line: c, hash: computeLineHash(c, content, hashLen) });
       }
     }
   };
@@ -112,7 +113,7 @@ type TranslateResult =
 function translateEdit(
   edit: Edit,
   opIndex: number,
-  lines: readonly string[],
+  lines: ReturnType<typeof indexSourceLines>,
   hashLen: number,
   radius: number,
 ): TranslateResult {
@@ -170,9 +171,7 @@ export function applyEdits(
   hashLen: number,
   shiftRadius: number,
 ): ApplyResult {
-  const lines = splitLines(text);
-  const bom = text.startsWith("\uFEFF") ? "\uFEFF" : "";
-  const ending = detectLineEnding(text);
+  const lines = indexSourceLines(text);
 
   const ops: (SpanOp & { readonly opIndex: number })[] = [];
   const anchorFailures: AnchorFailure[] = [];
@@ -217,61 +216,65 @@ export function applyEdits(
     );
   }
 
-  // Mixed line endings: each line carries the separator that FOLLOWED it in
-  // the original (its gap), so surviving lines keep theirs byte for byte. New
-  // gaps borrow the removed block's separators positionally — the last new
-  // line inherits the block's trailing gap, leaving the boundary to the next
-  // surviving line unchanged. Internal gaps use the same positional/last-gap
-  // rule as substring replacements, falling back to the file style for insertions.
-  const separator = ending === "crlf" ? "\r\n" : "\n";
-  // LF-only files have uniform separators; skip the regex scan.
-  const separators = ending === "lf" ? undefined : lineSeparators(text);
-  // Build from the verified snapshot in one pass: large bodies must not become
-  // function arguments, and later operations keep their original coordinates.
-  const result: { content: string; separator: string }[] = [];
-  let cursor = 0;
-  const appendSource = (start: number, end: number) => {
-    for (let index = start; index < end; index++) {
-      const content = lines[index];
-      // Keep the verified first-line BOM at byte zero.
-      result.push({
-        content: bom && index === 0 ? content.slice(1) : content,
-        separator: separators?.[index] ?? "",
-      });
-    }
+  const bom = text.startsWith("\uFEFF") ? "\uFEFF" : "";
+  const separator = detectLineEnding(text) === "crlf" ? "\r\n" : "\n";
+  const contentStart = (line: number) => (line === 0 ? bom.length : lines.start(line));
+  const gapAfter = (line: number) => text.slice(lines.end(line), lines.start(line + 1));
+
+  // The previous span's trailing gap connects to the next span, unless it ends the file.
+  const parts: string[] = [];
+  let lineCount = 0;
+  let lastLineEmpty = false;
+  let trailingGap = "";
+  const appendSpan = (content: string, count: number, endsEmpty: boolean, gap: string) => {
+    if (lineCount > 0) parts.push(trailingGap || separator);
+    parts.push(content);
+    lineCount += count;
+    lastLineEmpty = endsEmpty;
+    trailingGap = gap;
   };
+
+  const appendSource = (start: number, end: number) => {
+    if (start === end) return;
+    const last = end - 1;
+    const contentEnd = lines.end(last);
+    appendSpan(
+      text.slice(contentStart(start), contentEnd),
+      end - start,
+      contentStart(last) === contentEnd,
+      text.slice(contentEnd, lines.start(end)),
+    );
+  };
+
+  let cursor = 0;
   for (const op of sorted) {
     appendSource(cursor, op.lo);
-    // The trailing gap is outside the logical replacement, just as in substring replacement.
-    const removedSeparators = separators?.slice(op.lo, Math.max(op.lo, op.hi - 1)) ?? [];
-    for (let i = 0; i < op.newLines.length; i++) {
-      const content = op.newLines[i];
-      result.push({
-        // Only a replacement of the original first line can carry its copied BOM.
-        content:
-          bom && op.lo === 0 && op.hi > 0 && i === 0 && content.startsWith(bom)
-            ? content.slice(1)
-            : content,
-        separator:
-          i === op.newLines.length - 1 && op.hi > op.lo
-            ? (separators?.[op.hi - 1] ?? "")
-            : replacementSeparator(removedSeparators, i, separator),
-      });
+    if (op.newLines.length > 0) {
+      let logical = op.newLines.join("\n");
+      // Only replacement of the original first line can carry a copied file BOM.
+      if (bom && op.lo === 0 && op.hi > 0 && logical.startsWith(bom)) logical = logical.slice(1);
+
+      // Borrow only the internal gaps the body can use. Keep the replaced range's
+      // trailing gap at its right boundary.
+      const usedGaps = Math.min(op.hi - op.lo, op.newLines.length) - 1;
+      const oldInternal =
+        usedGaps > 0 && separator === "\r\n"
+          ? text.slice(lines.end(op.lo), lines.start(op.lo + usedGaps))
+          : "";
+      appendSpan(
+        op.newLines.length > 1 ? restoreLineEndings(logical, oldInternal, separator) : logical,
+        op.newLines.length,
+        logical === "" || logical.endsWith("\n"),
+        op.hi > op.lo ? gapAfter(op.hi - 1) : "",
+      );
     }
     cursor = op.hi;
   }
   appendSource(cursor, lines.length);
-  // An empty final logical line needs its own terminator to survive splitLines.
-  // A sole BOM-backed line already has a representation without a terminator.
-  const finalNewline =
-    hasFinalNewline(text) || (result.at(-1)?.content === "" && (result.length > 1 || !bom));
-  const newText =
-    bom +
-    joinTextFragments(
-      result.flatMap(({ content, separator: current }, i) => [
-        content,
-        i < result.length - 1 || finalNewline ? current || separator : "",
-      ]),
-    );
-  return { ok: true, text: newText };
+
+  // A final blank line needs a terminator unless the BOM alone represents it.
+  if (lineCount > 0 && (hasFinalNewline(text) || (lastLineEmpty && (lineCount > 1 || !bom)))) {
+    parts.push(trailingGap || separator);
+  }
+  return { ok: true, text: bom + joinTextFragments(parts) };
 }
