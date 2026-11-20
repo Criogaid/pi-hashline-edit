@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { extractPrefilter, type Prefilter } from "../core/search-analysis.ts";
 import { searchText, type GrepQuery } from "../core/search.ts";
+import { pictMatrix } from "../core/pict-matrix.testing.ts";
 import {
   acceptsNative,
   matrixCases,
@@ -20,7 +21,11 @@ interface CandidateCase {
   readonly required: Map<string, GrepQuery>;
 }
 
-async function checkCandidates(t: TestContext, queries: Iterable<{ readonly query: GrepQuery }>) {
+async function checkCandidates(
+  t: TestContext,
+  queries: Iterable<{ readonly query: GrepQuery }>,
+  concurrency: number,
+) {
   const directory = await mkdtemp(join(tmpdir(), "hl-grep-matrix-"));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const inputs = MATRIX_INPUTS.map(([label, bytes], index) => ({
@@ -59,7 +64,6 @@ async function checkCandidates(t: TestContext, queries: Iterable<{ readonly quer
   let checkedFiles = 0;
   let misses = 0;
   const examples: string[] = [];
-  const concurrency = 4;
   const processTimeoutMs = 10_000;
   const workers = await Promise.allSettled(
     Array.from({ length: concurrency }, async () => {
@@ -109,10 +113,14 @@ async function checkCandidates(t: TestContext, queries: Iterable<{ readonly quer
   assert.equal(misses, 0, examples.join("\n"));
 }
 
+test("PICT pairwise multiline JS queries → real rg retains all native hits", async (t) => {
+  await checkCandidates(t, pictMatrix().cases, 1);
+});
+
 test("Cartesian multiline JS queries → file prefilter retains all native hits", async (t) => {
-  await checkCandidates(t, matrixCases());
+  await checkCandidates(t, matrixCases(), 4);
 });
 
 test("Cartesian paired multiline JS syntax × composition × case mode → file prefilter retains native hits", async (t) => {
-  await checkCandidates(t, pairedMatrixCases());
+  await checkCandidates(t, pairedMatrixCases(), 4);
 });

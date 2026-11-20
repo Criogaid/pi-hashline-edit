@@ -65,6 +65,15 @@ export const MATRIX_QUANTIFIERS = ["", "?", "*", "+", "*?", "+?", "{0}", "{2}", 
 export const MATRIX_CONTEXTS = ["bare", "sequence", "alternative", "capture", "OR query"] as const;
 
 export const MATRIX_IGNORE_CASE = [false, true] as const;
+const MATRIX_MULTILINE = [false, true] as const;
+
+export const MATRIX_AXES = {
+  syntax: MATRIX_SYNTAX,
+  quantifier: MATRIX_QUANTIFIERS,
+  context: MATRIX_CONTEXTS,
+  ignoreCase: MATRIX_IGNORE_CASE,
+  multiline: MATRIX_MULTILINE,
+} as const;
 
 export const MATRIX_INPUTS = [
   ["empty", Buffer.alloc(0)],
@@ -91,33 +100,39 @@ export interface MatrixCase {
   readonly query: GrepQuery;
 }
 
+export function matrixCase(
+  [syntax, atom]: (typeof MATRIX_SYNTAX)[number],
+  quantifier: (typeof MATRIX_QUANTIFIERS)[number],
+  context: (typeof MATRIX_CONTEXTS)[number],
+  ignoreCase: boolean,
+  multiline: boolean,
+): MatrixCase {
+  const part = `(?:${atom})${quantifier}`;
+  const patterns =
+    context === "bare"
+      ? [part]
+      : context === "sequence"
+        ? [`x${part}y`]
+        : context === "alternative"
+          ? [`(?:${part}|Z)`]
+          : context === "capture"
+            ? [`(${part})\\1`]
+            : [part, "Z"];
+  return {
+    syntax,
+    quantifier,
+    context,
+    query: { patterns, ignoreCase, multiline, literal: false },
+  };
+}
+
 export function* matrixCases(): Generator<MatrixCase> {
-  for (const [syntax, atom] of MATRIX_SYNTAX) {
-    for (const quantifier of MATRIX_QUANTIFIERS) {
-      const part = `(?:${atom})${quantifier}`;
-      for (const context of MATRIX_CONTEXTS) {
-        const patterns =
-          context === "bare"
-            ? [part]
-            : context === "sequence"
-              ? [`x${part}y`]
-              : context === "alternative"
-                ? [`(?:${part}|Z)`]
-                : context === "capture"
-                  ? [`(${part})\\1`]
-                  : [part, "Z"];
-        for (const ignoreCase of MATRIX_IGNORE_CASE) {
-          for (const multiline of [false, true])
-            yield {
-              syntax,
-              quantifier,
-              context,
-              query: { patterns, ignoreCase, multiline, literal: false },
-            };
-        }
-      }
-    }
-  }
+  for (const syntax of MATRIX_SYNTAX)
+    for (const quantifier of MATRIX_QUANTIFIERS)
+      for (const context of MATRIX_CONTEXTS)
+        for (const ignoreCase of MATRIX_IGNORE_CASE)
+          for (const multiline of MATRIX_MULTILINE)
+            yield matrixCase(syntax, quantifier, context, ignoreCase, multiline);
 }
 
 export function acceptsNative(query: GrepQuery): boolean {
