@@ -425,7 +425,10 @@ export const ERROR_DEFINITIONS = {
   },
   OFFSET_PAST_END: {
     facts: facts(["totalLines"]),
-    next: { default: "Set offset to at most totalLines, or omit it." },
+    next: {
+      default: "Set offset to at most totalLines, or omit it.",
+      emptyFile: "Omit offset to read from the start.",
+    },
   },
   NOT_REGULAR_FILE: {
     facts: NONE,

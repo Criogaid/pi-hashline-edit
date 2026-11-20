@@ -313,6 +313,7 @@ export function makeReadOverride({
         if (anchored === false && start > Math.max(stats.totalLines, DEFAULT_OFFSET)) {
           throw new HashlineError("OFFSET_PAST_END", "Offset is past the last line.", {
             facts: { totalLines: stats.totalLines },
+            ...(stats.totalLines === 0 ? { next: "emptyFile" as const } : {}),
           });
         }
         const firstLineTooLong = firstOmittedLine === start;

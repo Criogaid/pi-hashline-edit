@@ -153,6 +153,10 @@ test("read without anchors starting past the last line → fails with the file's
       const report = reportOf(result, "read");
       assert.equal(report?.error, "OFFSET_PAST_END");
       assert.equal(report?.totalLines, totalLines);
+      if (totalLines === 0) {
+        assert.match(report?.next ?? "", /^Omit offset\b/);
+        assert.doesNotMatch(report?.next ?? "", /totalLines/);
+      }
     }
   }));
 
