@@ -287,6 +287,20 @@ test("success results → scripts receive the stated fields, after the payload t
   }
 });
 
+test("declared script outputs → require the fields every success of the tool carries", () => {
+  const incomplete: [ReportTool, object][] = [
+    ["read", {}],
+    ["grep", { text: "" }],
+    ["grep", { text: "", matches: 0 }],
+    ["edit", {}],
+    ["replace", { publication: "PUBLISHED" }],
+    ["replace", { matches: 1 }],
+    ["write", {}],
+  ];
+  for (const [tool, value] of incomplete)
+    assert.equal(Value.Check(SCRIPT_OUTPUT_SCHEMAS[tool], value), false, JSON.stringify(value));
+});
+
 test("facts the payload or the call already shows → scripts receive them while text and details stay the same", () => {
   const payload = [text("a.ts · 2 matches")];
   const plain = reportResult({ tool: "grep", path: ["a.ts"], matchLimit: 2 }, payload);
