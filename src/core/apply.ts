@@ -36,6 +36,7 @@ import {
   indexSourceLines,
   joinTextFragments,
   restoreLineEndings,
+  type TextFragment,
 } from "./lines.ts";
 import type { Anchor, AnchorFailure, AnchorRecovery, ApplyResult, Edit } from "./types.ts";
 import { HashlineError } from "./errors.ts";
@@ -219,15 +220,25 @@ export function applyEdits(
   const bom = text.startsWith("\uFEFF") ? "\uFEFF" : "";
   const separator = detectLineEnding(text) === "crlf" ? "\r\n" : "\n";
   const contentStart = (line: number) => (line === 0 ? bom.length : lines.start(line));
-  const gapAfter = (line: number) => text.slice(lines.end(line), lines.start(line + 1));
+  const gapAfter = (line: number): TextFragment | undefined => {
+    const sourceStart = lines.end(line);
+    const end = lines.start(line + 1);
+    if (sourceStart !== end) return { text: text.slice(sourceStart, end), sourceStart };
+  };
 
   // The previous span's trailing gap connects to the next span, unless it ends the file.
-  const parts: string[] = [];
+  const parts: TextFragment[] = [{ text: bom, sourceStart: 0 }];
+  const fallbackGap = { text: separator };
   let lineCount = 0;
   let lastLineEmpty = false;
-  let trailingGap = "";
-  const appendSpan = (content: string, count: number, endsEmpty: boolean, gap: string) => {
-    if (lineCount > 0) parts.push(trailingGap || separator);
+  let trailingGap: TextFragment | undefined;
+  const appendSpan = (
+    content: TextFragment,
+    count: number,
+    endsEmpty: boolean,
+    gap: TextFragment | undefined,
+  ) => {
+    if (lineCount > 0) parts.push(trailingGap ?? fallbackGap);
     parts.push(content);
     lineCount += count;
     lastLineEmpty = endsEmpty;
@@ -237,12 +248,13 @@ export function applyEdits(
   const appendSource = (start: number, end: number) => {
     if (start === end) return;
     const last = end - 1;
+    const sourceStart = contentStart(start);
     const contentEnd = lines.end(last);
     appendSpan(
-      text.slice(contentStart(start), contentEnd),
+      { text: text.slice(sourceStart, contentEnd), sourceStart },
       end - start,
       contentStart(last) === contentEnd,
-      text.slice(contentEnd, lines.start(end)),
+      gapAfter(last),
     );
   };
 
@@ -262,10 +274,13 @@ export function applyEdits(
           ? text.slice(lines.end(op.lo), lines.start(op.lo + usedGaps))
           : "";
       appendSpan(
-        op.newLines.length > 1 ? restoreLineEndings(logical, oldInternal, separator) : logical,
+        {
+          text:
+            op.newLines.length > 1 ? restoreLineEndings(logical, oldInternal, separator) : logical,
+        },
         op.newLines.length,
         logical === "" || logical.endsWith("\n"),
-        op.hi > op.lo ? gapAfter(op.hi - 1) : "",
+        op.hi > op.lo ? gapAfter(op.hi - 1) : undefined,
       );
     }
     cursor = op.hi;
@@ -274,7 +289,7 @@ export function applyEdits(
 
   // A final blank line needs a terminator unless the BOM alone represents it.
   if (lineCount > 0 && (hasFinalNewline(text) || (lastLineEmpty && (lineCount > 1 || !bom)))) {
-    parts.push(trailingGap || separator);
+    parts.push(trailingGap ?? fallbackGap);
   }
-  return { ok: true, text: bom + joinTextFragments(parts) };
+  return { ok: true, ...joinTextFragments(parts) };
 }

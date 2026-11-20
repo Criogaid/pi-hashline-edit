@@ -98,10 +98,9 @@ test("replacement at the file start → retains the original BOM at byte zero", 
   ];
   for (const { name, source, find, replace, expected, literal = false, flags } of cases) {
     await t.test(name, () => {
-      assert.deepEqual(applyReplacements(source, [{ literal, find, replace, flags }]), {
-        text: expected,
-        count: 1,
-      });
+      const { text, count } = applyReplacements(source, [{ literal, find, replace, flags }]);
+      assert.equal(text, expected);
+      assert.equal(count, 1);
     });
   }
 });
@@ -191,6 +190,24 @@ test("replacement joins beside LF → preserve standalone CR content", async (t)
       assert.equal(applyReplacements(source, rules).text, expected);
     });
   }
+});
+
+test("replacement adds CR at a copied LF boundary → copied spans use raw UTF-16 offsets", () => {
+  const result = applyReplacements("\uFEFF🙂\r\nleft\rX\nright", [
+    { find: "(X)", replace: "$1\r", literal: false },
+  ]);
+  assert.equal(result.text, "\uFEFF🙂\r\nleft\rX\r\r\nright");
+  assert.deepEqual(result.copied, [
+    { sourceStart: 0, targetStart: 0, length: 1 },
+    { sourceStart: 1, targetStart: 1, length: 9 },
+    { sourceStart: 11, targetStart: 13, length: 6 },
+  ]);
+});
+
+test("whole-file literal replacement with equal text → no copied span", () => {
+  const result = applyReplacements("same", [{ find: "same", replace: "same", literal: true }]);
+  assert.equal(result.text, "same");
+  assert.deepEqual(result.copied, []);
 });
 
 test("replacement rejection → reports all unmatched rules or the conflicting rule pair and line", async (t) => {

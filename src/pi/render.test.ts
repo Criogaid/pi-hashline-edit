@@ -44,7 +44,7 @@ const hints = { keyHint: (key: string) => `<${key}>` };
 const mutationDetails = (
   report: Pick<SuccessReport, "publication" | "freshness" | "then_run">,
 ) => ({
-  ...generateMutationDetails("old\n", "new\n"),
+  ...generateMutationDetails("old\n", "new\n", []),
   report: {
     tool: "edit" as const,
     path: "a.txt",
@@ -90,7 +90,7 @@ test("Fusion mutation card → follows Pi's output padding when it changes", asy
 
 test("empty logical diff → render according to confirmed publication state", () => {
   initTheme("dark");
-  const diff = generateMutationDetails("same\r\nsame\n", "same\nsame\r\n");
+  const diff = generateMutationDetails("same\r\nsame\n", "same\nsame\r\n", []);
   assert.equal(diff.diff, "");
   for (const publication of ["PUBLISHED", "NOT_PUBLISHED", undefined] as const) {
     const output = stripVTControlCharacters(
@@ -139,7 +139,7 @@ test("mutation headers refresh in place and retain isolated per-call counts", ()
     tool.renderResult(
       {
         content: [{ type: "text", text: "Done" }],
-        details: generateMutationDetails("old\n", "new\n"),
+        details: generateMutationDetails("old\n", "new\n", []),
       },
       { isPartial: false, expanded: false },
       theme,
@@ -406,7 +406,7 @@ test("mutation previews hide CRLF boundaries even with mixed endings or an unter
   initTheme("dark");
   for (const before of ["old\r\ncontext\r\n", "old\r\ncontext\nlast", "old\r\ncontext\r\nlast"]) {
     const after = before.replace("old", "new");
-    const details = generateMutationDetails(before, after);
+    const details = generateMutationDetails(before, after, []);
     for (const tool of [
       makeEditOverride(process.cwd(), DEFAULT_CONFIG),
       makeReplaceTool(process.cwd(), DEFAULT_CONFIG),
@@ -430,7 +430,7 @@ test("mutation previews hide CRLF boundaries even with mixed endings or an unter
 test("diff previews retain standalone CR and literal control-picture characters", () => {
   initTheme("dark");
   for (const before of ["old\r", "old␍", "old\rcontent\r\n"]) {
-    const details = generateMutationDetails(before, before.replace("old", "new"));
+    const details = generateMutationDetails(before, before.replace("old", "new"), []);
     const tool = makeEditOverride(process.cwd(), DEFAULT_CONFIG);
     const result = tool.renderResult(
       { content: [], details },
@@ -677,7 +677,7 @@ test("collapsed diff or output that hides rows → shows the host's expand hint,
   initTheme("dark");
   const rows = (word: string) => Array.from({ length: 40 }, (_, i) => `${word} ${i}\n`).join("");
   const details = {
-    ...generateMutationDetails(rows("old"), rows("new")),
+    ...generateMutationDetails(rows("old"), rows("new"), []),
     report: { tool: "edit" as const, path: "a.txt", publication: "PUBLISHED" as const },
   };
   const diffCard = (expanded: boolean) =>

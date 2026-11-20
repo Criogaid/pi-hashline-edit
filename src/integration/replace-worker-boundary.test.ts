@@ -12,10 +12,17 @@ const validRules = [{ find: "safe", replace: "changed", literal: false }];
 
 test("worker boundary: malformed external reply → rejects its result and facts", async (t) => {
   for (const reply of [
-    { result: { text: 123, count: 1 } },
-    { result: { text: "changed", count: 0 } },
+    { result: { text: 123, count: 1, copied: [] } },
+    { result: { text: "changed", count: 0, copied: [] } },
     {
-      result: { text: "changed", count: 1 },
+      result: {
+        text: "changed",
+        count: 1,
+        copied: [{ sourceStart: 0, targetStart: 0, length: 0 }],
+      },
+    },
+    {
+      result: { text: "changed", count: 1, copied: [] },
       error: { code: "NO_MATCH", message: "failure", facts: { unmatched: ["replacements[0]"] } },
     },
     { error: { code: "NO_MATCH", message: "failure" } },

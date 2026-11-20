@@ -56,6 +56,7 @@ import { runTool } from "./report.ts";
 import type { OutputBudgets } from "./budgets.ts";
 import type { ToolEnvironment } from "./config.ts";
 import { STRICT_SAMPLING } from "./schema.ts";
+import type { CopiedSpan } from "../core/copy-span.ts";
 
 type ActionFusionExecutor = ReturnType<typeof createActionFusionExecutor>;
 
@@ -169,6 +170,8 @@ export function mutationToolBase<
 interface TextChange<TTool extends MutationToolName> {
   /** Complete replacement text; equal to the snapshot for a no-op. */
   readonly text: string;
+  /** Identical ranges copied from the snapshot, used to delimit the diff. */
+  readonly copied: readonly CopiedSpan[];
   /** The tool's own outcome facts, such as replace's match count. */
   readonly facts: MutationFacts<TTool>;
 }
@@ -200,7 +203,7 @@ export async function runTextMutation<TTool extends MutationToolName>(
   try {
     return {
       commit,
-      details: generateMutationDetails(currentText, next.text),
+      details: generateMutationDetails(currentText, next.text, next.copied),
       facts: next.facts,
     };
   } catch (error) {

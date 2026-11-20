@@ -9,7 +9,11 @@ for (const { entry, input, expected } of [
       source: "before\n",
       rules: [{ find: "(before)", replace: "$1 after", literal: false }],
     },
-    expected: { text: "before after\n", count: 1 },
+    expected: {
+      text: "before after\n",
+      count: 1,
+      copied: [{ sourceStart: 6, targetStart: 12, length: 1 }],
+    },
   },
   {
     entry: "grep-worker.mjs",

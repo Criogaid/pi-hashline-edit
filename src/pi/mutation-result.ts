@@ -6,10 +6,10 @@
 
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import { FileMutationError, type CommitResult, type FreshnessObservation } from "./file-commit.ts";
-import { generateDiffString } from "@earendil-works/pi-coding-agent";
+import { generateRangeDiff } from "./mutation-diff.ts";
 import { displayCarriageReturns } from "./anchor-format.ts";
 import { errorMessage } from "../core/errors.ts";
-import { normalizeLineEndings } from "../core/lines.ts";
+import type { CopiedSpan } from "../core/copy-span.ts";
 import type {
   ActionFusionProgress,
   CommandResult,
@@ -40,9 +40,12 @@ export type MutationResultDetails<TDetails> =
   | (Partial<TDetails> & { actionFusion: ActionFusionProgress });
 
 /** The diff of the shared logical text, which the card and Pi's session export both show. */
-export function generateMutationDetails(before: string, after: string) {
-  const { diff } = generateDiffString(normalizeLineEndings(before), normalizeLineEndings(after));
-  return { diff: displayCarriageReturns(diff) };
+export function generateMutationDetails(
+  before: string,
+  after: string,
+  copied: readonly CopiedSpan[],
+) {
+  return { diff: displayCarriageReturns(generateRangeDiff(before, after, copied)) };
 }
 
 /** The facts a mutation tool states about its own outcome. */

@@ -1,0 +1,103 @@
+import assert from "node:assert/strict";
+import { test } from "node:test";
+import { generateDiffString } from "@earendil-works/pi-coding-agent";
+import type { CopiedSpan } from "../core/copy-span.ts";
+import { normalizeLineEndings } from "../core/lines.ts";
+import { generateRangeDiff } from "./mutation-diff.ts";
+
+function partitions(diff: string) {
+  const before: [number, string][] = [];
+  const after: [number, string][] = [];
+  const context: [number, string][] = [];
+  for (const line of diff ? diff.split("\n") : []) {
+    if (/^ +\.\.\.$/.test(line)) continue;
+    const match = /^([ +\-]) *(\d+) ([\s\S]*)$/.exec(line);
+    assert.ok(match, `Invalid Pi diff row: ${JSON.stringify(line)}`);
+    const rows = match[1] === "-" ? before : match[1] === "+" ? after : context;
+    rows.push([Number(match[2]), match[3]]);
+  }
+  return { before, after, context };
+}
+
+test("range diff with duplicate rows → removes the occurrence outside the copied span", () => {
+  const line = "same\n";
+  const before = line.repeat(3);
+  const after = line.repeat(2);
+  const actual = generateRangeDiff(before, after, [
+    { sourceStart: line.length, targetStart: 0, length: after.length },
+  ]);
+  assert.deepEqual(partitions(actual), {
+    before: [[1, "same"]],
+    after: [],
+    context: [
+      [2, "same"],
+      [3, "same"],
+    ],
+  });
+});
+
+test("range diff across separated edits → retains Pi's global numbering and context style", () => {
+  const lines = (start: number, end: number) =>
+    Array.from({ length: end - start }, (_, i) => `row ${start + i}\n`).join("");
+  const head = lines(1, 7);
+  const middle = lines(8, 24);
+  const tail = lines(25, 33);
+  const oldFirst = `${head}old first\n`;
+  const newFirst = `${head}new first\nextra line\n`;
+  const oldSecond = `${oldFirst}${middle}old second\n`;
+  const newSecond = `${newFirst}${middle}`;
+  const before = oldSecond + tail;
+  const after = newSecond + tail;
+  const copied: CopiedSpan[] = [
+    { sourceStart: 0, targetStart: 0, length: head.length },
+    { sourceStart: oldFirst.length, targetStart: newFirst.length, length: middle.length },
+    { sourceStart: oldSecond.length, targetStart: newSecond.length, length: tail.length },
+  ];
+  assert.equal(generateRangeDiff(before, after, copied), generateDiffString(before, after).diff);
+});
+
+for (const [name, oldHead, newHead, shared, oldTail, newTail] of [
+  ["partial starts and mixed endings", "old\n", "new\r", "edge\r\nint\rerior\nlast\r", "\n", "!"],
+  ["copied LF and a newly terminated EOF row", "left\r", "left", "\nkeep\nlast", "", "\n"],
+  ["standalone CR at EOF", "", "", "guard\r\nlast\r", "", "\r\n"],
+  ["only CRLF normalization", "left\r", "left", "\nsame\r\n", "", ""],
+] as const) {
+  test(`range diff with ${name} → renders the same row partitions as the whole logical diff`, () => {
+    const before = oldHead + shared + oldTail;
+    const after = newHead + shared + newTail;
+    const copied = [
+      { sourceStart: oldHead.length, targetStart: newHead.length, length: shared.length },
+    ];
+    const native = generateDiffString(
+      normalizeLineEndings(before),
+      normalizeLineEndings(after),
+    ).diff;
+    assert.deepEqual(partitions(generateRangeDiff(before, after, copied)), partitions(native));
+  });
+}
+
+test("range diff with a dense gap → shows actual removed and added rows", () => {
+  const count = 1_000;
+  const removed = Array.from({ length: count }, (_, i) => `old ${i}`);
+  const added = Array.from({ length: count }, (_, i) => `new ${i}`);
+  const head = "head\r\n";
+  const tail = "\ntail";
+  const before = head + removed.join("\n") + tail;
+  const after = head + added.join("\n") + tail;
+  const copied = [
+    { sourceStart: 0, targetStart: 0, length: head.length },
+    {
+      sourceStart: before.length - tail.length,
+      targetStart: after.length - tail.length,
+      length: tail.length,
+    },
+  ];
+  assert.deepEqual(partitions(generateRangeDiff(before, after, copied)), {
+    before: removed.map((line, i) => [i + 2, line]),
+    after: added.map((line, i) => [i + 2, line]),
+    context: [
+      [1, "head"],
+      [count + 2, "tail"],
+    ],
+  });
+});

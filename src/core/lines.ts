@@ -16,6 +16,8 @@
  * @module pi-hashline-edit/core
  */
 
+import type { CopiedSpan } from "./copy-span.ts";
+
 /** Normalize CRLF boundaries to LF; standalone CR remains content. */
 export function normalizeLineEndings(text: string): string {
   return text.replace(/\r\n/g, "\n");
@@ -40,16 +42,31 @@ function preserveBoundaryCarriageReturn(previous: string, next: string): string 
   return previous.endsWith("\r") && next.startsWith("\n") ? `\r${next}` : next;
 }
 
-/** Join independent raw fragments without absorbing trailing CR content into the next LF. */
-export function joinTextFragments(parts: readonly string[]): string {
+export interface TextFragment {
+  readonly text: string;
+  readonly sourceStart?: number;
+}
+
+/** Join raw fragments and map their copied slices past any CR inserted at a boundary. */
+export function joinTextFragments(parts: readonly TextFragment[]): {
+  text: string;
+  copied: CopiedSpan[];
+} {
   const joined: string[] = [];
+  const copied: CopiedSpan[] = [];
   let previous = "";
-  for (const part of parts) {
-    if (!part) continue;
-    joined.push(preserveBoundaryCarriageReturn(previous, part));
-    previous = part;
+  let targetEnd = 0;
+  for (const { text, sourceStart } of parts) {
+    if (!text) continue;
+    const part = preserveBoundaryCarriageReturn(previous, text);
+    joined.push(part);
+    targetEnd += part.length;
+    if (sourceStart !== undefined) {
+      copied.push({ sourceStart, targetStart: targetEnd - text.length, length: text.length });
+    }
+    previous = text;
   }
-  return joined.join("");
+  return { text: joined.join(""), copied };
 }
 
 /** Restore a logical replacement without normalizing it a second time. */

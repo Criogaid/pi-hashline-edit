@@ -14,6 +14,7 @@ import {
   joinTextFragments,
   normalizeLineEndings,
   restoreLineEndings,
+  type TextFragment,
 } from "./lines.ts";
 import { findSortedRangeConflict } from "./ranges.ts";
 import { HashlineError } from "./errors.ts";
@@ -119,12 +120,15 @@ export function applyReplacements(
       },
     });
   }
-  const parts: string[] = [bom];
+  const parts: TextFragment[] = [{ text: bom, sourceStart: 0 }];
   let cursor = bom.length;
   for (const change of changes) {
-    parts.push(source.slice(cursor, Math.max(bom.length, change.start)), change.text);
+    parts.push(
+      { text: source.slice(cursor, Math.max(bom.length, change.start)), sourceStart: cursor },
+      { text: change.text },
+    );
     cursor = Math.max(bom.length, change.end);
   }
-  parts.push(source.slice(cursor));
-  return { text: joinTextFragments(parts), count: changes.length };
+  parts.push({ text: source.slice(cursor), sourceStart: cursor });
+  return { ...joinTextFragments(parts), count: changes.length };
 }

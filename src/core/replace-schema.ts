@@ -1,5 +1,6 @@
 /** Tool-validated replacement rules, the engine's result, and their types; no Pi runtime imports. */
 import { Type, type Static } from "typebox";
+import { COPIED_SPAN_SCHEMA } from "./copy-span.ts";
 
 const REPLACEMENT_SCHEMA = Type.Object(
   {
@@ -30,11 +31,12 @@ export const REPLACEMENTS_SCHEMA = Type.Array(REPLACEMENT_SCHEMA, {
 });
 export type Replacement = Readonly<Static<typeof REPLACEMENT_SCHEMA>>;
 
-/** A replacement batch's new text and match count; the host checks it again across the worker boundary. */
+/** A replacement batch’s result, checked by the host across the worker boundary. */
 export const REPLACEMENT_RESULT_SCHEMA = Type.Object(
   {
     text: Type.String(),
     count: Type.Integer({ minimum: 1 }),
+    copied: Type.Array(COPIED_SPAN_SCHEMA),
   },
   { additionalProperties: false },
 );

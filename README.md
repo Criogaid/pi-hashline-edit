@@ -65,6 +65,8 @@ The model copies an anchor into `edit`:
 
 The edit succeeds only if line 2 still has that content. The TUI shows the diff; the model receives a short JSON report.
 
+The `edit` and `replace` cards use unchanged rows from the mutation to bound the diff. Pi aligns lines within small changed ranges. Large ranges show their original and replacement rows as a block.
+
 ## Tools
 
 The extension replaces Pi's `read`, `grep`, `edit`, and `write`, and adds `replace`.

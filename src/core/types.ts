@@ -4,6 +4,8 @@
  * @module pi-hashline-edit/core
  */
 
+import type { CopiedSpan } from "./copy-span.ts";
+
 /** Line anchor: dual reference of line number (1-based) + content hash. */
 export interface Anchor {
   readonly line: number;
@@ -81,5 +83,6 @@ export type ApplyResult =
   | {
       readonly ok: true;
       readonly text: string;
+      readonly copied: readonly CopiedSpan[];
     }
   | { readonly ok: false; readonly failures: readonly AnchorFailure[] };

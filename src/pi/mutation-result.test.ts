@@ -122,7 +122,7 @@ for (const [name, before, after] of [
   ["no-op", "unchanged\n", "unchanged\n"],
 ] as const) {
   test(`${name} mutation → details contain only the logical-view diff`, () => {
-    const details = generateMutationDetails(before, after);
+    const details = generateMutationDetails(before, after, []);
     const logical = generateDiffString(before.replace(/\r\n/g, "\n"), after.replace(/\r\n/g, "\n"));
     assert.deepEqual(details, {
       diff: displayCarriageReturns(logical.diff),

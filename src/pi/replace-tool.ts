@@ -117,9 +117,9 @@ function runReplace(
 ) {
   return runTextMutation<"replace">(target, async (currentText) => {
     // The regex worker reports its own cancellation; a literal batch runs synchronously.
-    const { text, count } = rules.some((rule) => !rule.literal)
+    const { text, count, copied } = rules.some((rule) => !rule.literal)
       ? await runRegexReplacements(currentText, rules, config.replace.regexTimeoutMs, target.signal)
       : applyReplacements(currentText, rules);
-    return { text, facts: { matches: count } };
+    return { text, copied, facts: { matches: count } };
   });
 }

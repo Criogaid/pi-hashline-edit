@@ -259,6 +259,13 @@ test("splicing across mixed endings → preserve raw spans and recompute only th
   );
   assert(result.ok);
   assert.equal(result.text, "\uFEFFhead\r\nα\r\nkeep\r\r\nX\r\nY\r\r\n\n🙂\r\nleave");
+  assert.deepEqual(result.copied, [
+    { sourceStart: 0, targetStart: 0, length: 1 }, // BOM
+    { sourceStart: 1, targetStart: 7, length: 8 }, // original lines before the replacement
+    { sourceStart: 9, targetStart: 15, length: 2 }, // separator before the replacement
+    { sourceStart: 17, targetStart: 23, length: 1 }, // LF following the generated CR
+    { sourceStart: 18, targetStart: 24, length: 10 }, // surviving lines after the replacement
+  ]);
 });
 
 test("inserting and deleting in mixed-ending files preserves surviving separators", () => {

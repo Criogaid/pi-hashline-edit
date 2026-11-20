@@ -65,6 +65,8 @@ greet.ts · 3 lines
 
 只有第 2 行内容仍然一致时修改才会成功。TUI 显示 diff，模型收到一份简短的 JSON 报告。
 
+`edit` 和 `replace` 卡片用操作中原样复制的整行划分 diff 的改动区段。小区段由 Pi 对齐行，大区段成块显示修改前后的行。
+
 ## 工具
 
 扩展替换 Pi 的 `read`、`grep`、`edit`、`write`，并新增 `replace`。
