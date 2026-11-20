@@ -171,7 +171,7 @@ export function makeReadOverride({
       "Read a file. Images return as attachments. Text lines show as LINE#HASH│content anchors for edit; CRLF line endings show as LF.",
     promptSnippet: "Read files with editable line anchors",
     promptGuidelines: [
-      "In codemode, use tools.bash (cat, git show) for raw file text. Hashline-formatted read and grep content results include headers and show CRLF as LF. Files containing NUL go to native read without a Hashline header.",
+      "In codemode, tools.read with anchors: false resolves to a `<path> · <N> lines` header line followed by the lines read. Files containing NUL go to native read without a Hashline header.",
     ],
     parameters: parameters as typeof builtin.parameters,
     // Codemode scripts receive structuredContent: Pi's image block for a delegated image, the
