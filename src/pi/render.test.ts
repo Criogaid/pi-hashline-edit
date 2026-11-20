@@ -26,7 +26,7 @@ import { generateMutationDetails } from "./mutation-result.ts";
 import { createActionFusionExecutor } from "./action-fusion.ts";
 import { DEFAULT_CONFIG } from "./tool-factories.testing.ts";
 import { toDisplayLines } from "./grep-render.ts";
-import { parseFileHeader } from "./grep-output.ts";
+import { CONTEXT_GAP, parseFileHeader } from "./grep-output.ts";
 import { makeReadOverride } from "./tool-factories.testing.ts";
 import { callTool } from "./tool-call.testing.ts";
 import { renderToolError } from "./render.ts";
@@ -560,6 +560,17 @@ test("grep renders plain and anchored rows in one group without exposing hashes"
     theme.fg("success", "mixed.txt") + theme.fg("dim", " · 2 matches"),
     theme.fg("dim", "    1: ") + theme.fg("toolOutput", "alpha"),
     theme.fg("dim", "   12: ") + theme.fg("toolOutput", "  7#ABCD│literal content"),
+  ]);
+});
+
+test("grep gap row between two groups of one file → TUI keeps it between their aligned rows", () => {
+  initTheme("dark");
+  const raw = ["a.txt · 2 matches", "1#ABCD│alpha", CONTEXT_GAP, "12#ABCD│beta"].join("\n");
+  assert.deepEqual(toDisplayLines(raw, theme).map(stripVTControlCharacters), [
+    "a.txt · 2 matches",
+    "    1: alpha",
+    `   ${CONTEXT_GAP}`,
+    "   12: beta",
   ]);
 });
 

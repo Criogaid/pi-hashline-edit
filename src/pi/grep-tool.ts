@@ -82,7 +82,7 @@ function createGrepSchema({ defaultLimit, defaultContext }: HashlineEditConfig["
       context: Type.Optional(
         Type.Number({
           ...GREP_CONTEXT_RANGE,
-          description: `Lines shown before and after each match (${GREP_CONTEXT_RANGE.minimum}-${GREP_CONTEXT_RANGE.maximum}, default ${defaultContext}); display only, not matched. Use 3-5 when searching code to edit.`,
+          description: `Lines shown before and after each match (${GREP_CONTEXT_RANGE.minimum}-${GREP_CONTEXT_RANGE.maximum}, default ${defaultContext}); display only, not matched; a -- row separates groups of rows that are not adjacent lines. Use 3-5 when searching code to edit.`,
         }),
       ),
       limit: Type.Optional(

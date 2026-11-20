@@ -5,7 +5,7 @@
  */
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import { parseDisplayRow } from "./anchor-format.ts";
-import { parseFileHeader } from "./grep-output.ts";
+import { CONTEXT_GAP, parseFileHeader } from "./grep-output.ts";
 
 /** Leading spaces and tabs of a row's content. */
 function indentation(text: string): number {
@@ -15,13 +15,15 @@ function indentation(text: string): number {
 /**
  * Render grouped grep results for the TUI. Anchored and plain preview rows share
  * aligned line numbers and folded leading indentation; anchored rows lose their
- * hashes. Notices are report facts, which the card renders from the report.
+ * hashes, and a gap row keeps its place between two groups of one file. Notices are
+ * report facts, which the card renders from the report.
  */
 export function toDisplayLines(raw: string, theme: Theme): string[] {
   const lines = raw.split("\n");
   type Header = NonNullable<ReturnType<typeof parseFileHeader>>;
   type Row = NonNullable<ReturnType<typeof parseDisplayRow>>;
-  const blocks: (string | { header: Header; rows: Row[] })[] = [];
+  /** `gaps` holds the indices of rows that a gap row precedes. */
+  const blocks: (string | { header: Header; rows: Row[]; gaps: Set<number> })[] = [];
   let lineNoWidth = 0;
   // A filename can look like a row, and a source row can end like a header.
   // Parse each group before measuring its rows so the header contributes no width.
@@ -33,14 +35,18 @@ export function toDisplayLines(raw: string, theme: Theme): string[] {
       continue;
     }
     const rows: Row[] = [];
+    const gaps = new Set<number>();
     while (index + 1 < lines.length) {
-      const row = parseDisplayRow(lines[index + 1]);
+      // A gap row belongs to the group only when a row follows it.
+      const gap = rows.length > 0 && lines[index + 1] === CONTEXT_GAP ? 1 : 0;
+      const row = parseDisplayRow(lines[index + 1 + gap] ?? "");
       if (!row) break;
+      if (gap) gaps.add(rows.length);
       rows.push(row);
       lineNoWidth = Math.max(lineNoWidth, row.lineNo.length);
-      index++;
+      index += 1 + gap;
     }
-    blocks.push({ header, rows });
+    blocks.push({ header, rows, gaps });
   }
 
   const out: string[] = [];
@@ -56,7 +62,8 @@ export function toDisplayLines(raw: string, theme: Theme): string[] {
       ? group.rows.reduce((min, { content }) => Math.min(min, indentation(content)), Infinity)
       : 0;
     const marker = base > 0 ? theme.fg("dim", "›") + " " : "";
-    for (const { lineNo, content } of group.rows) {
+    for (const [index, { lineNo, content }] of group.rows.entries()) {
+      if (group.gaps.has(index)) out.push(theme.fg("dim", `   ${CONTEXT_GAP}`));
       out.push(
         theme.fg("dim", `   ${lineNo.padStart(lineNoWidth)}: `) +
           marker +

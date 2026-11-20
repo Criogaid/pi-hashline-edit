@@ -28,6 +28,12 @@ function formatFileHeader(path: string, matches: number): string {
 }
 const FILE_HEADER = /^(.+?) · (\d+ match(?:es)?)$/s;
 
+/**
+ * The row between two groups of rows that are not adjacent lines of one file, as ripgrep prints
+ * it. Only a search with context rows has groups; grep-render reads this row back for the TUI.
+ */
+export const CONTEXT_GAP = "--";
+
 export function parseFileHeader(line: string): { path: string; summary: string } | undefined {
   const match = FILE_HEADER.exec(line);
   return match ? { path: match[1], summary: match[2] } : undefined;
@@ -147,6 +153,8 @@ interface FormattedBlock {
   readonly invalidUtf8?: string;
   /** Indices of hits in a block with context rows. */
   readonly hitIndices?: readonly number[];
+  /** Indices of rows that open a group after a gap in line numbers, in a block with context rows. */
+  readonly gapIndices?: readonly number[];
   /** The first hit's row fitted as row one, when another row precedes it. */
   readonly firstHitRow?: string;
   /** Rows that establish a narrower displayed preview, indexed from the file header. */
@@ -168,11 +176,15 @@ function contentBlock(
   const firstRowBytes = budget.grepBytes - Buffer.byteLength(header) - 1;
   const previewMinimums: { index: number; units: number }[] = [];
   const hitIndices: number[] | undefined = context > 0 ? [] : undefined;
+  const gapIndices: number[] | undefined = context > 0 ? [] : undefined;
+  let previousLine: number | undefined;
   let firstHitRow: string | undefined;
   return {
     onLine(number, text) {
       // Rows make CR visible one unit for one, so preview columns stay source columns.
       const column = columns.get(number);
+      if (previousLine !== undefined && number > previousLine + 1) gapIndices?.push(lines.length);
+      previousLine = number;
       const row = (display: string) =>
         snapshot.validUtf8 ? anchors.row(number, text, display) : plainRow(number, display);
       let preview = previewLine(text, column, budget.grepPreviewUnits);
@@ -205,6 +217,7 @@ function contentBlock(
       invalidUtf8: snapshot.validUtf8 ? undefined : displayPath,
       previewMinimums,
       hitIndices,
+      gapIndices,
       firstHitRow,
     }),
   };
@@ -258,6 +271,14 @@ interface AssembleGrepOutputOptions {
  * that does not fit; content blocks are separated by an empty line. `shown` counts each reached
  * block's kept lines, its separator excluded.
  */
+/** A block's lines as the payload shows them: a gap row leads each row that opens a later group. */
+function payloadLines({ lines, gapIndices }: FormattedBlock): readonly string[] {
+  if (!gapIndices?.length) return lines;
+  const gaps = new Set(gapIndices);
+  // The gap row stays with its row, so a cut payload never ends on one.
+  return lines.map((line, index) => (gaps.has(index) ? `${CONTEXT_GAP}\n${line}` : line));
+}
+
 function fitPayload(blocks: readonly (readonly string[])[], separated: boolean, maxBytes: number) {
   const kept: string[] = [];
   const shown: number[] = [];
@@ -333,7 +354,7 @@ function assembleGrepOutput(options: AssembleGrepOutputOptions): {
     );
   }
   const { kept, shown, truncated } = fitPayload(
-    blocks.map((block) => block.lines),
+    blocks.map(payloadLines),
     outputMode === "content",
     budget.grepBytes,
   );

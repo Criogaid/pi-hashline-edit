@@ -25,7 +25,7 @@ const { DEFAULT_CONFIG } = await import("./tool-factories.testing.ts");
 import { formatByteSize, outputBudgetsFor } from "./budgets.ts";
 import { reportOf } from "./report.ts";
 const { grepCounts } = await import("./grep-output.testing.ts");
-const { parseFileHeader } = await import("./grep-output.ts");
+const { CONTEXT_GAP, parseFileHeader } = await import("./grep-output.ts");
 import { parseHashline } from "./anchor-format.ts";
 import { expectToolFailure } from "./report-failure.testing.ts";
 import { RegExpParser } from "@eslint-community/regexpp";
@@ -492,6 +492,30 @@ test("grep byte limit with every line matched → removing context is not sugges
     assert.equal(text(withContext), text(withoutContext));
     assert.ok(reportOf(withContext, "grep")?.outputLimit);
     assert.equal(reportOf(withContext, "grep")?.next, reportOf(withoutContext, "grep")?.next);
+  }));
+
+test("context rows around matches that are far apart → a gap row separates the groups of one file", async () =>
+  withDir(async (dir) => {
+    const path = join(dir, "gaps.txt");
+    const hits = new Set([2, 4, 10]);
+    await writeFile(
+      path,
+      Array.from(
+        { length: 12 },
+        (_, i) => `${hits.has(i + 1) ? "needle" : "other"} ${i + 1}\n`,
+      ).join(""),
+    );
+    const { backend } = fakeBackend({ paths: [path] });
+    const tool = makeMockGrep(dir, DEFAULT_CONFIG, backend);
+    const shown = async (context: number) =>
+      text(await callTool(tool, { path, pattern: ["needle"], literal: true, context }))
+        .split("\n")
+        .slice(1)
+        .map((row) => (row === CONTEXT_GAP ? row : parseHashline(row)?.lineNo));
+    // Lines 2 and 4 share the context row between them, so they form one group.
+    assert.deepEqual(await shown(1), ["1", "2", "3", "4", "5", CONTEXT_GAP, "9", "10", "11"]);
+    // Without context every row is a match, and no row marks the distance between them.
+    assert.deepEqual(await shown(0), ["2", "4", "10"]);
   }));
 
 test("small grep payload and a long multibyte path → keeps the only anchored match", async () =>
