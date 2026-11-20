@@ -25,6 +25,11 @@ const MAX_COLLAPSED_DIFF_LINES = 24;
 /** Collapsed tool output and errors share a bounded preview. */
 const MAX_COLLAPSED_OUTPUT_LINES = 15;
 
+/** The last row of a collapsed preview that hides rows; every card states them the same way. */
+function hiddenRowsMarker(hidden: number, theme: Theme): string {
+  return theme.fg("muted", `… (${hidden} more lines)`);
+}
+
 /**
  * Render a pi-format diff (`+N`/`-N`/` N` content) for the TUI, reusing pi's
  * built-in renderer: semantic diff colors plus intra-line (word-level) change
@@ -38,7 +43,7 @@ function renderDiffPreview(diff: string, expanded: boolean, theme: Theme): strin
   const allLines = rendered.split("\n");
   const more =
     allLines.length > MAX_COLLAPSED_DIFF_LINES
-      ? `\n${theme.fg("dim", `… (${allLines.length - MAX_COLLAPSED_DIFF_LINES} more)`)}`
+      ? `\n${hiddenRowsMarker(allLines.length - MAX_COLLAPSED_DIFF_LINES, theme)}`
       : "";
   return allLines.slice(0, MAX_COLLAPSED_DIFF_LINES).join("\n") + more;
 }
@@ -110,18 +115,20 @@ function publishDiffCounts(
     refreshHeader(counts);
 }
 
-/** Render a bounded preview; expanding reveals every supplied line. */
+/**
+ * Render a bounded preview; expanding reveals every supplied line. `facts` follow the preview
+ * and are never hidden, so a collapsed card still shows its report.
+ */
 export function renderOutputPreview(
   lines: readonly string[],
   expanded: boolean,
   theme: Theme,
+  facts: readonly string[] = [],
 ): Text {
   const shown = expanded ? lines : lines.slice(0, MAX_COLLAPSED_OUTPUT_LINES);
   const more =
-    shown.length < lines.length
-      ? `\n${theme.fg("muted", `… (${lines.length - shown.length} more lines)`)}`
-      : "";
-  return new Text(shown.join("\n") + more, 0, 0);
+    shown.length < lines.length ? [hiddenRowsMarker(lines.length - shown.length, theme)] : [];
+  return new Text([...shown, ...more, ...facts].join("\n"), 0, 0);
 }
 
 /** A value on one line when it is a scalar; lists and objects continue on indented lines. */

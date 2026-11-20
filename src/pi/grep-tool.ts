@@ -169,11 +169,7 @@ export function makeGrepOverride({ cwd, config, budgets }: ToolEnvironment) {
           : mode === "content"
             ? toDisplayLines(payload.text, theme)
             : payload.text.split("\n").map((line) => theme.fg("toolOutput", line));
-      return renderOutputPreview(
-        [...lines, ...(report ? reportLines(report, theme) : [])],
-        expanded,
-        theme,
-      );
+      return renderOutputPreview(lines, expanded, theme, report ? reportLines(report, theme) : []);
     },
 
     async execute(

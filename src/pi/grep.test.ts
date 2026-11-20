@@ -968,6 +968,36 @@ test("aligns TUI line numbers across files to the widest result", () => {
   );
 });
 
+test("collapsed card with more rows than its preview → hides rows but still shows the report's facts", async () => {
+  await withDir(async (dir) => {
+    const file = join(dir, "a.ts");
+    await writeFile(file, Array.from({ length: 40 }, (_, index) => `alpha ${index}\n`).join(""));
+    const tool = makeMockGrep(dir, DEFAULT_CONFIG, fakeBackend({ paths: [file] }).backend);
+    const args = { pattern: ["alpha"], literal: true, limit: 30 };
+    const result = await call(tool, args);
+    const facts = reportOf(result, "grep");
+    assert.equal(facts?.matchLimit, 30);
+    const plain = { fg: (_color: string, value: string) => value, bold: (value: string) => value };
+    const render = (expanded: boolean): string[] =>
+      tool.renderResult!(
+        result,
+        { isPartial: false, expanded },
+        plain as any,
+        { args, isError: false } as any,
+      )
+        .render(200)
+        .map((line: string) => line.trimEnd());
+    const collapsed = render(false);
+    const expanded = render(true);
+    assert.ok(collapsed.length < expanded.length);
+    const stated = expanded.slice(
+      expanded.findLastIndex((line) => /^\s+\d+: alpha /.test(line)) + 1,
+    );
+    assert.ok(stated.length > 0);
+    assert.deepEqual(collapsed.slice(-stated.length), stated);
+  });
+});
+
 test("matching rows exceed limit → bounded results offer optional continuation", async () => {
   await withDir(async (dir) => {
     const file = join(dir, "a.ts");

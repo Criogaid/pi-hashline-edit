@@ -700,6 +700,29 @@ test("raw read rendering with an offset → numbers every source line from the h
     }
   }));
 
+test("read window whose line numbers differ in width → TUI rows share one line-number column", async () =>
+  withDir(async (dir) => {
+    const tool = makeReadOverride(dir, DEFAULT_CONFIG);
+    await writeFile(
+      join(dir, "rows.txt"),
+      Array.from({ length: 12 }, (_, index) => `row ${index + 1}\n`).join(""),
+    );
+    for (const anchors of [true, false]) {
+      const args = { path: "rows.txt", anchors, offset: 8, limit: 4 };
+      const rendered: string[] = tool.renderResult!(
+        JSON.parse(JSON.stringify(await callTool(tool, args))),
+        { expanded: true, isPartial: false },
+        stubTheme,
+        { args, state: {}, cwd: dir, isError: false } as any,
+      )
+        .render(120)
+        .map((line: string) => line.trimEnd());
+      const rows = rendered.filter((line) => /^\s+\d+: row /.test(line));
+      assert.equal(rows.length, 4);
+      assert.equal(new Set(rows.map((line) => line.indexOf(":"))).size, 1, rendered.join("\n"));
+    }
+  }));
+
 test("unanchored read whose text equals a report with no facts → expanded rendering keeps the row", async () =>
   withDir(async (dir) => {
     const tool = makeReadOverride(dir, DEFAULT_CONFIG);

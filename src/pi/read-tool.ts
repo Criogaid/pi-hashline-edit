@@ -135,8 +135,10 @@ function renderReadBody(
   } else {
     rendered = detabbed.map((l) => theme.fg("toolOutput", l));
   }
+  // Line numbers ascend, so the last one is the widest.
+  const lineNoWidth = lineNos.at(-1)?.length ?? 0;
   for (let i = 0; i < rendered.length; i++) {
-    out.push(theme.fg("dim", `   ${lineNos[i]}: `) + rendered[i]);
+    out.push(theme.fg("dim", `   ${lineNos[i].padStart(lineNoWidth)}: `) + rendered[i]);
   }
 
   return out.join("\n");
