@@ -290,9 +290,8 @@ export function makeReadOverride({
         let firstOmittedLine: number | undefined;
         const stats = await scanTextLines(
           absPath,
-          (number) => number >= start && number - start < limit,
+          (number) => firstOmittedLine === undefined && number >= start && number - start < limit,
           (line) => {
-            if (firstOmittedLine !== undefined) return;
             const rowBytes =
               line.byteLength +
               line.carriageReturns * crExpansion +
