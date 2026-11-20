@@ -49,7 +49,7 @@ export async function resolveSearchPaths(cwd: string, path: readonly string[] | 
       if (errnoCode(error) !== "ENOENT") throw error;
       missing.push(searchPath);
       // The working directory and Windows namespace syntax are not caller globs.
-      const name = process.platform === "win32" ? value.replace(/^@?\\\\\?\\/, "") : value;
+      const name = process.platform === "win32" ? value.replace(/^@?[\\/]{2}\?[\\/]/, "") : value;
       wildcard ||= !name.startsWith("file://") && /[*?]/.test(name);
     }
   }

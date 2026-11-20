@@ -19,7 +19,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join, parse } from "node:path";
+import { dirname, join, parse, toNamespacedPath } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 
@@ -1533,6 +1533,28 @@ test("grep paths with input shorthand or literal separators still edit the searc
         assert.equal(await readFile(otherFile, "utf8"), "needle\n");
       });
     }
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("Windows namespace path in missing → passing it back preserves matches from existing paths", {
+  skip: process.platform !== "win32" && "Requires Windows namespace paths",
+}, async () => {
+  const directory = await mkdtemp(join(tmpdir(), "hl-grep-namespace-"));
+  try {
+    const present = "present.txt";
+    await writeFile(join(directory, present), "needle\n");
+    const tool = makeGrepOverride(directory, DEFAULT_CONFIG);
+    const args = { literal: true, pattern: ["needle"] };
+    const missing = toNamespacedPath(join(directory, "missing.txt"));
+    const first = await callTool(tool, { ...args, path: [present, missing] });
+    assert.equal(first.isError, undefined);
+    assert.equal(grepCounts(first).matches, 1);
+    const reported = reportOf(first, "grep")?.missing?.[0];
+    assert.ok(reported);
+    const repeated = await callTool(tool, { ...args, path: [present, reported] });
+    assert.deepEqual(repeated.structuredContent, first.structuredContent);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
