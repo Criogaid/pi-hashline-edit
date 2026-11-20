@@ -244,13 +244,21 @@ const stubTheme = { fg: (_k: string, s: string) => s, bold: (s: string) => s } a
 initTheme();
 
 test("deleting the first repeated row → the edit card marks the anchored deletion", async (t) => {
-  for (const [name, before, after, displayedRow] of [
-    ["LF", "\n\nsame\nsame\n", "\n\nsame\n", "same"],
+  for (const [name, before, after, line, displayedRow] of [
+    ["LF", "\n\nsame\nsame\n", "\n\nsame\n", 3, "same"],
     [
       "BOM, mixed endings, and standalone CR",
       "\uFEFF🙂\r\nkeep\rX\nsame\r\r\nsame\r\r\n",
       "\uFEFF🙂\r\nkeep\rX\nsame\r\r\n",
+      3,
       "same␍",
+    ],
+    [
+      "duplicate at the BOM-prefixed first row",
+      "\uFEFFsame\nsame\nsame\n",
+      "\uFEFFsame\nsame\n",
+      1,
+      "\uFEFFsame",
     ],
   ] as const) {
     await t.test(name, async () =>
@@ -259,7 +267,7 @@ test("deleting the first repeated row → the edit card marks the anchored delet
         const file = join(dir, path);
         await writeFile(file, before);
         const tool = makeEditOverride(dir, DEFAULT_CONFIG);
-        const args = { path, steps: [{ action: "delete" as const, anchor: h(before, 3) }] };
+        const args = { path, steps: [{ action: "delete" as const, anchor: h(before, line) }] };
         const result = await callTool(tool, args);
         assert.equal(result.isError, undefined);
         assert.deepEqual(await readFile(file), Buffer.from(after));
@@ -273,9 +281,9 @@ test("deleting the first repeated row → the edit card marks the anchored delet
         const rows = card.render(120).map((row) => stripVTControlCharacters(row).trimEnd());
         assert.deepEqual(
           rows.filter((row) => row.startsWith("-")),
-          [`-3 ${displayedRow}`],
+          [`-${line} ${displayedRow}`],
         );
-        assert.ok(rows.includes(` 4 ${displayedRow}`));
+        assert.ok(rows.includes(` ${line + 1} ${displayedRow.replace(/^\uFEFF/, "")}`));
       }),
     );
   }

@@ -64,8 +64,15 @@ export function generateRangeDiff(
   after: string,
   copied: readonly CopiedSpan[],
 ): string {
-  const source = indexSourceLines(before);
-  const target = indexSourceLines(after);
+  // A header BOM stays at byte zero even when the body of the first row moves.
+  const sharedBom = before.startsWith("\uFEFF") && after.startsWith("\uFEFF");
+  const source = lineIndex(before);
+  const target = lineIndex(after);
+
+  function lineIndex(text: string): LineIndex {
+    const lines = indexSourceLines(text);
+    return sharedBom ? { ...lines, start: (row) => (row === 0 ? 1 : lines.start(row)) } : lines;
+  }
   // The card shows net logical changes even when edit operations rearrange identical rows.
   if (
     source.length === target.length &&

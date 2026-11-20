@@ -65,7 +65,7 @@ The model copies an anchor into `edit`:
 
 The edit succeeds only if line 2 still has that content. The TUI shows the diff; the model receives a short JSON report.
 
-The `edit` and `replace` cards use unchanged rows from the mutation to bound the diff. A copied last-line body can identify which duplicate row survives when adding or removing its neighbor changes the line terminator. Each changed range aligns up to 128 line additions and deletions combined. If alignment exceeds that limit, the card keeps proven matches and shows the remaining original and replacement rows as blocks.
+The `edit` and `replace` cards use unchanged rows from the mutation to bound the diff. A shared BOM stays with the file, so the first row's copied body can identify a surviving duplicate. A copied last-line body can also identify which duplicate survives when adding or removing its neighbor changes the line terminator. Each changed range aligns up to 128 line additions and deletions combined. If alignment exceeds that limit, the card keeps proven matches and shows the remaining original and replacement rows as blocks.
 
 ## Tools
 
