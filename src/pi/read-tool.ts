@@ -164,7 +164,7 @@ export function makeReadOverride({
       anchors: Type.Optional(
         Type.Boolean({
           description:
-            "false returns the lines as they are in the file, with no header or LINE#HASH│ prefixes, for text you will read or parse but not edit; about a third fewer tokens. Standalone CR displays as ␍ (default true).",
+            "false returns the lines as they are in the file, with no header or LINE#HASH│ prefixes, for text you will read or parse but not edit; about a third fewer tokens (default true).",
         }),
       ),
     },
@@ -175,7 +175,7 @@ export function makeReadOverride({
     name: "read" as const,
     label: "read",
     description:
-      "Read a file's text; images return as attachments. Lines show as LINE#HASH│content anchors for edit after one header line; anchors: false returns the lines alone. CRLF line endings show as LF.",
+      "Read a file's text; images return as attachments. Lines show as LINE#HASH│content anchors for edit after one header line; anchors: false returns the lines alone. CRLF line endings show as LF and standalone CR as ␍.",
     promptSnippet: "Read file text, with line anchors for edit",
     promptGuidelines: ["Files containing NUL go to native read without a Hashline header."],
     parameters: parameters as typeof builtin.parameters,

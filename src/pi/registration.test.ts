@@ -87,7 +87,7 @@ test("registered tools with or without Fusion → expose prompt rules and conver
                 anchors: {
                   type: "boolean",
                   description:
-                    "false returns the lines as they are in the file, with no header or LINE#HASH│ prefixes, for text you will read or parse but not edit; about a third fewer tokens. Standalone CR displays as ␍ (default true).",
+                    "false returns the lines as they are in the file, with no header or LINE#HASH│ prefixes, for text you will read or parse but not edit; about a third fewer tokens (default true).",
                 },
               },
             });
