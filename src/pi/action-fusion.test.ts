@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { callTool, createToolContext as ctx } from "./tool-call.testing.ts";
 import { makeEditOverride, makeReplaceTool, makeWriteOverride } from "./tool-factories.testing.ts";
-import { commandCompletion, createFusionContext } from "./action-fusion.testing.ts";
+import { commandCompletion, commandOutput, createFusionContext } from "./action-fusion.testing.ts";
 import type { ExtensionToolContext } from "@earendil-works/pi-coding-agent";
 import type { ActionFusionProgress } from "./report-schema.ts";
 import { ACTION_FUSION_GUIDELINES, createActionFusionExecutor } from "./action-fusion.ts";
@@ -161,7 +161,7 @@ test("edit and replace share one embedded executor and preserve mutation results
     const editOutput = editResult.content.at(-1);
     assert.ok(editOutput?.type === "text");
     assert.equal(reportOf(editResult, "edit")?.then_run?.status, "succeeded");
-    assert.equal(editResult.content.length, 1);
+    assert.deepEqual(editResult.content.slice(0, -1), [{ type: "text", text: "checked" }]);
     const replaceOutput = replaceResult.content.at(-1);
     assert.ok(replaceOutput?.type === "text");
     assert.equal(reportOf(replaceResult, "replace")?.then_run?.status, "succeeded");
@@ -202,7 +202,7 @@ test("then_run returns a termination flag → parent results preserve its value 
         assert.equal(result.terminate, terminate);
         assert.equal(Object.hasOwn(result, "terminate"), terminate !== undefined);
         assert.equal(reportOf(result, tool.name)?.then_run?.status, "succeeded");
-        assert.equal(reportOf(result, tool.name)?.then_run?.output, "checked");
+        assert.equal(commandOutput(result), "checked");
       }
     }
   } finally {
@@ -425,11 +425,8 @@ test("progress reports skipped mutations and failed commands without rolling bac
     );
     assert.equal(reportOf(failed, "write")?.then_run?.status, "failed");
     assert.equal(reportOf(failed, "write")?.publication, "PUBLISHED");
-    assert.equal(
-      reportOf(failed, "write")?.then_run?.output,
-      "diagnostic\nCommand exited with code 7",
-    );
-    assert.equal(failed.content.length, 1);
+    assert.equal(commandOutput(failed), "diagnostic\nCommand exited with code 7");
+    assert.equal(failed.content.length, 2);
     assert.equal(commands, 1);
     assert.deepEqual(
       events.map((event) => event.command),
@@ -640,10 +637,11 @@ test("command returns a terminal status → reports its status and diagnostic on
       assert.equal(result.isError, undefined);
       assert.equal(report?.publication, "PUBLISHED");
       assert.equal(report?.then_run?.status, status);
-      assert.equal(report?.then_run?.output, output);
-      assert.equal(result.content.length, 1);
-      const diagnostic = result.content[0];
-      assert.ok(diagnostic.type === "text");
+      assert.equal(commandOutput(result), output);
+      assert.equal(result.content.length, 2);
+      const diagnostic = {
+        text: result.content.map((block) => (block.type === "text" ? block.text : "")).join("\n"),
+      };
       assert.equal((diagnostic.text.match(/"then_run"/g) ?? []).length, 1);
       assert.equal((diagnostic.text.match(/command diagnostic/g) ?? []).length, 1);
       assert.doesNotMatch(

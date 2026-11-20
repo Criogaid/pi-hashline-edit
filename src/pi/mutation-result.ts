@@ -117,7 +117,11 @@ export function describeMutationFailure(
   });
 }
 
-/** Build the mutation report from commit, freshness, and command facts; the TUI uses its diff details. */
+/**
+ * Build the mutation result from commit, freshness, and command facts; the TUI uses its diff
+ * details. The command's output is the result's payload, which the report follows with the
+ * command's status; scripts read both in `then_run`.
+ */
 export function finalizeMutation<TDetails extends object, TTool extends MutationToolName>(
   tool: TTool,
   path: string,
@@ -128,6 +132,7 @@ export function finalizeMutation<TDetails extends object, TTool extends Mutation
 ): AgentToolResult<TDetails & ReportDetails<SuccessReport>> {
   const fresh = observation.freshness === "unchanged";
   const output = command?.result ? commandText(command.result.content) : "";
+  const shown = output ? boundedText(output, budget.fieldBytes) : undefined;
   // Tool-indexed facts preserve the correlation that object spread loses.
   const report = {
     tool,
@@ -136,13 +141,16 @@ export function finalizeMutation<TDetails extends object, TTool extends Mutation
     ...facts,
     freshness: fresh ? undefined : observation.freshness,
     freshnessError: causeOf(observation.error, budget.fieldBytes),
-    then_run: command
-      ? {
-          status: command.status,
-          ...(output ? { output: boundedText(output, budget.fieldBytes) } : {}),
-        }
-      : undefined,
+    then_run: command ? { status: command.status } : undefined,
     progressError: causeOf(command?.progressError, budget.fieldBytes),
-  } as SuccessReport;
-  return reportResult(report, [], details);
+  } as SuccessReport & { tool: MutationToolName };
+  return reportResult<TDetails, MutationToolName>(
+    report,
+    shown === undefined ? [] : [{ type: "text", text: shown }],
+    details,
+    undefined,
+    command && shown !== undefined
+      ? { then_run: { status: command.status, output: shown } }
+      : undefined,
+  );
 }

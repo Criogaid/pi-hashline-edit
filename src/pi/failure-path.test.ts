@@ -1,4 +1,4 @@
-import { commandCompletion, type SessionCommand } from "./action-fusion.testing.ts";
+import { commandCompletion, commandOutput, type SessionCommand } from "./action-fusion.testing.ts";
 import fs, { mkdtemp, readdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { syncBuiltinESMExports } from "node:module";
 import { tmpdir } from "node:os";
@@ -245,9 +245,9 @@ test("command succeeds on an unchanged target → retains the result and complet
       { path: target, content: "saved\n", mode: "create", then_run: { command: "check" } },
       { ctx: { ...(await createToolContext(dir, t)), executeTool } },
     );
-    assert.equal(completed.content.length, 1);
+    assert.equal(completed.content.length, 2);
     assert.equal(reportOf(completed, "write")?.then_run?.status, "succeeded");
-    assert.equal(reportOf(completed, "write")?.then_run?.output, "command finished");
+    assert.equal(commandOutput(completed), "command finished");
     assert.equal(progress.filter((event) => event.command === "succeeded").length, 1);
     assert.equal(progress.at(-1)?.freshness, "unchanged");
     assert.deepEqual(progress.at(-1)?.result, {

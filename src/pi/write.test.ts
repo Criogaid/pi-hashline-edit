@@ -1,4 +1,4 @@
-import { commandCompletion, type SessionCommand } from "./action-fusion.testing.ts";
+import { commandCompletion, commandOutput, type SessionCommand } from "./action-fusion.testing.ts";
 import { rejectsArgument } from "./argument-error.testing.ts";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -168,10 +168,8 @@ test("write returns its summary and command output after an unchanged then_run",
       undefined,
       { ...context(dir), executeTool },
     );
-    assert.deepEqual(reportOf(result, "write")?.then_run, {
-      status: "succeeded",
-      output: "checked",
-    });
+    assert.deepEqual(reportOf(result, "write")?.then_run, { status: "succeeded" });
+    assert.equal(commandOutput(result), "checked");
   }));
 
 test("write reports changed freshness when then_run changes the target", async () =>
@@ -197,10 +195,8 @@ test("write reports changed freshness when then_run changes the target", async (
     assert.doesNotMatch(text, /revision:|[0-9a-f]{64}/i);
     assert.equal(reportOf(result, "write")?.freshness, "changed");
     assert.match(reportOf(result, "write")?.next ?? "", /Read the file before further edits/);
-    assert.deepEqual(reportOf(result, "write")?.then_run, {
-      status: "succeeded",
-      output: "checked",
-    });
+    assert.deepEqual(reportOf(result, "write")?.then_run, { status: "succeeded" });
+    assert.equal(commandOutput(result), "checked");
     assert.doesNotMatch(text, /\b1#[0-9A-Z]+\b/);
     const rendered = write
       .renderResult(result, { isPartial: false }, theme, { isError: false })

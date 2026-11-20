@@ -1,6 +1,7 @@
-import { commandCompletion, type SessionCommand } from "./action-fusion.testing.ts";
+import { commandCompletion, commandOutput, type SessionCommand } from "./action-fusion.testing.ts";
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { Value } from "typebox/value";
 import { generateDiffString } from "@earendil-works/pi-coding-agent";
 import { generateMutationDetails } from "./mutation-result.ts";
 import { displayCarriageReturns } from "./anchor-format.ts";
@@ -27,7 +28,41 @@ function invalidMutationResults(
   const diff: string = result.details.diff;
 }
 
-test("command content includes images → report text joins only text blocks", async (t) => {
+test("then_run command with and without output → the model reads the output as text before a report of its status, and scripts read both in then_run", async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), "hashline-command-output-"));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  // Quotes, a backslash, and a line break are what a JSON string would escape.
+  const printed = 'src\\a.ts(1,7): error: expected "x"\nCommand exited with code 2';
+  for (const [name, output] of [
+    ["printed.txt", printed],
+    ["silent.txt", undefined],
+  ] as const) {
+    const executeTool: SessionCommand = async () =>
+      commandCompletion({ content: output ? [{ type: "text", text: output }] : [] }, true);
+    const tool = makeWriteOverride(
+      dir,
+      createActionFusionExecutor(() => {}),
+    );
+    const result = await callTool(
+      tool,
+      { path: name, content: "saved\n", mode: "create", then_run: { command: "check" } },
+      { ctx: { ...(await createToolContext(dir, t)), executeTool } },
+    );
+    const blocks = result.content.map((block) => (block.type === "text" ? block.text : ""));
+    const stated = { publication: "PUBLISHED", then_run: { status: "failed" } };
+    assert.deepEqual(blocks.slice(0, -1), output ? [output] : [], name);
+    assert.deepEqual(JSON.parse(blocks.at(-1) ?? ""), stated, name);
+    assert.deepEqual(reportOf(result, "write")?.then_run, stated.then_run, name);
+    assert.deepEqual(
+      result.structuredContent,
+      { ...stated, then_run: { ...stated.then_run, ...(output ? { output } : {}) } },
+      name,
+    );
+    assert.ok(Value.Check(tool.outputSchema, result.structuredContent), name);
+  }
+});
+
+test("command content includes images → the result's output joins only text blocks", async (t) => {
   const dir = await mkdtemp(join(tmpdir(), "hashline-command-content-"));
   try {
     const path = join(dir, "file.txt");
@@ -45,7 +80,7 @@ test("command content includes images → report text joins only text blocks", a
       { path, content: "saved\n", mode: "create", then_run: { command: "check" } },
       { ctx: { ...(await createToolContext(dir, t)), executeTool } },
     );
-    assert.equal(reportOf(result, "write")?.then_run?.output, "first\nsecond");
+    assert.equal(commandOutput(result), "first\nsecond");
     assert.equal(await readFile(path, "utf8"), "saved\n");
   } finally {
     await rm(dir, { recursive: true, force: true });
@@ -70,7 +105,7 @@ test("oversized command diagnostic → bounds model output and retains the origi
   );
   const report = reportOf({ content: result.content }, "write");
   assert.equal(report?.then_run?.status, "failed");
-  const shown = report.then_run.output;
+  const shown = commandOutput(result);
   assert.ok(shown && Buffer.byteLength(shown) <= budget.fieldBytes);
   assert.ok(shown.startsWith("opening\n") && shown.endsWith("\nlast line"));
   assert.deepEqual(displayedOutput, { type: "text", text: output });

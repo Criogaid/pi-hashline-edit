@@ -11,7 +11,7 @@ import type { CommandResult } from "./report-schema.ts";
 import { commandText } from "./mutation-result.ts";
 import { reportOf } from "./report.ts";
 import { makeWriteOverride } from "./tool-factories.testing.ts";
-import { commandCompletion, createFusionContext } from "./action-fusion.testing.ts";
+import { commandCompletion, commandOutput, createFusionContext } from "./action-fusion.testing.ts";
 import { callTool } from "./tool-call.testing.ts";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { ProcessTerminal, TuiMainScreen } from "@earendil-works/pi-tui";
@@ -188,7 +188,8 @@ test("Fusion command outcomes → progress, cards, and reports preserve command 
       const report = reportOf({ content: [block] }, "write");
       assert.ok(report);
       const output = expected ? commandText(expected.content) : "";
-      assert.deepEqual(report.then_run, { status: command, ...(output ? { output } : {}) });
+      assert.deepEqual(report.then_run, { status: command });
+      assert.equal(commandOutput(result), output || undefined);
       const rendered = h.card(h.entries[0], true).render(160).join("\n");
       assert.match(rendered, text);
       if (command === "cancelled") assert.equal(rendered.includes("Not run: cancelled."), !output);

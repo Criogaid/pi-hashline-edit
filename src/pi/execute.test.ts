@@ -1,4 +1,4 @@
-import { commandCompletion, type SessionCommand } from "./action-fusion.testing.ts";
+import { commandCompletion, commandOutput, type SessionCommand } from "./action-fusion.testing.ts";
 import { argumentError, rejectsArgument, rejectsArguments } from "./argument-error.testing.ts";
 /** Tool-level edit and shared mutation workflow tests. */
 import { test } from "node:test";
@@ -670,7 +670,7 @@ test("failed commands preserve mutation results and stay out of all main card re
       const last = result.content.at(-1);
       assert.ok(last?.type === "text");
       assert.equal(report?.then_run?.status, "failed");
-      assert.match(report?.then_run?.output ?? "", /command-only diagnostic/);
+      assert.match(commandOutput(result) ?? "", /command-only diagnostic/);
       if (path !== "write.txt")
         assert.equal(typeof ("diff" in result.details ? result.details.diff : undefined), "string");
       assert.doesNotMatch(rendered, /command-only diagnostic|then_run:failed/);

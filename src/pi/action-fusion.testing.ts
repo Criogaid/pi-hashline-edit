@@ -27,6 +27,14 @@ export function commandCompletion(
   };
 }
 
+/** A mutation result's command output as the model reads it: the text before the report. */
+export function commandOutput(
+  result: Pick<AgentToolResult<unknown>, "content">,
+): string | undefined {
+  const payload = result.content.length > 1 ? result.content[0] : undefined;
+  return payload?.type === "text" ? payload.text : undefined;
+}
+
 export async function createFusionContext(
   cwd: string,
   t: TestContext,

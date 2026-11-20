@@ -44,6 +44,7 @@ import {
   type FailureReport,
   type OutcomeVariant,
   type ModelOmittedField,
+  type MutationToolName,
   type Report,
   type ReportTool,
   type SuccessFacts,
@@ -144,12 +145,19 @@ function outcomeNext(report: Report, variant: OutcomeVariant | undefined): strin
 }
 
 /**
+ * Facts a producer hands to scripts only, because the payload or the call already shows them to
+ * the model: its tool's own facts, and a mutation's command outcome with the output that the
+ * payload shows.
+ */
+export type ImpliedFacts<TTool extends ReportTool> = Partial<SuccessFacts<TTool>> &
+  (TTool extends MutationToolName ? Pick<Report, "then_run"> : unknown);
+
+/**
  * A successful result: the tool's payload, then its report when it states
  * anything beyond tool and path or when there is no payload. `variant` is the recovery
  * alternative the producing layer selected. Scripts receive one object
- * (`SCRIPT_OUTPUT_SCHEMAS`): the payload's text as `text` for a tool that has a payload, then
- * the stated fields and `implied`, the facts the payload or the call already shows the model.
- * The text, its `next`, and the details leave `implied` out.
+ * (`SCRIPT_OUTPUT_SCHEMAS`): the payload's text as `text` for `read` and `grep`, then the
+ * stated fields and `implied`. The text, its `next`, and the details leave `implied` out.
  */
 export function reportResult<
   TDetails extends object | undefined,
@@ -159,7 +167,7 @@ export function reportResult<
   payload: Content = [],
   details?: TDetails,
   variant?: OutcomeVariant,
-  implied?: Partial<SuccessFacts<TTool>>,
+  implied?: ImpliedFacts<TTool>,
 ): AgentToolResult<TDetails & ReportDetails<SuccessReport>> {
   const complete = Object.fromEntries(
     reportEntries({ ...report, next: outcomeNext(report, variant) }),

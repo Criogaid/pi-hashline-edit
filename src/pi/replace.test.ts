@@ -1,4 +1,4 @@
-import { commandCompletion, type SessionCommand } from "./action-fusion.testing.ts";
+import { commandCompletion, commandOutput, type SessionCommand } from "./action-fusion.testing.ts";
 import { rejectsArgument, rejectsArguments } from "./argument-error.testing.ts";
 /** Tool-level replace contracts: byte preservation, matching, and failures. */
 import { test } from "node:test";
@@ -613,7 +613,7 @@ test("successful batches run one command against the complete result", async () 
     );
     assert.equal(commands, 1);
     assert.equal(reportOf(result, "replace")?.then_run?.status, "succeeded");
-    assert.equal(reportOf(result, "replace")?.then_run?.output, "checked");
+    assert.equal(commandOutput(result), "checked");
   }));
 
 test("regex captures and zero-width insertions use logical offsets without consuming CRLF bytes", async () =>

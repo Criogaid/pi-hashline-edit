@@ -312,7 +312,8 @@ const FACT_FIELDS = {
     "Use the freshness recovery instruction when the post-commit observation failed.",
   ),
 
-  // Action Fusion.
+  // Action Fusion. A result's payload shows the command's output to the model, so only scripts
+  // read `output` here.
   then_run: modelFact(
     Type.Object(
       { status: COMMAND_STATUS_SCHEMA, output: opt(Type.String()) },

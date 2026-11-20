@@ -81,6 +81,7 @@ async function openSession(
       return {
         modelRequests: responses,
         report: reportOf(result, "write"),
+        content: result.content,
         text: result.content
           .filter((block) => block.type === "text")
           .map((block) => block.text)
@@ -153,7 +154,7 @@ for (const [freshness, source, expectedFile, status] of [
     assert.equal(result.report?.publication, "PUBLISHED");
     assert.equal(result.report.then_run?.status, status);
     assert.equal(result.report.freshness, freshness);
-    const wire = reportOf({ content: [{ type: "text", text: result.text }] }, "write");
+    const wire = reportOf({ content: result.content }, "write");
     assert.equal(wire?.freshness, freshness);
     if (freshness === "changed") assert.match(wire.next ?? "", /Read the file/);
     else assert.equal(wire.next, undefined);

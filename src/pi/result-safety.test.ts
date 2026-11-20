@@ -1,4 +1,4 @@
-import { commandCompletion, type SessionCommand } from "./action-fusion.testing.ts";
+import { commandCompletion, commandOutput, type SessionCommand } from "./action-fusion.testing.ts";
 import { rejectsArgument } from "./argument-error.testing.ts";
 import { computeLineHash } from "../core/hash.ts";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
@@ -104,8 +104,8 @@ test("edit and replace commands change or remove the file → withhold anchors a
           if (state === "missing") assert.equal(report?.next, undefined);
           else assert.match(report?.next ?? "", /Read the file before further edits/);
           assert.equal(report?.then_run?.status, fails ? "failed" : "succeeded");
-          if (fails) assert.equal(report?.then_run?.output, "command failed");
-          assert.equal(result.content.length, 1);
+          assert.equal(commandOutput(result), fails ? "command failed" : "done");
+          assert.equal(result.content.length, 2);
           assert.ok(updates.length > 0);
           for (const update of updates)
             assert.doesNotMatch(text(update), /Updated anchors|\d+#[0-9A-Z]+│/);
