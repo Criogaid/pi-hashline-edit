@@ -44,10 +44,61 @@ test("replacement at the file start → retains the original BOM at byte zero", 
       replace: "X",
       expected: "Xfoo\uFEFFbar",
     },
+    {
+      name: "literal replacement starts with an explicit U+FEFF",
+      source: "\uFEFFa",
+      find: "\uFEFF",
+      literal: true,
+      replace: "\uFEFFX",
+      expected: "\uFEFF\uFEFFXa",
+    },
+    {
+      name: "regex replacement starts with an explicit U+FEFF before a copy of the header",
+      source: "\uFEFFa",
+      find: "^.",
+      replace: "\uFEFF$&X",
+      expected: "\uFEFF\uFEFF\uFEFFXa",
+    },
+    {
+      name: "leading numbered capture copies a body U+FEFF",
+      source: "\uFEFF\uFEFFa",
+      find: "^.(.)",
+      replace: "$1X",
+      expected: "\uFEFF\uFEFFXa",
+    },
+    {
+      name: "leading named capture copies a body U+FEFF",
+      source: "\uFEFF\uFEFFa",
+      find: "^.(?<body>.)",
+      replace: "$<body>X",
+      expected: "\uFEFF\uFEFFXa",
+    },
+    {
+      name: "only the first emitted copy of the header is reused after an empty capture",
+      source: "\uFEFFa",
+      find: "^(x)?(.)",
+      replace: "$1$2$2X",
+      expected: "\uFEFF\uFEFFXa",
+    },
+    {
+      name: "a leading named capture of the header reuses the original BOM",
+      source: "\uFEFFa",
+      find: "^(?<header>.)",
+      replace: "$<header>X",
+      expected: "\uFEFFXa",
+    },
+    {
+      name: "two-digit fallback copies the header through capture one",
+      source: "\uFEFFa",
+      find: "^(.)",
+      flags: "d",
+      replace: "$12",
+      expected: "\uFEFF2a",
+    },
   ];
-  for (const { name, source, find, replace, expected } of cases) {
+  for (const { name, source, find, replace, expected, literal = false, flags } of cases) {
     await t.test(name, () => {
-      assert.deepEqual(applyReplacements(source, [{ literal: false, find, replace }]), {
+      assert.deepEqual(applyReplacements(source, [{ literal, find, replace, flags }]), {
         text: expected,
         count: 1,
       });

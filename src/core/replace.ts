@@ -20,23 +20,47 @@ import { HashlineError } from "./errors.ts";
 
 import type { Replacement, ReplacementResult } from "./replace-schema.ts";
 
-/** Expand JS replacement tokens against the original match, including prefix/suffix context. */
-function expandReplacement(template: string, match: RegExpExecArray, source: string): string {
+/** Expand JS replacement tokens, reusing a leading copy of the header when the match consumes it. */
+function expandReplacement(template: string, match: RegExpExecArray, headerRegex?: RegExp): string {
+  const { index, input, groups } = match;
   // Without named captures, $<...> is ordinary text and may contain other $ tokens.
-  const tokens =
-    match.groups === undefined ? /\$(\$|&|`|'|\d{1,2})/g : /\$(\$|&|`|'|<[^>]*>|\d{1,2})/g;
-  return template.replace(tokens, (token, key: string) => {
+  const tokens = groups === undefined ? /\$(\$|&|`|'|\d{1,2})/g : /\$(\$|&|`|'|<[^>]*>|\d{1,2})/g;
+  // Only tokens preceded entirely by empty expansions can emit the first output character.
+  let leadingOffset = 0;
+  return template.replace(tokens, (token, key: string, offset: number) => {
+    const leading = headerRegex !== undefined && offset === leadingOffset;
     if (key === "$") return "$";
-    if (key === "&") return match[0];
-    if (key === "`") return source.slice(0, match.index);
-    if (key === "'") return source.slice(match.index + match[0].length);
-    if (key.startsWith("<")) return match.groups![key.slice(1, -1)] ?? "";
-    const index = Number(key);
-    if (index > 0 && index < match.length) return match[index] ?? "";
-    // $12 falls back to capture 1 plus literal 2 when capture 12 does not exist.
-    const first = Number(key[0]);
-    if (key.length === 2 && first > 0 && first < match.length) return (match[first] ?? "") + key[1];
-    return token;
+    if (key === "&") return leading ? match[0].slice(1) : match[0];
+
+    let text = token;
+    let capture: string | number | undefined;
+    if (key === "`") text = input.slice(0, index);
+    else if (key === "'") text = input.slice(index + match[0].length);
+    else if (key.startsWith("<")) {
+      capture = key.slice(1, -1);
+      text = groups?.[capture] ?? "";
+    } else {
+      const number = Number(key);
+      const first = Number(key[0]);
+      if (number > 0 && number < match.length) {
+        capture = number;
+        text = match[number] ?? "";
+      } else if (key.length === 2 && first > 0 && first < match.length) {
+        // $12 falls back to capture 1 plus literal 2 when capture 12 does not exist.
+        capture = first;
+        text = (match[first] ?? "") + key[1];
+      }
+    }
+
+    if (!leading) return text;
+    if (text === "") leadingOffset += token.length;
+    if (capture === undefined || text[0] !== input[0]) return text;
+
+    // Adding d to the same regex at offset zero yields this match with capture offsets.
+    const indices =
+      match.indices ?? new RegExp(headerRegex, `${headerRegex.flags}d`).exec(input)!.indices!;
+    const span = typeof capture === "number" ? indices[capture] : indices.groups?.[capture];
+    return span?.[0] === 0 ? text.slice(1) : text;
   });
 }
 
@@ -49,6 +73,7 @@ export function applyReplacements(
 ): ReplacementResult {
   const changes: { start: number; end: number; text: string; rule: number }[] = [];
   const view = createLfTextView(source);
+  const bom = source.startsWith("\uFEFF") ? source[0] : "";
   const fallbackEnding = detectLineEnding(source) === "crlf" ? "\r\n" : "\n";
   const unmatched: string[] = [];
   for (const [index, rule] of rules.entries()) {
@@ -64,7 +89,13 @@ export function applyReplacements(
         end,
         rule: index,
         text: restoreLineEndings(
-          rule.literal ? replacement : expandReplacement(replacement, match, view.text),
+          rule.literal
+            ? replacement
+            : expandReplacement(
+                replacement,
+                match,
+                bom && start === 0 && end > 0 ? regex : undefined,
+              ),
           source.slice(start, end),
           fallbackEnding,
         ),
@@ -88,16 +119,10 @@ export function applyReplacements(
       },
     });
   }
-  const bom = source.startsWith("\uFEFF") ? "\uFEFF" : "";
   const parts: string[] = [bom];
   let cursor = bom.length;
   for (const change of changes) {
-    // Keep the original header at byte zero; a copied leading BOM denotes that same header.
-    const text =
-      bom && change.start === 0 && change.end > 0 && change.text.startsWith(bom)
-        ? change.text.slice(1)
-        : change.text;
-    parts.push(source.slice(cursor, Math.max(bom.length, change.start)), text);
+    parts.push(source.slice(cursor, Math.max(bom.length, change.start)), change.text);
     cursor = Math.max(bom.length, change.end);
   }
   parts.push(source.slice(cursor));
