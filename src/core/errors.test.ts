@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { filesystemErrorCode, HashlineError, PATH_ERROR_MESSAGES } from "./errors.ts";
+import { errorMessage, filesystemErrorCode, HashlineError, PATH_ERROR_MESSAGES } from "./errors.ts";
 
 // npm run typecheck checks these invalid callers; they must never run.
 function invalidErrorConstruction() {
@@ -23,6 +23,10 @@ test("classified code with required facts → retains facts and native cause", (
   assert.equal(failure.errorCode, "NO_MATCH");
   assert.deepEqual(failure.facts, { unmatched: ["replacements[2]"] });
   assert.equal(failure.cause, cause);
+});
+
+test("thrown value without a string form → returns a diagnostic", () => {
+  assert.equal(errorMessage(Object.create(null)), "The thrown value has no string form.");
 });
 
 test("filesystem errors → classify missing paths and directories consistently", () => {

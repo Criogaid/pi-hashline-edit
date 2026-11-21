@@ -54,9 +54,17 @@ export const PATH_ERROR_MESSAGES = {
   NOT_REGULAR_FILE: "Path is not a regular file.",
 } as const satisfies Partial<Record<ErrorCode, string>>;
 
-/** Message text for a caught value; non-Error throws are stringified. */
+/**
+ * Message text for a caught value; non-Error throws are stringified. A thrown value may have no
+ * string form (a null-prototype object), and describing it must not throw in its place.
+ */
 export function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+  if (error instanceof Error) return error.message;
+  try {
+    return String(error);
+  } catch {
+    return "The thrown value has no string form.";
+  }
 }
 
 /** Node's errno code of a filesystem error, if any. */
