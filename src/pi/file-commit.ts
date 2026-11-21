@@ -18,10 +18,9 @@ import {
   link,
   type FileHandle,
 } from "node:fs/promises";
-import type { BigIntStats, Stats } from "node:fs";
 import { dirname, join } from "node:path";
 import { byteRevision } from "./file-revision.ts";
-import { decodeEditableText, unwritableTextError } from "../core/text.ts";
+import { unwritableTextError } from "../core/text.ts";
 import {
   errnoCode,
   filesystemErrorCode,
@@ -30,7 +29,7 @@ import {
   HashlineError,
 } from "../core/errors.ts";
 import { FileChangedDuringReadError, throwIfCancelled } from "./error-text.ts";
-import { withFileRead } from "./file-read.ts";
+import { readFileRevision, requireRegularFile } from "./file-read.ts";
 import type { Freshness, PublicationStatus } from "./report-schema.ts";
 
 /**
@@ -88,68 +87,8 @@ export class FileMutationError extends HashlineError<"PUBLISH_FAILED" | "POST_PR
   }
 }
 
-function requireRegularFile(target: Stats | BigIntStats): void {
-  if (!target.isFile())
-    throw new HashlineError("NOT_REGULAR_FILE", PATH_ERROR_MESSAGES.NOT_REGULAR_FILE);
-}
-
-const REGULAR_FILE_READ_CHUNK_BYTES = 64 * 1024;
-
 /** Observations of a published target run to completion: the report must state what was published. */
 const UNCANCELLABLE = new AbortController().signal;
-
-/** Read a regular file in full, even when the filesystem returns short reads. */
-async function readRegularFileBytes(
-  handle: FileHandle,
-  size: bigint,
-  signal: AbortSignal,
-): Promise<Buffer> {
-  const chunks: Buffer[] = [];
-  let position = 0n;
-  while (position < size) {
-    throwIfCancelled(signal);
-    const remaining = size - position;
-    const length = Number(
-      remaining < BigInt(REGULAR_FILE_READ_CHUNK_BYTES)
-        ? remaining
-        : BigInt(REGULAR_FILE_READ_CHUNK_BYTES),
-    );
-    const buffer = Buffer.allocUnsafe(length);
-    const result = await handle.read({
-      buffer,
-      offset: 0,
-      length,
-      position: Number(position),
-    });
-    if (result.bytesRead <= 0 || result.bytesRead > length) throw new FileChangedDuringReadError();
-    chunks.push(buffer.subarray(0, result.bytesRead));
-    position += BigInt(result.bytesRead);
-  }
-  return Buffer.concat(chunks);
-}
-
-/** Check the opened object before reading; a FIFO must not block even if the path changed. */
-async function readRegularFile(path: string, signal: AbortSignal): Promise<Buffer> {
-  return withFileRead(path, signal, async (handle, before) => {
-    requireRegularFile(before);
-    return readRegularFileBytes(handle, before.size, signal);
-  });
-}
-
-async function fileRevision(path: string, signal: AbortSignal): Promise<string> {
-  return byteRevision(await readRegularFile(path, signal));
-}
-
-/** Decode and bind a mutation snapshot to the exact bytes read. */
-export async function readEditableSnapshot(path: string, signal: AbortSignal) {
-  try {
-    const bytes = await readRegularFile(path, signal);
-    return { text: decodeEditableText(bytes), baseRevision: byteRevision(bytes) };
-  } catch (error) {
-    throwIfCancelled(signal);
-    throw error;
-  }
-}
 
 /**
  * A failure of a filesystem step before publication: the step is the message, the failure its
@@ -172,7 +111,7 @@ async function requireBaseRevision(
 ): Promise<void> {
   let currentRevision: string;
   try {
-    currentRevision = await fileRevision(path, signal);
+    currentRevision = await readFileRevision(path, signal);
   } catch (error) {
     throwIfCancelled(signal);
     throw stepError("Unable to recheck target revision.", error);
@@ -252,7 +191,7 @@ async function planPublication(
   if (mode === "update")
     return { kind: "replace", mode, target, beforeRevision: intent.baseRevision };
   try {
-    return { kind: "replace", mode, target, beforeRevision: await fileRevision(path, signal) };
+    return { kind: "replace", mode, target, beforeRevision: await readFileRevision(path, signal) };
   } catch (error) {
     throwIfCancelled(signal);
     throw stepError("Unable to read target revision.", error);
@@ -403,7 +342,7 @@ export async function commitFile(
       freshness,
     });
     try {
-      const observed = await fileRevision(path, UNCANCELLABLE);
+      const observed = await readFileRevision(path, UNCANCELLABLE);
       return committed(observed === publishedRevision ? "unchanged" : "changed");
     } catch (error) {
       // Another writer is replacing the published bytes: report a changed target, not a failed
@@ -456,10 +395,10 @@ export async function observeFreshness(
   settle = false,
 ): Promise<FreshnessObservation> {
   try {
-    const first = await fileRevision(path, UNCANCELLABLE);
+    const first = await readFileRevision(path, UNCANCELLABLE);
     if (settle) {
       await new Promise<void>((resolve) => setImmediate(resolve));
-      if ((await fileRevision(path, UNCANCELLABLE)) !== first) return { freshness: "changed" };
+      if ((await readFileRevision(path, UNCANCELLABLE)) !== first) return { freshness: "changed" };
     }
     return { freshness: first === publishedRevision ? "unchanged" : "changed" };
   } catch (error) {

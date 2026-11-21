@@ -4,7 +4,6 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { withFileRead } from "./file-read.ts";
 import * as revision from "./file-revision.ts";
 
 test("target changes while hashing identical overwrite content → publishes requested bytes", async (t) => {
@@ -14,20 +13,12 @@ test("target changes while hashing identical overwrite content → publishes req
   const content = "A";
   await writeFile(target, content);
 
-  // An identical overwrite hashes the same bytes for the target and the request.
-  // Track the buffers that came from disk so only the request hash triggers the other write.
-  const targetReads = new WeakSet<Uint8Array>();
-  const trackFileRead: typeof withFileRead = async (path, signal, read) => {
-    const result = await withFileRead(path, signal, read);
-    if (result instanceof Uint8Array) targetReads.add(result);
-    return result;
-  };
-  t.mock.module("./file-read.ts", { namedExports: { withFileRead: trackFileRead } });
+  // Simulate a concurrent writer while hashing the request bytes.
   t.mock.module("./file-revision.ts", {
     namedExports: {
       ...revision,
       byteRevision(bytes: Uint8Array) {
-        if (!targetReads.has(bytes)) writeFileSync(target, "B");
+        writeFileSync(target, "B");
         return revision.byteRevision(bytes);
       },
     },

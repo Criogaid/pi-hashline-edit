@@ -4,13 +4,8 @@
  *
  * @module pi-hashline-edit/pi
  */
-import { createReadStream } from "node:fs";
 import { createUtf8Decoder, Utf8DecodingError, type Utf8Decoding } from "../core/text.ts";
-import { throwIfCancelled } from "./error-text.ts";
-import { withFileRead } from "./file-read.ts";
-import { createRevisionHasher } from "./file-revision.ts";
-
-const TEXT_READ_CHUNK_BYTES = 64 * 1024;
+import { readFileRevision } from "./file-read.ts";
 
 /**
  * Scan whole-file bytes; lossy decoding reports validity without rejecting malformed UTF-8.
@@ -25,71 +20,58 @@ export async function scanTextFile(
   },
 ) {
   const { onChunk, signal, decoding = "strict" } = options;
-  return withFileRead(path, signal, async (handle) => {
-    const decode = createUtf8Decoder();
-    // Strict decoding always decides validity; lossy text is decoded only for a chunk consumer.
-    const lossy = decoding === "lossy" && onChunk ? createUtf8Decoder("lossy") : undefined;
-    const revision = createRevisionHasher();
-    let byteLength = 0;
-    let lineFeeds = 0;
-    let lastByte = -1;
-    let hasNul = false;
-    let decodingError: Utf8DecodingError | undefined;
-    /** Strict text of a chunk, or of the final flush without bytes; undefined once malformed. */
-    const decodeStrict = (bytes?: Buffer): string | undefined => {
-      if (decodingError) return undefined;
-      try {
-        return decode(bytes, bytes !== undefined);
-      } catch (error) {
-        if (!(error instanceof Utf8DecodingError)) throw error;
-        decodingError = error;
-        return undefined;
-      }
-    };
-    const stream = createReadStream(path, {
-      fd: handle,
-      autoClose: false,
-      highWaterMark: TEXT_READ_CHUNK_BYTES,
-      signal,
-    });
+  const decode = createUtf8Decoder();
+  // Strict decoding always decides validity; lossy text is decoded only for a chunk consumer.
+  const lossy = decoding === "lossy" && onChunk ? createUtf8Decoder("lossy") : undefined;
+  let byteLength = 0;
+  let lineFeeds = 0;
+  let lastByte = -1;
+  let hasNul = false;
+  let decodingError: Utf8DecodingError | undefined;
+  /** Strict text of a chunk, or of the final flush without bytes; undefined once malformed. */
+  const decodeStrict = (bytes?: Buffer): string | undefined => {
+    if (decodingError) return undefined;
     try {
-      for await (const chunk of stream) {
-        const bytes = chunk as Buffer;
-        revision.update(bytes);
-        byteLength += bytes.length;
-        hasNul ||= bytes.includes(0);
-        lastByte = bytes[bytes.length - 1];
-        let offset = 0;
-        while ((offset = bytes.indexOf(10, offset)) !== -1) {
-          lineFeeds++;
-          offset++;
-        }
-        // NUL takes precedence even when an earlier chunk contained malformed UTF-8.
-        if (hasNul) continue;
-        let text = decodeStrict(bytes);
-        if (lossy) text = lossy(bytes, true);
-        if (text !== undefined) await onChunk?.(text, byteLength);
-      }
+      return decode(bytes, bytes !== undefined);
     } catch (error) {
-      // Node's stream abort raises its own AbortError; report the shared cancellation text.
-      throwIfCancelled(signal);
-      throw error;
+      if (!(error instanceof Utf8DecodingError)) throw error;
+      decodingError = error;
+      return undefined;
     }
-    throwIfCancelled(signal);
-    if (!hasNul) {
+  };
+  const revision = await readFileRevision(path, signal, {
+    extent: "eof",
+    onChunk(bytes) {
+      byteLength += bytes.length;
+      hasNul ||= bytes.includes(0);
+      lastByte = bytes[bytes.length - 1];
+      let offset = 0;
+      while ((offset = bytes.indexOf(10, offset)) !== -1) {
+        lineFeeds++;
+        offset++;
+      }
+      // NUL takes precedence even when an earlier chunk contained malformed UTF-8.
+      if (hasNul) return;
+      const text = decodeStrict(bytes);
+      if (lossy) return onChunk?.(lossy(bytes, true), byteLength);
+      if (text !== undefined) return onChunk?.(text, byteLength);
+    },
+    onEnd() {
+      if (hasNul) return;
       let tail = decodeStrict();
       if (lossy) tail = lossy();
-      else if (decodingError && decoding === "strict") throw decodingError;
-      if (tail) await onChunk?.(tail, byteLength);
-    }
-    return {
-      revision: revision.digest(),
-      totalLines: lineFeeds + (lastByte !== -1 && lastByte !== 10 ? 1 : 0),
-      finalNewline: lastByte === -1 || lastByte === 10,
-      hasNul,
-      validUtf8: !decodingError,
-    };
+      if (tail) return onChunk?.(tail, byteLength);
+    },
   });
+  // A changed observation or a NUL anywhere takes precedence over an encoding error.
+  if (decoding === "strict" && !hasNul && decodingError) throw decodingError;
+  return {
+    revision,
+    totalLines: lineFeeds + (lastByte !== -1 && lastByte !== 10 ? 1 : 0),
+    finalNewline: lastByte === -1 || lastByte === 10,
+    hasNul,
+    validUtf8: !decodingError,
+  };
 }
 
 interface ScannedLine {

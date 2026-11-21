@@ -19,12 +19,8 @@ import { join } from "node:path";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { spawn } from "node:child_process";
-import {
-  commitFile,
-  readEditableSnapshot,
-  type CommitResult,
-  type FreshnessObservation,
-} from "./file-commit.ts";
+import { commitFile, type CommitResult, type FreshnessObservation } from "./file-commit.ts";
+import { readEditableSnapshot } from "./file-read.ts";
 import { byteRevision } from "./file-revision.ts";
 import { HashlineError, PATH_ERROR_MESSAGES } from "../core/errors.ts";
 import { createActionFusionScheduler } from "./action-fusion.ts";
@@ -164,6 +160,34 @@ test("short low-level reads → complete mutation snapshots before revision bind
       const snapshot = await readEditableSnapshot(target, signal);
       assert.equal(snapshot.text, expected.toString("utf8"));
       assert.equal(snapshot.baseRevision, byteRevision(expected));
+    } finally {
+      t.mock.restoreAll();
+      syncBuiltinESMExports();
+    }
+  }));
+
+test("premature EOF in a revision-only read → rejects the overwrite without publishing", async (t) =>
+  withTemp(async (dir) => {
+    const target = join(dir, "early-eof.txt");
+    await writeFile(target, "original");
+    const nativeOpen = fsPromises.open;
+    t.mock.method(fsPromises, "open", async (...args: Parameters<typeof nativeOpen>) => {
+      const handle = await nativeOpen(...args);
+      if (args[0] === target) {
+        t.mock.method(handle, "read", async ({ buffer }: { buffer: Buffer }) => ({
+          buffer,
+          bytesRead: 0,
+        }));
+      }
+      return handle;
+    });
+    syncBuiltinESMExports();
+    try {
+      await assert.rejects(
+        commitFile(target, "replacement", { mode: "overwrite" }, signal),
+        (error: unknown) => error instanceof HashlineError && error.errorCode === "FILE_CHANGED",
+      );
+      assert.equal(await readFile(target, "utf8"), "original");
     } finally {
       t.mock.restoreAll();
       syncBuiltinESMExports();

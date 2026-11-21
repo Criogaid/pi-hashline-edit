@@ -33,7 +33,8 @@ import {
   type MutationFacts,
   type MutationToolName,
 } from "./report-schema.ts";
-import { commitFile, FileMutationError, readEditableSnapshot } from "./file-commit.ts";
+import { commitFile, FileMutationError } from "./file-commit.ts";
+import { readEditableSnapshot } from "./file-read.ts";
 import {
   describeMutationFailure,
   finalizeMutation,

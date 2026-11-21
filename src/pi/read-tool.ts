@@ -29,7 +29,8 @@ import { createAnchorFormatter, displayCarriageReturns, parseHashline } from "./
 import { canonicalPath, serializePath } from "./path.ts";
 import { renderToolError, reportLines, splitReport } from "./render.ts";
 import { POSITIVE_SAFE_INTEGER, STRICT_SAMPLING } from "./schema.ts";
-import { HashlineError, PATH_ERROR_MESSAGES } from "../core/errors.ts";
+import { HashlineError } from "../core/errors.ts";
+import { requireRegularFile } from "./file-read.ts";
 import { callSignal, throwIfCancelled } from "./error-text.ts";
 import { reportResult, runTool, type ReportDetails } from "./report.ts";
 import { SCRIPT_OUTPUT_SCHEMAS } from "./report-schema.ts";
@@ -281,9 +282,7 @@ export function makeReadOverride({ cwd, config, budgets }: ToolEnvironment) {
         };
 
         // Opening a FIFO or device can block before any cancellation check runs.
-        if (!(await stat(absPath)).isFile()) {
-          throw new HashlineError("NOT_REGULAR_FILE", PATH_ERROR_MESSAGES.NOT_REGULAR_FILE);
-        }
+        requireRegularFile(await stat(absPath));
         if (await detectSupportedImageMimeTypeFromFile(absPath)) return readNative();
 
         const rows: string[] = [];
