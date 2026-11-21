@@ -155,13 +155,35 @@ interface ContentBlock extends OutputBlock {
   readonly invalidPath?: string;
   /** Rows that establish a narrower displayed preview. */
   readonly previewMinimums: readonly PreviewMinimum[];
-  /** Hits and their display rows if context is removed. */
-  readonly hits: readonly { readonly index: number; readonly soloRow: string }[];
+  /** Indices of matching rows in the displayed prefix. */
+  readonly hitIndices: readonly number[];
+  /** The hits-only prefix, shared with `lines` when context is zero. */
+  readonly withoutContext: readonly string[];
+}
+
+function rowBytes(row: string, separator: string): number {
+  return Buffer.byteLength(row) + separator.length;
+}
+
+/** Keep the first overflowing row so the ordered fill still sees where this block ends. */
+function filePrefix(header: string, maxBytes: number) {
+  const lines = [header];
+  let remaining = maxBytes - rowBytes(header, "");
+  return {
+    lines,
+    get open() {
+      return remaining >= 0;
+    },
+    append(row: string) {
+      remaining -= rowBytes(row, "\n");
+      lines.push(row);
+    },
+  };
 }
 
 /**
- * One file's content block: its header, then a row for each line the second read shows. The
- * first row is narrowed to the space remaining after its header.
+ * Each prefix fits at most the full call budget. Earlier blocks can only reduce that space.
+ * Narrow each prefix's first row to the space remaining after its header.
  */
 function contentBlock(
   { filePath, rows, snapshot }: GrepFileMatch,
@@ -170,12 +192,14 @@ function contentBlock(
   const columns = new Map(rows.map((match) => [match.lineNumber, match.column]));
   const displayPath = serializePath(cwd, filePath);
   const header = formatFileHeader(displayPath, rows.length);
-  const lines = [header];
-  const firstRowBytes = budget.grepBytes - Buffer.byteLength(header) - 1;
+  const content = filePrefix(header, budget.grepBytes);
+  const solo = context > 0 ? filePrefix(header, budget.grepBytes) : undefined;
+  const firstRowBytes = budget.grepBytes - rowBytes(header, "\n");
   const previewMinimums: PreviewMinimum[] = [];
-  const hits: { index: number; soloRow: string }[] = [];
+  const hitIndices: number[] = [];
   let previousLine = 0;
   return {
+    select: (number) => content.open || (solo?.open === true && columns.has(number)),
     onLine(number, text) {
       // Rows make CR visible one unit for one, so preview columns stay source columns.
       const column = columns.get(number);
@@ -183,38 +207,40 @@ function contentBlock(
       previousLine = number;
       const row = (display: string) =>
         snapshot.validUtf8 ? anchors.row(number, text, display) : plainRow(number, display);
-      /** This line's preview narrowed to fit as row one: its prefix, then the CR-visible text. */
-      const fitRowOne = (candidate: Preview): Preview => {
-        const prefixBytes = Buffer.byteLength(row(""));
-        const fits = (preview: Preview) =>
-          prefixBytes + Buffer.byteLength(displayCarriageReturns(preview.text)) <= firstRowBytes;
-        return fits(candidate)
-          ? candidate
-          : narrowPreview(text, column, budget.grepPreviewUnits, fits);
-      };
       const regular = previewLine(text, column, budget.grepPreviewUnits);
-      const preview = lines.length === 1 ? fitRowOne(regular) : regular;
-      const shown = row(preview.text);
-      if (context > 0 && column !== undefined) {
-        // Without context rows, the first hit is row one and shows row one's fitted preview.
-        const soloRow =
-          hits.length > 0 || lines.length === 1 ? shown : row(fitRowOne(regular).text);
-        hits.push({ index: lines.length, soloRow });
+      const firstContent = content.lines.length === 1;
+      const firstSolo = column !== undefined && solo?.lines.length === 1;
+      let first = regular;
+      if (firstContent || firstSolo) {
+        const prefixBytes = Buffer.byteLength(row(""));
+        const fits = ({ text }: Preview) =>
+          prefixBytes + Buffer.byteLength(displayCarriageReturns(text)) <= firstRowBytes;
+        if (!fits(regular)) first = narrowPreview(text, column, budget.grepPreviewUnits, fits);
       }
+      const preview = firstContent ? first : regular;
+      const shown = row(preview.text);
+      const gapPrefix = gap ? `${CONTEXT_GAP}\n` : "";
+      const soloPreview = firstSolo ? first : regular;
+      if (solo?.open && column !== undefined) {
+        solo.append(soloPreview === preview ? shown : row(soloPreview.text));
+      }
+      if (!content.open) return;
+      if (solo && column !== undefined) hitIndices.push(content.lines.length);
       if (
         preview.kept !== undefined &&
         preview.kept < (previewMinimums.at(-1)?.units ?? Infinity)
       ) {
-        previewMinimums.push({ index: lines.length, units: preview.kept });
+        previewMinimums.push({ index: content.lines.length, units: preview.kept });
       }
-      lines.push(gap ? `${CONTEXT_GAP}\n${shown}` : shown);
+      content.append(gapPrefix + shown);
     },
     finish: () => ({
-      lines,
+      lines: content.lines,
       matches: rows.length,
       invalidPath: snapshot.validUtf8 ? undefined : displayPath,
       previewMinimums,
-      hits,
+      hitIndices,
+      withoutContext: solo?.lines ?? content.lines,
     }),
   };
 }
@@ -262,7 +288,7 @@ function fitPayload(blocks: Iterable<Iterable<string>>, separator: string, maxBy
     let prefix = kept.length ? separator : "";
     const start = kept.length;
     for (const line of lines) {
-      bytes += Buffer.byteLength(line) + prefix.length;
+      bytes += rowBytes(line, prefix);
       if (bytes > maxBytes) {
         shown.push(kept.length - start);
         return { kept, shown, truncated: true };
@@ -273,12 +299,6 @@ function fitPayload(blocks: Iterable<Iterable<string>>, separator: string, maxBy
     shown.push(kept.length - start);
   }
   return { kept, shown, truncated: false };
-}
-
-/** Without context, the first hit under each header uses the fitted first-row preview. */
-function* hitRows({ lines, hits }: ContentBlock) {
-  yield lines[0];
-  for (const { soloRow } of hits) yield soloRow;
 }
 
 /**
@@ -356,10 +376,14 @@ export async function grepOutput(
       if (block.invalidPath !== undefined) invalidUtf8.push(block.invalidPath);
       const minimum = block.previewMinimums.findLast(({ index }) => index < count);
       previewLimit = Math.min(previewLimit, minimum?.units ?? Infinity);
-      shownHits += block.hits.findLastIndex(({ index }) => index < count) + 1;
+      shownHits += block.hitIndices.findLastIndex((hit) => hit < count) + 1;
     }
     if (truncated && context > 0) {
-      const withoutContext = fitPayload(blocks.map(hitRows), separator, budget.grepBytes).shown;
+      const withoutContext = fitPayload(
+        blocks.map((block) => block.withoutContext),
+        separator,
+        budget.grepBytes,
+      ).shown;
       const hitCount = withoutContext.reduce((sum, count) => sum + Math.max(0, count - 1), 0);
       if (hitCount > shownHits) next = "contextRows";
     }

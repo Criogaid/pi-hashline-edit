@@ -15,8 +15,10 @@ import { scanTextLines } from "./text-stream.ts";
 
 const MAX_CONCURRENT_FILE_READS = 16;
 
-/** Builds one file's output as its lines arrive, so a long line is never retained whole. */
+/** Selects and collects output rows during the revision scan. */
 export interface LineCollector<T> {
+  /** Whether the collector still needs this physical line if it is in the match window. */
+  select(number: number): boolean;
   onLine(number: number, text: string): void;
   /** Runs only after the read's revision matched the search. */
   finish(): T;
@@ -42,7 +44,7 @@ async function rereadFile<T>(
   const shown = shownLines(file, context);
   const stats = await scanTextLines(
     file.filePath,
-    (number) => shown.has(number),
+    (number) => shown.has(number) && collector.select(number),
     (line) => collector.onLine(line.number, line.text),
     { signal, decoding: "lossy" },
   );
