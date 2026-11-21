@@ -360,8 +360,10 @@ export async function commitFile(
   const unwritable = unwritableTextError(content);
   if (unwritable) throw unwritable;
   const bytes = Buffer.from(content, "utf8");
-  const plan = await planPublication(path, intent, signal);
+  // Hash before reading the target's revision, so no hashing time separates that read from the
+  // no-change decision below.
   const publishedRevision = byteRevision(bytes);
+  const plan = await planPublication(path, intent, signal);
   // Check a bound snapshot even when the transformation produced no change.
   if (plan.kind === "replace" && plan.beforeRevision === publishedRevision) {
     await recheckReplace(path, plan, signal);
