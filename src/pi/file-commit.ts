@@ -297,7 +297,7 @@ export async function commitFile(
   intent: CommitIntent,
   signal: AbortSignal,
 ): Promise<CommitResult> {
-  // Tools reject such input in prepareArguments, but a transformation can still produce it
+  // The argument boundary rejects such input, but a transformation can still produce it
   // (a regex without `u` can split a surrogate pair), so publication keeps the final check.
   const unwritable = unwritableTextError(content);
   if (unwritable) throw unwritable;

@@ -3,9 +3,8 @@
  *
  * Mutation previews and the one TUI presentation of a report (report.ts): every
  * card renders its result's facts from the structured report in `details`,
- * never from the model text. Argument rejections are the exception Pi forces:
- * they are raised before execution and arrive as text only, so they are decoded
- * with the report codec.
+ * never from the model text. Pi transports thrown argument rejections as text,
+ * which the report codec decodes for their cards.
  *
  * @module pi-hashline-edit/pi
  */

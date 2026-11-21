@@ -1,7 +1,7 @@
 /**
  * Model-facing argument rejection: an `INVALID_ARGUMENTS` report (report.ts)
- * with field issues within one byte budget. Pi raises it before execution,
- * so it travels as the thrown message only. Oversized issues are omitted whole.
+ * with field issues within one byte budget. The argument boundary throws this report
+ * before file access. Pi carries the rejection as text. Oversized issues are omitted whole.
  */
 import type { OutputBudgets } from "./budgets.ts";
 import { renderReport, type ReportText } from "./report.ts";

@@ -35,7 +35,7 @@ import {
 import { argumentItems, type ReportArgumentIssue } from "./argument-validation.ts";
 import { filePathField, literalUnion } from "./schema.ts";
 
-/** Split a validated anchor token; prepareArguments and the schema already checked it. */
+/** Parse an anchor from the checked execution snapshot. */
 function parseAnchor(value: string): Anchor;
 function parseAnchor(value: string | undefined): Anchor | undefined;
 function parseAnchor(value: string | undefined) {
@@ -327,7 +327,7 @@ function runEdit(
     // Recovery reports checksum candidates from nearby lines, then the whole file
     // if needed. Every failed anchor still rejects the batch; callers inspect
     // candidates and resubmit with fresh anchors.
-    // checkEditArguments ran in prepareArguments: each step carries exactly its action's fields.
+    // The execution boundary checked the final steps against each action's field rules.
     const checked = editOps as readonly CheckedEditOp[];
     const result = applyEdits(currentText, toCoreEdits(checked), hashLen, shiftRadius);
     if (!result.ok) {
