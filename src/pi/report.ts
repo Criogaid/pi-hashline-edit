@@ -149,7 +149,7 @@ function outcomeNext(report: Report, variant: OutcomeVariant | undefined): strin
  * the model: its tool's own facts, and a mutation's command outcome with the output that the
  * payload shows.
  */
-export type ImpliedFacts<TTool extends ReportTool> = Partial<SuccessFacts<TTool>> &
+type ImpliedFacts<TTool extends ReportTool> = Partial<SuccessFacts<TTool>> &
   (TTool extends MutationToolName ? Pick<Report, "then_run"> : unknown);
 
 /**
