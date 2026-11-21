@@ -85,9 +85,8 @@ export const total = (ranges: Ranges): number =>
 export const contains = (ranges: Ranges, point: number): boolean =>
   ranges.some(([low, high]) => low <= point && point <= high);
 
-/** Full-string membership, including empty alternatives without the final-newline exception of $. */
-const membership = (source: string, flags: string): RegExp =>
-  new RegExp(`^(?:${source})(?![\\s\\S])`, flags);
+/** Full-string membership; without the m flag, JavaScript's $ matches only at the end of input. */
+const membership = (source: string, flags: string): RegExp => new RegExp(`^(?:${source})$`, flags);
 
 /** The UTF-16 units a validated expression matches; flags contain only i or s. */
 export function nativeCharacterRanges(source: string, flags: string): Ranges {
