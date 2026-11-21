@@ -7,7 +7,7 @@
  */
 
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
-import { Type, type Static } from "typebox";
+import { Type } from "typebox";
 import { Text } from "@earendil-works/pi-tui";
 import { renderOutputPreview, renderToolError, reportLines, splitReport } from "./render.ts";
 import { shortenHomePath } from "./path.ts";
@@ -30,7 +30,7 @@ import { SCRIPT_OUTPUT_SCHEMAS } from "./report-schema.ts";
 import type { HashlineEditConfig, ToolEnvironment } from "./config.ts";
 import {
   checkRegexArguments,
-  createArgumentPreparer,
+  createArgumentBoundary,
   type ReportArgumentIssue,
 } from "./argument-validation.ts";
 
@@ -109,7 +109,7 @@ function streamedList(value: string | readonly string[] | null | undefined): rea
 function checkGrepArguments(args: unknown, report: ReportArgumentIssue): void {
   const { pattern, literal } = (args ?? {}) as Record<string, unknown>;
   const fields = Array.isArray(pattern)
-    ? pattern.map((value, index) => [`pattern[${index}]`, value] as const)
+    ? Array.from(pattern, (value, index) => [`pattern[${index}]`, value] as const)
     : [];
   checkRegexArguments("flags", GREP_FLAGS, literal !== false, fields, report);
 }
@@ -118,6 +118,7 @@ function checkGrepArguments(args: unknown, report: ReportArgumentIssue): void {
 export function makeGrepOverride({ cwd, config, budgets }: ToolEnvironment) {
   const { hashLen } = config;
   const grepSchema = createGrepSchema(config.grep);
+  const boundary = createArgumentBoundary(grepSchema, budgets, checkGrepArguments);
 
   return {
     name: "grep" as const,
@@ -130,15 +131,12 @@ export function makeGrepOverride({ cwd, config, budgets }: ToolEnvironment) {
     ],
     parameters: grepSchema,
     outputSchema: SCRIPT_OUTPUT_SCHEMAS.grep,
-    prepareArguments: createArgumentPreparer("grep", grepSchema, budgets, checkGrepArguments),
+    prepareArguments: boundary.prepareArguments,
     constrainedSampling: STRICT_SAMPLING,
 
     renderShell: "default" as const,
 
-    renderCall(
-      args: Static<GrepSchema>,
-      theme: Parameters<NonNullable<GrepTool["renderCall"]>>[1],
-    ) {
+    renderCall(args, theme) {
       const paths = streamedList(args?.path);
       const globs = streamedList(args?.glob);
       let text =
@@ -153,12 +151,7 @@ export function makeGrepOverride({ cwd, config, budgets }: ToolEnvironment) {
       return new Text(text, 0, 0);
     },
 
-    renderResult(
-      result: Parameters<NonNullable<GrepTool["renderResult"]>>[0],
-      { isPartial, expanded }: Parameters<NonNullable<GrepTool["renderResult"]>>[1],
-      theme: Parameters<NonNullable<GrepTool["renderResult"]>>[2],
-      context: Parameters<NonNullable<GrepTool["renderResult"]>>[3],
-    ) {
+    renderResult(result, { isPartial, expanded }, theme, context) {
       if (isPartial) return new Text(theme.fg("warning", "Searching…"), 0, 0);
       if (context.isError) return renderToolError(result, "grep", theme, expanded, context);
       const { content, report } = splitReport(result, "grep");
@@ -179,11 +172,8 @@ export function makeGrepOverride({ cwd, config, budgets }: ToolEnvironment) {
       );
     },
 
-    async execute(
-      _toolCallId: string,
-      params: Static<GrepSchema>,
-      piSignal: AbortSignal | undefined,
-    ) {
+    async execute(_toolCallId, input, piSignal) {
+      const params = boundary.afterHooks(input);
       const signal = callSignal(piSignal);
       const budget = budgets();
       return runTool("grep", { path: params.path, signal, budget }, async () => {

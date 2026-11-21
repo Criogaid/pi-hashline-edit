@@ -4,17 +4,16 @@
  * schema failure. Pi still validates the original arguments after preparation.
  * Tool schemas have no cross-field constraints.
  */
-import { validateToolArguments, type ToolCall } from "@earendil-works/pi-ai";
 import { compile } from "@earendil-works/pi-schema";
 import { formats } from "@earendil-works/pi-schema/formats";
 import type { Static, TObject, TSchema } from "typebox";
 import { errorMessage } from "../core/errors.ts";
 import { buildRegex } from "../core/regex.ts";
-import { diagnoseArguments } from "./argument-diagnostics.ts";
+import { diagnoseArguments, nativeArgumentIssue } from "./argument-diagnostics.ts";
 import { formatArgumentError } from "./argument-error.ts";
 import type { OutputBudgetProvider } from "./budgets.ts";
 import { pathSpellingError } from "./path.ts";
-import type { ArgumentIssue, ReportTool } from "./report-schema.ts";
+import type { ArgumentIssue } from "./report-schema.ts";
 
 /** Report one semantic issue: what is wrong (a fact), and how to correct it when the fact alone does not say. */
 export type ReportArgumentIssue = (field: string, reason: string, fix?: string) => void;
@@ -94,21 +93,20 @@ function preparationError(cause: unknown, limited: boolean, budgets: OutputBudge
   );
 }
 
-export function createArgumentPreparer<T extends TObject>(
-  name: ReportTool,
+export function createArgumentBoundary<T extends TObject>(
   parameters: T,
   budgets: OutputBudgetProvider,
   check?: CheckArguments,
-): (args: unknown) => Static<T> {
+) {
   const validator = compile(parameters, COMPILE_OPTIONS);
 
-  return (args) => {
-    let checked: unknown;
+  function inspect<Value>(snapshot: () => Value): Value {
+    let checked: Value;
     let schemaFailed: boolean;
     try {
       // parse() only returns errors on failure. Keep the coerced value for both
       // semantic checks and the bounded, per-field diagnostic pass.
-      checked = validator.coerce(structuredClone(args));
+      checked = snapshot();
       schemaFailed = !validator.check(checked);
     } catch (error) {
       throw preparationError(error, false, budgets);
@@ -121,27 +119,25 @@ export function createArgumentPreparer<T extends TObject>(
       const reason = pathSpellingError(path);
       if (reason !== undefined) issues.push({ field, reason });
     }
-    // Keep Pi's preparation contract: the framework performs its own coercion next.
-    if (!schemaFailed && issues.length === 0) return args as Static<T>;
+    if (!schemaFailed && issues.length === 0) return checked;
     const result = diagnoseArguments(parameters, checked, issues, schemaFailed);
-    if (result.issues.length > 0) {
-      throw new Error(formatArgumentError(result.issues, result.limited, budgets()));
-    }
+    // Pi can reject JS values (for example sparse arrays) that TypeBox does not diagnose.
+    const reasons = result.issues.length
+      ? result.issues
+      : validator.errors(checked).map((error) => nativeArgumentIssue(error, checked));
+    throw new Error(formatArgumentError(reasons, result.limited, budgets()));
+  }
 
-    // Preserve Pi's original failure when projection has no issue to report.
-    try {
-      validateToolArguments(
-        { name, parameters, description: "" },
-        {
-          type: "toolCall",
-          id: "argument-validation",
-          name,
-          arguments: args as ToolCall["arguments"],
-        },
-      );
-    } catch (error) {
-      throw preparationError(error, result.limited, budgets);
-    }
-    return args as Static<T>;
+  return {
+    prepareArguments(args: unknown): Static<T> {
+      inspect(() => validator.coerce(structuredClone(args)));
+      // Pi coerces the raw arguments for its hooks after this preflight.
+      return args as Static<T>;
+    },
+    // A tool_call hook can retain and mutate the validated arguments before or during execution.
+    // The tool consumes its own checked snapshot of the canonical arguments the last hook left.
+    afterHooks<Input extends Static<T>>(args: Input): Input {
+      return inspect(() => structuredClone(args));
+    },
   };
 }

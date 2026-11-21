@@ -123,7 +123,7 @@ grep 卡片原样显示返回的文件路径和计数行。只有 `content` 模�
 
 在提供方支持时，所有工具都请求约束采样（Pi 的 `constrainedSampling`：提供方把模型输出限制在工具的 strict JSON schema 内），模型因此无法写出 schema 未声明的字段或取值，也无法超出 edit 的操作数上限。这时调用中没用到的可选字段都写 `null`，edit 每个操作里其 `action` 用不到的字段也一样。出于同一原因，grep 的 `pattern`、`path` 和 `glob` 只接受数组；在其他提供方上，Pi 会把单个字符串包成数组。
 
-参数转换和接受判定由 Pi 负责；诊断不修改提交的参数。操作数组应按 schema 提交。Pi 先移除可选的 `null` 字段，再把单值包成数组：`replacements: [{ ..., flags: null }]` 会省略 `flags`，而 `replacements: { ..., flags: null }` 会把它转为字符串 `"null"`，随后 flags 校验失败。
+Pi 转换并校验模型参数。`tool_call` 钩子收到转换后的值，它改写的参数也必须符合工具的 schema 和操作规则。工具在访问文件前检查自己的参数快照，改写无效时返回 `INVALID_ARGUMENTS`。操作数组应按 schema 提交。Pi 先移除可选的 `null` 字段，再把单值包成数组：`replacements: [{ ..., flags: null }]` 会省略 `flags`，而 `replacements: { ..., flags: null }` 会把它转为字符串 `"null"`，随后 flags 校验失败。
 
 ## 修改被拒绝时
 

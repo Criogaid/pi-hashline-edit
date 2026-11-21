@@ -27,7 +27,7 @@ import { withFileMutationQueue, type ExtensionToolContext } from "@earendil-work
 import type { AgentToolResult, AgentToolUpdateCallback } from "@earendil-works/pi-agent-core";
 import type { Static, TObject, TProperties } from "typebox";
 import { ACTION_FUSION_GUIDELINES, withThenRunSchema, type ThenRunInput } from "./action-fusion.ts";
-import { createArgumentPreparer, type CheckArguments } from "./argument-validation.ts";
+import { createArgumentBoundary, type CheckArguments } from "./argument-validation.ts";
 import { SCRIPT_OUTPUT_SCHEMAS, type MutationToolName } from "./report-schema.ts";
 import { commitFile, FileMutationError, readEditableSnapshot } from "./file-commit.ts";
 import {
@@ -105,6 +105,7 @@ export function mutationToolBase<
   const { tool, cwd, schema, schedule, budgets } = spec;
   const { actionFusion } = spec.config;
   const parameters = withThenRunSchema(schema, tool, actionFusion);
+  const boundary = createArgumentBoundary(parameters, budgets, spec.check);
   return {
     name: tool,
     label: tool,
@@ -116,7 +117,7 @@ export function mutationToolBase<
     ],
     parameters,
     outputSchema: SCRIPT_OUTPUT_SCHEMAS[tool],
-    prepareArguments: createArgumentPreparer(tool, parameters, budgets, spec.check),
+    prepareArguments: boundary.prepareArguments,
     constrainedSampling: STRICT_SAMPLING,
     renderShell: "default" as const,
     execute(
@@ -129,7 +130,7 @@ export function mutationToolBase<
       const signal = callSignal(piSignal);
       // Pi's agent loop always supplies a callback; a direct call without one has no display.
       const onUpdate = piOnUpdate ?? (() => {});
-      const { then_run, ...mutationParams } = params;
+      const { then_run, ...mutationParams } = boundary.afterHooks(params);
       const displayPath = mutationParams.path;
       const budget = budgets();
       return runTool(

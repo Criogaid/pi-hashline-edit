@@ -17,13 +17,11 @@ import {
   detectSupportedImageMimeTypeFromFile,
   getLanguageFromPath,
   highlightCode,
-  type ReadToolInput,
   type ReadToolDetails,
-  type ExtensionToolContext,
   type Theme,
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
-import type { AgentToolUpdateCallback } from "@earendil-works/pi-agent-core";
+import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import { Text } from "@earendil-works/pi-tui";
 import { IsString, IsUnion, Type, type TSchema } from "typebox";
 import { scanTextLines } from "./text-stream.ts";
@@ -37,7 +35,7 @@ import { reportResult, runTool, type ReportDetails } from "./report.ts";
 import { SCRIPT_OUTPUT_SCHEMAS } from "./report-schema.ts";
 import { formatByteSize, type OutputBudgets } from "./budgets.ts";
 import type { ToolEnvironment } from "./config.ts";
-import { createArgumentPreparer } from "./argument-validation.ts";
+import { createArgumentBoundary } from "./argument-validation.ts";
 
 const DEFAULT_OFFSET = 1;
 
@@ -48,9 +46,6 @@ const DEFAULT_OFFSET = 1;
  */
 type ReadDetails = (ReadToolDetails & { nativeRead?: true; header?: string }) &
   Partial<ReportDetails>;
-
-/** Pi's read arguments plus this override's own. */
-type ReadInput = ReadToolInput & { anchors?: boolean };
 
 /** This read's output schema: its own text result, and each result of Pi's read other than plain text. */
 function readOutputSchema(native: TSchema | undefined): TSchema {
@@ -174,14 +169,7 @@ function windowFacts(end: WindowEnd, limitText: string) {
 }
 
 /** Build the read override (a ToolDefinition fragment for registerTool). */
-export function makeReadOverride({
-  cwd,
-  config,
-  budgets,
-}: ToolEnvironment): ToolDefinition<
-  ReturnType<typeof createReadToolDefinition>["parameters"],
-  ReadDetails | undefined
-> {
+export function makeReadOverride({ cwd, config, budgets }: ToolEnvironment) {
   const { hashLen } = config;
   const { defaultLimit, maxKiB } = config.read;
   // An explicit read.maxKiB caps read output; otherwise the selected model's budget does.
@@ -217,6 +205,7 @@ export function makeReadOverride({
     { additionalProperties: false },
   );
 
+  const boundary = createArgumentBoundary(parameters, budgets);
   return {
     name: "read" as const,
     label: "read",
@@ -224,16 +213,21 @@ export function makeReadOverride({
       "Read a file's text; images return as attachments. Lines show as LINE#HASH│content anchors for edit after one header line; anchors: false returns the lines alone. CRLF line endings show as LF and standalone CR as ␍.",
     promptSnippet: "Read file text, with line anchors for edit",
     promptGuidelines: ["Files containing NUL go to native read without a Hashline header."],
-    parameters: parameters as typeof builtin.parameters,
+    parameters,
     // Scripts receive the report's object for text, and Pi's image block for a delegated image.
     outputSchema: readOutputSchema(builtin.outputSchema),
-    prepareArguments: createArgumentPreparer("read", parameters, budgets),
+    prepareArguments: boundary.prepareArguments,
     constrainedSampling: STRICT_SAMPLING,
     renderShell: "default" as const,
 
     renderCall: builtin.renderCall,
 
-    renderResult(result, options, theme, context) {
+    renderResult(
+      result,
+      options,
+      theme,
+      context: Parameters<NonNullable<typeof builtin.renderResult>>[3],
+    ) {
       const { isPartial, expanded } = options;
       if (isPartial) return new Text(theme.fg("warning", "Reading…"), 0, 0);
       if (context.isError) return renderToolError(result, "read", theme, expanded, context);
@@ -265,12 +259,13 @@ export function makeReadOverride({
     },
 
     async execute(
-      toolCallId: string,
-      { anchors: anchored, ...params }: ReadInput,
-      piSignal: AbortSignal | undefined,
-      onUpdate: AgentToolUpdateCallback<ReadToolDetails | undefined> | undefined,
-      ctx: ExtensionToolContext,
-    ) {
+      toolCallId,
+      input,
+      piSignal,
+      onUpdate,
+      ctx,
+    ): Promise<AgentToolResult<ReadDetails | undefined>> {
+      const { anchors: anchored, ...params } = boundary.afterHooks(input);
       const signal = callSignal(piSignal);
       const budget = budgets();
       const maxBytes = readCap(budget);
@@ -373,5 +368,5 @@ export function makeReadOverride({
         });
       });
     },
-  };
+  } satisfies ToolDefinition<typeof parameters, ReadDetails | undefined>;
 }

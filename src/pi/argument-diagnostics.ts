@@ -1,4 +1,5 @@
 /** Failure-only schema projection and structured error aggregation; Pi owns input preparation and acceptance. */
+import type { ValidationError } from "@earendil-works/pi-schema";
 import {
   ArrayOptions,
   IsArray,
@@ -116,6 +117,14 @@ function valuePath(parts: readonly string[], prepared: unknown): string {
     value = typeof value === "object" && value !== null ? Reflect.get(value, part) : undefined;
   }
   return path;
+}
+
+/** Pi escapes JSON Pointer keys. TypeBox passes additional keys verbatim in its own diagnostics. */
+export function nativeArgumentIssue(error: ValidationError, prepared: unknown): ArgumentIssue {
+  const parts = pointerParts(error.path).map((key) =>
+    key.replaceAll("~1", "/").replaceAll("~0", "~"),
+  );
+  return { field: valuePath(parts, prepared) || "$", reason: error.message };
 }
 
 /** One declaration's meaning: its description, labeled with its values when it is a choice. */

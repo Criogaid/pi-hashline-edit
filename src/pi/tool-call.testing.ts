@@ -3,7 +3,8 @@
  *
  * In production, input reaches `execute` only after Pi runs the tool's
  * `prepareArguments` and validates (and coerces) the result against the tool
- * schema. `execute` trusts that input, so tests that probe invalid or
+ * schema. Session hooks can then change the arguments. This fixture models calls without a hook;
+ * real session tests cover hook edits. Tests that probe invalid or
  * unusual arguments go through the same funnel instead of calling `execute`.
  */
 
