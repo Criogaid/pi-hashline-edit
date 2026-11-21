@@ -92,24 +92,31 @@ export async function scanTextFile(
   });
 }
 
-interface ScannedLine {
+interface ScannedLine<Text extends string | undefined> {
   readonly number: number;
   readonly byteLength: number;
   readonly carriageReturns: number;
-  /** Absent when the selected line exceeds maxLineBytes. */
-  readonly text: string | undefined;
+  readonly text: Text;
 }
 
-/** Visit selected logical lines, retaining at most maxLineBytes of content per line. */
-export async function scanTextLines(
+interface ScanOptions {
+  readonly signal: AbortSignal;
+  /** Retain at most this many bytes of a line; a longer line has no text. */
+  readonly maxLineBytes?: number;
+  readonly decoding?: Utf8Decoding;
+}
+
+/** A line's text: every line has it unless the scan bounds line bytes. */
+type LineText<Options extends ScanOptions> = Options extends { readonly maxLineBytes: number }
+  ? string | undefined
+  : string;
+
+/** Visit selected logical lines. */
+export async function scanTextLines<Options extends ScanOptions>(
   path: string,
   select: (number: number) => boolean,
-  onLine: (line: ScannedLine) => void,
-  options: {
-    readonly signal: AbortSignal;
-    readonly maxLineBytes?: number;
-    readonly decoding?: Utf8Decoding;
-  },
+  onLine: (line: ScannedLine<LineText<Options>>) => void,
+  options: Options,
 ) {
   const { signal, decoding, maxLineBytes: maxBytes = Infinity } = options;
   let number = 1;
@@ -128,7 +135,8 @@ export async function scanTextLines(
         number,
         byteLength: logicalBytes,
         carriageReturns: carriageReturns - (stripCr ? 1 : 0),
-        text,
+        // Without maxLineBytes the bound is Infinity, so every line keeps its text.
+        text: text as LineText<Options>,
       });
       carriageReturns = 0;
       byteLength = 0;

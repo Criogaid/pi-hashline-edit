@@ -326,17 +326,16 @@ export function makeReadOverride({
         const stats = await scanTextLines(
           absPath,
           (number) => !budgetExceeded && number >= start && number - start < limit,
-          (line) => {
+          ({ number, byteLength, carriageReturns, text }) => {
             const rowBytes =
-              line.byteLength +
-              line.carriageReturns * crExpansion +
-              Buffer.byteLength(formatRow(line.number, ""));
+              byteLength + carriageReturns * crExpansion + Buffer.byteLength(formatRow(number, ""));
             const nextBytes = outputBytes + rowBytes + (rows.length > 0 ? 1 : 0);
-            if (nextBytes > maxBytes) {
+            // A line without text is longer than the whole budget.
+            if (text === undefined || nextBytes > maxBytes) {
               budgetExceeded = true;
               return;
             }
-            rows.push(formatRow(line.number, line.text!));
+            rows.push(formatRow(number, text));
             outputBytes = nextBytes;
           },
           { signal, maxLineBytes: maxBytes },

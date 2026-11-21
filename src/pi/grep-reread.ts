@@ -43,8 +43,7 @@ async function rereadFile<T>(
   const stats = await scanTextLines(
     file.filePath,
     (number) => shown.has(number),
-    // No maxLineBytes: every selected line keeps its text.
-    (line) => collector.onLine(line.number, line.text!),
+    (line) => collector.onLine(line.number, line.text),
     { signal, decoding: "lossy" },
   );
   // A NUL the search did not see also changes the revision.
