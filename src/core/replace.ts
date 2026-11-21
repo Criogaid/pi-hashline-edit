@@ -22,14 +22,15 @@ import { HashlineError } from "./errors.ts";
 import type { Replacement, ReplacementResult } from "./replace-schema.ts";
 
 /** Expand JS replacement tokens, reusing a leading copy of the header when the match consumes it. */
-function expandReplacement(template: string, match: RegExpExecArray, headerRegex?: RegExp): string {
+function expandReplacement(template: string, match: RegExpExecArray, regex: RegExp): string {
   const { index, input, groups } = match;
+  const consumesHeader = index === 0 && match[0].startsWith("\uFEFF");
   // Without named captures, $<...> is ordinary text and may contain other $ tokens.
   const tokens = groups === undefined ? /\$(\$|&|`|'|\d{1,2})/g : /\$(\$|&|`|'|<[^>]*>|\d{1,2})/g;
   // Only tokens preceded entirely by empty expansions can emit the first output character.
   let leadingOffset = 0;
   return template.replace(tokens, (token, key: string, offset: number) => {
-    const leading = headerRegex !== undefined && offset === leadingOffset;
+    const leading = consumesHeader && offset === leadingOffset;
     if (key === "$") return "$";
     if (key === "&") return leading ? match[0].slice(1) : match[0];
 
@@ -58,8 +59,7 @@ function expandReplacement(template: string, match: RegExpExecArray, headerRegex
     if (capture === undefined || text[0] !== input[0]) return text;
 
     // Adding d to the same regex at offset zero yields this match with capture offsets.
-    const indices =
-      match.indices ?? new RegExp(headerRegex, `${headerRegex.flags}d`).exec(input)!.indices!;
+    const indices = match.indices ?? new RegExp(regex, `${regex.flags}d`).exec(input)!.indices!;
     const span = typeof capture === "number" ? indices[capture] : indices.groups?.[capture];
     return span?.[0] === 0 ? text.slice(1) : text;
   });
@@ -90,13 +90,7 @@ export function applyReplacements(
         end,
         rule: index,
         text: restoreLineEndings(
-          rule.literal
-            ? replacement
-            : expandReplacement(
-                replacement,
-                match,
-                bom && start === 0 && end > 0 ? regex : undefined,
-              ),
+          rule.literal ? replacement : expandReplacement(replacement, match, regex),
           source.slice(start, end),
           fallbackEnding,
         ),
