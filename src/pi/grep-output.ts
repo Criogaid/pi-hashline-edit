@@ -57,6 +57,9 @@ function searchDiagnostics(
   return diagnostics.toString().trimEnd();
 }
 
+/** The counts a script reads when the payload already shows them and the report leaves them out. */
+type ShownCounts = Required<Pick<SuccessFacts<"grep">, "matches" | "files">>;
+
 /** How the search was bounded and which named paths it skipped; stated with success and failure alike. */
 type SearchFacts = Pick<Report, "scanLimit" | "missing">;
 
@@ -313,7 +316,7 @@ function contextHidesHit(
 function assembleGrepOutput(options: AssembleGrepOutputOptions): {
   payload: string;
   facts: SuccessFacts<"grep">;
-  implied?: Partial<SuccessFacts<"grep">>;
+  implied?: ShownCounts;
   next?: OutcomeVariant;
 } {
   const {
@@ -390,7 +393,7 @@ export async function grepOutput(
 ): Promise<{
   payload?: string;
   facts: SuccessFacts<"grep">;
-  implied?: Partial<SuccessFacts<"grep">>;
+  implied?: ShownCounts;
   next?: OutcomeVariant;
 }> {
   const { cwd, search, warnings, missing, outputMode, effectiveLimit, literalPipe, budget } =
