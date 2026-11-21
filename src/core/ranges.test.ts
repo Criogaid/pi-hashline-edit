@@ -90,16 +90,18 @@ test("sorted ranges sharing or crossing boundaries → report conflicts accordin
     ],
   ];
   for (const [ranges, strictConflict, insertionBeforeRangeConflict] of cases) {
-    for (const insertBeforeRange of [false, true]) {
-      const expected = insertBeforeRange ? insertionBeforeRangeConflict : strictConflict;
+    for (const [policy, expected] of [
+      ["reject-shared-start", strictConflict],
+      ["allow-insertion-before-range", insertionBeforeRangeConflict],
+    ] as const) {
       for (const shift of [0, 10]) {
         assert.equal(
           findSortedRangeConflict(
             ranges.map(([start, end]) => [start + shift, end + shift]),
-            insertBeforeRange,
+            policy,
           ),
           expected,
-          JSON.stringify({ ranges, insertBeforeRange, shift }),
+          JSON.stringify({ ranges, policy, shift }),
         );
       }
     }

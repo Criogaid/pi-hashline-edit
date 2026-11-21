@@ -100,7 +100,10 @@ export function applyReplacements(
       facts: { unmatched },
     });
   changes.sort((a, b) => a.start - b.start || a.end - b.end);
-  const conflict = findSortedRangeConflict(changes.map((change) => [change.start, change.end]));
+  const conflict = findSortedRangeConflict(
+    changes.map((change) => [change.start, change.end]),
+    "reject-shared-start",
+  );
   if (conflict !== undefined) {
     const previous = changes[conflict - 1];
     const current = changes[conflict];

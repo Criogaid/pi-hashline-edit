@@ -174,7 +174,7 @@ export function applyEdits(
     .sort((a, b) => a.lo - b.lo || a.hi - b.hi);
   const conflict = findSortedRangeConflict(
     sorted.map((op) => [op.lo, op.hi]),
-    true,
+    "allow-insertion-before-range",
   );
   if (conflict !== undefined) {
     const current = sorted[conflict];
