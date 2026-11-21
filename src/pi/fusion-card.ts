@@ -36,11 +36,41 @@ const RESULT_TYPE = "hashline-then-run-result";
 
 type CommandCardData = ActionFusionProgress;
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
 function decodeCard(read: () => unknown): CommandCardData | undefined {
   try {
     const source = read();
-    if (source === undefined) return undefined;
-    const data: unknown = structuredClone(source);
+    if (!isRecord(source)) return undefined;
+    const card = { ...source };
+    if (isRecord(card.result)) {
+      const result = { ...card.result };
+      const details = result.details;
+      // Pi's Bash renderer reads the output path and these truncation fields.
+      if (isRecord(details)) {
+        const { fullOutputPath, truncation } = details;
+        result.details = JSON.parse(
+          JSON.stringify({
+            fullOutputPath,
+            truncation: isRecord(truncation)
+              ? {
+                  truncated: truncation.truncated,
+                  truncatedBy: truncation.truncatedBy,
+                  outputLines: truncation.outputLines,
+                  totalLines: truncation.totalLines,
+                  maxBytes: truncation.maxBytes,
+                }
+              : undefined,
+          }),
+        );
+      } else {
+        delete result.details;
+      }
+      card.result = result;
+    }
+    const data: unknown = structuredClone(card);
     if (!Value.Check(ACTION_FUSION_PROGRESS_SCHEMA, data)) return undefined;
     const content = data.result?.content;
     // Pi calls array methods outside its renderer guard. Accept only dense, indexed content.

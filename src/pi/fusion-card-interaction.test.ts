@@ -187,6 +187,36 @@ test("synchronous entry subscriber rewrites command output → live card retains
   assert.match(host.render(100).join("\n"), /original output/);
 });
 
+test("override returns a formatter in its details → live and restored cards show the final output", async (t) => {
+  initTheme("dark");
+  let report: ReturnType<typeof registerFusionCards> | undefined;
+  const { session, sessionManager } = await openTestSession(t, {
+    tools: [],
+    configure(pi) {
+      report = registerFusionCards(pi);
+    },
+  });
+  await bindTui(session);
+  assert.ok(report);
+  report(commandCard);
+  report({
+    ...commandCard,
+    command: "succeeded",
+    result: {
+      content: [{ type: "text", text: "final output" }],
+      details: { fullOutputPath: "check.log", diagnosticFormatter() {} },
+    },
+  });
+  const entry = sessionManager.getBranch().find((e) => e.type === "custom");
+  const renderer = session.extensionRunner.getEntryRenderer("hashline-then-run");
+  assert.ok(entry?.type === "custom" && renderer);
+  const render = () => new CustomEntryComponent(entry, renderer).render(100).join("\n");
+  const live = render();
+  assert.match(live, /succeeded[\s\S]*final output[\s\S]*check\.log/);
+  await bindTui(session);
+  assert.equal(render(), live);
+});
+
 test("foreign command entries → renderer and branch restore reject unusable snapshots", async (t) => {
   initTheme("dark");
   const { session, sessionManager } = await openTestSession(t, {

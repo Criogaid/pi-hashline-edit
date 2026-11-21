@@ -149,7 +149,7 @@ The command runs through the session's own Bash tool, so approvals, overrides, a
 
 Cancelling a mutation while it waits in the Fusion queue stops that call before it writes. The earlier mutation and command keep their place in the queue.
 
-Command cards use Pi's native tool component for mouse clicks and the global expand shortcut. Each card keeps its own expansion while output streams or the screen redraws. The built-in Bash renderer displays the command's original content and details, which are also saved for session restore; custom Bash renderer overrides are not exposed by the supported Pi API.
+Command cards use Pi's native tool component for mouse clicks and the global expand shortcut. Each card keeps its own expansion while output streams or the screen redraws. The built-in Bash renderer displays the command's content, output path, and truncation information. Command cards save these values for session restore. Custom Bash renderer overrides are not exposed by the supported Pi API.
 
 ## Configuration
 
