@@ -270,7 +270,7 @@ export function makeReadOverride({
             onUpdate,
             ctx,
           );
-          const delegated = reportResult(report, result.content, {
+          const delegated = reportResult(report, result.content, budget, {
             ...result.details,
             nativeRead: true as const,
           });
@@ -345,6 +345,7 @@ export function makeReadOverride({
             lineTooLong: firstLineTooLong ? limitText : undefined,
           },
           [{ type: "text" as const, text }],
+          budget,
           anchored === false ? { header } : undefined,
           undefined,
           callerLimitOnly ? { nextOffset } : undefined,

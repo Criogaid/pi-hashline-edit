@@ -29,10 +29,11 @@ import {
   pathError,
 } from "../core/errors.ts";
 import { boundedText, causeOf } from "./report-cause.ts";
-import type { OutputBudgets } from "./budgets.ts";
+import { leadingEntriesWithin, type OutputBudgets } from "./budgets.ts";
 import { cancellationError } from "./error-text.ts";
 import { serializeAbsolutePath } from "./path.ts";
 import {
+  BOUNDED_LISTS,
   ERROR_DEFINITIONS,
   MODEL_OMITTED_FIELDS,
   OUTCOME_NEXT,
@@ -145,11 +146,24 @@ function outcomeNext(report: Report, variant: OutcomeVariant | undefined): strin
   return typeof next === "object" ? ((variant && next[variant]) ?? next.default) : next;
 }
 
-/** Producers and throw sites state resolved paths; every report spells them as headers spell paths. */
-function spellMissing<R extends { readonly missing?: readonly string[] }>(report: R): R {
-  return report.missing
+/**
+ * The facts every report states as producers gave them, made fit for output: resolved paths
+ * spelled as headers spell paths, then each bounded list cut to whole entries within the
+ * diagnostic block, counting what it omits.
+ */
+function boundFacts<R extends Partial<Report>>(report: R, budget: OutputBudgets): R {
+  const bounded: Record<string, unknown> = report.missing
     ? { ...report, missing: report.missing.map(serializeAbsolutePath) }
-    : report;
+    : { ...report };
+  for (const [list, omittedField] of BOUNDED_LISTS) {
+    const entries = bounded[list] as readonly unknown[] | undefined;
+    if (!entries) continue;
+    const kept = leadingEntriesWithin(entries, budget.blockBytes);
+    if (kept.length === entries.length) continue;
+    bounded[list] = kept;
+    bounded[omittedField] = entries.length - kept.length;
+  }
+  return bounded as R;
 }
 
 /**
@@ -173,12 +187,13 @@ export function reportResult<
 >(
   report: SuccessReport & { tool: TTool },
   payload: Content,
+  budget: OutputBudgets,
   details?: TDetails,
   variant?: OutcomeVariant,
   implied?: ImpliedFacts<TTool>,
 ): AgentToolResult<TDetails & ReportDetails<SuccessReport>> {
   const complete = Object.fromEntries(
-    reportEntries({ ...spellMissing(report), next: outcomeNext(report, variant) }),
+    reportEntries({ ...boundFacts(report, budget), next: outcomeNext(report, variant) }),
   ) as SuccessReport;
   const stated = Object.keys(statedFields(complete)).length > 0;
   const text = payload.flatMap((block) => (block.type === "text" ? [block.text] : [])).join("\n");
@@ -252,18 +267,21 @@ export function describeFailure(
   const failure = classify(caught, context.signal);
   const budget = context.budget;
   // HashlineError's constructor ties its facts to its code; the union cannot carry that link.
-  return spellMissing({
-    error: failure.errorCode,
-    tool,
-    path: context.path as Report["path"],
-    publication: mutation?.publication,
-    message: boundedText(failure.message, budget.fieldBytes),
-    cause: causeOf(failure.cause, budget.fieldBytes),
-    ...failure.facts,
-    then_run: mutation?.then_run,
-    progressError: mutation?.progressError,
-    next: failureNext(failure, mutation?.publication),
-  } as FailureReport);
+  return boundFacts(
+    {
+      error: failure.errorCode,
+      tool,
+      path: context.path as Report["path"],
+      publication: mutation?.publication,
+      message: boundedText(failure.message, budget.fieldBytes),
+      cause: causeOf(failure.cause, budget.fieldBytes),
+      ...failure.facts,
+      then_run: mutation?.then_run,
+      progressError: mutation?.progressError,
+      next: failureNext(failure, mutation?.publication),
+    } as FailureReport,
+    budget,
+  );
 }
 
 /** Run one tool execution, returning any failure as its report. */

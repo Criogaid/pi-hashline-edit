@@ -150,6 +150,7 @@ export function finalizeMutation<TDetails extends object, TTool extends Mutation
   return reportResult<TDetails, MutationToolName>(
     report,
     shown === undefined ? [] : [{ type: "text", text: shown }],
+    budget,
     details,
     undefined,
     command && shown !== undefined

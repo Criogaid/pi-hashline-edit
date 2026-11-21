@@ -195,6 +195,10 @@ const FACT_FIELDS = {
     }),
     "Correct the missing paths and search them again, or use create mode for a new file.",
   ),
+  omittedMissing: modelFact(
+    count("Missing paths omitted from the byte budget."),
+    "Know that the missing list is incomplete.",
+  ),
 
   // Anchor verification (failure-context.ts).
   failures: modelFact(
@@ -329,6 +333,16 @@ const FACT_FIELDS = {
 } as const satisfies Record<string, FactDefinition>;
 
 type FactName = keyof typeof FACT_FIELDS;
+
+/**
+ * List facts the report layer cuts to whole leading entries within the diagnostic block, each
+ * with the fact that counts the entries it omitted.
+ */
+export const BOUNDED_LISTS = [
+  ["missing", "omittedMissing"],
+  ["unmatched", "omittedUnmatched"],
+  ["failures", "omittedFailures"],
+] as const satisfies readonly (readonly [FactName, FactName])[];
 type FactSchema<Name extends FactName> = (typeof FACT_FIELDS)[Name]["schema"];
 type TuiOnlyFactName = {
   [Name in FactName]: (typeof FACT_FIELDS)[Name]["audience"] extends "tui" ? Name : never;
@@ -373,7 +387,7 @@ export const ERROR_DEFINITIONS = {
   INVALID_ARGUMENTS: { facts: facts(["issues"], ["omittedIssues", "schemaLimited"]) },
   OPERATION_ABORTED: { facts: NONE },
   PATH_NOT_FOUND: {
-    facts: facts([], ["missing"]),
+    facts: facts([], ["missing", "omittedMissing"]),
     next: {
       default: "Check the path.",
       useCreate: 'Use mode "create" to create a new file.',
@@ -442,7 +456,9 @@ export const ERROR_DEFINITIONS = {
   SYMLINK_UNRESOLVED: { facts: NONE },
   PUBLISH_FAILED: { facts: NONE },
   POST_PROCESS_FAILED: { facts: NONE },
-  SEARCH_INCOMPLETE: { facts: facts(["diagnostics"], ["scanLimit", "missing"]) },
+  SEARCH_INCOMPLETE: {
+    facts: facts(["diagnostics"], ["scanLimit", "missing", "omittedMissing"]),
+  },
   RIPGREP_FAILED: { facts: NONE },
   UNSUPPORTED_PATH: { facts: NONE },
   UNCLASSIFIED: { facts: NONE },
@@ -564,6 +580,7 @@ const SUCCESS_DEFINITIONS = {
       "matches",
       "files",
       "missing",
+      "omittedMissing",
       "matchLimit",
       "scanLimit",
       "outputLimit",

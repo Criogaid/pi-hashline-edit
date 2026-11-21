@@ -262,7 +262,7 @@ test("success reports → omit repeated call fields while retaining details and 
     publication: "PUBLISHED",
   };
   const payload = [text("payload")];
-  const result = reportResult(report, payload);
+  const result = reportResult(report, payload, DEFAULT_OUTPUT_BUDGETS);
   const last = result.content.at(-1);
   assert.ok(last?.type === "text");
   assert.deepEqual(JSON.parse(last.text), { publication: "PUBLISHED" });
@@ -281,7 +281,11 @@ test("success results → scripts receive the stated fields, after the payload t
     [{ tool: "write", path: "a.txt", publication: "PUBLISHED" }, undefined],
   ];
   for (const [report, payload] of cases) {
-    const result = reportResult(report, payload === undefined ? [] : [text(payload)]);
+    const result = reportResult(
+      report,
+      payload === undefined ? [] : [text(payload)],
+      DEFAULT_OUTPUT_BUDGETS,
+    );
     const stated = JSON.parse(renderReport(result.details.report));
     assert.deepEqual(
       result.structuredContent,
@@ -309,10 +313,15 @@ test("declared script outputs → require the fields every success of the tool c
 
 test("facts the payload or the call already shows → scripts receive them while text and details stay the same", () => {
   const payload = [text("a.ts · 2 matches")];
-  const plain = reportResult({ tool: "grep", path: ["a.ts"], matchLimit: 2 }, payload);
+  const plain = reportResult(
+    { tool: "grep", path: ["a.ts"], matchLimit: 2 },
+    payload,
+    DEFAULT_OUTPUT_BUDGETS,
+  );
   const counted = reportResult(
     { tool: "grep", path: ["a.ts"], matchLimit: 2 },
     payload,
+    DEFAULT_OUTPUT_BUDGETS,
     undefined,
     undefined,
     { matches: 2, files: 1 },
@@ -328,9 +337,14 @@ test("facts the payload or the call already shows → scripts receive them while
   });
   assert.ok(Value.Check(SCRIPT_OUTPUT_SCHEMAS.grep, counted.structuredContent));
 
-  const read = reportResult({ tool: "read", path: "a.txt" }, [text("one")], undefined, undefined, {
-    nextOffset: 2,
-  });
+  const read = reportResult(
+    { tool: "read", path: "a.txt" },
+    [text("one")],
+    DEFAULT_OUTPUT_BUDGETS,
+    undefined,
+    undefined,
+    { nextOffset: 2 },
+  );
   assert.deepEqual(read.content, [text("one")]);
   assert.deepEqual(read.structuredContent, { text: "one", nextOffset: 2 });
   assert.ok(Value.Check(SCRIPT_OUTPUT_SCHEMAS.read, read.structuredContent));
@@ -439,6 +453,7 @@ test("grep preview from invalid UTF-8 → recovery selects bash for the listed p
       invalidUtf8: ["invalid.txt"],
     },
     [],
+    DEFAULT_OUTPUT_BUDGETS,
   );
   const next = reportOf(result, "grep")?.next ?? "";
   assert.match(next, /invalidUtf8.*bash/);
@@ -459,6 +474,7 @@ test("grep limits coincide → recovery prioritizes output, then match, then sca
         }),
       },
       [],
+      DEFAULT_OUTPUT_BUDGETS,
     );
     assert.equal(reportOf(result, "grep")?.next, typeof next === "string" ? next : next.default);
   }
@@ -473,6 +489,7 @@ test("no-op write target missing after then_run → report omits the no-op recov
       then_run: { status: "succeeded" },
     },
     [],
+    DEFAULT_OUTPUT_BUDGETS,
   );
   const report = reportOf({ content: result.content }, "write");
   assert.ok(report);
@@ -489,6 +506,7 @@ test("output limit with read next offset → recovery prioritizes the next offse
       outputLimit: formatByteSize(DEFAULT_OUTPUT_BUDGETS.readBytes),
     },
     [],
+    DEFAULT_OUTPUT_BUDGETS,
   );
   assert.equal(reportOf(result, "read")?.next, next);
 });
@@ -572,7 +590,11 @@ test("failure classification without mutation facts → omits mutation state for
 
 test("mutation freshness → retains the fact and requests reread only for an existing or unknown target", () => {
   for (const freshness of ["missing", "changed", "unknown"] as const) {
-    const result = reportResult({ tool: "edit", publication: "PUBLISHED", freshness }, []);
+    const result = reportResult(
+      { tool: "edit", publication: "PUBLISHED", freshness },
+      [],
+      DEFAULT_OUTPUT_BUDGETS,
+    );
     const report = reportOf(result, "edit");
     assert.equal(report?.freshness, freshness);
     if (freshness === "missing") assert.equal(report?.next, undefined);

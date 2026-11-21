@@ -339,6 +339,58 @@ test("every grep path is missing → reports all resolved paths with default rec
     }
   }));
 
+test("missing grep paths exceed the diagnostic block → reports the fitting prefix and omitted count", async (t) =>
+  withDir(async (dir) => {
+    const budget = outputBudgetsFor(4096);
+    const missing = Array.from({ length: 80 }, (_, index) => `missing-file-${index}.txt`);
+    const resolved = missing.map((name) => join(dir, name).replaceAll("\\", "/"));
+    const file = join(dir, "present.txt");
+    await writeFile(file, "value\n");
+    for (const { name, existing, error } of [
+      { name: "all paths missing", existing: [], error: "PATH_NOT_FOUND" },
+      { name: "one path exists", existing: [file], error: undefined },
+    ]) {
+      await t.test(name, async () => {
+        const { backend } = fakeBackend({ paths: existing });
+        const tool = makeMockGrep(dir, DEFAULT_CONFIG, backend, () => budget);
+        const result = await callTool(tool, {
+          literal: true,
+          pattern: "value",
+          path: [...missing, ...existing],
+          outputMode: "count",
+        });
+        assert.equal(result.isError, error ? true : undefined);
+        const report = reportOf({ content: result.content }, "grep");
+        assert.equal(report?.error, error);
+        assert.ok(report?.missing?.length);
+        const bytes = Buffer.byteLength(JSON.stringify(report.missing));
+        assert.ok(
+          bytes <= budget.blockBytes,
+          `missing uses ${bytes} bytes (budget ${budget.blockBytes})`,
+        );
+        const kept = report.missing.length;
+        assert.deepEqual(report.missing, resolved.slice(0, kept));
+        const next = resolved[kept];
+        assert.ok(next !== undefined);
+        assert.ok(Buffer.byteLength(JSON.stringify([...report.missing, next])) > budget.blockBytes);
+        assert.equal(report.omittedMissing, resolved.length - kept);
+        const detailsReport = reportOf(result, "grep");
+        assert.deepEqual(detailsReport?.missing, report.missing);
+        assert.equal(detailsReport?.omittedMissing, report.omittedMissing);
+        if (error === undefined) {
+          assert.deepEqual(result.structuredContent, {
+            text: text(result),
+            matches: 1,
+            files: 1,
+            missing: report.missing,
+            omittedMissing: report.omittedMissing,
+            next: report.next,
+          });
+        }
+      });
+    }
+  }));
+
 test("a missing grep path contains a wildcard alongside an existing path → reports all missing paths with glob recovery", async (t) =>
   withDir(async (dir) => {
     await writeFile(join(dir, "present.txt"), "value\n");
