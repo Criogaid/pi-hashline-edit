@@ -9,7 +9,7 @@ const { DEFAULT_CONFIG } = await import("../pi/tool-factories.testing.ts");
 
 import { reportOf } from "../pi/report.ts";
 const { grepCounts } = await import("../pi/grep-output.testing.ts");
-import { runRgLines, runRgPaths } from "../pi/rg-process.ts";
+import { runRgLines, runRgPaths, type CandidateLines } from "../pi/rg-process.ts";
 import { callTool } from "../pi/tool-call.testing.ts";
 import { acceptsNative } from "../core/search-matrix.testing.ts";
 import { rejectsArgument } from "../pi/argument-error.testing.ts";
@@ -28,11 +28,11 @@ test("Cartesian literal mode × case override × line mode × bytes → the real
   ];
   for (const input of inputs) await writeFile(join(directory, input.name), input.bytes);
   const limit = inputs.reduce((sum, input) => sum + input.bytes.length, 0);
-  const candidates = new Map<string, readonly number[] | undefined>();
+  const candidates = new Map<string, CandidateLines>();
   const tool = makeMockGrep(directory, DEFAULT_CONFIG, {
     runRgPaths(args, cwd, signal, onPath) {
       return runRgPaths(args, cwd, signal, (path) => {
-        candidates.set(basename(path), undefined);
+        candidates.set(basename(path), "all");
         return onPath(path);
       });
     },
@@ -90,11 +90,11 @@ test("Cartesian literal mode × case override × line mode × bytes → the real
           assert.equal(grepCounts(actual).files, expected.length, context);
           for (const input of expected) {
             nativeMatchingFiles++;
-            assert.ok(candidates.has(input.name), `${context}: rg dropped ${input.name}`);
             const listed = candidates.get(input.name);
+            assert.ok(listed !== undefined, `${context}: rg dropped ${input.name}`);
             for (const row of input.rows) {
               assert.ok(
-                listed === undefined || listed.includes(row.lineNumber),
+                listed === "all" || listed.includes(row.lineNumber),
                 `${context}: rg dropped ${input.name}:${row.lineNumber}`,
               );
             }

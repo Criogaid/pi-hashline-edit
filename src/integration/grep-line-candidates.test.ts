@@ -8,7 +8,7 @@ import { acceptsNative } from "../core/search-matrix.testing.ts";
 import { searchText, type GrepQuery } from "../core/search.ts";
 import type { GrepFileMatch } from "../pi/grep-search.ts";
 import { lineCandidatePatterns } from "../pi/rg-regex.ts";
-import { runRgLines } from "../pi/rg-process.ts";
+import { runRgLines, type CandidateLines } from "../pi/rg-process.ts";
 import { REGEX_TRANSLATION_CORPUS } from "../testing/regex-translation-corpus.ts";
 
 // Ordered pairs expose decoder and boundary interactions between the required byte fragments.
@@ -153,7 +153,7 @@ test("Cartesian adversarial bytes × syntax × case mode × assertion positions 
         }
         const translated = lineCandidatePatterns(query);
         assert.ok(translated, JSON.stringify(query));
-        const candidates = new Map<string, readonly number[] | undefined>();
+        const candidates = new Map<string, CandidateLines>();
         const actual = await searchWithMockRg({
           backend: {
             async runRgPaths() {
@@ -165,7 +165,7 @@ test("Cartesian adversarial bytes × syntax × case mode × assertion positions 
               assert.deepEqual(emitted, translated);
               return runRgLines(args, cwd, signal, maxLines, (path, lines) => {
                 candidates.set(path, lines);
-                listedRows += lines?.length ?? 0;
+                listedRows += lines === "all" ? 0 : lines.length;
                 return onFile(path, lines);
               });
             },
@@ -182,7 +182,10 @@ test("Cartesian adversarial bytes × syntax × case mode × assertion positions 
             const context = JSON.stringify({ query, filePath, row });
             assert.ok(candidates.has(filePath), context);
             const lines = candidates.get(filePath);
-            assert.ok(lines !== undefined && lines.includes(row.lineNumber), context);
+            assert.ok(
+              lines !== undefined && lines !== "all" && lines.includes(row.lineNumber),
+              context,
+            );
           }
           return { filePath, rows: result.lines };
         });

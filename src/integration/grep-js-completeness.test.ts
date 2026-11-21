@@ -9,7 +9,7 @@ const MAX_MULTILINE_SEARCH_BYTES = 64 * 1024 * 1024;
 
 import { reportOf } from "../pi/report.ts";
 const { grepCounts } = await import("../pi/grep-output.testing.ts");
-import { COMMON_RG_ARGS, runRgLines, runRgPaths } from "../pi/rg-process.ts";
+import { COMMON_RG_ARGS, runRgLines, runRgPaths, type CandidateLines } from "../pi/rg-process.ts";
 import { searchText } from "../core/search.ts";
 import { callTool } from "../pi/tool-call.testing.ts";
 
@@ -173,11 +173,11 @@ test("real rg candidates → include every JS row and preserve confirmed output 
     ["alpha\\nbeta", false, true, 2],
   ] as const) {
     await t.test(`${pattern} ignoreCase=${ignoreCase} → identical confirmed results`, async () => {
-      const candidates = new Map<string, readonly number[] | undefined>();
+      const candidates = new Map<string, CandidateLines>();
       const filtered = makeMockGrep(directory, DEFAULT_CONFIG, {
         runRgPaths(args, cwd, signal, onPath) {
           return runRgPaths(args, cwd, signal, (path) => {
-            candidates.set(path, undefined);
+            candidates.set(path, "all");
             return onPath(path);
           });
         },
@@ -206,7 +206,7 @@ test("real rg candidates → include every JS row and preserve confirmed output 
             [...COMMON_RG_ARGS, "--files", "--null", ...args.slice(scopeStart)],
             cwd,
             signal,
-            (path) => onFile(path, undefined),
+            (path) => onFile(path, "all"),
           );
         },
       });
@@ -239,11 +239,11 @@ test("real rg candidates → include every JS row and preserve confirmed output 
           limit: bytes.length,
         }).lines;
         if (!rows.length) continue;
-        assert.ok(candidates.has(path), `rg dropped ${name}`);
         const listed = candidates.get(path);
+        assert.ok(listed !== undefined, `rg dropped ${name}`);
         for (const row of rows)
           assert.ok(
-            listed === undefined || listed.includes(row.lineNumber),
+            listed === "all" || listed.includes(row.lineNumber),
             `${name}:${row.lineNumber}`,
           );
       }

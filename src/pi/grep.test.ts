@@ -30,7 +30,7 @@ const { CONTEXT_GAP, parseFileHeader } = await import("./grep-output.ts");
 import { parseHashline } from "./anchor-format.ts";
 import { expectToolFailure } from "./report-failure.testing.ts";
 import { RegExpParser } from "@eslint-community/regexpp";
-import { COMMON_RG_ARGS, LINE_LISTING_ARGS } from "./rg-process.ts";
+import { COMMON_RG_ARGS, LINE_LISTING_ARGS, type CandidateLines } from "./rg-process.ts";
 import { fileCandidateArgs } from "./grep-rg.testing.ts";
 const { DEFAULT_OUTPUT_BUDGETS } = await import("./tool-factories.testing.ts");
 
@@ -42,7 +42,7 @@ type FakeOptions = {
   error?: Error;
   onRun?: () => void | Promise<void>;
   paths?: string[];
-  lines?: readonly number[];
+  lines?: CandidateLines;
   rejectsPatterns?: boolean;
 };
 
@@ -77,7 +77,7 @@ function fakeBackend(options: FakeOptions = {}) {
   const backend = {
     runRgPaths: (args, _cwd, _signal, onPath) => run("paths", args, onPath),
     runRgLines: (args, _cwd, _signal, _maxLines, onFile) =>
-      run("lines", args, (file) => onFile(file, options.lines)),
+      run("lines", args, (file) => onFile(file, options.lines ?? "all")),
     rgRejectsPatterns: async (args, _cwd, _signal) => {
       calls.push({ kind: "probe", args });
       return options.rejectsPatterns ?? false;
@@ -1743,7 +1743,7 @@ test("sparse, dense, or overflowed candidate lines → matching preserves origin
   withDir(async (dir) => {
     const file = join(dir, "input.txt");
     await writeFile(file, "miss\r\nneedle\r\nmiss\nmiss\nneedle\r");
-    for (const lines of [[2, 5], [1, 2, 4, 5], undefined]) {
+    for (const lines of [[2, 5], [1, 2, 4, 5], "all"] as const) {
       const fake = fakeBackend({ paths: [file], lines });
       const result = await callTool(makeMockGrep(dir, DEFAULT_CONFIG, fake.backend), {
         path: file,

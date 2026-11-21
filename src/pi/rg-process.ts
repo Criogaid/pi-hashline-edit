@@ -222,22 +222,25 @@ export const LINE_LISTING_ARGS = [
   "--max-columns=1",
 ];
 
+/** A file's candidate lines: ascending line numbers, or every line. */
+export type CandidateLines = readonly number[] | "all";
+
 /**
  * Read a {@link LINE_LISTING_ARGS} listing. Each file's group is a NUL-terminated
  * path, then one `N:` record per matching line ending in a line feed (its content is at most
  * one byte or an omission notice), then an empty line. onFile receives a file's ascending line
- * numbers, or undefined once there are more than maxLines.
+ * numbers, or "all" once there are more than maxLines.
  */
 export function runRgLines(
   args: string[],
   cwd: string,
   signal: AbortSignal,
   maxLines: number,
-  onFile: (path: string, lines: readonly number[] | undefined) => boolean | Promise<boolean>,
+  onFile: (path: string, lines: CandidateLines) => boolean | Promise<boolean>,
 ): Promise<RgRunResult> {
   return runRg(args, cwd, signal, async (stdout) => {
     let path: string | undefined;
-    let lines: number[] | undefined = [];
+    let lines: number[] | "all" = [];
     let pending: Buffer = Buffer.alloc(0);
     const flush = () => {
       const found = lines;
@@ -260,13 +263,13 @@ export function runRgLines(
         if (path === undefined) path = decodePath(record);
         else if (!record.length) {
           if (!(await flush())) return false;
-        } else if (lines) {
+        } else if (lines !== "all") {
           const colon = record.indexOf(58);
           const line = colon > 0 ? Number(record.subarray(0, colon).toString("latin1")) : NaN;
           if (!Number.isSafeInteger(line) || line < 1)
             throw new HashlineError("RIPGREP_FAILED", "ripgrep printed an unexpected line record.");
           if (lines.length < maxLines) lines.push(line);
-          else lines = undefined;
+          else lines = "all";
         }
       }
       pending = buf.subarray(at);

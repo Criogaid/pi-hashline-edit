@@ -62,9 +62,22 @@ interface Queued {
   readonly position: number;
 }
 /** A searched candidate, including fatal failures that only matter before the ordered cutoff. */
+/**
+ * One candidate's search: its matches, none, or none because a NUL appeared after the worker
+ * failed on earlier text, so the slot needs a fresh worker.
+ */
+type FileSearch =
+  | { readonly kind: "matched"; readonly file: GrepFileMatch }
+  | { readonly kind: "none" }
+  | { readonly kind: "restart" };
+
+const NO_MATCH = { kind: "none" } as const satisfies FileSearch;
+
+/** A searched candidate waiting to commit in listing order. */
 type Settled =
-  | { readonly file?: GrepFileMatch; readonly warning?: SearchWarning }
-  | { readonly error: unknown };
+  | Exclude<FileSearch, { readonly kind: "restart" }>
+  | { readonly kind: "warning"; readonly warning: SearchWarning }
+  | { readonly kind: "error"; readonly error: unknown };
 
 /**
  * The candidate lines among the next lines of a request source, as the LF view shows them.
@@ -102,7 +115,7 @@ async function searchFile(
   fileLimit: number,
   run: Run,
   signal: AbortSignal,
-): Promise<GrepFileMatch | "restart" | undefined> {
+): Promise<FileSearch> {
   const rows: Rows = [];
   let lineOffset = 0;
   let nextWanted = 0;
@@ -110,7 +123,7 @@ async function searchFile(
   const send = async (source: string) => {
     const lines = countLines(source);
     let candidates = lines;
-    if (wanted) {
+    if (wanted !== "all") {
       let end = nextWanted;
       while (end < wanted.length && wanted[end] <= lineOffset + lines) end++;
       candidates = end - nextWanted;
@@ -119,7 +132,7 @@ async function searchFile(
     if (candidates > 0 && limit > 0) {
       // Selecting most lines costs more than matching them all, with the same results.
       const selected =
-        wanted && candidates * 2 <= lines
+        wanted !== "all" && candidates * 2 <= lines
           ? selectLines(source, lineOffset, wanted, nextWanted)
           : undefined;
       const found = await run(
@@ -131,7 +144,7 @@ async function searchFile(
           column,
         });
     }
-    if (wanted) nextWanted += candidates;
+    if (wanted !== "all") nextWanted += candidates;
     lineOffset += lines;
   };
 
@@ -194,16 +207,15 @@ async function searchFile(
     if (evaluationFailure) throw evaluationFailure.error;
     throw error;
   });
-  if (stats.hasNul) return evaluationFailure ? "restart" : undefined;
+  if (stats.hasNul) return evaluationFailure ? { kind: "restart" } : NO_MATCH;
   if (evaluationFailure) throw evaluationFailure.error;
   if (oversized || lineUnits > MAX_SEARCH_LINE_UNITS)
     throw new SearchFileLimitError(query.multiline);
   await send(pending);
-  if (!rows.length) return undefined;
+  if (!rows.length) return NO_MATCH;
   return {
-    filePath,
-    rows,
-    snapshot: { revision: stats.revision, validUtf8: stats.validUtf8 },
+    kind: "matched",
+    file: { filePath, rows, snapshot: { revision: stats.revision, validUtf8: stats.validUtf8 } },
   };
 }
 
@@ -259,9 +271,9 @@ export async function searchFiles(options: {
     settled.set(position, outcome);
     for (let result = settled.get(committed); result && !stopped(); ) {
       settled.delete(committed++);
-      if ("error" in result) fail(result.error);
-      else if (result.warning) warnings.push(result.warning);
-      else if (result.file) {
+      if (result.kind === "error") fail(result.error);
+      else if (result.kind === "warning") warnings.push(result.warning);
+      else if (result.kind === "matched") {
         const rows = result.file.rows.slice(0, limit - matches);
         files.push({ ...result.file, rows });
         matches += rows.length;
@@ -276,7 +288,7 @@ export async function searchFiles(options: {
   const consume = async (run: Run): Promise<"restart" | void> => {
     for (let item = await next(); item !== undefined; item = await next()) {
       const { candidate, position } = item;
-      let found: Awaited<ReturnType<typeof searchFile>>;
+      let found: FileSearch;
       try {
         // Use a fixed file budget so earlier commits cannot change which regex requests run.
         found = await searchFile(candidate, query, limit, run, poolSignal);
@@ -286,15 +298,15 @@ export async function searchFiles(options: {
           error instanceof SearchFileLimitError
             ? { path: candidate.filePath, reason: error.message }
             : fileReadWarning(candidate.filePath, error);
-        commit(position, warning ? { warning } : { error });
+        commit(position, warning ? { kind: "warning", warning } : { kind: "error", error });
         if (!warning) return;
         continue;
       }
-      if (found === "restart") {
-        commit(position, {});
-        return found;
+      if (found.kind === "restart") {
+        commit(position, NO_MATCH);
+        return "restart";
       }
-      commit(position, { file: found });
+      commit(position, found);
     }
   };
 

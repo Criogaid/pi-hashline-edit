@@ -88,7 +88,7 @@ test("out-of-order file completions → listing order fixes rows, warnings, and 
           runRgPaths: async () => assert.fail("This query uses line candidates"),
           runRgLines: async (_args, _cwd, _signal, _maxLines, onFile) => {
             for (const name of names) {
-              if (!(await onFile(join(dir, name), undefined))) {
+              if (!(await onFile(join(dir, name), "all"))) {
                 return { code: 2, stderr: listingDiagnostic, stopped: true };
               }
             }
@@ -187,7 +187,7 @@ test("match limit reached before a repeated candidate → stop listing before la
       const result = await callTool(
         makeMockGrep(dir, DEFAULT_CONFIG, {
           runRgLines: (_args, _cwd, _signal, _maxLines, onFile) =>
-            list((path) => onFile(path, undefined)),
+            list((path) => onFile(path, "all")),
           runRgPaths: (_args, _cwd, _signal, onFile) => list(onFile),
         }),
         { path: file, ...query, limit: 1, outputMode: "files" },
@@ -234,7 +234,7 @@ test("file-associated failure → listing position decides failure or cutoff, wh
   const backend: MockRg = {
     runRgPaths: async () => assert.fail("This query uses line candidates"),
     runRgLines: async (_args, _cwd, _signal, _maxLines, onFile) => {
-      for (const name of names) if (!(await onFile(join(dir, name), undefined))) break;
+      for (const name of names) if (!(await onFile(join(dir, name), "all"))) break;
       return { code: 0, stderr: "", stopped: false };
     },
   };
@@ -344,7 +344,7 @@ test("partial budget consumed by an earlier file → later file has the same reg
   const backend: MockRg = {
     runRgPaths: async () => assert.fail("This query uses line candidates"),
     runRgLines: async (_args, _cwd, _signal, _maxLines, onFile) => {
-      for (const file of [early, late]) if (!(await onFile(file, undefined))) break;
+      for (const file of [early, late]) if (!(await onFile(file, "all"))) break;
       return { code: 0, stderr: "", stopped: false };
     },
   };
@@ -431,7 +431,7 @@ test("regex request fails before a later NUL → skip that file and search the n
   );
   const tool = makeMockGrep(dir, DEFAULT_CONFIG, {
     runRgLines: async (_args, _cwd, _signal, _maxLines, onFile) => {
-      for (const file of [...binaries, text]) if (!(await onFile(file, undefined))) break;
+      for (const file of [...binaries, text]) if (!(await onFile(file, "all"))) break;
       return { code: 0, stderr: "", stopped: false };
     },
   });

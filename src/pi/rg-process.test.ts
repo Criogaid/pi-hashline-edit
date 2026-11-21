@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import childProcess from "node:child_process";
 import { syncBuiltinESMExports } from "node:module";
 import { Readable } from "node:stream";
-import { searchDiagnostic, runRgLines } from "./rg-process.ts";
+import { searchDiagnostic, runRgLines, type CandidateLines } from "./rg-process.ts";
 import { fileURLToPath } from "node:url";
 import { HashlineError } from "../core/errors.ts";
 
@@ -49,7 +49,7 @@ async function parseListing(
   });
   syncBuiltinESMExports();
   try {
-    const files: { path: string; lines: readonly number[] | undefined }[] = [];
+    const files: { path: string; lines: CandidateLines }[] = [];
     const result = await runRgLines(
       [
         listingFixture,
@@ -101,7 +101,7 @@ test("line listing exceeds maxLines → only the overflowing file requests all-l
       maxLines,
     );
     assert.deepEqual(files, [
-      { path: "many", lines: maxLines === 2 ? undefined : [1, 2, 3] },
+      { path: "many", lines: maxLines === 2 ? "all" : [1, 2, 3] },
       { path: "few", lines: [1] },
     ]);
   }

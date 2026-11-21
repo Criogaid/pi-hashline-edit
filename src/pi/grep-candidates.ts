@@ -21,6 +21,7 @@ import {
   rgRejectsPatterns,
   runRgLines,
   runRgPaths,
+  type CandidateLines,
   type RgRunResult,
 } from "./rg-process.ts";
 import { lineCandidatePatterns, rgCodePoint } from "./rg-regex.ts";
@@ -35,10 +36,10 @@ export const MAX_UNNARROWED_SCAN_BYTES = 256 * 1024 * 1024;
 /** Candidate patterns match original bytes exactly as written; JavaScript decides case and encoding. */
 const BYTE_PATTERN_ARGS = ["--engine=default", "--case-sensitive", "--encoding=none"];
 
-/** An absolute file path to check: only its ascending candidate lines, or every line when absent. */
+/** An absolute file path to check and its candidate lines. */
 export interface Candidate {
   readonly filePath: string;
-  readonly lines?: readonly number[];
+  readonly lines: CandidateLines;
 }
 
 /** A literal's characters as one rg pattern. */
@@ -84,7 +85,7 @@ export async function listCandidates(options: {
   let scanned = 0;
   let scanLimitReached = false;
   const seen = new ListedFiles();
-  const offer = async (path: string, lines?: readonly number[]) => {
+  const offer = async (path: string, lines: CandidateLines) => {
     listedAny = true;
     if (stopped()) return false;
     const filePath = resolve(path);
@@ -148,7 +149,7 @@ export async function listCandidates(options: {
           ],
           cwd,
           signal,
-          offer,
+          (path) => offer(path, "all"),
         ),
     };
   }
@@ -170,7 +171,7 @@ export async function listCandidates(options: {
     [...COMMON_RG_ARGS, "--files", "--null", ...scoped],
     cwd,
     signal,
-    offer,
+    (path) => offer(path, "all"),
   );
   return { listing, scanLimitReached };
 }

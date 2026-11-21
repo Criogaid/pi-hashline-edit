@@ -6,7 +6,7 @@ import { join, resolve } from "node:path";
 import { test } from "node:test";
 import { searchText, type GrepQuery } from "../core/search.ts";
 import type { GrepFileMatch } from "../pi/grep-search.ts";
-import { runRgLines, runRgPaths } from "../pi/rg-process.ts";
+import { runRgLines, runRgPaths, type CandidateLines } from "../pi/rg-process.ts";
 import { fileCandidateArgs } from "../pi/grep-rg.testing.ts";
 import { lineCandidatePatterns } from "../pi/rg-regex.ts";
 
@@ -70,7 +70,7 @@ test("upstream regex witnesses × LF/CRLF/malformed bytes → sound candidates, 
           await writeFile(filePath, bytes);
           inputs.push({ bytes, filePath });
         }
-        const candidates = new Map<string, readonly number[] | undefined>();
+        const candidates = new Map<string, CandidateLines>();
         const result = await searchWithMockRg({
           backend: {
             runRgPaths: async () => assert.fail("unexpected file fallback"),
@@ -92,16 +92,17 @@ test("upstream regex witnesses × LF/CRLF/malformed bytes → sound candidates, 
         });
         const expected = inputs.map(({ bytes, filePath }) => {
           const native = searchText({ source: bytes.toString("utf8"), query, limit: 1000 });
+          const listed = candidates.get(filePath);
           for (const row of native.lines)
             assert.ok(
-              candidates.get(filePath)?.includes(row.lineNumber),
+              listed !== undefined && listed !== "all" && listed.includes(row.lineNumber),
               `missing candidate ${filePath}:${row.lineNumber}`,
             );
           if (example.rejectCandidates)
             for (let offset = 0; offset < example.misses.length; offset++) {
               const line = example.hits.length + offset + 1;
               assert.equal(
-                candidates.get(filePath)?.includes(line) ?? false,
+                listed === "all" || listed?.includes(line) === true,
                 false,
                 `unfiltered ${JSON.stringify(example.misses[offset])}`,
               );

@@ -97,7 +97,7 @@ async function runChild(
           cwd,
           signal,
           maxLines,
-          (path: string, lines?: number[]) => {
+          (path: string, lines: readonly number[] | "all") => {
             candidateFiles++;
             return onFile(path, lines);
           },
