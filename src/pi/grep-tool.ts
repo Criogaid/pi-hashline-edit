@@ -130,7 +130,7 @@ export function makeGrepOverride({ cwd, config, budgets }: ToolEnvironment) {
     ],
     parameters: grepSchema,
     outputSchema: SCRIPT_OUTPUT_SCHEMAS.grep,
-    prepareArguments: createArgumentPreparer("grep", grepSchema, checkGrepArguments, budgets),
+    prepareArguments: createArgumentPreparer("grep", grepSchema, budgets, checkGrepArguments),
     constrainedSampling: STRICT_SAMPLING,
 
     renderShell: "default" as const,

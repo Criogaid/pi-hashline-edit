@@ -227,7 +227,7 @@ export function makeReadOverride({
     parameters: parameters as typeof builtin.parameters,
     // Scripts receive the report's object for text, and Pi's image block for a delegated image.
     outputSchema: readOutputSchema(builtin.outputSchema),
-    prepareArguments: createArgumentPreparer("read", parameters, undefined, budgets),
+    prepareArguments: createArgumentPreparer("read", parameters, budgets),
     constrainedSampling: STRICT_SAMPLING,
     renderShell: "default" as const,
 

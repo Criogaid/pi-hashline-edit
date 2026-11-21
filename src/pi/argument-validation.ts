@@ -97,8 +97,8 @@ function preparationError(cause: unknown, limited: boolean, budgets: OutputBudge
 export function createArgumentPreparer<T extends TObject>(
   name: ReportTool,
   parameters: T,
-  check: CheckArguments | undefined,
   budgets: OutputBudgetProvider,
+  check?: CheckArguments,
 ): (args: unknown) => Static<T> {
   const validator = compile(parameters, COMPILE_OPTIONS);
 

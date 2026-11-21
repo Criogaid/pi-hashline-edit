@@ -83,7 +83,7 @@ interface MutationToolSpec<P extends TProperties, TDetails, TTool extends Mutati
   readonly promptSnippet: string;
   readonly promptGuidelines?: readonly string[];
   /** Semantic argument checks the schema cannot express. */
-  readonly check?: CheckArguments;
+  readonly check: CheckArguments;
   /** Perform the mutation. Runs inside the file mutation queue. */
   run(
     params: Omit<MutationParams<P>, "then_run">,
@@ -116,7 +116,7 @@ export function mutationToolBase<
     ],
     parameters,
     outputSchema: SCRIPT_OUTPUT_SCHEMAS[tool],
-    prepareArguments: createArgumentPreparer(tool, parameters, spec.check, budgets),
+    prepareArguments: createArgumentPreparer(tool, parameters, budgets, spec.check),
     constrainedSampling: STRICT_SAMPLING,
     renderShell: "default" as const,
     execute(
