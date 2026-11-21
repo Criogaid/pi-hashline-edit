@@ -7,7 +7,7 @@
  * semantic checks, and `run`, and adds its own renderers.
  *
  * Owns the sequencing every mutation tool must keep identical once Pi has
- * prepared and validated the arguments: separating then_run, path resolution,
+ * checked the arguments: separating then_run,
  * the shared file mutation queue, the hand-off to Action Fusion, and
  * finalization. Each tool returns a typed `MutationOutcome` (commit facts,
  * details, outcome facts); Action Fusion returns facts too, and this module's
@@ -44,7 +44,6 @@ import {
   type MutationFinalDetails,
   type MutationResultDetails,
 } from "./mutation-result.ts";
-import { canonicalPath } from "./path.ts";
 import { callSignal, throwIfCancelled } from "./error-text.ts";
 import { runTool } from "./report.ts";
 import type { OutputBudgets } from "./budgets.ts";
@@ -78,7 +77,7 @@ export interface MutationTarget {
 type MutationParams<P extends TProperties> = Static<TObject<P>> & { readonly path: string };
 
 /** What a mutation tool supplies to the shared definition; renderers stay with the tool. */
-interface MutationToolSpec<P extends TProperties, TDetails, TTool extends MutationToolName>
+interface MutationToolSpec<P extends TProperties, TDetails, TTool extends MutationToolName, Parsed>
   extends MutationToolEnvironment {
   readonly tool: TTool;
   /** Parameters without then_run, which Action Fusion adds. */
@@ -86,12 +85,13 @@ interface MutationToolSpec<P extends TProperties, TDetails, TTool extends Mutati
   readonly description: string;
   readonly promptSnippet: string;
   readonly promptGuidelines?: readonly string[];
-  /** Semantic argument checks the schema cannot express. */
-  readonly check: CheckArguments;
+  /** Semantic argument checks and any execution data they derive. */
+  readonly check: CheckArguments<Parsed>;
   /** Perform the mutation. Runs inside the file mutation queue. */
   run(
     params: Omit<MutationParams<P>, "then_run">,
     target: MutationTarget,
+    parsed: NoInfer<Parsed>,
   ): Promise<MutationOutcome<TDetails, NoInfer<TTool>>>;
 }
 
@@ -105,11 +105,12 @@ export function mutationToolBase<
   P extends TProperties,
   TDetails extends object,
   TTool extends MutationToolName,
->(spec: MutationToolSpec<P, TDetails, TTool>) {
+  Parsed,
+>(spec: MutationToolSpec<P, TDetails, TTool, Parsed>) {
   const { tool, cwd, schema, schedule, budgets } = spec;
   const { actionFusion } = spec.config;
   const parameters = withThenRunSchema(schema, tool, actionFusion);
-  const boundary = createArgumentBoundary(parameters, budgets, spec.check);
+  const boundary = createArgumentBoundary(parameters, cwd, budgets, spec.check);
   return {
     name: tool,
     label: tool,
@@ -134,17 +135,21 @@ export function mutationToolBase<
       const signal = callSignal(piSignal);
       // Pi's agent loop always supplies a callback; a direct call without one has no display.
       const onUpdate = piOnUpdate ?? (() => {});
-      const { then_run, ...mutationParams } = boundary.afterHooks(params);
+      const {
+        args,
+        parsed,
+        paths: [{ absolutePath }],
+      } = boundary.afterHooks(params);
+      const { then_run, ...mutationParams } = args;
       const displayPath = mutationParams.path;
       const budget = budgets();
       return runTool(
         tool,
         { path: displayPath, signal, budget },
         async () => {
-          const absolutePath = canonicalPath(cwd, displayPath);
           const target: MutationTarget = { absolutePath, signal, budget };
           const mutate = (): Promise<MutationOutcome<TDetails, TTool>> =>
-            withFileMutationQueue(absolutePath, () => spec.run(mutationParams, target));
+            withFileMutationQueue(absolutePath, () => spec.run(mutationParams, target, parsed));
           const settled = await schedule({
             toolCallId,
             absolutePath,

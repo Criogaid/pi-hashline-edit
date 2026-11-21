@@ -8,7 +8,6 @@
 import { homedir } from "node:os";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { errorMessage } from "../core/errors.ts";
 
 const UNICODE_SPACES = /[\u00A0\u2000-\u200A\u202F\u205F\u3000]/g;
 const WINDOWS_SHELL_DRIVE = /^\/(?:mnt\/|cygdrive\/)?([a-z])(?:\/(.*))?$/is;
@@ -59,17 +58,18 @@ export function canonicalPath(cwd: string, path: string): string {
   return resolve(cwd, localPath(path));
 }
 
-/** Why a model-supplied path names no local path, or undefined when it names one. */
-export function pathSpellingError(path: string): string | undefined {
-  try {
-    // No filesystem path contains NUL, spelled or decoded from a file URL. The spelling is checked
-    // too, because normalization can drop the segment that holds it.
-    return path.includes("\0") || localPath(path).includes("\0")
-      ? "Path contains a NUL character."
-      : undefined;
-  } catch (error) {
-    return errorMessage(error);
-  }
+export interface ResolvedArgumentPath {
+  readonly absolutePath: string;
+  readonly spelling: string;
+}
+
+/** Parse a local path argument, rejecting NUL before and after decoding or normalization. */
+export function parseArgumentPath(path: string): string {
+  const nulMessage = "Path contains a NUL character.";
+  if (path.includes("\0")) throw new Error(nulMessage);
+  const local = localPath(path);
+  if (local.includes("\0")) throw new Error(nulMessage);
+  return local;
 }
 
 /**

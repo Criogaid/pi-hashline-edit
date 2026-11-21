@@ -26,7 +26,7 @@ import { Text } from "@earendil-works/pi-tui";
 import { IsString, IsUnion, Type, type TSchema } from "typebox";
 import { scanTextLines } from "./text-stream.ts";
 import { createAnchorFormatter, displayCarriageReturns, parseHashline } from "./anchor-format.ts";
-import { canonicalPath, serializePath } from "./path.ts";
+import { serializePath } from "./path.ts";
 import { renderToolError, reportLines, splitReport } from "./render.ts";
 import { POSITIVE_SAFE_INTEGER, STRICT_SAMPLING } from "./schema.ts";
 import { HashlineError } from "../core/errors.ts";
@@ -36,7 +36,7 @@ import { reportResult, runTool, type ReportDetails } from "./report.ts";
 import { SCRIPT_OUTPUT_SCHEMAS } from "./report-schema.ts";
 import { formatByteSize } from "./budgets.ts";
 import type { ToolEnvironment } from "./config.ts";
-import { createArgumentBoundary } from "./argument-validation.ts";
+import { createArgumentBoundary, noArgumentProduct } from "./argument-validation.ts";
 
 const DEFAULT_OFFSET = 1;
 
@@ -171,7 +171,7 @@ export function makeReadOverride({ cwd, config, budgets }: ToolEnvironment) {
     { additionalProperties: false },
   );
 
-  const boundary = createArgumentBoundary(parameters, budgets);
+  const boundary = createArgumentBoundary(parameters, cwd, budgets, () => noArgumentProduct);
   return {
     name: "read" as const,
     label: "read",
@@ -230,7 +230,11 @@ export function makeReadOverride({ cwd, config, budgets }: ToolEnvironment) {
       onUpdate,
       ctx,
     ): Promise<AgentToolResult<ReadDetails | undefined>> {
-      const { anchors: anchored, ...params } = boundary.afterHooks(input);
+      const {
+        args,
+        paths: [{ absolutePath: absPath }],
+      } = boundary.afterHooks(input);
+      const { anchors: anchored, ...params } = args;
       const signal = callSignal(piSignal);
       const budget = budgets();
       const maxBytes = configuredBytes ?? budget.readBytes;
@@ -243,7 +247,6 @@ export function makeReadOverride({ cwd, config, budgets }: ToolEnvironment) {
           ? (_line: number, content: string) => displayCarriageReturns(content)
           : createAnchorFormatter(hashLen).row;
         const report = { tool: "read" as const, path: params.path };
-        const absPath = canonicalPath(cwd, params.path);
         const readNative = async () => {
           // Bind I/O to our target: native resolution may normalize or try filename variants.
           const native = createReadToolDefinition(cwd, {

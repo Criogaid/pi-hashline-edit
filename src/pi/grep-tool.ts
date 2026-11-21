@@ -6,6 +6,7 @@
  * @module pi-hashline-edit/pi
  */
 
+import { resolve } from "node:path";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { Text } from "@earendil-works/pi-tui";
@@ -31,6 +32,7 @@ import type { HashlineEditConfig, ToolEnvironment } from "./config.ts";
 import {
   checkRegexArguments,
   createArgumentBoundary,
+  noArgumentProduct,
   type ReportArgumentIssue,
 } from "./argument-validation.ts";
 
@@ -106,19 +108,21 @@ function streamedList(value: string | readonly string[] | null | undefined): rea
 }
 
 /** Validate JavaScript syntax once; the search never rejects a pattern V8 accepts. */
-function checkGrepArguments(args: unknown, report: ReportArgumentIssue): void {
+function checkGrepArguments(args: unknown, report: ReportArgumentIssue) {
   const { pattern, literal } = (args ?? {}) as Record<string, unknown>;
   const fields = Array.isArray(pattern)
     ? Array.from(pattern, (value, index) => [`pattern[${index}]`, value] as const)
     : [];
   checkRegexArguments("flags", GREP_FLAGS, literal !== false, fields, report);
+  return noArgumentProduct;
 }
 
 /** Build the grep override (a ToolDefinition fragment for registerTool). */
 export function makeGrepOverride({ cwd, config, budgets }: ToolEnvironment) {
   const { hashLen } = config;
   const grepSchema = createGrepSchema(config.grep);
-  const boundary = createArgumentBoundary(grepSchema, budgets, checkGrepArguments);
+  const boundary = createArgumentBoundary(grepSchema, cwd, budgets, checkGrepArguments);
+  const defaultPaths = [{ absolutePath: resolve(cwd), spelling: "." }];
 
   return {
     name: "grep" as const,
@@ -173,7 +177,7 @@ export function makeGrepOverride({ cwd, config, budgets }: ToolEnvironment) {
     },
 
     async execute(_toolCallId, input, piSignal) {
-      const params = boundary.afterHooks(input);
+      const { args: params, paths: requestedPaths } = boundary.afterHooks(input);
       const signal = callSignal(piSignal);
       const budget = budgets();
       return runTool("grep", { path: params.path, signal, budget }, async () => {
@@ -189,7 +193,9 @@ export function makeGrepOverride({ cwd, config, budgets }: ToolEnvironment) {
           multiline: params.multiline ?? false,
         };
         const globs = params.glob ?? [];
-        const { paths, missing } = await resolveSearchPaths(cwd, params.path);
+        const { paths, missing } = await resolveSearchPaths(
+          params.path === undefined ? defaultPaths : requestedPaths,
+        );
         const admitted = await filterExplicitFilesByGlob(cwd, globs, paths, signal);
         const { warnings: searchWarnings, ...search } = await searchFiles({
           scope: { cwd, globs, searchPaths: admitted.searchPaths },

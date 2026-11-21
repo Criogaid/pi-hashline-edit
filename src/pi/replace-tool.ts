@@ -44,8 +44,8 @@ import {
   type MutationToolEnvironment,
 } from "./mutation-runner.ts";
 import {
-  argumentItems,
   checkRegexArguments,
+  noArgumentProduct,
   type ReportArgumentIssue,
 } from "./argument-validation.ts";
 import { filePathField } from "./schema.ts";
@@ -76,8 +76,9 @@ function replaceHeader(
 }
 
 /** Report unwritable replacement text, flags V8 rejects, and regex compile errors; Pi checks field shapes. */
-function checkReplaceArguments(args: unknown, report: ReportArgumentIssue): void {
-  const rules = argumentItems((args as { replacements?: unknown } | null)?.replacements);
+function checkReplaceArguments(args: unknown, report: ReportArgumentIssue) {
+  const rules = (args as { replacements?: unknown } | null)?.replacements;
+  if (!Array.isArray(rules)) return noArgumentProduct;
   rules.forEach((rule, index) => {
     const { find, replace, literal, flags } = (rule ?? {}) as Record<string, unknown>;
     const item = `replacements[${index}]`;
@@ -92,6 +93,7 @@ function checkReplaceArguments(args: unknown, report: ReportArgumentIssue): void
       report,
     );
   });
+  return noArgumentProduct;
 }
 
 export function makeReplaceTool(env: MutationToolEnvironment) {

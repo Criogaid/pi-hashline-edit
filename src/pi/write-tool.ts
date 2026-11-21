@@ -20,6 +20,7 @@ import {
 import type { MutationOutcome } from "./mutation-result.ts";
 import type { ReportDetails } from "./report.ts";
 import { filePathField } from "./schema.ts";
+import { noArgumentProduct } from "./argument-validation.ts";
 
 const writeSchema = Type.Object(
   {
@@ -56,6 +57,7 @@ export function makeWriteOverride(env: MutationToolEnvironment) {
         const content = (args as { content?: unknown } | null)?.content;
         const unwritable = typeof content === "string" ? unwritableTextError(content) : undefined;
         if (unwritable) report("content", unwritable.message);
+        return noArgumentProduct;
       },
       async run(
         params,

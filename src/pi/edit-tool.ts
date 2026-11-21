@@ -32,15 +32,8 @@ import {
   type MutationTarget,
   type MutationToolEnvironment,
 } from "./mutation-runner.ts";
-import { argumentItems, type ReportArgumentIssue } from "./argument-validation.ts";
+import type { ReportArgumentIssue } from "./argument-validation.ts";
 import { filePathField, literalUnion } from "./schema.ts";
-
-/** Parse an anchor from the checked execution snapshot. */
-function parseAnchor(value: string): Anchor;
-function parseAnchor(value: string | undefined): Anchor | undefined;
-function parseAnchor(value: string | undefined) {
-  return value === undefined ? undefined : parseAnchorToken(value)!;
-}
 
 /** Operation item fields besides `action`. */
 type EditItemField = (typeof EDIT_ANCHOR_FIELDS)[number] | "lines";
@@ -70,7 +63,7 @@ const EDIT_OPS = {
   },
   append: { meaning: "Add lines at the end of the file.", required: ["lines"] },
   prepend: { meaning: "Add lines at the start of the file.", required: ["lines"] },
-} as const satisfies Record<string, EditOpSpec>;
+} as const satisfies Record<Edit["op"], EditOpSpec>;
 type EditOpName = keyof typeof EDIT_OPS;
 const EDIT_OP_NAMES = Object.keys(EDIT_OPS) as EditOpName[];
 
@@ -127,32 +120,32 @@ type EditSchema = ReturnType<typeof buildEditSchema>;
 
 type EditParams = Static<EditSchema>;
 
-type EditOpInput = EditParams["steps"][number];
 type EditOpSchema = EditSchema["properties"]["steps"]["items"];
 
-/** The fields an op declares under `required` or `optional` in EDIT_OPS. */
-type OpFields<
-  Name extends EditOpName,
-  Kind extends "required" | "optional",
-> = (typeof EDIT_OPS)[Name] extends { readonly [K in Kind]: readonly (infer Field)[] }
-  ? Field
-  : never;
-
-/** A step as argument checks admit it: each field its action requires, and no field it does not take. */
-type CheckedEditOp = {
-  [Name in EditOpName]: { readonly action: Name } & {
-    readonly [Field in OpFields<Name, "required"> & keyof EditOpInput]-?: NonNullable<
-      EditOpInput[Field]
-    >;
-  } & {
-    readonly [Field in OpFields<Name, "optional"> & keyof EditOpInput]?: EditOpInput[Field];
-  } & {
-    readonly [Field in Exclude<
-      EditItemField,
-      OpFields<Name, "required"> | OpFields<Name, "optional">
-    >]?: never;
-  };
-}[EditOpName];
+function editArgumentRules(item: EditOpSchema) {
+  const { action: _action, ...fields } = item.properties;
+  // Object keys preserve the step schema's diagnostic order.
+  const fieldNames = Object.keys(fields) as EditItemField[];
+  return new Map(
+    EDIT_OP_NAMES.map((action) => {
+      const spec: EditOpSpec = EDIT_OPS[action];
+      const fix = `"${action}": ${describeEditOp(spec)}`;
+      const rules = fieldNames.map((field) => {
+        if (spec.required.includes(field))
+          return {
+            field,
+            missing: {
+              reason: `is required for "${action}"`,
+              fix: Reflect.get(fields[field], "description"),
+            },
+          };
+        if (spec.optional?.includes(field)) return { field };
+        return { field, present: { reason: "is not allowed", fix } };
+      });
+      return [action as unknown, { action, rules }] as const;
+    }),
+  );
+}
 
 /** How to correct edit argument issues; each reason states only what is wrong. */
 const EDIT_ISSUE_FIX = {
@@ -162,112 +155,115 @@ const EDIT_ISSUE_FIX = {
   hashLength: "Read or grep the file for current anchors.",
 } as const;
 
-/**
- * Report semantic argument issues: the fields each op takes, and field values
- * the schema cannot judge. Malformed shapes remain Pi's schema responsibility;
- * Pi has already removed null optional fields.
- */
-function checkEditArguments(
-  args: unknown,
+/** Decode a cited token and leave shape errors to the schema. */
+function parseCitedAnchor(
+  value: unknown,
+  field: string,
   hashLen: number,
-  item: EditOpSchema,
   report: ReportArgumentIssue,
-): void {
-  const { action: _action, ...fields } = item.properties;
-  // These are the own keys of the flat step schema, in declaration order.
-  const fieldNames = Object.keys(fields) as (keyof typeof fields)[];
-  argumentItems((args as { steps?: unknown } | null)?.steps).forEach((value, index) => {
-    if (value === null || typeof value !== "object") return;
-    const edit = value as Record<string, unknown>;
-    // The schema reports an unknown action; which fields it takes is then unknown.
-    if (typeof edit.action !== "string" || !Object.hasOwn(EDIT_OPS, edit.action)) return;
-    const name = edit.action as EditOpName;
-    const spec: EditOpSpec = EDIT_OPS[name];
-    const path = `steps[${index}]`;
-    const accepted = new Set([...spec.required, ...(spec.optional ?? [])]);
-    const admitted: Partial<Record<EditItemField, unknown>> = {};
-    for (const field of fieldNames) {
-      const value = edit[field];
-      if (value === undefined && spec.required.includes(field)) {
-        report(
-          `${path}.${field}`,
-          `is required for "${name}"`,
-          Reflect.get(fields[field], "description"),
-        );
-      } else if (accepted.has(field)) {
-        admitted[field] = value;
-      } else if (value !== undefined) {
-        report(`${path}.${field}`, "is not allowed", `"${name}": ${describeEditOp(spec)}`);
-      }
-    }
-
-    const { lines } = admitted;
-    if (Array.isArray(lines)) {
-      if (lines.length === 0) {
-        report(
-          `${path}.lines`,
-          "is empty",
-          name === "replace" ? EDIT_ISSUE_FIX.emptyReplace : EDIT_ISSUE_FIX.emptyLines,
-        );
-      }
-      lines.forEach((line, lineIndex) => {
-        const unwritable = typeof line === "string" ? unwritableTextError(line) : undefined;
-        if (unwritable) report(`${path}.lines[${lineIndex}]`, unwritable.message);
-      });
-    }
-    const cited: { anchor?: number; end?: number } = {};
-    for (const field of EDIT_ANCHOR_FIELDS) {
-      const anchor = admitted[field];
-      if (typeof anchor !== "string") continue;
-      const token = parseAnchorToken(anchor);
-      if (!token) continue;
-      if (Number.isSafeInteger(token.line)) {
-        cited[field] = token.line;
-      } else {
-        report(
-          `${path}.${field}`,
-          "line number exceeds the safe integer range",
-          EDIT_ISSUE_FIX.unsafeLine,
-        );
-      }
-      if (token.hash.length !== hashLen) {
-        report(
-          `${path}.${field}`,
-          `has ${token.hash.length} hash characters; hashLen is ${hashLen}`,
-          EDIT_ISSUE_FIX.hashLength,
-        );
-      }
-    }
-
-    // The cited line numbers alone decide this, whatever the file holds. An
-    // unsafe line number was reported above, and comparing it would add a false issue.
-    if (cited.anchor !== undefined && cited.end !== undefined && cited.end < cited.anchor) {
-      report(`${path}.end`, `line ${cited.end} is before anchor line ${cited.anchor}`);
-    }
-  });
+): Anchor | undefined {
+  if (typeof value !== "string") return undefined;
+  const token = parseAnchorToken(value);
+  if (!token) return undefined;
+  const safeLine = Number.isSafeInteger(token.line);
+  if (!safeLine)
+    report(field, "line number exceeds the safe integer range", EDIT_ISSUE_FIX.unsafeLine);
+  if (token.hash.length !== hashLen)
+    report(
+      field,
+      `has ${token.hash.length} hash characters; hashLen is ${hashLen}`,
+      EDIT_ISSUE_FIX.hashLength,
+    );
+  // A hash-length error still allows a range comparison, but an unsafe line does not.
+  return safeLine ? token : undefined;
 }
 
-/** Translate checked public operations into core steps, parsing numeric anchor positions. */
-function toCoreEdits(ops: readonly CheckedEditOp[]): Edit[] {
-  return ops.map((op) => {
-    switch (op.action) {
-      case "replace":
-        return {
-          op: "replace",
-          anchor: parseAnchor(op.anchor),
-          end: parseAnchor(op.end),
-          body: op.lines,
-        };
-      case "delete":
-        return { op: "delete", anchor: parseAnchor(op.anchor), end: parseAnchor(op.end) };
-      case "insert_after":
-      case "insert_before":
-        return { op: op.action, anchor: parseAnchor(op.anchor), body: op.lines };
-      case "append":
-      case "prepend":
-        return { op: op.action, body: op.lines };
-    }
-  });
+function checkEditBody(
+  lines: unknown,
+  path: string,
+  emptyFix: string,
+  report: ReportArgumentIssue,
+): string[] | undefined {
+  if (!Array.isArray(lines)) return undefined;
+  if (lines.length === 0) report(path, "is empty", emptyFix);
+  for (const [index, line] of lines.entries()) {
+    if (typeof line !== "string") continue;
+    const unwritable = unwritableTextError(line);
+    if (unwritable) report(`${path}[${index}]`, unwritable.message);
+  }
+  // The boundary releases the body only after the schema checks its item types.
+  return lines as string[];
+}
+
+function checkEditStep(
+  value: unknown,
+  path: string,
+  hashLen: number,
+  rules: ReturnType<typeof editArgumentRules>,
+  report: ReportArgumentIssue,
+) {
+  if (!(value instanceof Object)) return undefined;
+  // The schema reports an unknown action; which fields it takes is then unknown.
+  const rule = rules.get(Reflect.get(value, "action"));
+  if (!rule) return undefined;
+  const { action } = rule;
+  const admitted: Partial<Record<EditItemField, unknown>> = {};
+  for (const { field, missing, present } of rule.rules) {
+    const input: unknown = Reflect.get(value, field);
+    const issue = input === undefined ? missing : present;
+    if (issue) report(`${path}.${field}`, issue.reason, issue.fix);
+    else admitted[field] = input;
+  }
+  const body = checkEditBody(
+    admitted.lines,
+    `${path}.lines`,
+    action === "replace" ? EDIT_ISSUE_FIX.emptyReplace : EDIT_ISSUE_FIX.emptyLines,
+    report,
+  );
+  const anchor = parseCitedAnchor(admitted.anchor, `${path}.anchor`, hashLen, report);
+  const end = parseCitedAnchor(admitted.end, `${path}.end`, hashLen, report);
+  if (anchor && end && end.line < anchor.line)
+    report(`${path}.end`, `line ${end.line} is before anchor line ${anchor.line}`);
+  return { action, anchor, end, body };
+}
+
+type CheckedEditStep = {
+  [Op in Edit as Op["op"]]: Omit<Op, "op"> & { action: Op["op"] };
+}[EditOpName];
+
+function buildEdit(step: CheckedEditStep): Edit {
+  switch (step.action) {
+    case "append":
+    case "prepend":
+      return { op: step.action, body: step.body };
+    case "delete":
+      return { op: step.action, anchor: step.anchor, end: step.end };
+    case "replace":
+      return { op: step.action, anchor: step.anchor, body: step.body, end: step.end };
+    case "insert_after":
+    case "insert_before":
+      return { op: step.action, anchor: step.anchor, body: step.body };
+    default:
+      step satisfies never;
+      throw new Error("Accepted edit step has an unknown action.");
+  }
+}
+
+function parseEditArguments(
+  args: unknown,
+  hashLen: number,
+  rules: ReturnType<typeof editArgumentRules>,
+  report: ReportArgumentIssue,
+): () => Edit[] {
+  const steps = (args as { steps?: unknown } | null)?.steps;
+  const drafts = Array.isArray(steps)
+    ? steps.map((value: unknown, index) =>
+        checkEditStep(value, `steps[${index}]`, hashLen, rules, report),
+      )
+    : [];
+  // Schema validation admits only known actions and typed fields. The semantic check
+  // enforces their presence and parses every admitted anchor. The verdict precedes this map.
+  return () => (drafts as readonly CheckedEditStep[]).map(buildEdit);
 }
 
 /** Call header with total/per-kind operation counts and the result's diff counts. */
@@ -300,6 +296,7 @@ export function makeEditOverride(env: MutationToolEnvironment) {
   // Schema, verification, and recovery use the registered configuration.
   const { hashLen, shiftRadius } = env.config;
   const schema = buildEditSchema(hashLen);
+  const rules = editArgumentRules(schema.properties.steps.items);
 
   return {
     ...mutationToolBase({
@@ -313,9 +310,8 @@ export function makeEditOverride(env: MutationToolEnvironment) {
         "Batch all steps for one file into a single edit call, and send changes to different files in the same response; they do not interfere.",
         "Before citing a line after write, edit, or replace, get its anchor from a new read or grep. Only after edit, lines above the earliest changed line keep their anchors.",
       ],
-      check: (args, report) =>
-        checkEditArguments(args, hashLen, schema.properties.steps.items, report),
-      run: (params, target) => runEdit(target, params.steps, hashLen, shiftRadius),
+      check: (args, report) => parseEditArguments(args, hashLen, rules, report),
+      run: (_params, target, edits) => runEdit(target, edits, hashLen, shiftRadius),
     }),
     ...diffCardRenderers("edit", "Editing…", editHeader),
   };
@@ -323,7 +319,7 @@ export function makeEditOverride(env: MutationToolEnvironment) {
 
 function runEdit(
   target: MutationTarget,
-  editOps: readonly EditOpInput[],
+  edits: readonly Edit[],
   hashLen: number,
   shiftRadius: number,
 ) {
@@ -333,9 +329,7 @@ function runEdit(
     // Recovery reports checksum candidates from nearby lines, then the whole file
     // if needed. Every failed anchor still rejects the batch; callers inspect
     // candidates and resubmit with fresh anchors.
-    // The execution boundary checked the final steps against each action's field rules.
-    const checked = editOps as readonly CheckedEditOp[];
-    const result = applyEdits(currentText, toCoreEdits(checked), hashLen, shiftRadius);
+    const result = applyEdits(currentText, edits, hashLen, shiftRadius);
     if (!result.ok) {
       throw describeEditFailure(currentText, result.failures, anchorFormatter, target.budget);
     }

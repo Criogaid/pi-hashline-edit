@@ -6,7 +6,7 @@
  */
 import { stat } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
-import { canonicalPath, isGlobSpelling } from "./path.ts";
+import { isGlobSpelling, type ResolvedArgumentPath } from "./path.ts";
 import { COMMON_RG_ARGS, runRgPaths, searchDiagnostic } from "./rg-process.ts";
 import { errnoCode, HashlineError, PATH_ERROR_MESSAGES } from "../core/errors.ts";
 import type { SearchWarning } from "./error-text.ts";
@@ -35,22 +35,21 @@ interface SearchPathInfo {
 }
 
 /**
- * Canonical search paths, the working directory when none is given, and the missing ones. The
+ * Admit resolved search paths and identify the missing ones. The
  * call fails when every path is missing, or when a missing path is a wildcard meant for glob.
  */
-export async function resolveSearchPaths(cwd: string, path: readonly string[] | undefined) {
+export async function resolveSearchPaths(paths: readonly ResolvedArgumentPath[]) {
   const pathInfo: SearchPathInfo[] = [];
   const missing: string[] = [];
   let wildcard = false;
-  for (const value of path ?? ["."]) {
-    const searchPath = canonicalPath(cwd, value);
+  for (const { absolutePath: searchPath, spelling } of paths) {
     try {
       pathInfo.push({ path: searchPath, isFile: (await stat(searchPath)).isFile() });
     } catch (error) {
       // Only a missing path is PATH_NOT_FOUND; other filesystem errors keep their cause.
       if (errnoCode(error) !== "ENOENT") throw error;
       missing.push(searchPath);
-      wildcard ||= isGlobSpelling(value);
+      wildcard ||= isGlobSpelling(spelling);
     }
   }
   if (wildcard || (missing.length && pathInfo.length === 0))

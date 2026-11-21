@@ -4,6 +4,7 @@
  * schema failure. Pi still validates the original arguments after preparation.
  * Tool schemas have no cross-field constraints.
  */
+import { resolve } from "node:path";
 import { compile } from "@earendil-works/pi-schema";
 import { formats } from "@earendil-works/pi-schema/formats";
 import { IsArray, IsObject, type Static, type TObject, type TSchema } from "typebox";
@@ -12,12 +13,14 @@ import { buildRegex } from "../core/regex.ts";
 import { diagnoseArguments, nativeArgumentIssue, propertyPath } from "./argument-diagnostics.ts";
 import { formatArgumentError } from "./argument-error.ts";
 import type { OutputBudgetProvider } from "./budgets.ts";
-import { pathSpellingError } from "./path.ts";
+import { parseArgumentPath, type ResolvedArgumentPath } from "./path.ts";
 import type { ArgumentIssue } from "./report-schema.ts";
 
 /** Report one semantic issue: what is wrong (a fact), and how to correct it when the fact alone does not say. */
 export type ReportArgumentIssue = (field: string, reason: string, fix?: string) => void;
-export type CheckArguments = (args: unknown, report: ReportArgumentIssue) => void;
+export type CheckArguments<Parsed> = (args: unknown, report: ReportArgumentIssue) => () => Parsed;
+
+export const noArgumentProduct = () => {};
 
 /**
  * Report V8's diagnostics for a rule's flags and, in regex mode, for each pattern that
@@ -52,11 +55,6 @@ export function checkRegexArguments(
   }
 }
 
-/** Inspect arrays and the singleton objects Pi may coerce, without changing input. */
-export function argumentItems(value: unknown): readonly unknown[] {
-  return Array.isArray(value) ? value : value !== null && typeof value === "object" ? [value] : [];
-}
-
 /** pi-ai's validateToolArguments compile options. */
 const COMPILE_OPTIONS = { formats, coerce: true, unresolvedRefs: "reject" } as const;
 
@@ -76,14 +74,20 @@ export function createRenderArguments(parameters: TSchema): (args: unknown) => u
   };
 }
 
-/** A call's path arguments by field; every tool names its path field `path`, grep's a list. */
-function pathArguments(args: unknown): (readonly [string, string])[] {
-  const path = typeof args === "object" && args !== null && "path" in args ? args.path : undefined;
-  if (typeof path === "string") return [["path", path]];
-  if (!Array.isArray(path)) return [];
-  return path.flatMap((item, index) =>
-    typeof item === "string" ? [[`path[${index}]`, item] as const] : [],
-  );
+function parsePathArguments(args: unknown, report: ReportArgumentIssue) {
+  const path = (args as { path?: unknown } | null)?.path;
+  const locals: { spelling: string; local: string }[] = [];
+  const parse = (spelling: unknown, field: string) => {
+    if (typeof spelling !== "string") return;
+    try {
+      locals.push({ spelling, local: parseArgumentPath(spelling) });
+    } catch (error) {
+      report(field, errorMessage(error));
+    }
+  };
+  if (Array.isArray(path)) path.forEach((spelling, index) => parse(spelling, `path[${index}]`));
+  else parse(path, "path");
+  return locals;
 }
 
 function arrayShapeIssue(
@@ -127,46 +131,42 @@ function firstArrayIssue(schema: TSchema, value: unknown, path = ""): ArgumentIs
   return undefined;
 }
 
-function preparationError(cause: unknown, limited: boolean, budgets: OutputBudgetProvider): Error {
-  return new Error(
-    formatArgumentError([{ field: "$", reason: errorMessage(cause) }], limited, budgets()),
-    { cause },
-  );
-}
-
-export function createArgumentBoundary<T extends TObject>(
+export function createArgumentBoundary<T extends TObject, Parsed>(
   parameters: T,
+  cwd: string,
   budgets: OutputBudgetProvider,
-  check?: CheckArguments,
+  check: CheckArguments<Parsed>,
 ) {
   const validator = compile(parameters, COMPILE_OPTIONS);
 
-  function inspectNative<Value>(operation: () => Value): Value {
+  function withArgumentError<Value>(operation: () => Value): Value {
     try {
       return operation();
     } catch (error) {
-      throw preparationError(error, false, budgets);
+      throw new Error(
+        formatArgumentError([{ field: "$", reason: errorMessage(error) }], false, budgets()),
+        { cause: error },
+      );
     }
   }
 
   function snapshot<Value>(args: Value): Value {
-    const copy = inspectNative(() => structuredClone(args));
+    const copy = withArgumentError(() => structuredClone(args));
     const issue = firstArrayIssue(parameters, copy);
     if (issue) throw new Error(formatArgumentError([issue], false, budgets()));
     return copy;
   }
 
-  function inspect<Value>(checked: Value): Value {
-    const schemaFailed = !inspectNative(() => validator.check(checked));
+  function verdict(checked: unknown) {
+    const schemaFailed = !withArgumentError(() => validator.check(checked));
     const issues: ArgumentIssue[] = [];
-    check?.(checked, (field, reason, fix) =>
-      issues.push(fix === undefined ? { field, reason } : { field, reason, fix }),
-    );
-    for (const [field, path] of pathArguments(checked)) {
-      const reason = pathSpellingError(path);
-      if (reason !== undefined) issues.push({ field, reason });
-    }
-    if (!schemaFailed && issues.length === 0) return checked;
+    const report: ReportArgumentIssue = (field, reason, fix) => {
+      issues.push(fix === undefined ? { field, reason } : { field, reason, fix });
+    };
+    const build = check(checked, report);
+    const locals = parsePathArguments(checked, report);
+    if (!schemaFailed && issues.length === 0) return { build, locals };
+
     const result = diagnoseArguments(parameters, checked, issues, schemaFailed);
     // Pi can reject values that TypeBox does not diagnose, for example near-integers.
     const reasons =
@@ -179,14 +179,20 @@ export function createArgumentBoundary<T extends TObject>(
   return {
     prepareArguments(args: unknown): Static<T> {
       const raw = snapshot(args);
-      inspect(inspectNative(() => validator.coerce(raw)));
+      verdict(withArgumentError(() => validator.coerce(raw)));
       // Pi coerces the raw arguments for its hooks after this preflight.
       return args as Static<T>;
     },
     // A tool_call hook can retain and mutate the validated arguments before or during execution.
     // The tool consumes its own checked snapshot of the canonical arguments the last hook left.
-    afterHooks<Input extends Static<T>>(args: Input): Input {
-      return inspect(snapshot(args));
+    afterHooks<Input extends Static<T>>(args: Input) {
+      const checked = snapshot(args);
+      const { build, locals } = verdict(checked);
+      const paths: ResolvedArgumentPath[] = locals.map(({ spelling, local }) => ({
+        absolutePath: resolve(cwd, local),
+        spelling,
+      }));
+      return { args: checked, parsed: build(), paths };
     },
   };
 }
