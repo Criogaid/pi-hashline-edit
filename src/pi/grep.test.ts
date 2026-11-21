@@ -13,6 +13,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import fsPromises from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, toNamespacedPath } from "node:path";
+import { pathToFileURL } from "node:url";
 import { initTheme } from "@earendil-works/pi-coding-agent";
 import { Value } from "typebox/value";
 import { theme } from "../../node_modules/@earendil-works/pi-coding-agent/dist/modes/interactive/theme/theme.js";
@@ -276,6 +277,24 @@ test("some grep paths are missing → searches existing paths and reports missin
         if (limit === 1) assert.equal(report?.matchLimit, 1);
       });
     }
+  }));
+
+test("missing file URL with a query and an @ mention → grep reports the missing path and searches existing files", async () =>
+  withDir(async (dir) => {
+    const file = join(dir, "present.txt");
+    const absent = join(dir, "absent.txt");
+    await writeFile(file, "value\n");
+    const { backend } = fakeBackend({ paths: [file] });
+    const result = await callTool(makeMockGrep(dir, DEFAULT_CONFIG, backend), {
+      literal: true,
+      pattern: "value",
+      path: [file, `@${pathToFileURL(absent).href}?v=1`],
+      outputMode: "count",
+    });
+    const report = reportOf(result, "grep");
+    assert.equal(result.isError, undefined, JSON.stringify(report));
+    assert.deepEqual(report?.missing, [absent.replaceAll("\\", "/")]);
+    assert.equal(grepCounts(result).matches, 1);
   }));
 
 test("question mark in the workspace path → a missing relative name does not hide existing matches", async () =>

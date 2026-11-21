@@ -6,7 +6,7 @@
  */
 import { stat } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
-import { canonicalPath } from "./path.ts";
+import { canonicalPath, isGlobSpelling } from "./path.ts";
 import { COMMON_RG_ARGS, runRgPaths, searchDiagnostic } from "./rg-process.ts";
 import { errnoCode, HashlineError, PATH_ERROR_MESSAGES } from "../core/errors.ts";
 import type { SearchWarning } from "./error-text.ts";
@@ -50,9 +50,7 @@ export async function resolveSearchPaths(cwd: string, path: readonly string[] | 
       // Only a missing path is PATH_NOT_FOUND; other filesystem errors keep their cause.
       if (errnoCode(error) !== "ENOENT") throw error;
       missing.push(searchPath);
-      // The working directory and Windows namespace syntax are not caller globs.
-      const name = process.platform === "win32" ? value.replace(/^@?[\\/]{2}\?[\\/]/, "") : value;
-      wildcard ||= !name.startsWith("file://") && /[*?]/.test(name);
+      wildcard ||= isGlobSpelling(value);
     }
   }
   if (wildcard || (missing.length && pathInfo.length === 0))

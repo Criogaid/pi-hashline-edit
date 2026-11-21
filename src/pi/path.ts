@@ -14,10 +14,12 @@ const WINDOWS_SHELL_DRIVE = /^\/(?:mnt\/|cygdrive\/)?([a-z])(?:\/(.*))?$/is;
 const LOCALHOST_UNC_PATH = /^\\\\(localhost)\\/i;
 const LOCALHOST_UNC_URL = /^file:\/\/\/\/localhost\//i;
 
+/** Pi's file tools accept a path with a leading `@`, as the model mentions a file. */
+const withoutMention = (path: string) => (path.startsWith("@") ? path.slice(1) : path);
+
 /** Resolve model-supplied paths with the same input conventions as Pi's built-in file tools. */
 export function canonicalPath(cwd: string, path: string): string {
-  let normalized = path.replace(UNICODE_SPACES, " ");
-  if (normalized.startsWith("@")) normalized = normalized.slice(1);
+  let normalized = withoutMention(path.replace(UNICODE_SPACES, " "));
   if (
     process.platform === "win32" &&
     normalized.startsWith("/") &&
@@ -46,6 +48,17 @@ export function canonicalPath(cwd: string, path: string): string {
       : fileURLToPath(normalized);
   }
   return resolve(cwd, normalized);
+}
+
+/**
+ * Whether a path that names no file reads as a caller glob: `*` or `?` in the path itself. A file
+ * URL and the Windows namespace prefix are path syntax, not glob characters.
+ */
+export function isGlobSpelling(path: string): boolean {
+  const spelling = withoutMention(path);
+  if (spelling.startsWith("file://")) return false;
+  const name = process.platform === "win32" ? spelling.replace(/^[\\/]{2}\?[\\/]/, "") : spelling;
+  return /[*?]/.test(name);
 }
 
 /** Return a readable path that resolves back to the same file through the tools' input syntax. */
