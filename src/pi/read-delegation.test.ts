@@ -67,6 +67,21 @@ test("read delegation → only images and NUL use native read on the canonical t
     });
   }
 
+  await t.test("NUL read delegation → native read receives the original signal", async (t) => {
+    for (const [name, signal] of [
+      ["undefined signal", undefined],
+      ["provided signal", new AbortController().signal],
+    ] as const) {
+      await t.test(name, async () => {
+        const before = execute.mock.callCount();
+        const result = await callTool(tool, { path: "nul.txt" }, { signal });
+        assert.equal(result.details?.nativeRead, true);
+        assert.equal(execute.mock.callCount(), before + 1);
+        assert.equal(execute.mock.calls.at(-1)?.arguments[3], signal);
+      });
+    }
+  });
+
   await t.test(
     "encoded Unicode path and different context cwd → delegates the exact file",
     async () => {

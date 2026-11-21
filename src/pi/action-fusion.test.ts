@@ -7,6 +7,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { Type } from "typebox";
+import { openTestSession, responseStream } from "../testing/session.testing.ts";
 import { callTool, createToolContext as ctx } from "./tool-call.testing.ts";
 import { makeEditOverride, makeReplaceTool, makeWriteOverride } from "./tool-factories.testing.ts";
 import { commandCompletion, commandOutput, createFusionContext } from "./action-fusion.testing.ts";
@@ -123,6 +125,58 @@ test("then_run schemas reject invalid commands, unknown keys, and excessive time
     }
   } finally {
     await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("fused write → session Bash receives the original signal", async (t) => {
+  const bashSignals: (AbortSignal | undefined)[] = [];
+  const { cwd, model, session } = await openTestSession(t, {
+    tools: ["bash"],
+    configure(pi) {
+      pi.registerTool({
+        name: "bash",
+        label: "bash",
+        description: "Session Bash override",
+        parameters: Type.Object({ command: Type.String() }),
+        async execute(_id, _args, signal) {
+          bashSignals.push(signal);
+          return { content: [{ type: "text", text: "checked" }], details: {} };
+        },
+      });
+    },
+  });
+  const tool = makeWriteOverride(
+    cwd,
+    createActionFusionExecutor(() => {}),
+  );
+  for (const [name, signal] of [
+    ["undefined signal", undefined],
+    ["provided signal", new AbortController().signal],
+  ] as const) {
+    await t.test(name, async () => {
+      const before = bashSignals.length;
+      const args = {
+        path: `${name}.txt`,
+        mode: "create",
+        content: "saved\n",
+        then_run: { command: "check" },
+      };
+      // Pi's nested dispatcher needs the assistant message for the parent call.
+      session.agent.state.messages = [
+        await responseStream(model, {
+          content: [{ type: "toolCall", id: name, name: "write", arguments: args }],
+          stopReason: "toolUse",
+        }).result(),
+      ];
+      const result = await callTool(tool, args, {
+        toolCallId: name,
+        signal,
+        ctx: session.extensionRunner.createToolContext(name, signal),
+      });
+      assert.equal(reportOf(result, "write")?.then_run?.status, "succeeded");
+      assert.equal(bashSignals.length, before + 1);
+      assert.equal(bashSignals.at(-1), signal);
+    });
   }
 });
 
@@ -592,7 +646,6 @@ test("timed command stays silent → heartbeat preserves output and stops after 
         const context = await createFusionContext(dir, t, async (name, input, options) => {
           assert.equal(name, "bash");
           assert.deepEqual(input, { command: "check", timeout: 10 });
-          assert.equal(options?.signal, controller.signal);
           started.resolve();
           options?.onUpdate?.({
             content: [{ type: "text", text: "latest output" }],

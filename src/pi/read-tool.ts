@@ -267,7 +267,7 @@ export function makeReadOverride({
           const result = await native.execute(
             toolCallId,
             { ...params, path: absPath },
-            signal,
+            piSignal,
             onUpdate,
             ctx,
           );

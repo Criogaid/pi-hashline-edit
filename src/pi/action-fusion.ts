@@ -127,10 +127,8 @@ async function runCommand(
 ): Promise<CommandOutcome> {
   // Use the session's callable Bash, including overrides, validation, permission
   // hooks and tool_result hooks. Tool failures resolve with isError, not rejection.
-  const { result, isError, durationMs } = await ctx.executeTool("bash", input, {
-    signal,
-    onUpdate,
-  });
+  // Without a signal option, Pi gives the nested call this tool call's own signal.
+  const { result, isError, durationMs } = await ctx.executeTool("bash", input, { onUpdate });
   const command = {
     terminate: result.terminate,
     result: { content: result.content, details: result.details },
