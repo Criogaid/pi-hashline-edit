@@ -7,7 +7,11 @@ import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { openTestSession, responseStream } from "../testing/session.testing.ts";
 import type { ActionFusionProgress } from "../pi/report-schema.ts";
-import { createActionFusionScheduler, type ThenRunInput } from "../pi/action-fusion.ts";
+import {
+  createActionFusionScheduler,
+  observeFusionToolCall,
+  type ThenRunInput,
+} from "../pi/action-fusion.ts";
 import { makeWriteOverride } from "../pi/tool-factories.testing.ts";
 import { commandText } from "../pi/mutation-result.ts";
 import { reportOf } from "../pi/report.ts";
@@ -27,6 +31,7 @@ async function openSession(
       pi.on("tool_call", (event) => {
         calls.push({ name: event.toolName, parent: event.parentToolCallId });
       });
+      pi.on("tool_call", observeFusionToolCall);
       configure?.(pi);
       pi.registerTool(
         makeWriteOverride(
@@ -143,6 +148,23 @@ for (const { name, source, timeout, command, diagnostic } of commandCases) {
   });
 }
 
+test("session Bash hook shortens the timeout → reports the nested timeout", {
+  timeout: 15_000,
+}, async (t) => {
+  const f = await openSession(t, (pi) => {
+    pi.on("tool_call", (event) => {
+      if (event.toolName === "bash") event.input.timeout = 1;
+    });
+    pi.on("tool_result", (event) => {
+      if (event.toolName === "bash") event.input.timeout = 5;
+    });
+  });
+  await writeFile(join(f.cwd, "command.mjs"), "setTimeout(() => {}, 30_000);\n");
+  const result = await f.run({ command: "node command.mjs", timeout: 10 });
+  assert.match(result.text, /Command timed out after 1 seconds/);
+  assert.equal(result.report?.then_run?.status, "timeout");
+});
+
 for (const [freshness, source, expectedFile, status] of [
   ["changed", "fs.writeFileSync('saved.txt', 'after'); process.exitCode = 7;", "after", "failed"],
   ["missing", "fs.unlinkSync('saved.txt');", null, "succeeded"],
@@ -187,7 +209,7 @@ test("cancelling a real session Bash command → reports cancellation and keeps 
   assert.equal(f.progress.at(-1)?.command, "cancelled");
 });
 
-test("session Bash permission checks wait → countdown starts with command execution progress", {
+test("session Bash permission hook rewrites arguments → shows the executed command and its countdown", {
   timeout: 15_000,
 }, async (t) => {
   const checking = Promise.withResolvers<void>();
@@ -197,11 +219,12 @@ test("session Bash permission checks wait → countdown starts with command exec
       if (event.toolName === "bash") {
         checking.resolve();
         await allowed.promise;
+        event.input.command = "echo checked";
+        event.input.timeout = 5;
       }
     });
   });
-  await writeFile(join(f.cwd, "command.mjs"), "console.log('checked');\n");
-  const pending = f.run({ command: "node command.mjs", timeout: 10 });
+  const pending = f.run({ command: "exit 7", timeout: 10 });
   try {
     await checking.promise;
     assert.ok(f.progress.every((event) => event.timing === undefined));
@@ -210,10 +233,12 @@ test("session Bash permission checks wait → countdown starts with command exec
     await pending;
   }
   assert.deepEqual(f.progress.find((event) => event.timing)?.timing, {
-    timeoutSeconds: 10,
-    remainingSeconds: 10,
+    timeoutSeconds: 5,
+    remainingSeconds: 5,
   });
   assert.equal(f.progress.at(-1)?.command, "succeeded");
+  assert.equal(f.progress.find((event) => event.result)?.commandText, "echo checked");
+  assert.equal(f.progress.at(-1)?.commandText, "echo checked");
 });
 
 test("session Bash tool_call blocks then_run → no command side effect, mutation stays published", {

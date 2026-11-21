@@ -20,7 +20,7 @@ import { makeReadOverride } from "./pi/read-tool.ts";
 import { makeGrepOverride } from "./pi/grep-tool.ts";
 import { makeReplaceTool } from "./pi/replace-tool.ts";
 import { makeWriteOverride } from "./pi/write-tool.ts";
-import { createActionFusionScheduler } from "./pi/action-fusion.ts";
+import { createActionFusionScheduler, observeFusionToolCall } from "./pi/action-fusion.ts";
 import { runAlone } from "./pi/mutation-runner.ts";
 import { registerFusionCards, withMutationStatus } from "./pi/fusion-card.ts";
 import { NEXT_GUIDELINE } from "./pi/report-schema.ts";
@@ -40,6 +40,7 @@ export default async function (pi: ExtensionAPI) {
     // Saved then_run cards render even when Action Fusion is off.
     const reportProgress = registerFusionCards(pi);
     const schedule = config.actionFusion ? createActionFusionScheduler(reportProgress) : runAlone;
+    if (config.actionFusion) pi.on("tool_call", observeFusionToolCall);
     // Every tool returns a report; Pi prints this shared guideline once.
     const register = <TParams extends TSchema, TDetails, TState>(
       tool: ToolDefinition<TParams, TDetails, TState>,

@@ -14,7 +14,11 @@ import { makeEditOverride, makeReplaceTool, makeWriteOverride } from "./tool-fac
 import { commandCompletion, commandOutput, createFusionContext } from "./action-fusion.testing.ts";
 import type { ExtensionToolContext } from "@earendil-works/pi-coding-agent";
 import type { ActionFusionProgress } from "./report-schema.ts";
-import { ACTION_FUSION_GUIDELINES, createActionFusionScheduler } from "./action-fusion.ts";
+import {
+  ACTION_FUSION_GUIDELINES,
+  createActionFusionScheduler,
+  observeFusionToolCall,
+} from "./action-fusion.ts";
 import { loadConfig } from "./config.ts";
 import { ACTION_FUSION_PROGRESS_SCHEMA } from "./report-schema.ts";
 import { Value } from "typebox/value";
@@ -677,6 +681,13 @@ test("timed command stays silent → heartbeat preserves output and stops after 
         const context = await createFusionContext(dir, t, async (name, input, options) => {
           assert.equal(name, "bash");
           assert.deepEqual(input, { command: "check", timeout: 10 });
+          observeFusionToolCall({
+            type: "tool_call",
+            toolName: "bash",
+            toolCallId: `${outcome}/1`,
+            parentToolCallId: outcome,
+            input: { command: "check", timeout: 10 },
+          });
           started.resolve();
           options?.onUpdate?.({
             content: [{ type: "text", text: "latest output" }],
@@ -790,9 +801,19 @@ test("command returns a terminal status → reports its status and diagnostic on
           ? "command diagnostic\nCommand timed out after 10 seconds"
           : "command diagnostic";
       const fusion = createActionFusionScheduler(() => {});
-      const context = await createFusionContext(dir, t, async () => {
+      const context = await createFusionContext(dir, t, async (_name, _input, options) => {
         commands++;
         if (status === "cancelled") controller.abort();
+        if (status === "timeout") {
+          observeFusionToolCall({
+            type: "tool_call",
+            toolName: "bash",
+            toolCallId: "test/1",
+            parentToolCallId: "test",
+            input: { command: "check", timeout: 10 },
+          });
+          options?.onUpdate?.({ content: [], details: undefined });
+        }
         return {
           ...commandCompletion({ content: [{ type: "text", text: output }] }, true),
           durationMs: 1,

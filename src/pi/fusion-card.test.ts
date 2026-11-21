@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { initTheme } from "@earendil-works/pi-coding-agent";
 import { registerFusionCards } from "./fusion-card.ts";
-import { createActionFusionScheduler } from "./action-fusion.ts";
+import { createActionFusionScheduler, observeFusionToolCall } from "./action-fusion.ts";
 import type { ActionFusionProgress } from "./report-schema.ts";
 import type { CommandResult } from "./report-schema.ts";
 import { commandText } from "./mutation-result.ts";
@@ -200,7 +200,7 @@ test("Fusion command outcomes → progress, cards, and reports preserve command 
       const controller = new AbortController();
       if (scenario === "cancelled") controller.abort();
       let commands = 0;
-      const context = await createFusionContext(dir, t, async () => {
+      const context = await createFusionContext(dir, t, async (_name, _input, options) => {
         commands++;
         switch (scenario) {
           case "cancelled-before-execute":
@@ -215,6 +215,14 @@ test("Fusion command outcomes → progress, cards, and reports preserve command 
               durationMs: 1,
             };
           case "cancelled-after-timeout":
+            observeFusionToolCall({
+              type: "tool_call",
+              toolName: "bash",
+              toolCallId: "test/1",
+              parentToolCallId: "test",
+              input: { command: "check", timeout: timeoutSeconds },
+            });
+            options?.onUpdate?.({ content: [], details: undefined });
             controller.abort();
             return { ...commandCompletion(timedOut, true), durationMs: 1 };
           case "cancelled-error":
