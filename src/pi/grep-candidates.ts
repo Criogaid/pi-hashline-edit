@@ -59,11 +59,6 @@ interface PatternStage {
   readonly list: () => Promise<RgRunResult>;
 }
 
-function widenOnArgumentLimit(error: unknown): undefined {
-  if (isRgArgumentLimit(error)) return undefined;
-  throw error;
-}
-
 /**
  * Await each consumer for backpressure; false stops listing. The caller owns worker cleanup.
  * An empty scope lists nothing, because rg would search the working directory instead.
@@ -158,13 +153,18 @@ export async function listCandidates(options: {
   // before offering any candidate because it rejects the patterns. A completed listing that only
   // hit unreadable paths also exits with 2, and stands.
   for (const { patternArgs, list } of patternStages()) {
-    const listing = await list().catch(widenOnArgumentLimit);
-    const givesWay =
-      !listing ||
-      (listing.code === 2 &&
-        !listedAny &&
-        (await rgRejectsPatterns([...BYTE_PATTERN_ARGS, ...patternArgs], cwd, signal)));
-    if (!givesWay) return { listing, scanLimitReached };
+    let listing: RgRunResult;
+    try {
+      listing = await list();
+    } catch (error) {
+      if (isRgArgumentLimit(error)) continue;
+      throw error;
+    }
+    const rejected =
+      listing.code === 2 &&
+      !listedAny &&
+      (await rgRejectsPatterns([...BYTE_PATTERN_ARGS, ...patternArgs], cwd, signal));
+    if (!rejected) return { listing, scanLimitReached };
   }
   scanAll = true;
   const listing = await runRgPaths(
