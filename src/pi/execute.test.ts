@@ -165,7 +165,12 @@ test("successful mutation → returns one report without anchor payload", async 
           if (tool !== "write") {
             assert.ok("diff" in result.details && typeof result.details.diff === "string");
             assert.match(result.details.diff, /new/);
-          } else assert.deepEqual(result.details, { report: reportOf(result, "write") });
+          } else {
+            assert.deepEqual(result.details, {
+              report: reportOf(result, "write"),
+              reportBlockIndex: 0,
+            });
+          }
         }),
       );
     }

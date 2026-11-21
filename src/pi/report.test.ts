@@ -295,7 +295,7 @@ test("success reports → omit repeated call fields while retaining details and 
     path: "target.txt",
     publication: "PUBLISHED",
   };
-  const payload = [text("payload")];
+  const payload = [text(renderReport(report))];
   const result = reportResult(report, payload, DEFAULT_OUTPUT_BUDGETS);
   const last = result.content.at(-1);
   assert.ok(last?.type === "text");
@@ -407,18 +407,28 @@ test("success facts without a tool → use call context and enforce tool-specifi
   assert.deepEqual(splitReport(hooked, "read"), { content: hooked.content, report: undefined });
 });
 
-test("checked report with a different trailing block → preserves the entire payload", () => {
+test("hook changes a success result → strips no block without matching report position and text", () => {
   const report: SuccessReport = { tool: "write", path: "saved.txt", publication: "PUBLISHED" };
-  for (const last of [
-    text(JSON.stringify(report, null, 2)),
-    text(JSON.stringify({ publication: "NOT_PUBLISHED" })),
-    text(renderReport(report) + "\n"),
-    { type: "image" as const, data: "iVBORw0KGgo=", mimeType: "image/png" },
-  ]) {
-    const content = [text("saved payload"), last];
-    const result: Parameters<typeof splitReport>[0] = { content, details: { report } };
-    assert.deepEqual(splitReport(result, "write"), { content, report });
-    assert.equal(splitReport(result, "write").content, content);
+  const payload = [text(renderReport(report))];
+  const original = reportResult(report, payload, DEFAULT_OUTPUT_BUDGETS);
+  const cases = [
+    { ...original, content: payload },
+    { ...original, details: { report } },
+    {
+      ...original,
+      details: { ...original.details, report: { ...report, publication: "NOT_PUBLISHED" } },
+    },
+    ...[
+      text(JSON.stringify(report, null, 2)),
+      text(JSON.stringify({ publication: "NOT_PUBLISHED" })),
+      text(renderReport(report) + "\n"),
+      { type: "image" as const, data: "iVBORw0KGgo=", mimeType: "image/png" },
+    ].map((last) => ({ ...original, content: [...payload, last] })),
+  ];
+  for (const result of cases) {
+    const split = splitReport(result, "write");
+    assert.equal(split.report, result.details.report);
+    assert.equal(split.content, result.content);
   }
 });
 

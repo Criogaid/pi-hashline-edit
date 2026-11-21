@@ -230,9 +230,9 @@ export function reportLines(
 }
 
 /**
- * A successful result's checked report and the content before its report block. Renderers
- * read reports only here or through renderToolError, so the facts a card shows and the
- * block it strips come from one check; content that is not our report stays.
+ * A successful result's checked report and payload. Strip only a trailing block whose recorded
+ * index and text agree with the result. A hook can remove the report and leave identical payload
+ * text at an earlier index.
  */
 export function splitReport(
   result: Pick<AgentToolResult<unknown>, "content" | "details">,
@@ -242,9 +242,18 @@ export function splitReport(
   report: Report | undefined;
 } {
   const report = detailsReport(result.details, tool);
-  const last = result.content.at(-1);
-  const ours = report !== undefined && last?.type === "text" && last.text === renderReport(report);
-  return { content: ours ? result.content.slice(0, -1) : result.content, report };
+  const { content, details } = result;
+  const reportBlockIndex: unknown =
+    typeof details === "object" && details !== null
+      ? Reflect.get(details, "reportBlockIndex")
+      : undefined;
+  const last = content.at(-1);
+  const ours =
+    report !== undefined &&
+    reportBlockIndex === content.length - 1 &&
+    last?.type === "text" &&
+    last.text === renderReport(report);
+  return { content: ours ? content.slice(0, -1) : content, report };
 }
 
 /** Render a failure from its report; text that is not ours keeps its original lines. */

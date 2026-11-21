@@ -55,6 +55,8 @@ import {
 /** Every result's details carry its report for the TUI; Pi does not send details to the model. */
 export interface ReportDetails<TReport extends Report = Report> {
   readonly report: TReport;
+  /** Zero-based index of the report block appended to a success result, if any. */
+  readonly reportBlockIndex?: number;
 }
 
 type Content = AgentToolResult<unknown>["content"];
@@ -201,14 +203,15 @@ export function reportResult<
   const complete = Object.fromEntries(
     reportEntries({ ...boundFacts(report, budget), next: outcomeNext(report, variant) }),
   ) as SuccessReport;
-  const stated = Object.keys(statedFields(complete)).length > 0;
+  const appendReport = Object.keys(statedFields(complete)).length > 0 || payload.length === 0;
   const text = payload.flatMap((block) => (block.type === "text" ? [block.text] : [])).join("\n");
   return {
-    content:
-      stated || payload.length === 0
-        ? [...payload, { type: "text", text: renderReport(complete) }]
-        : payload,
-    details: { ...details, report: complete } as TDetails & ReportDetails<SuccessReport>,
+    content: appendReport ? [...payload, { type: "text", text: renderReport(complete) }] : payload,
+    details: {
+      ...details,
+      report: complete,
+      ...(appendReport ? { reportBlockIndex: payload.length } : {}),
+    } as TDetails & ReportDetails<SuccessReport>,
     // Report fields are JSON values: the wire schema admits nothing else.
     structuredContent: {
       ...("text" in SCRIPT_OUTPUT_SCHEMAS[report.tool].properties ? { text } : {}),

@@ -243,9 +243,7 @@ export function makeReadOverride({
       // Collapsed (not expanded): show nothing — the call line carries the
       // title, matching the built-in read's fold behavior.
       if (!expanded) return new Text("", 0, 0);
-      // The payload is the first block and a report follows it only when it states a fact, so
-      // text that equals a report with no facts (`{}`) is the payload, not the block to strip.
-      const payload = result.content[0];
+      const payload = content[0];
       const text = payload?.type === "text" ? payload.text : "";
       // Only a read with `anchors: false` carries its header in details, which records the call
       // that ran; arguments Pi cannot coerce do not describe it.

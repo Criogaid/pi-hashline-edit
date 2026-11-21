@@ -152,7 +152,10 @@ test("unchanged write → shows No net change above any report facts", () => {
       ...(freshness ? { freshness } : {}),
     };
     const card = tool.renderResult(
-      { content: [{ type: "text", text: renderReport(report) }], details: { report } },
+      {
+        content: [{ type: "text", text: renderReport(report) }],
+        details: { report, reportBlockIndex: 0 },
+      },
       options,
       theme,
       context,
@@ -932,6 +935,44 @@ test("command changes or removes the target → completed mutation stays success
   }
 });
 
+test("delegated NUL read returns only {} → renders the payload on replay", async (t) => {
+  initTheme("dark");
+  const { cwd } = await openTestSession(t, { tools: [] });
+  const tool = makeReadOverride(cwd, DEFAULT_CONFIG);
+  const args = { path: "nul.txt", offset: 2 };
+  await writeFile(join(cwd, args.path), "first\0\n{}");
+
+  const result = await callTool(tool, args);
+  assert.ok(result.details?.nativeRead);
+  assert.deepEqual(result.content, [{ type: "text", text: "{}" }]);
+  assert.deepEqual(result.structuredContent, { text: "{}" });
+
+  const { content, details } = result;
+  const replayed: Pick<typeof result, "content" | "details"> = JSON.parse(
+    JSON.stringify({ content, details }),
+  );
+  const options = { isPartial: false, expanded: true };
+  assert.ok(tool.renderResult);
+  const card = tool.renderResult(replayed, options, theme, {
+    ...options,
+    args,
+    cwd,
+    toolCallId: "native-read-replay",
+    state: {},
+    lastComponent: undefined,
+    durationMs: undefined,
+    invalidate() {},
+    executionStarted: true,
+    argsComplete: true,
+    isError: false,
+    showImages: false,
+    outputPad: 0,
+    keyText: () => "",
+    ...hints,
+  });
+  assert.equal(stripVTControlCharacters(card.render(100).join("\n")).trim(), "{}");
+});
+
 test("success renderers receive replayed or hooked reports → display only schema-checked facts", () => {
   initTheme("dark");
   const cwd = process.cwd();
@@ -969,7 +1010,7 @@ test("success renderers receive replayed or hooked reports → display only sche
     const show = (report: unknown, text: string) => {
       const result = {
         content: [{ type: "text" as const, text }],
-        details: { nativeRead, report },
+        details: { nativeRead, report, reportBlockIndex: 0 },
       };
       const before = structuredClone(result);
       const output = stripVTControlCharacters(
