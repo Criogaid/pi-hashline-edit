@@ -54,10 +54,6 @@ function rowTokens(index: LineIndex, start: number, end: number): RowToken[] {
   return tokens;
 }
 
-function sameRow(before: RowToken, after: RowToken): boolean {
-  return before === after;
-}
-
 /** Render copied full rows at their proven positions and diff the gaps in the logical LF view. */
 export function generateRangeDiff(
   before: string,
@@ -152,10 +148,7 @@ export function generateRangeDiff(
     // A proven row must not compare equal to an unrelated occurrence of the same text.
     const identity = Symbol();
     if (oldIdentity >= 0) oldRows[oldIdentity] = newRows[newIdentity] = identity;
-    const parts = diffArrays(oldRows, newRows, {
-      comparator: sameRow,
-      maxEditLength: MAX_ALIGNMENT_EDITS,
-    });
+    const parts = diffArrays(oldRows, newRows, { maxEditLength: MAX_ALIGNMENT_EDITS });
     if (
       parts &&
       (oldIdentity < 0 ||
@@ -181,12 +174,12 @@ export function generateRangeDiff(
     function emitBlock(fromOld: number, toOld: number, fromNew: number, toNew: number) {
       const commonLimit = Math.min(toOld - fromOld, toNew - fromNew);
       let prefix = 0;
-      while (prefix < commonLimit && sameRow(oldRows[fromOld + prefix], newRows[fromNew + prefix]))
+      while (prefix < commonLimit && oldRows[fromOld + prefix] === newRows[fromNew + prefix])
         prefix++;
       let suffix = 0;
       while (
         suffix < commonLimit - prefix &&
-        sameRow(oldRows[toOld - suffix - 1], newRows[toNew - suffix - 1])
+        oldRows[toOld - suffix - 1] === newRows[toNew - suffix - 1]
       )
         suffix++;
       equalRows += prefix;
