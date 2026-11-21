@@ -23,13 +23,13 @@ export function normalizeLineEndings(text: string): string {
   return text.replace(/\r\n/g, "\n");
 }
 
-/** Raw separators in logical-line order, shared by both mutation applicators. */
-export function lineSeparators(text: string): string[] {
+/** Raw separators in logical-line order. */
+function lineSeparators(text: string): string[] {
   return text.match(/\r?\n/g) ?? [];
 }
 
 /** New internal gaps reuse the corresponding old gap, then the last gap or file style. */
-export function replacementSeparator(
+function replacementSeparator(
   separators: readonly string[],
   index: number,
   fallback: string,
