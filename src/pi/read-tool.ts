@@ -34,7 +34,7 @@ import { requireRegularFile } from "./file-read.ts";
 import { callSignal, throwIfCancelled } from "./error-text.ts";
 import { reportResult, runTool, type ReportDetails } from "./report.ts";
 import { SCRIPT_OUTPUT_SCHEMAS } from "./report-schema.ts";
-import { formatByteSize, type OutputBudgets } from "./budgets.ts";
+import { formatByteSize } from "./budgets.ts";
 import type { ToolEnvironment } from "./config.ts";
 import { createArgumentBoundary } from "./argument-validation.ts";
 
@@ -75,7 +75,7 @@ function formatReadHeader(
   const count = `${totalLines} line${totalLines === 1 ? "" : "s"}`;
   return `${path} · ${count}${shownFrom}${finalNewline ? "" : " · no trailing newline"}`;
 }
-const READ_HEADER = /^(.+?) · (\d+ lines?(?: \(from line \d+\))?(?: · no trailing newline)?)$/s;
+const READ_HEADER = /^(.+?) · ((\d+) lines?(?: \(from line (\d+)\))?(?: · no trailing newline)?)$/s;
 
 /**
  * Render the expanded read body for the TUI: color the header, strip the
@@ -86,52 +86,46 @@ const READ_HEADER = /^(.+?) · (\d+ lines?(?: \(from line \d+\))?(?: · no trail
  * line count diverges). Notices are report facts, rendered from the report.
  */
 function renderReadBody(
-  raw: string,
+  text: string,
   path: string,
-  anchored: boolean,
-  lineTooLong: boolean,
+  plainHeader: string | undefined,
+  lineTooLong: string | undefined,
   theme: Theme,
 ): string {
-  const lines = raw.split("\n");
-  const out: string[] = [];
+  const plain = plainHeader !== undefined;
+  // Interpolation also coerces text supplied by result hooks for unanchored reads.
+  const lines = (plain ? `${plainHeader}\n${text}` : text).split("\n");
+  const header = READ_HEADER.exec(lines[0]);
+  const out = header ? [theme.fg("success", header[1]) + theme.fg("dim", ` · ${header[2]}`)] : [];
 
-  // Header: "<path> · <N> line(s)", optionally followed by " (from line <offset>)"
-  // and/or " · no trailing newline".
-  let bodyStart = 0;
-  const h = lines[0].match(READ_HEADER);
-  if (h) {
-    out.push(theme.fg("success", h[1]) + theme.fg("dim", ` · ${h[2]}`));
-    bodyStart = 1;
-  }
+  const firstLine = Number(header?.[4] ?? DEFAULT_OFFSET);
+  // Unanchored text cannot distinguish zero rows from one empty row. Use the read's metadata.
+  let bodyStart = Number(header !== null);
+  if (plain && (lineTooLong !== undefined || firstLine > Number(header?.[3] ?? 0)))
+    bodyStart = lines.length;
 
-  // Collect rows (full content).
+  const parseRow = plain
+    ? (content: string, index: number) => ({
+        lineNo: String(firstLine + index - bodyStart),
+        content,
+      })
+    : parseHashline;
   const lineNos: string[] = [];
-  const codeContents: string[] = [];
-  const firstLine = Number(/\(from line (\d+)\)/.exec(h?.[2] ?? "")?.[1] ?? DEFAULT_OFFSET);
-  const totalLines = Number(/^(\d+) lines?/.exec(h?.[2] ?? "")?.[1] ?? 0);
-  // Unanchored rows carry no marker, so no rows and one empty row are the same text: a window
-  // past the last line or a first line over the byte limit shows no row.
-  if (!anchored && (lineTooLong || firstLine > totalLines)) bodyStart = lines.length;
+  const detabbed: string[] = [];
   for (let i = bodyStart; i < lines.length; i++) {
-    const row = anchored
-      ? parseHashline(lines[i])
-      : { lineNo: String(firstLine + i - bodyStart), content: lines[i] };
+    const row = parseRow(lines[i], i);
     if (!row) break;
     lineNos.push(row.lineNo);
-    codeContents.push(row.content);
+    detabbed.push(row.content.replace(/\t/g, "   "));
   }
 
-  // Syntax-highlight the whole block so multi-line constructs stay correct.
-  const detabbed = codeContents.map((l) => l.replace(/\t/g, "   "));
+  // Highlight the entire block for multi-line constructs; fall back if rows cannot be aligned.
   const lang = getLanguageFromPath(path);
-  let rendered: string[];
-  if (lang) {
-    const hl = highlightCode(detabbed.join("\n"), lang);
-    // Guard against highlighters that reshape line count: fall back to plain.
-    rendered = hl.length === detabbed.length ? hl : detabbed.map((l) => theme.fg("toolOutput", l));
-  } else {
-    rendered = detabbed.map((l) => theme.fg("toolOutput", l));
-  }
+  const highlighted = lang ? highlightCode(detabbed.join("\n"), lang) : undefined;
+  const rendered =
+    highlighted?.length === detabbed.length
+      ? highlighted
+      : detabbed.map((line) => theme.fg("toolOutput", line));
   // Line numbers ascend, so the last one is the widest.
   const lineNoWidth = lineNos.at(-1)?.length ?? 0;
   for (let i = 0; i < rendered.length; i++) {
@@ -148,10 +142,7 @@ export function makeReadOverride({ cwd, config, budgets }: ToolEnvironment) {
   const { hashLen } = config;
   const { defaultLimit, maxKiB } = config.read;
   // An explicit read.maxKiB caps read output; otherwise the selected model's budget does.
-  const readCap =
-    maxKiB === undefined
-      ? (budget: OutputBudgets) => budget.readBytes
-      : () => maxKiB * BYTES_PER_KIB;
+  const configuredBytes = maxKiB === undefined ? undefined : maxKiB * BYTES_PER_KIB;
   const builtin = createReadToolDefinition(cwd);
   // A TypeBox object, not a spread of Pi's plain JSON schema: argument diagnostics pick
   // single fields from it, which needs TypeBox's own schema kinds.
@@ -216,14 +207,13 @@ export function makeReadOverride({ cwd, config, budgets }: ToolEnvironment) {
       const text = payload?.type === "text" ? payload.text : "";
       // Only a read with `anchors: false` carries its header in details, which records the call
       // that ran; arguments Pi cannot coerce do not describe it.
-      const header = result.details?.header;
       return new Text(
         [
           renderReadBody(
-            header === undefined ? text : `${header}\n${text}`,
+            text,
             String(context.args?.path ?? ""),
-            header === undefined,
-            report !== undefined && "lineTooLong" in report && report.lineTooLong !== undefined,
+            result.details?.header,
+            report?.lineTooLong,
             theme,
           ),
           ...(report ? reportLines(report, theme) : []),
@@ -243,16 +233,15 @@ export function makeReadOverride({ cwd, config, budgets }: ToolEnvironment) {
       const { anchors: anchored, ...params } = boundary.afterHooks(input);
       const signal = callSignal(piSignal);
       const budget = budgets();
-      const maxBytes = readCap(budget);
+      const maxBytes = configuredBytes ?? budget.readBytes;
       return runTool("read", { path: params.path, signal, budget }, async () => {
         throwIfCancelled(signal);
         const start = params.offset ?? DEFAULT_OFFSET;
         const limit = params.limit ?? defaultLimit;
-        const anchors = createAnchorFormatter(hashLen);
-        const formatRow =
-          anchored === false
-            ? (_line: number, content: string) => displayCarriageReturns(content)
-            : anchors.row;
+        const plain = anchored === false;
+        const formatRow = plain
+          ? (_line: number, content: string) => displayCarriageReturns(content)
+          : createAnchorFormatter(hashLen).row;
         const report = { tool: "read" as const, path: params.path };
         const absPath = canonicalPath(cwd, params.path);
         const readNative = async () => {
@@ -287,7 +276,7 @@ export function makeReadOverride({ cwd, config, budgets }: ToolEnvironment) {
 
         const rows: string[] = [];
         const crExpansion = Buffer.byteLength(displayCarriageReturns("\r")) - 1;
-        let outputBytes = 0;
+        let remainingBytes = maxBytes + 1; // The first row has no preceding LF.
         let budgetExceeded = false;
         const stats = await scanTextLines(
           absPath,
@@ -295,13 +284,13 @@ export function makeReadOverride({ cwd, config, budgets }: ToolEnvironment) {
           ({ number, byteLength, carriageReturns, text }) => {
             const rowBytes =
               byteLength + carriageReturns * crExpansion + Buffer.byteLength(formatRow(number, ""));
-            const nextBytes = outputBytes + rowBytes + (rows.length > 0 ? 1 : 0);
-            if (nextBytes > maxBytes) {
+            const cost = rowBytes + 1;
+            if (cost > remainingBytes) {
               budgetExceeded = true;
               return;
             }
             rows.push(formatRow(number, text));
-            outputBytes = nextBytes;
+            remainingBytes -= cost;
           },
           {
             signal,
@@ -312,34 +301,36 @@ export function makeReadOverride({ cwd, config, budgets }: ToolEnvironment) {
         if (stats.hasNul) return readNative();
         // Rows without a header show no rows and one empty row as the same text, so a window that
         // starts past the last line is a failure. An empty file read from its first line is empty text.
-        if (anchored === false && start > Math.max(stats.totalLines, DEFAULT_OFFSET)) {
+        if (plain && start > Math.max(stats.totalLines, DEFAULT_OFFSET)) {
           throw new HashlineError("OFFSET_PAST_END", "Offset is past the last line.", {
             facts: { totalLines: stats.totalLines },
             ...(stats.totalLines === 0 ? { next: "emptyFile" as const } : {}),
           });
         }
         const nextOffset = start + rows.length;
-        const hasMoreLines = rows.length > 0 && (budgetExceeded || nextOffset <= stats.totalLines);
+        const hasMoreLines = rows.length > 0 && nextOffset <= stats.totalLines;
         const limitText = budgetExceeded ? formatByteSize(maxBytes) : undefined;
+        const limitFact =
+          rows.length === 0 ? { lineTooLong: limitText } : { outputLimit: limitText };
         const header = formatReadHeader(
           serializePath(cwd, absPath),
           stats.totalLines,
           start,
           stats.finalNewline,
         );
-        const text = anchored === false ? rows.join("\n") : `${header}\n${rows.join("\n")}`;
+        const body = rows.join("\n");
+        const text = plain ? body : `${header}\n${body}`;
 
         return reportResult(
           {
             ...report,
             nextOffset: hasMoreLines ? nextOffset : undefined,
             callShowsNextOffset: !budgetExceeded && params.limit !== undefined ? true : undefined,
-            outputLimit: hasMoreLines ? limitText : undefined,
-            lineTooLong: hasMoreLines ? undefined : limitText,
+            ...limitFact,
           },
           [{ type: "text", text }],
           budget,
-          { details: anchored === false ? { header } : undefined },
+          { details: plain ? { header } : undefined },
         );
       });
     },

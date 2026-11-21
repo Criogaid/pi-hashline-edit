@@ -776,6 +776,35 @@ test("unanchored read whose text equals a report with no facts → expanded rend
     assert.deepEqual(rendered, ["braces.txt · 1 line", "   1: {}"]);
   }));
 
+test("hooked unanchored read with numeric text → expanded rendering shows it at the header offset", () => {
+  const cwd = process.cwd();
+  const { renderResult: render } = makeReadOverride(cwd, DEFAULT_CONFIG);
+  const options = { expanded: true, isPartial: false };
+  // Pi passes the hook result to the renderer even when the hook replaces text with a number.
+  const result = {
+    content: [{ type: "text" as const, text: 123 as unknown as string }],
+    details: { header: "raw.txt · 3 lines (from line 2)" },
+  };
+  const rendered = render(result, options, stubTheme, {
+    ...options,
+    args: { path: "raw.txt" },
+    cwd,
+    toolCallId: "hooked-read",
+    state: {},
+    lastComponent: undefined,
+    durationMs: undefined,
+    invalidate() {},
+    executionStarted: true,
+    argsComplete: true,
+    isError: false,
+    showImages: false,
+    outputPad: 0,
+    keyText: () => "",
+    keyHint: (_key, description) => description,
+  }).render(120);
+  assert.match(rendered[1], /^ {3}2: 123\s*$/);
+});
+
 test("unanchored read with no rows or a real empty row → expanded rendering preserves the selected rows", async (t) =>
   withDir(async (dir) => {
     const budget = outputBudgetsFor(4_000);
