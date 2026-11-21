@@ -43,8 +43,7 @@ function parseAnchor(value: string | undefined) {
 }
 
 /** Operation item fields besides `action`. */
-const EDIT_ITEM_FIELDS = [...EDIT_ANCHOR_FIELDS, "lines"] as const;
-type EditItemField = (typeof EDIT_ITEM_FIELDS)[number];
+type EditItemField = (typeof EDIT_ANCHOR_FIELDS)[number] | "lines";
 
 /** What one op does and which item fields it takes; it takes no others. */
 interface EditOpSpec {
@@ -174,6 +173,9 @@ function checkEditArguments(
   item: EditOpSchema,
   report: ReportArgumentIssue,
 ): void {
+  const { action: _action, ...fields } = item.properties;
+  // These are the own keys of the flat step schema, in declaration order.
+  const fieldNames = Object.keys(fields) as (keyof typeof fields)[];
   argumentItems((args as { steps?: unknown } | null)?.steps).forEach((value, index) => {
     if (value === null || typeof value !== "object") return;
     const edit = value as Record<string, unknown>;
@@ -184,13 +186,13 @@ function checkEditArguments(
     const path = `steps[${index}]`;
     const accepted = new Set([...spec.required, ...(spec.optional ?? [])]);
     const admitted: Partial<Record<EditItemField, unknown>> = {};
-    for (const field of EDIT_ITEM_FIELDS) {
+    for (const field of fieldNames) {
       const value = edit[field];
       if (value === undefined && spec.required.includes(field)) {
         report(
           `${path}.${field}`,
           `is required for "${name}"`,
-          Reflect.get(item.properties[field], "description"),
+          Reflect.get(fields[field], "description"),
         );
       } else if (accepted.has(field)) {
         admitted[field] = value;
