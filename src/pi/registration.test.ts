@@ -219,13 +219,13 @@ test("mutation cards use Fusion by default and explicit false removes command su
     const tools: any[] = [];
     const entries: any[] = [];
     const renderers = new Map<string, any>();
-    let start: ((event: unknown, ctx: unknown) => void) | undefined;
+    const startListeners: ((event: unknown, ctx: unknown) => void)[] = [];
     await registerHashline({
       async exec() {
         return { stdout: dir, stderr: "", code: 0, killed: false, truncated: false };
       },
       on(event: string, handler: (event: unknown, ctx: unknown) => void) {
-        if (event === "session_start") start = handler;
+        if (event === "session_start") startListeners.push(handler);
       },
       getSettings() {
         return {};
@@ -276,20 +276,21 @@ test("mutation cards use Fusion by default and explicit false removes command su
     initTheme("dark");
     const tui = new TuiMainScreen(new ProcessTerminal());
     tui.requestRender = () => {};
-    assert.ok(start);
-    start(
-      {},
-      {
-        cwd: dir,
-        mode: "tui",
-        sessionManager: { getBranch: () => entries },
-        ui: {
-          setWidget(_key: string, content: Parameters<ExtensionContext["ui"]["setWidget"]>[1]) {
-            if (typeof content === "function") content(tui, theme);
+    assert.ok(startListeners.length);
+    for (const start of startListeners)
+      start(
+        {},
+        {
+          cwd: dir,
+          mode: "tui",
+          sessionManager: { getBranch: () => entries },
+          ui: {
+            setWidget(_key: string, content: Parameters<ExtensionContext["ui"]["setWidget"]>[1]) {
+              if (typeof content === "function") content(tui, theme);
+            },
           },
         },
-      },
-    );
+      );
     const cases = [
       { name: "write", args: { content: "published\n", mode: "create" } },
       { name: "edit", args: { steps: [{ action: "append", lines: ["appended"] }] } },

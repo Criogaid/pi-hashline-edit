@@ -39,7 +39,7 @@ const scenarios: readonly {
   readonly args: ToolCall["arguments"];
   readonly rejected?: true;
 }[] = [
-  { label: "read", tool: makeReadOverride(env), args: { path: "file.txt" } },
+  { label: "read", tool: makeReadOverride(env, () => true), args: { path: "file.txt" } },
   { label: `edit (${editOperations} ops)`, tool: edit, args: editArgs },
   { label: `write (${writeBytes} bytes)`, tool: write, args: writeArgs },
   {

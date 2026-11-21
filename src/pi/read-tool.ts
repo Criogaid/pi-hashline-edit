@@ -22,6 +22,7 @@ import {
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
+import type { ImageContent } from "@earendil-works/pi-ai";
 import { Text } from "@earendil-works/pi-tui";
 import { IsString, IsUnion, Type, type TSchema } from "typebox";
 import { scanTextLines } from "./text-stream.ts";
@@ -47,6 +48,9 @@ const DEFAULT_OFFSET = 1;
  */
 type ReadDetails = (ReadToolDetails & { nativeRead?: true; header?: string }) &
   Partial<ReportDetails>;
+
+// Pi's public factory erases the output type. Its toReadOutput emits only these variants.
+type NativeReadOutput = string | (Pick<ImageContent, keyof ImageContent> & { note: string });
 
 /** This read's output schema: its own text result, and each result of Pi's read other than plain text. */
 function readOutputSchema(native: TSchema | undefined): TSchema {
@@ -138,7 +142,10 @@ function renderReadBody(
 const BYTES_PER_KIB = 1024;
 
 /** Build the read override (a ToolDefinition fragment for registerTool). */
-export function makeReadOverride({ cwd, config, budgets }: ToolEnvironment) {
+export function makeReadOverride(
+  { cwd, config, budgets }: ToolEnvironment,
+  readAutoResize: () => boolean,
+) {
   const { hashLen } = config;
   const { defaultLimit, maxKiB } = config.read;
   // An explicit read.maxKiB caps read output; otherwise the selected model's budget does.
@@ -250,9 +257,11 @@ export function makeReadOverride({ cwd, config, budgets }: ToolEnvironment) {
         const readNative = async () => {
           // Bind I/O to our target: native resolution may normalize or try filename variants.
           const native = createReadToolDefinition(cwd, {
+            autoResizeImages: readAutoResize(),
             operations: {
               access: () => access(absPath, constants.R_OK),
               readFile: () => readFile(absPath),
+              // Recheck the delegated read's target, which can change after the dispatch probe.
               detectImageMimeType: () => detectSupportedImageMimeTypeFromFile(absPath),
             },
           });
@@ -267,10 +276,10 @@ export function makeReadOverride({ cwd, config, budgets }: ToolEnvironment) {
             details: { ...result.details, nativeRead: true as const },
           });
           // Pi gives scripts an image as its image block; delegated text is the report's `text`.
-          const image = result.structuredContent;
-          return typeof image === "object" && image !== null
-            ? { ...delegated, structuredContent: image }
-            : delegated;
+          const output = result.structuredContent as NativeReadOutput;
+          return typeof output === "string"
+            ? delegated
+            : { ...delegated, structuredContent: output };
         };
 
         // Opening a FIFO or device can block before any cancellation check runs.

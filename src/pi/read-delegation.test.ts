@@ -32,11 +32,10 @@ test("read delegation → only images and NUL use native read on the canonical t
     },
   });
   const { makeReadOverride } = await import("./read-tool.ts");
-  const tool = makeReadOverride({
-    cwd: dir,
-    config: loadConfig(dir),
-    budgets: () => outputBudgetsFor(undefined),
-  });
+  const tool = makeReadOverride(
+    { cwd: dir, config: loadConfig(dir), budgets: () => outputBudgetsFor(undefined) },
+    () => true,
+  );
   const image = Buffer.from("R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7", "base64");
   await writeFile(join(dir, "image.gif"), image);
   await writeFile(join(dir, "nul.txt"), "first\0\nsecond\n");

@@ -10,7 +10,11 @@
  * @module pi-hashline-edit
  */
 
-import type { ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-agent";
+import {
+  type ExtensionAPI,
+  SettingsManager,
+  type ToolDefinition,
+} from "@earendil-works/pi-coding-agent";
 import type { Static, TSchema } from "typebox";
 import { createRenderArguments } from "./pi/argument-validation.ts";
 import { loadConfig } from "./pi/config.ts";
@@ -74,7 +78,14 @@ export default async function (pi: ExtensionAPI) {
     registerMutation(makeEditOverride(mutationEnv));
     registerMutation(makeReplaceTool(mutationEnv));
 
-    register(makeReadOverride(env));
+    let autoResizeImages: boolean | undefined;
+    const readAutoResize = () =>
+      (autoResizeImages ??= SettingsManager.inMemory(pi.getSettings()).getImageAutoResize());
+    // Pi snapshots the setting when it builds the native tool. Headless reload can skip session_start.
+    pi.on("session_start", () => {
+      readAutoResize();
+    });
+    register(makeReadOverride(env, readAutoResize));
     register(makeGrepOverride(env));
   }
 }

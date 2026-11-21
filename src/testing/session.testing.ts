@@ -10,6 +10,7 @@ import {
   createAgentSession,
   DefaultResourceLoader,
   type ExtensionAPI,
+  type ImageSettings,
   ModelRuntime,
   SessionManager,
   SettingsManager,
@@ -56,6 +57,7 @@ export async function openTestSession(
     readonly cwd?: string;
     readonly tools: readonly string[];
     readonly configure?: (pi: ExtensionAPI, cwd: string) => void | Promise<void>;
+    readonly images?: ImageSettings;
   },
 ) {
   const cwd = options.cwd ?? (await mkdtemp(join(tmpdir(), "hashline-session-")));
@@ -92,6 +94,7 @@ export async function openTestSession(
   const settingsManager = SettingsManager.inMemory({
     compaction: { enabled: false },
     retry: { enabled: false },
+    images: options.images,
   });
   const configure = options.configure;
   const loader = new DefaultResourceLoader({

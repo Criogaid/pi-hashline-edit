@@ -35,7 +35,7 @@ export const makeReadOverride = (
   cwd: string,
   config: HashlineEditConfig,
   budgets = defaultOutputBudgets,
-) => read(toolEnvironment(cwd, config, budgets));
+) => read(toolEnvironment(cwd, config, budgets), () => true);
 export const makeGrepOverride = (
   cwd: string,
   config: HashlineEditConfig,
