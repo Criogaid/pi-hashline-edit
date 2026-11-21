@@ -294,26 +294,21 @@ export function analyzeQueryPattern<T>(
 }
 
 /**
- * Smart case over decoded characters, a surrogate pair counting as its supplementary
- * character; case-sensitive when a pattern cannot be analyzed.
+ * Smart case over the characters the pattern spells, a surrogate pair counting as its
+ * supplementary character; case-sensitive when a pattern cannot be analyzed. The pair is
+ * decided by source adjacency, because a quantifier can hold the low half alone.
  */
 export function smartIgnoreCase(patterns: readonly string[], literal: boolean): boolean {
   return !patterns.some((pattern) => {
     const uppercase = analyzeQueryPattern(pattern, literal, (parsed) => {
-      let found = false;
-      visitRegExpAST(parsed, {
-        onCharacterEnter(node) {
-          const { parent } = node;
-          const siblings: readonly AST.Node[] =
-            parent.type === "Alternative" || parent.type === "CharacterClass"
-              ? parent.elements
-              : [];
-          const point = surrogatePair(node, siblings[siblings.indexOf(node) + 1]) ?? node.value;
-          const text = String.fromCodePoint(point);
-          found ||= text !== text.toLowerCase();
-        },
+      const characters: AST.Character[] = [];
+      visitRegExpAST(parsed, { onCharacterEnter: (node) => characters.push(node) });
+      return characters.some((node, index) => {
+        const next = characters[index + 1];
+        const point = (next?.start === node.end && surrogatePair(node, next)) || node.value;
+        const text = String.fromCodePoint(point);
+        return text !== text.toLowerCase();
       });
-      return found;
     });
     return uppercase ?? true;
   });

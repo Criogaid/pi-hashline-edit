@@ -72,6 +72,8 @@ for (const [patterns, isLiteral, expected] of [
   [["(?<UPPER>foo)"], false, true],
   [["ς", "σ"], false, true],
   [["σ", "Σ"], false, false],
+  [["𐐀+|abc"], false, false],
+  [["𐐨+"], false, true],
   [["foo\\S*"], true, false],
   [["\\u0041"], true, true],
   [["foo", "BAR"], true, false],
