@@ -22,8 +22,8 @@ export function toDisplayLines(raw: string, theme: Theme): string[] {
   const lines = raw.split("\n");
   type Header = NonNullable<ReturnType<typeof parseFileHeader>>;
   type Row = NonNullable<ReturnType<typeof parseDisplayRow>>;
-  /** `gaps` holds the indices of rows that a gap row precedes. */
-  const blocks: (string | { header: Header; rows: Row[]; gaps: Set<number> })[] = [];
+  const blocks: (string | { header: Header; rows: (Row | typeof CONTEXT_GAP)[]; base: number })[] =
+    [];
   let lineNoWidth = 0;
   // A filename can look like a row, and a source row can end like a header.
   // Parse each group before measuring its rows so the header contributes no width.
@@ -34,19 +34,20 @@ export function toDisplayLines(raw: string, theme: Theme): string[] {
       blocks.push(line);
       continue;
     }
-    const rows: Row[] = [];
-    const gaps = new Set<number>();
+    const rows: (Row | typeof CONTEXT_GAP)[] = [];
+    let base = Infinity;
     while (index + 1 < lines.length) {
       // A gap row belongs to the group only when a row follows it.
       const gap = rows.length > 0 && lines[index + 1] === CONTEXT_GAP ? 1 : 0;
       const row = parseDisplayRow(lines[index + 1 + gap] ?? "");
       if (!row) break;
-      if (gap) gaps.add(rows.length);
+      if (gap) rows.push(CONTEXT_GAP);
       rows.push(row);
+      base = Math.min(base, indentation(row.content));
       lineNoWidth = Math.max(lineNoWidth, row.lineNo.length);
       index += 1 + gap;
     }
-    blocks.push({ header, rows, gaps });
+    blocks.push({ header, rows, base });
   }
 
   const out: string[] = [];
@@ -57,13 +58,14 @@ export function toDisplayLines(raw: string, theme: Theme): string[] {
     }
     const { path, summary } = group.header;
     out.push(theme.fg("success", path) + theme.fg("dim", ` · ${summary}`));
-    // Fold shared indentation without spreading an unbounded number of rows.
-    const base = group.rows.length
-      ? group.rows.reduce((min, { content }) => Math.min(min, indentation(content)), Infinity)
-      : 0;
-    const marker = base > 0 ? theme.fg("dim", "›") + " " : "";
-    for (const [index, { lineNo, content }] of group.rows.entries()) {
-      if (group.gaps.has(index)) out.push(theme.fg("dim", `   ${CONTEXT_GAP}`));
+    const { base, rows } = group;
+    const marker = base > 0 && rows.length ? theme.fg("dim", "›") + " " : "";
+    for (const row of rows) {
+      if (row === CONTEXT_GAP) {
+        out.push(theme.fg("dim", `   ${CONTEXT_GAP}`));
+        continue;
+      }
+      const { lineNo, content } = row;
       out.push(
         theme.fg("dim", `   ${lineNo.padStart(lineNoWidth)}: `) +
           marker +
