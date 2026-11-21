@@ -112,11 +112,17 @@ test("Fusion command outcomes → progress, cards, and reports preserve command 
     ],
   };
   const failure: CommandResult = { content: [{ type: "text", text: "boom" }], details: {} };
+  const exited: CommandResult = {
+    content: [{ type: "text", text: "Command exited with code 7" }],
+    details: {},
+  };
   const cases: readonly {
     scenario:
       | "succeeded"
       | "failed"
       | "cancelled-error"
+      | "cancelled-after-exit"
+      | "cancelled-before-execute"
       | "cancelled-empty"
       | "skipped"
       | "cancelled";
@@ -128,6 +134,17 @@ test("Fusion command outcomes → progress, cards, and reports preserve command 
     { scenario: "failed", command: "failed", result: failure, text: /boom/ },
     { scenario: "cancelled-error", command: "cancelled", result: failure, text: /boom/ },
     {
+      scenario: "cancelled-after-exit",
+      command: "failed",
+      result: exited,
+      text: /Command exited with code 7/,
+    },
+    {
+      scenario: "cancelled-before-execute",
+      command: "cancelled",
+      text: /Not run: cancelled\./,
+    },
+    {
       scenario: "cancelled-empty",
       command: "cancelled",
       result: { content: [], details: {} },
@@ -137,10 +154,15 @@ test("Fusion command outcomes → progress, cards, and reports preserve command 
     { scenario: "cancelled", command: "cancelled", text: /Not run: cancelled\./ },
   ];
   for (const { scenario, command, result: expected, text } of cases) {
-    const name =
-      scenario === "cancelled-empty"
-        ? "started command cancelled with empty output → card omits the not-run reason"
-        : scenario;
+    const names: Partial<Record<typeof scenario, string>> = {
+      "cancelled-empty":
+        "started command cancelled with empty output → card omits the not-run reason",
+      "cancelled-after-exit":
+        "cancellation after a command exits → preserves the failure and exit diagnostic",
+      "cancelled-before-execute":
+        "cancellation before command execution → omits output and shows not run",
+    };
+    const name = names[scenario] ?? scenario;
     await t.test(name, async (t) => {
       const dir = await mkdtemp(join(tmpdir(), "hashline-fusion-card-"));
       t.after(() => rm(dir, { recursive: true, force: true }));
@@ -152,12 +174,30 @@ test("Fusion command outcomes → progress, cards, and reports preserve command 
       let commands = 0;
       const context = await createFusionContext(dir, t, async () => {
         commands++;
-        if (scenario === "cancelled-error" || scenario === "cancelled-empty") controller.abort();
-        if (scenario === "failed" || scenario === "cancelled-error")
-          return commandCompletion(failure, true);
-        return scenario === "cancelled-empty"
-          ? commandCompletion({ content: [] }, true)
-          : commandCompletion(success);
+        switch (scenario) {
+          case "cancelled-before-execute":
+            controller.abort();
+            return commandCompletion(
+              { content: [{ type: "text", text: "Operation aborted" }] },
+              true,
+            );
+          case "cancelled-after-exit":
+            controller.abort();
+            return {
+              ...commandCompletion(exited, true, undefined, { exit_code: 7 }),
+              durationMs: 1,
+            };
+          case "cancelled-error":
+            controller.abort();
+            return { ...commandCompletion(failure, true), durationMs: 1 };
+          case "cancelled-empty":
+            controller.abort();
+            return { ...commandCompletion({ content: [] }, true), durationMs: 1 };
+          case "failed":
+            return commandCompletion(failure, true);
+          default:
+            return commandCompletion(success);
+        }
       });
       const fusion = createActionFusionExecutor((progress) => {
         events.push(progress);
@@ -173,7 +213,7 @@ test("Fusion command outcomes → progress, cards, and reports preserve command 
         },
         { ctx: context, signal: controller.signal },
       );
-      assert.equal(commands, expected ? 1 : 0);
+      assert.equal(commands, scenario === "skipped" || scenario === "cancelled" ? 0 : 1);
       const final = events.at(-1);
       assert.ok(final);
       assert.equal(final.command, command);

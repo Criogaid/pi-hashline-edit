@@ -624,6 +624,7 @@ test("timed command stays silent → heartbeat preserves output and stops after 
         finished.resolve({
           toolCall: { type: "toolCall", id: "test/1", name: "bash", arguments: {} },
           isError: outcome !== "succeeded",
+          durationMs: 1,
           result: {
             details: undefined,
             content: [
@@ -705,7 +706,10 @@ test("command returns a terminal status → reports its status and diagnostic on
       const context = await createFusionContext(dir, t, async () => {
         commands++;
         if (status === "cancelled") controller.abort();
-        return commandCompletion({ content: [{ type: "text", text: output }] }, true);
+        return {
+          ...commandCompletion({ content: [{ type: "text", text: output }] }, true),
+          durationMs: 1,
+        };
       });
       const result = await callTool(
         makeWriteOverride(dir, fusion),

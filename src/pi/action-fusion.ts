@@ -113,7 +113,8 @@ export interface FusedMutation<TDetails, TTool extends MutationToolName> {
 /** Keep command state independent of its diagnostic text and of file publication. */
 interface CommandOutcome {
   readonly status: Exclude<CommandStatus, "skipped">;
-  readonly result: CommandResult;
+  /** Absent when Pi ended the call before the command ran. */
+  readonly result?: CommandResult;
   /** Preserve the session tool's request to stop after this tool batch. */
   readonly terminate?: boolean;
 }
@@ -126,13 +127,15 @@ async function runCommand(
 ): Promise<CommandOutcome> {
   // Use the session's callable Bash, including overrides, validation, permission
   // hooks and tool_result hooks. Tool failures resolve with isError, not rejection.
-  const { result, isError } = await ctx.executeTool("bash", input, { signal, onUpdate });
+  const { result, isError, durationMs } = await ctx.executeTool("bash", input, {
+    signal,
+    onUpdate,
+  });
   const command = {
     terminate: result.terminate,
     result: { content: result.content, details: result.details },
   };
   if (!isError) return { status: "succeeded", ...command };
-  if (signal?.aborted) return { status: "cancelled", ...command };
 
   const structured = result.structuredContent;
   const hasExitCode =
@@ -140,6 +143,12 @@ async function runCommand(
     typeof structured === "object" &&
     "exit_code" in structured &&
     typeof structured.exit_code === "number";
+  // An exit code is the command's own outcome, even when cancellation arrived during a result hook.
+  // Pi measures execute() only when the command ran; a cancelled call that never ran has no output.
+  if (signal?.aborted && !hasExitCode)
+    return durationMs === undefined
+      ? { status: "cancelled", terminate: result.terminate }
+      : { status: "cancelled", ...command };
   // Pi's Bash supplies exit_code for ordinary exits, but serializes a thrown
   // timeout as text. Only recognize its final diagnostic for the requested
   // timeout; a failed command's output may itself mention or quote a timeout.
@@ -252,7 +261,7 @@ function createProgressTracker<TDetails extends object>({
     stopHeartbeat() {
       if (heartbeat) clearInterval(heartbeat);
     },
-    commandSettled(result: CommandResult) {
+    commandSettled(result: CommandResult | undefined) {
       commandResult = result;
     },
   };
