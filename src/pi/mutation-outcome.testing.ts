@@ -14,7 +14,7 @@ export function publishedMutation<T extends object | undefined>(
     commit: {
       publication: "PUBLISHED",
       publishedRevision: revision,
-      observedRevision: revision,
+      freshness: "unchanged",
     },
   };
 }

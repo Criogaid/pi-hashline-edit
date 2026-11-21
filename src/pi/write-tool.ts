@@ -62,10 +62,12 @@ export function makeWriteOverride(env: MutationToolEnvironment) {
         { absolutePath, signal },
       ): Promise<MutationOutcome<WriteMutationDetails, "write">> {
         throwIfCancelled(signal);
-        const commit = await commitFile(absolutePath, params.content, {
-          mode: params.mode,
+        const commit = await commitFile(
+          absolutePath,
+          params.content,
+          { mode: params.mode },
           signal,
-        });
+        );
         return {
           commit,
           details: {},

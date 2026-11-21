@@ -187,11 +187,12 @@ export async function runTextMutation<TTool extends MutationToolName>(
   // Cancelled before write: don't touch the disk.
   throwIfCancelled(signal);
 
-  const commit = await commitFile(absolutePath, next.text, {
-    mode: "overwrite",
-    baseRevision,
+  const commit = await commitFile(
+    absolutePath,
+    next.text,
+    { mode: "update", baseRevision },
     signal,
-  });
+  );
   try {
     return {
       commit,

@@ -34,27 +34,37 @@ import { withFileRead } from "./file-read.ts";
 import type { Freshness, PublicationStatus } from "./report-schema.ts";
 
 /**
- * How a commit treats the target. `create` requires that it not exist. `overwrite` requires
- * that it exist; with `baseRevision` (read-modify-write), the target must still hold the bytes
- * that revision names, and that revision stands in for hashing the target again.
+ * How a commit treats the target. `create` requires that it not exist. `overwrite` requires that
+ * it exist and replaces it whole. `update` (read-modify-write) also requires that it still hold
+ * the bytes `baseRevision` names, and that revision stands in for hashing the target again.
  */
-type CommitOptions = { readonly signal: AbortSignal } & (
+type CommitIntent =
   | { readonly mode: "create" }
-  | { readonly mode: "overwrite"; readonly baseRevision?: string }
-);
+  | { readonly mode: "overwrite" }
+  | { readonly mode: "update"; readonly baseRevision: string };
 
-/** The published bytes' revision and, when stable, the revision observed right after. */
-interface CommitRevisions {
+type ReplaceIntent = Exclude<CommitIntent, { readonly mode: "create" }>;
+
+/** What publication does, decided once the target has been inspected. */
+type PublishPlan =
+  | { readonly kind: "create" }
+  | {
+      readonly kind: "replace";
+      readonly intent: ReplaceIntent;
+      readonly target: TargetInfo;
+      /** The revision the target holds before the commit. */
+      readonly beforeRevision: string;
+    };
+
+/**
+ * The published bytes' revision, and whether the target still held them right after the
+ * commit; an unstable observation after publication means another writer changed it.
+ */
+export interface CommitResult {
+  readonly publication: Exclude<PublicationStatus, "UNKNOWN">;
   readonly publishedRevision: string;
-  /** Absent when a concurrent change prevented a stable observation after publication. */
-  readonly observedRevision?: string;
+  readonly freshness: Exclude<Freshness, "unknown">;
 }
-
-export type CommitResult = CommitRevisions &
-  (
-    | { readonly publication: "PUBLISHED" }
-    | { readonly publication: "NOT_PUBLISHED"; readonly observedRevision: string }
-  );
 
 /**
  * A mutation failure with what it published. Every other failure of a mutation
@@ -210,21 +220,58 @@ async function inspectTarget(path: string): Promise<TargetInfo | undefined> {
   return { publishPath, modeBits: target.mode };
 }
 
-async function requireOverwriteTarget(path: string, baseRevision: string | undefined) {
+async function requireExistingTarget(path: string, intent: ReplaceIntent) {
   const target = await inspectTarget(path);
   if (!target)
     throw new HashlineError("PATH_NOT_FOUND", PATH_ERROR_MESSAGES.PATH_NOT_FOUND, {
       facts: { missing: [path] },
       // Read-modify-write tools have no mode to change.
-      next: baseRevision === undefined ? "useCreate" : undefined,
+      ...(intent.mode === "overwrite" ? { next: "useCreate" as const } : {}),
     });
   return target;
+}
+
+/** Inspect the target once and decide how to publish over it. */
+async function planPublication(
+  path: string,
+  intent: CommitIntent,
+  signal: AbortSignal,
+): Promise<PublishPlan> {
+  if (intent.mode === "create") {
+    if (await inspectTarget(path))
+      throw new HashlineError("TARGET_EXISTS", "Target already exists.");
+    throwIfCancelled(signal);
+    return { kind: "create" };
+  }
+  const target = await requireExistingTarget(path, intent);
+  throwIfCancelled(signal);
+  if (intent.mode === "update")
+    return { kind: "replace", intent, target, beforeRevision: intent.baseRevision };
+  try {
+    return { kind: "replace", intent, target, beforeRevision: await fileRevision(path, signal) };
+  } catch (error) {
+    throwIfCancelled(signal);
+    throw stepError("Unable to read target revision.", error);
+  }
+}
+
+/** Before replacing: an update's base revision still holds and the path names the inspected file. */
+async function recheckReplace(
+  path: string,
+  plan: Extract<PublishPlan, { readonly kind: "replace" }>,
+  signal: AbortSignal,
+): Promise<void> {
+  if (plan.intent.mode === "update")
+    await requireBaseRevision(path, plan.intent.baseRevision, signal);
+  const current = await requireExistingTarget(path, plan.intent);
+  throwIfCancelled(signal);
+  if (current.publishPath !== plan.target.publishPath)
+    throw new HashlineError("FILE_CHANGED", "Target path resolves to a different file.");
 }
 
 async function writeAndSyncTemp(
   tempPath: string,
   content: Buffer,
-  modeBits: number | undefined,
   signal: AbortSignal,
 ): Promise<void> {
   throwIfCancelled(signal);
@@ -236,7 +283,6 @@ async function writeAndSyncTemp(
   } finally {
     await handle.close();
   }
-  if (modeBits !== undefined) await chmod(tempPath, modeBits & 0o7777);
 }
 
 async function publishCreate(
@@ -306,48 +352,23 @@ async function makeTempDirectory(directory: string): Promise<string> {
 export async function commitFile(
   path: string,
   content: string,
-  options: CommitOptions,
+  intent: CommitIntent,
+  signal: AbortSignal,
 ): Promise<CommitResult> {
   // Tools reject such input in prepareArguments, but a transformation can still produce it
   // (a regex without `u` can split a surrogate pair), so publication keeps the final check.
   const unwritable = unwritableTextError(content);
   if (unwritable) throw unwritable;
   const bytes = Buffer.from(content, "utf8");
-  const { mode } = options;
-  const baseRevision = mode === "overwrite" ? options.baseRevision : undefined;
-  const target =
-    mode === "overwrite" ? await requireOverwriteTarget(path, baseRevision) : undefined;
-  if (mode === "create" && (await inspectTarget(path)))
-    throw new HashlineError("TARGET_EXISTS", "Target already exists.");
-  throwIfCancelled(options.signal);
+  const plan = await planPublication(path, intent, signal);
   const publishedRevision = byteRevision(bytes);
-  const verifyOverwrite = async (initial: TargetInfo) => {
-    if (baseRevision !== undefined) await requireBaseRevision(path, baseRevision, options.signal);
-    const current = await requireOverwriteTarget(path, baseRevision);
-    throwIfCancelled(options.signal);
-    if (current.publishPath !== initial.publishPath)
-      throw new HashlineError("FILE_CHANGED", "Target path resolves to a different file.");
-  };
-  let beforeRevision = baseRevision;
-  if (target && beforeRevision === undefined) {
-    try {
-      beforeRevision = await fileRevision(path, options.signal);
-    } catch (error) {
-      throwIfCancelled(options.signal);
-      throw stepError("Unable to read target revision.", error);
-    }
-  }
   // Check a bound snapshot even when the transformation produced no change.
-  if (target && beforeRevision === publishedRevision) {
-    await verifyOverwrite(target);
-    return {
-      publishedRevision,
-      observedRevision: publishedRevision,
-      publication: "NOT_PUBLISHED",
-    };
+  if (plan.kind === "replace" && plan.beforeRevision === publishedRevision) {
+    await recheckReplace(path, plan, signal);
+    return { publication: "NOT_PUBLISHED", publishedRevision, freshness: "unchanged" };
   }
 
-  const publishPath = target?.publishPath ?? path;
+  const publishPath = plan.kind === "replace" ? plan.target.publishPath : path;
   const publishDirectory = dirname(publishPath);
   let tempDir: string;
   try {
@@ -360,25 +381,29 @@ export async function commitFile(
   const tempPath = join(tempDir, "content");
   let published = false;
   try {
-    await writeAndSyncTemp(tempPath, bytes, target?.modeBits, options.signal);
-    if (target) {
-      await verifyOverwrite(target);
-      await publishReplace(tempPath, publishPath, options.signal);
+    await writeAndSyncTemp(tempPath, bytes, signal);
+    if (plan.kind === "replace") {
+      // A replacement keeps the target's mode bits.
+      await chmod(tempPath, plan.target.modeBits & 0o7777);
+      await recheckReplace(path, plan, signal);
+      await publishReplace(tempPath, publishPath, signal);
     } else {
-      await publishCreate(tempPath, publishPath, options.signal);
+      await publishCreate(tempPath, publishPath, signal);
     }
     published = true;
     await syncDirectory(publishDirectory);
-    const committed: CommitResult = {
-      publishedRevision,
+    const committed = (freshness: CommitResult["freshness"]): CommitResult => ({
       publication: "PUBLISHED",
-    };
+      publishedRevision,
+      freshness,
+    });
     try {
-      return { ...committed, observedRevision: await fileRevision(path, UNCANCELLABLE) };
+      const observed = await fileRevision(path, UNCANCELLABLE);
+      return committed(observed === publishedRevision ? "unchanged" : "changed");
     } catch (error) {
       // Another writer is replacing the published bytes: report a changed target, not a failed
       // mutation whose retry would apply it again.
-      if (error instanceof FileChangedDuringReadError) return committed;
+      if (error instanceof FileChangedDuringReadError) return committed("changed");
       throw new FileMutationError(
         "POST_PROCESS_FAILED",
         "PUBLISHED",
@@ -415,10 +440,8 @@ export type FreshnessObservation =
     };
 
 /** Freshness known from the commit result alone, before any later observation. */
-export function commitFreshness(commit: CommitRevisions): FreshnessObservation {
-  return {
-    freshness: commit.publishedRevision === commit.observedRevision ? "unchanged" : "changed",
-  };
+export function commitFreshness(commit: CommitResult): FreshnessObservation {
+  return { freshness: commit.freshness };
 }
 
 /**
