@@ -51,6 +51,7 @@ interface Sample {
   readonly files: number;
   readonly candidateFiles: number;
   readonly candidateLines: number;
+  readonly scanLimitReached: boolean;
   readonly signature: string;
 }
 
@@ -170,6 +171,7 @@ async function runChild(
     files: rows.length,
     candidateFiles,
     candidateLines,
+    scanLimitReached: result.scanLimitReached,
     signature: createHash("sha256").update(JSON.stringify(rows)).digest("hex").slice(0, 16),
   };
 }
@@ -239,6 +241,8 @@ async function runParent() {
         const tiersSample = samples.get("tiers")![0];
         const agreement = (variant: Variant) => {
           const own = samples.get(variant)!;
+          // A sample that stopped at the unnarrowed scan limit did not search the whole scope.
+          if ([...own, tiersSample].some((sample) => sample.scanLimitReached)) return "scan limit";
           if (own.some((sample) => sample.signature !== own[0].signature)) return "unstable";
           return own[0].signature === tiersSample.signature
             ? "same"
