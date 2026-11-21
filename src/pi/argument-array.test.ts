@@ -34,6 +34,12 @@ for (const { tool, args, afterValidation, field } of [
     field: "steps[0].lines.join",
   },
   {
+    tool: edit,
+    args: { path, steps: [append] },
+    afterValidation: { steps: { ...append, lines: Object.assign(["text"], { note: 0 }) } },
+    field: "steps.lines.note",
+  },
+  {
     tool: replace,
     args: { path, replacements: [replacement] },
     afterValidation: { replacements: Object.assign([replacement], { forEach: 0 }) },
@@ -76,10 +82,9 @@ for (const { tool, args, afterValidation, field } of [
   });
 }
 
-test("hook replaces steps with a singleton containing a named lines property → reports the steps type error", async () => {
-  const steps = { ...append, lines: Object.assign(["text"], { note: 0 }) };
+test("hook replaces steps with a well-formed singleton → reports the steps type error", async () => {
   await assert.rejects(
-    callTool(edit, { path, steps: [append] }, { afterValidation: { steps } }),
+    callTool(edit, { path, steps: [append] }, { afterValidation: { steps: append } }),
     (error: unknown) => {
       const report = argumentError(error);
       assert.equal(report.error, "INVALID_ARGUMENTS");
