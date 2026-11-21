@@ -41,7 +41,7 @@ bench("splitLines (CRLF text)", 20, () => {
 // 2. computeLineHash
 const sampleLines = splitLines(lfText);
 console.log(`\n[2. Content Hashing (${sampleLines.length.toLocaleString()} lines)]`);
-bench("computeLineHash (50,000 lines, hashLen=4)", 10, () => {
+bench(`computeLineHash (50,000 lines, hashLen=${hashLen})`, 10, () => {
   sampleLines.map((content, i) => computeLineHash(i + 1, content, hashLen));
 });
 bench("computeLineHash (single line)", 100_000, () => {
