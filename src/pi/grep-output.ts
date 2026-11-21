@@ -89,7 +89,7 @@ function previewLine(text: string, column = 0, maxUnits: number): Preview {
   if (text.length <= maxUnits) return { text };
   const lead = Math.min(GREP_PREVIEW_LEAD, Math.floor(maxUnits / 5));
   let start = Math.max(0, Math.min(column - lead, text.length - maxUnits));
-  if (start > 0 && LOW_SURROGATE.test(text[start])) start++;
+  if (start > 0 && LOW_SURROGATE.test(text[start])) start--;
   let end = Math.min(text.length, start + maxUnits);
   if (end < text.length && LOW_SURROGATE.test(text[end])) end--;
   if (end === start) return { text: "…", kept: 0 };
