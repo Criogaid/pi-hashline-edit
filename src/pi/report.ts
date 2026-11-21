@@ -144,6 +144,13 @@ function outcomeNext(report: Report, variant: OutcomeVariant | undefined): strin
   return typeof next === "object" ? ((variant && next[variant]) ?? next.default) : next;
 }
 
+/** Producers and throw sites state resolved paths; every report spells them as headers spell paths. */
+function spellMissing<R extends { readonly missing?: readonly string[] }>(report: R): R {
+  return report.missing
+    ? { ...report, missing: report.missing.map(serializeAbsolutePath) }
+    : report;
+}
+
 /**
  * Facts a producer hands to scripts only, because the payload or the call already shows them to
  * the model: its tool's own facts, and a mutation's command outcome with the output that the
@@ -170,7 +177,7 @@ export function reportResult<
   implied?: ImpliedFacts<TTool>,
 ): AgentToolResult<TDetails & ReportDetails<SuccessReport>> {
   const complete = Object.fromEntries(
-    reportEntries({ ...report, next: outcomeNext(report, variant) }),
+    reportEntries({ ...spellMissing(report), next: outcomeNext(report, variant) }),
   ) as SuccessReport;
   const stated = Object.keys(statedFields(complete)).length > 0;
   const text = payload.flatMap((block) => (block.type === "text" ? [block.text] : [])).join("\n");
@@ -243,10 +250,8 @@ export function describeFailure(
 ): FailureReport {
   const failure = classify(caught, context.signal);
   const budget = context.budget;
-  const facts = failure.facts;
-  const missing = facts && "missing" in facts ? facts.missing : undefined;
   // HashlineError's constructor ties its facts to its code; the union cannot carry that link.
-  return {
+  return spellMissing({
     error: failure.errorCode,
     tool,
     path: context.path as Report["path"],
@@ -254,12 +259,10 @@ export function describeFailure(
     message: boundedText(failure.message, budget.fieldBytes),
     cause: causeOf(failure.cause, budget.fieldBytes),
     ...failure.facts,
-    // Throw sites state resolved paths; the report spells them as headers spell paths.
-    ...(missing ? { missing: missing.map(serializeAbsolutePath) } : {}),
     then_run: mutation?.then_run,
     progressError: mutation?.progressError,
     next: failureNext(failure, mutation?.publication),
-  } as FailureReport;
+  } as FailureReport);
 }
 
 /** Run one tool execution, returning any failure as its report. */
