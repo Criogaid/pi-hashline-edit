@@ -121,7 +121,7 @@ interface CommandOutcome {
 
 async function runCommand(
   input: ThenRunInput,
-  signal: AbortSignal | undefined,
+  signal: AbortSignal,
   ctx: ExtensionToolContext,
   onUpdate: AgentToolUpdateCallback<unknown>,
 ): Promise<CommandOutcome> {
@@ -157,7 +157,7 @@ async function runCommand(
   // An exit or a timeout is the command's own outcome, even when cancellation arrived during a
   // result hook. Pi measures execute() only when the command ran; a cancelled call that never ran
   // has no output.
-  if (signal?.aborted && !hasExitCode && !timedOut)
+  if (signal.aborted && !hasExitCode && !timedOut)
     return durationMs === undefined
       ? { status: "cancelled", terminate: result.terminate }
       : { status: "cancelled", ...command };
@@ -198,7 +198,7 @@ function createProgressTracker<TDetails extends object>({
   toolCallId: string;
   thenRun: ThenRunInput;
   onProgress: ProgressReporter;
-  onUpdate: AgentToolUpdateCallback<MutationResultDetails<TDetails>> | undefined;
+  onUpdate: AgentToolUpdateCallback<MutationResultDetails<TDetails>>;
 }) {
   let mutationDetails: TDetails | undefined;
   let failure: unknown;
@@ -228,7 +228,7 @@ function createProgressTracker<TDetails extends object>({
     };
     for (const notify of [
       () => onProgress(progress),
-      () => onUpdate?.({ content: [], details: { ...mutationDetails, actionFusion: progress } }),
+      () => onUpdate({ content: [], details: { ...mutationDetails, actionFusion: progress } }),
     ]) {
       try {
         notify();
@@ -276,7 +276,7 @@ export function createActionFusionExecutor(onProgress: ProgressReporter) {
 
   async function withQueue<T>(
     path: string,
-    signal: AbortSignal | undefined,
+    signal: AbortSignal,
     work: () => Promise<T>,
   ): Promise<T> {
     const key = await canonicalQueueKey(path);
@@ -294,7 +294,7 @@ export function createActionFusionExecutor(onProgress: ProgressReporter) {
       if (queueTails.get(key) === tail) queueTails.delete(key);
     });
     try {
-      if (previous && signal) {
+      if (previous) {
         const cancelled = Promise.withResolvers<never>();
         const subscription = addAbortListener(signal, () => cancelled.reject(cancellationError()));
         try {
@@ -325,9 +325,9 @@ export function createActionFusionExecutor(onProgress: ProgressReporter) {
     absolutePath: string;
     thenRun: ThenRunInput | undefined;
     mutate: () => Promise<MutationOutcome<TDetails, TTool>>;
-    signal: AbortSignal | undefined;
+    signal: AbortSignal;
     ctx: ExtensionToolContext;
-    onUpdate?: AgentToolUpdateCallback<MutationResultDetails<TDetails>>;
+    onUpdate: AgentToolUpdateCallback<MutationResultDetails<TDetails>>;
   }): Promise<FusedMutation<TDetails, TTool>> {
     // Without a command, the mutation still waits for a fused call on the same file.
     if (thenRun === undefined) {
@@ -371,7 +371,7 @@ export function createActionFusionExecutor(onProgress: ProgressReporter) {
 
       // A completed mutation remains successful; the command is only started on a fresh target.
       const before = await observeFreshness(absolutePath, publishedRevision, true);
-      if (signal?.aborted) return settle(before, { status: "cancelled" });
+      if (signal.aborted) return settle(before, { status: "cancelled" });
       if (before.freshness !== "unchanged") return settle(before, { status: "skipped" });
 
       progress.report("running", "unchanged");
@@ -383,7 +383,7 @@ export function createActionFusionExecutor(onProgress: ProgressReporter) {
         );
       } catch (error) {
         command = {
-          status: signal?.aborted ? "cancelled" : "failed",
+          status: signal.aborted ? "cancelled" : "failed",
           result: { content: [{ type: "text", text: errorMessage(error) }] },
         };
       } finally {

@@ -361,7 +361,7 @@ test("shared rg runner stops and cleans up after limits, callback failures, and 
     }
     missingExecutable = true;
     await assert.rejects(
-      runRgPaths([], directory, undefined, () => true),
+      runRgPaths([], directory, new AbortController().signal, () => true),
       /Failed to run ripgrep/,
     );
   } finally {

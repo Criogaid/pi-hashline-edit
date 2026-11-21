@@ -80,7 +80,7 @@ export function isRgArgumentLimit(error: unknown): boolean {
 }
 
 /** rg resolves `--glob` patterns against its working directory: the tool's workspace, where Pi's bash also runs. */
-function startRg(args: readonly string[], cwd: string, signal?: AbortSignal): RunningProcess {
+function startRg(args: readonly string[], cwd: string, signal: AbortSignal): RunningProcess {
   throwIfCancelled(signal);
   let child: ChildProcessByStdio<null, Readable, Readable>;
   try {
@@ -116,12 +116,12 @@ function startRg(args: readonly string[], cwd: string, signal?: AbortSignal): Ru
     child.on("close", (code) => {
       closed = true;
       if (timer) clearTimeout(timer);
-      signal?.removeEventListener("abort", kill);
+      signal.removeEventListener("abort", kill);
       stderr.append(stderrDecoder.end());
       resolve({ code, stderr: stderr.toString(), error });
     });
   });
-  signal?.addEventListener("abort", kill, { once: true });
+  signal.addEventListener("abort", kill, { once: true });
   return { child, done, kill };
 }
 
@@ -150,7 +150,7 @@ async function* nulDelimitedRecords(stream: Readable): AsyncGenerator<Buffer> {
 async function runRg(
   args: readonly string[],
   cwd: string,
-  signal: AbortSignal | undefined,
+  signal: AbortSignal,
   read: (stdout: Readable) => Promise<boolean>,
 ): Promise<RgRunResult> {
   const rg = startRg(args, cwd, signal);
@@ -171,7 +171,7 @@ async function runRg(
 export function runRgPaths(
   args: string[],
   cwd: string,
-  signal: AbortSignal | undefined,
+  signal: AbortSignal,
   onPath: (path: string) => boolean | Promise<boolean>,
 ): Promise<RgRunResult> {
   return runRg(args, cwd, signal, async (stdout) => {
@@ -190,7 +190,7 @@ export function runRgPaths(
 export async function rgRejectsPatterns(
   patternArgs: readonly string[],
   cwd: string,
-  signal: AbortSignal | undefined,
+  signal: AbortSignal,
 ): Promise<boolean> {
   const result = await runRg(
     [...COMMON_RG_ARGS, ...patternArgs, "--", "-"],
@@ -231,7 +231,7 @@ export const LINE_LISTING_ARGS = [
 export function runRgLines(
   args: string[],
   cwd: string,
-  signal: AbortSignal | undefined,
+  signal: AbortSignal,
   maxLines: number,
   onFile: (path: string, lines: readonly number[] | undefined) => boolean | Promise<boolean>,
 ): Promise<RgRunResult> {

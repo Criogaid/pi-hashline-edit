@@ -467,7 +467,8 @@ test("case-differing paths on Windows → the Fusion queue serializes mutation s
         order.push("end-1");
         return publishedMutation("first\n", { content: [], details: undefined });
       },
-      signal: undefined,
+      signal: new AbortController().signal,
+      onUpdate: () => {},
       ctx: await ctx(dir, t),
     });
     await firstStarted.promise;
@@ -480,7 +481,8 @@ test("case-differing paths on Windows → the Fusion queue serializes mutation s
         order.push("end-2");
         return publishedMutation("second\n", { content: [], details: undefined });
       },
-      signal: undefined,
+      signal: new AbortController().signal,
+      onUpdate: () => {},
       ctx: await ctx(dir, t),
     });
     await new Promise((r) => setTimeout(r, 20));
@@ -675,7 +677,8 @@ test("command omits timeout → no countdown events occur while it waits", async
         await writeFile(join(dir, "target.txt"), "saved\n");
         return publishedMutation("saved\n", { content: [], details: undefined });
       },
-      signal: undefined,
+      signal: new AbortController().signal,
+      onUpdate: () => {},
       ctx: context,
     });
     await started.promise;

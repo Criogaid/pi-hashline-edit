@@ -34,6 +34,8 @@ import { callTool } from "./tool-call.testing.ts";
 import { reportOf } from "./report.ts";
 
 // Checked by tsc; this state cannot be returned by the commit layer.
+const signal = new AbortController().signal;
+
 function invalidCommitStates() {
   // @ts-expect-error A no-op has a confirmed observed revision.
   const unobservedNoop: CommitResult = {
@@ -109,14 +111,14 @@ test("another create commits immediately before publication → preserves the wi
     t.mock.method(fsPromises, "link", async (...args: Parameters<typeof nativeLink>) => {
       t.mock.restoreAll();
       syncBuiltinESMExports();
-      const winner = await commitFile(target, "winner\n", { mode: "create" });
+      const winner = await commitFile(target, "winner\n", { signal, mode: "create" });
       assert.equal(winner.publication, "PUBLISHED");
       return nativeLink(...args);
     });
     syncBuiltinESMExports();
     try {
       await assert.rejects(
-        commitFile(target, "loser\n", { mode: "create" }),
+        commitFile(target, "loser\n", { signal, mode: "create" }),
         (error: unknown) => error instanceof HashlineError && error.errorCode === "TARGET_EXISTS",
       );
       assert.deepEqual(await readFile(target), Buffer.from("winner\n"));
@@ -132,7 +134,7 @@ test("create never overwrites an existing target", async () =>
     await writeFile(target, "original\n");
     const revision = byteRevision(await readFile(target));
     await assert.rejects(
-      commitFile(target, "replacement\n", { mode: "create" }),
+      commitFile(target, "replacement\n", { signal, mode: "create" }),
       (error: unknown) => error instanceof HashlineError && error.errorCode === "TARGET_EXISTS",
     );
     assert.equal(byteRevision(await readFile(target)), revision);
@@ -159,7 +161,7 @@ test("short low-level reads → complete mutation snapshots before revision bind
     });
     syncBuiltinESMExports();
     try {
-      const snapshot = await readEditableSnapshot(target, undefined);
+      const snapshot = await readEditableSnapshot(target, signal);
       assert.equal(snapshot.text, expected.toString("utf8"));
       assert.equal(snapshot.baseRevision, byteRevision(expected));
     } finally {
@@ -177,7 +179,7 @@ test("replacement exposes complete old or new content during concurrent reads", 
     const newContent = "new-".repeat(200_000);
     await writeFile(target, oldContent);
     let done = false;
-    const commit = commitFile(target, newContent, { mode: "overwrite" }).finally(() => {
+    const commit = commitFile(target, newContent, { signal, mode: "overwrite" }).finally(() => {
       done = true;
     });
     while (!done) {
@@ -202,7 +204,7 @@ test("overwriting a symlink updates its resolved regular-file target and preserv
       if (isPermissionError(error)) return t.skip("symlink creation unavailable");
       throw error;
     }
-    await commitFile(alias, "new\n", { mode: "overwrite" });
+    await commitFile(alias, "new\n", { signal, mode: "overwrite" });
     assert.equal(await readFile(target, "utf8"), "new\n");
     assert.equal((await lstat(alias)).isSymbolicLink(), true);
     assert.equal(await readlink(alias), "real.txt");
@@ -221,8 +223,11 @@ test("create rejects both valid and dangling symlinks without replacing the link
       if (isPermissionError(error)) return t.skip("symlink creation unavailable");
       throw error;
     }
-    await assert.rejects(commitFile(valid, "bad\n", { mode: "create" }), /already exists|symlink/);
-    await assert.rejects(commitFile(dangling, "bad\n", { mode: "create" }), /symlink/);
+    await assert.rejects(
+      commitFile(valid, "bad\n", { signal, mode: "create" }),
+      /already exists|symlink/,
+    );
+    await assert.rejects(commitFile(dangling, "bad\n", { signal, mode: "create" }), /symlink/);
     assert.equal((await lstat(valid)).isSymbolicLink(), true);
     assert.equal((await lstat(dangling)).isSymbolicLink(), true);
     assert.equal(await readFile(real, "utf8"), "original\n");
@@ -239,7 +244,10 @@ test("replacement rejects a multi-hardlink target without changing either link",
       if (isPermissionError(error)) return t.skip("hardlink creation unavailable");
       throw error;
     }
-    await assert.rejects(commitFile(target, "bad\n", { mode: "overwrite" }), /multiple hard links/);
+    await assert.rejects(
+      commitFile(target, "bad\n", { signal, mode: "overwrite" }),
+      /multiple hard links/,
+    );
     assert.equal(await readFile(target, "utf8"), "original\n");
     assert.equal(await readFile(sibling, "utf8"), "original\n");
     assert.equal((await stat(target)).nlink, 2);
@@ -252,10 +260,10 @@ test("files are replaced or created → preserve existing modes and apply umask 
     const existing = join(dir, "existing.sh");
     await writeFile(existing, "old\n");
     await chmod(existing, 0o750);
-    await commitFile(existing, "new\n", { mode: "overwrite" });
+    await commitFile(existing, "new\n", { signal, mode: "overwrite" });
     assert.equal((await stat(existing)).mode & 0o777, 0o750);
     const created = join(dir, "created.txt");
-    await commitFile(created, "new\n", { mode: "create" });
+    await commitFile(created, "new\n", { signal, mode: "create" });
     assert.equal((await stat(created)).mode & 0o777, 0o666 & ~process.umask());
   }));
 
@@ -263,12 +271,15 @@ test("directories are rejected instead of entering regular-file publication", as
   withTemp(async (dir) => {
     const target = join(dir, "directory");
     await mkdir(target);
-    await assert.rejects(commitFile(target, "bad\n", { mode: "overwrite" }), (error: unknown) => {
-      assert.ok(error instanceof HashlineError);
-      assert.equal(error.errorCode, "NOT_REGULAR_FILE");
-      assert.equal(error.message, PATH_ERROR_MESSAGES.NOT_REGULAR_FILE);
-      return true;
-    });
+    await assert.rejects(
+      commitFile(target, "bad\n", { signal, mode: "overwrite" }),
+      (error: unknown) => {
+        assert.ok(error instanceof HashlineError);
+        assert.equal(error.errorCode, "NOT_REGULAR_FILE");
+        assert.equal(error.message, PATH_ERROR_MESSAGES.NOT_REGULAR_FILE);
+        return true;
+      },
+    );
   }));
 
 test("Windows shared access failure preserves the target, skips then_run, and releases the queue", async (t) =>
@@ -412,7 +423,7 @@ test("overwrite target changes during temporary staging → rejects before publi
         syncBuiltinESMExports();
         try {
           await assert.rejects(
-            commitFile(target, "new\n", { mode: "overwrite", baseRevision }),
+            commitFile(target, "new\n", { signal, mode: "overwrite", baseRevision }),
             (error: unknown) => error instanceof HashlineError && error.errorCode === code,
           );
           assert.equal(staged, true);
@@ -436,6 +447,7 @@ test("bound overwrite → reports published and observed revisions for the publi
     await writeFile(target, "before\n");
     const baseRevision = byteRevision(await readFile(target));
     const result = await commitFile(target, "after\n", {
+      signal,
       mode: "overwrite",
       baseRevision,
     });
@@ -453,7 +465,7 @@ test("commit rejects lossy UTF-8 output before modifying or creating files", asy
     for (const content of ["\ud800", "\udfff", "before\ud800after"]) {
       for (const path of [existing, missing]) {
         await assert.rejects(
-          commitFile(path, content, { mode: path === existing ? "overwrite" : "create" }),
+          commitFile(path, content, { signal, mode: path === existing ? "overwrite" : "create" }),
           (error: unknown) =>
             error instanceof HashlineError && error.errorCode === "INVALID_UNICODE",
         );
@@ -462,7 +474,7 @@ test("commit rejects lossy UTF-8 output before modifying or creating files", asy
     assert.equal(await readFile(existing, "utf8"), "original\n");
     await assert.rejects(readFile(missing), { code: "ENOENT" });
     const content = "\uFEFFvalid 😀\r\n";
-    const result = await commitFile(existing, content, { mode: "overwrite" });
+    const result = await commitFile(existing, content, { signal, mode: "overwrite" });
     assert.deepEqual(await readFile(existing), Buffer.from(content));
     assert.equal(result.publishedRevision, byteRevision(Buffer.from(content)));
   }));
@@ -475,6 +487,7 @@ test("identical commits preserve the file and still enforce mode, revision, and 
     const before = await stat(target);
     const revision = byteRevision(await readFile(target));
     const result = await commitFile(target, content, {
+      signal,
       mode: "overwrite",
       baseRevision: revision,
     });
@@ -488,9 +501,9 @@ test("identical commits preserve the file and still enforce mode, revision, and 
       [after.ino, after.mtimeMs, after.ctimeMs],
       [before.ino, before.mtimeMs, before.ctimeMs],
     );
-    await assert.rejects(commitFile(target, content, { mode: "create" }), /already exists/);
+    await assert.rejects(commitFile(target, content, { signal, mode: "create" }), /already exists/);
     await assert.rejects(
-      commitFile(target, content, { mode: "overwrite", baseRevision: "stale" }),
+      commitFile(target, content, { signal, mode: "overwrite", baseRevision: "stale" }),
       (error: unknown) =>
         error instanceof HashlineError &&
         error.errorCode === "FILE_CHANGED" &&
@@ -500,7 +513,7 @@ test("identical commits preserve the file and still enforce mode, revision, and 
       commitFile(target, content, { mode: "overwrite", signal: AbortSignal.abort() }),
       (error: unknown) => error instanceof HashlineError && error.errorCode === "OPERATION_ABORTED",
     );
-    const created = await commitFile(join(dir, "empty"), "", { mode: "create" });
+    const created = await commitFile(join(dir, "empty"), "", { signal, mode: "create" });
     assert.equal(created.publication, "PUBLISHED");
   }));
 
@@ -509,7 +522,7 @@ test("missing overwrite target → suggests create only without a base revision"
     const missing = join(dir, "missing");
     for (const baseRevision of [undefined, "previous-revision"]) {
       await assert.rejects(
-        commitFile(missing, "", { mode: "overwrite", baseRevision }),
+        commitFile(missing, "", { signal, mode: "overwrite", baseRevision }),
         (error: unknown) => {
           assert.ok(error instanceof HashlineError);
           assert.equal(error.errorCode, "PATH_NOT_FOUND");
@@ -527,7 +540,7 @@ test("file changes after the read → bound commits reject changed and unchanged
     const target = join(dir, "target.txt");
     const initialContent = "line 1\nline 2\n";
     await writeFile(target, initialContent);
-    const snapshot = await readEditableSnapshot(target, undefined);
+    const snapshot = await readEditableSnapshot(target, signal);
     assert.equal(snapshot.text, initialContent);
 
     // External process modifies target after snapshot is read.
@@ -537,7 +550,11 @@ test("file changes after the read → bound commits reject changed and unchanged
     for (const content of [snapshot.text, "replacement\n"]) {
       await assert.rejects(
         () =>
-          commitFile(target, content, { mode: "overwrite", baseRevision: snapshot.baseRevision }),
+          commitFile(target, content, {
+            signal,
+            mode: "overwrite",
+            baseRevision: snapshot.baseRevision,
+          }),
         (error: unknown) => error instanceof HashlineError && error.errorCode === "FILE_CHANGED",
       );
       assert.equal(await readFile(target, "utf8"), "line 1\nmodified line 2\n");
@@ -546,6 +563,7 @@ test("file changes after the read → bound commits reject changed and unchanged
 
     // Without baseRevision, overwrite hashes the current target instead of using the snapshot.
     const overwriteResult = await commitFile(target, snapshot.text, {
+      signal,
       mode: "overwrite",
     });
     assert.equal(overwriteResult.publication, "PUBLISHED");
@@ -554,8 +572,9 @@ test("file changes after the read → bound commits reject changed and unchanged
     assert.equal(await readFile(target, "utf8"), initialContent);
 
     // When target does not change externally, no-op commit succeeds and confirms observed revision.
-    const freshSnapshot = await readEditableSnapshot(target, undefined);
+    const freshSnapshot = await readEditableSnapshot(target, signal);
     const noopResult = await commitFile(target, freshSnapshot.text, {
+      signal,
       mode: "overwrite",
       baseRevision: freshSnapshot.baseRevision,
     });
@@ -568,12 +587,13 @@ test("no-op commit with baseRevision rejects if target was deleted externally", 
   withTemp(async (dir) => {
     const target = join(dir, "deleted.txt");
     await writeFile(target, "content\n");
-    const snapshot = await readEditableSnapshot(target, undefined);
+    const snapshot = await readEditableSnapshot(target, signal);
 
     await rm(target);
 
     await assert.rejects(
       commitFile(target, snapshot.text, {
+        signal,
         mode: "overwrite",
         baseRevision: snapshot.baseRevision,
       }),
@@ -607,7 +627,7 @@ test("commitFile temporary publication → handles existing and missing parents 
         syncBuiltinESMExports();
         if (scenario === "denied") {
           await assert.rejects(
-            commitFile(target, "data", { mode: "create" }),
+            commitFile(target, "data", { signal, mode: "create" }),
             (error: unknown) =>
               error instanceof HashlineError &&
               error.errorCode === "PUBLISH_FAILED" &&
@@ -615,7 +635,7 @@ test("commitFile temporary publication → handles existing and missing parents 
           );
           await assert.rejects(readFile(target), { code: "ENOENT" });
         } else {
-          const result = await commitFile(target, "data", { mode: "create" });
+          const result = await commitFile(target, "data", { signal, mode: "create" });
           assert.equal(result.publication, "PUBLISHED");
           assert.equal(await readFile(target, "utf8"), "data");
         }

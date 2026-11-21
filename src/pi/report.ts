@@ -225,17 +225,17 @@ function failureResult(report: FailureReport): AgentToolResult<ReportDetails<Fai
 export interface FailureContext {
   /** The path or paths the call names, as supplied. */
   readonly path?: string | readonly string[];
-  readonly signal?: AbortSignal;
+  readonly signal: AbortSignal;
   readonly budget: OutputBudgets;
 }
 
 /** What a mutation tool states about its failure beside the classified error. */
 type MutationFailureFacts = Pick<FailureReport, "publication" | "then_run" | "progressError">;
 
-function classify(error: unknown, signal: AbortSignal | undefined): HashlineError {
+function classify(error: unknown, signal: AbortSignal): HashlineError {
   if (error instanceof HashlineError) return error;
   // Pi's native tools and Node report cancellation with their own errors.
-  if (signal?.aborted) return cancellationError();
+  if (signal.aborted) return cancellationError();
   const path = pathError(error);
   if (path) return path;
   const code: ErrorCode = filesystemErrorCode(error) ?? "UNCLASSIFIED";

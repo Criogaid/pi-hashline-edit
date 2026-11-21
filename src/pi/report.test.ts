@@ -26,6 +26,8 @@ import {
 } from "./report-schema.ts";
 
 // npm run typecheck checks these invalid callers; they must never run.
+const signal = new AbortController().signal;
+
 function invalidReportConstruction(report: Report) {
   // @ts-expect-error Removed facts cannot be supplied to a report.
   const removedFact: Report = { tool: "grep", created: true };
@@ -59,7 +61,7 @@ function displayed(result: Parameters<typeof renderToolError>[0], tool: ReportTo
 test("structured failure → omits call fields from text and renders the complete details once", async () => {
   const result = await runTool(
     "write",
-    { path: "target.txt", budget: DEFAULT_OUTPUT_BUDGETS },
+    { signal, path: "target.txt", budget: DEFAULT_OUTPUT_BUDGETS },
     async () => {
       throw new HashlineError("TARGET_EXISTS", "Target already exists.");
     },
@@ -149,7 +151,11 @@ test("native failure with deeply nested cause → retains the terminal diagnosti
   let error: Error = terminal;
   for (let index = 0; index < 12; index++)
     error = Object.assign(new Error(`layer ${index}`, { cause: error }), { code: "EIO" });
-  const report = describeFailure("grep", error, { path: "source", budget: DEFAULT_OUTPUT_BUDGETS });
+  const report = describeFailure("grep", error, {
+    signal,
+    path: "source",
+    budget: DEFAULT_OUTPUT_BUDGETS,
+  });
   const serialized = renderReport(report);
   const decoded = reportFromText(serialized, "grep");
   assert.ok(decoded);
@@ -215,6 +221,7 @@ test("native filesystem failure → reports its diagnostic once without a synthe
     for (const message of [`${code}: cannot inspect source`, "cannot inspect source"]) {
       const native = Object.assign(new Error(message), { code });
       const report = describeFailure("grep", native, {
+        signal,
         path: "source",
         budget: DEFAULT_OUTPUT_BUDGETS,
       });
@@ -239,6 +246,7 @@ test("native path errors → classify fixed messages and state the missing path 
       path: resolved,
     });
     const report = describeFailure("read", native, {
+      signal,
       path: "source",
       budget: DEFAULT_OUTPUT_BUDGETS,
     });
@@ -266,7 +274,10 @@ test("mutation publication → recovery reflects whether the change was saved", 
             publication,
             "failed",
           );
-    const report = describeMutationFailure("edit", error, { budget: DEFAULT_OUTPUT_BUDGETS });
+    const report = describeMutationFailure("edit", error, {
+      signal,
+      budget: DEFAULT_OUTPUT_BUDGETS,
+    });
     assert.equal(report.publication, publication);
     assert.equal(report.next, expected);
     assert.equal(reportFromText(renderReport(report), "edit")?.next, expected);
@@ -414,6 +425,7 @@ test("report-contract: native failure with an independent cause → retains the 
   const underlying = Object.assign(new Error("disk read failed"), { code: "EIO" });
   const native = new Error("cannot inspect source", { cause: underlying });
   const report = describeFailure("read", native, {
+    signal,
     path: "source",
     budget: DEFAULT_OUTPUT_BUDGETS,
   });
@@ -578,6 +590,7 @@ test("hooked details contain a cyclic report cause → preserves payload and dec
 test("native mutation failure before commit → retains publication", () => {
   for (const tool of ["edit", "replace", "write"] as const) {
     const report = describeMutationFailure(tool, new Error("native failure"), {
+      signal,
       budget: DEFAULT_OUTPUT_BUDGETS,
     });
     assert.equal(report.publication, "NOT_PUBLISHED", tool);
@@ -590,7 +603,7 @@ test("failure classification without mutation facts → omits mutation state for
       tool === "read" || tool === "grep"
         ? new Error("native failure")
         : new FileMutationError("POST_PROCESS_FAILED", "PUBLISHED", "result generation failed");
-    const report = describeFailure(tool, error, { budget: DEFAULT_OUTPUT_BUDGETS });
+    const report = describeFailure(tool, error, { signal, budget: DEFAULT_OUTPUT_BUDGETS });
     assert.equal(
       report.error,
       error instanceof FileMutationError ? "POST_PROCESS_FAILED" : "UNCLASSIFIED",

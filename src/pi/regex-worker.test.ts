@@ -13,7 +13,7 @@ test("input-type inherited from eval → both file workers run with other flags 
     (async () => {
     const { default: assert } = await import('node:assert/strict');
     const { withRegexWorker } = await import(${JSON.stringify(workerModule)});
-    const run = (entry, input) => withRegexWorker(new URL(entry), value => value, 10000, undefined, send => send(input));
+    const run = (entry, input) => withRegexWorker(new URL(entry), value => value, 10000, new AbortController().signal, send => send(input));
     const probe = new URL('data:text/javascript,' + encodeURIComponent("import { parentPort } from 'node:worker_threads'; parentPort.on('message', () => parentPort.postMessage({ result: process.execArgv }));"));
     const flags = await run(probe.href, {});
     assert.ok(flags.includes('--no-warnings'));

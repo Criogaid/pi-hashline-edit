@@ -20,9 +20,9 @@ export async function scanTextFile(
   path: string,
   options: {
     readonly onChunk?: (text: string, bytesRead: number) => void | Promise<void>;
-    readonly signal?: AbortSignal;
+    readonly signal: AbortSignal;
     readonly decoding?: Utf8Decoding;
-  } = {},
+  },
 ) {
   const { onChunk, signal, decoding = "strict" } = options;
   return withFileRead(path, signal, async (handle) => {
@@ -106,7 +106,7 @@ export async function scanTextLines(
   select: (number: number) => boolean,
   onLine: (line: ScannedLine) => void,
   options: {
-    readonly signal?: AbortSignal;
+    readonly signal: AbortSignal;
     readonly maxLineBytes?: number;
     readonly decoding?: Utf8Decoding;
   },

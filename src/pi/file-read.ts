@@ -22,7 +22,7 @@ function sameObservation(before: BigIntStats, after: BigIntStats): boolean {
  */
 export async function withFileRead<T>(
   path: string,
-  signal: AbortSignal | undefined,
+  signal: AbortSignal,
   read: (handle: FileHandle, before: BigIntStats) => Promise<T>,
 ): Promise<T> {
   throwIfCancelled(signal);

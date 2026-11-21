@@ -218,7 +218,7 @@ export async function searchFiles(options: {
   readonly query: GrepQuery;
   readonly limit: number;
   readonly timeoutMs: number;
-  readonly signal?: AbortSignal;
+  readonly signal: AbortSignal;
 }) {
   const { scope, query, limit, timeoutMs, signal } = options;
   const files: GrepFileMatch[] = [];
@@ -229,7 +229,7 @@ export async function searchFiles(options: {
   let matchLimitReached = false;
   let failure: { error: unknown } | undefined;
   const failed = new AbortController();
-  const poolSignal = signal ? AbortSignal.any([signal, failed.signal]) : failed.signal;
+  const poolSignal = AbortSignal.any([signal, failed.signal]);
   const fail = (error: unknown) => {
     failure ??= { error };
     failed.abort();

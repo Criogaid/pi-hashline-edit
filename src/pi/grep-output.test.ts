@@ -25,6 +25,7 @@ test("narrow grep preview centred on a low surrogate → keeps the whole matched
     `${name} · 1 match\n${anchors.row(1, line, `[partial, columns 1-2] ${character}…`)}`,
   );
   const { payload } = await grepOutput({
+    signal: new AbortController().signal,
     cwd,
     anchors,
     outputMode: "content",

@@ -12,6 +12,8 @@ import { truncateSync } from "node:fs";
 import { Utf8DecodingError } from "../core/text.ts";
 import { HashlineError } from "../core/errors.ts";
 
+const signal = new AbortController().signal;
+
 async function withFile(run: (path: string) => Promise<void>) {
   const directory = await mkdtemp(join(tmpdir(), "hashline-stream-"));
   try {
@@ -43,7 +45,7 @@ test("streamed lines preserve BOM, standalone CR, and boundaries split across ch
           assert.equal(line.byteLength, Buffer.byteLength(line.text!));
           lines.push(line.text!);
         },
-        {},
+        { signal },
       );
       assert.deepEqual(lines, splitLines(text));
       assert.equal(stats.totalLines, lines.length);
@@ -64,6 +66,7 @@ test("streamed scans → return the revision of every original byte and byte-bas
       const chunks: string[] = [];
       const progress: number[] = [];
       const stats = await scanTextFile(path, {
+        signal,
         onChunk(text, bytesRead) {
           chunks.push(text);
           progress.push(bytesRead);
@@ -77,7 +80,7 @@ test("streamed scans → return the revision of every original byte and byte-bas
         path,
         (number) => number === 1,
         () => {},
-        {},
+        { signal },
       );
       assert.equal(selected.revision, stats.revision);
     }
@@ -91,7 +94,7 @@ test("streamed selection discards oversized content and still counts and reads s
       path,
       (number) => number <= 3,
       (line) => seen.push(line),
-      { maxLineBytes: 4 },
+      { signal, maxLineBytes: 4 },
     );
     assert.equal(stats.totalLines, 4);
     assert.deepEqual(seen, [
@@ -112,7 +115,7 @@ test("streamed validation checks the entire file and gives NUL precedence over m
         path,
         (number) => number === 1,
         () => {},
-        {},
+        { signal },
       ),
       (error: unknown) => error instanceof Utf8DecodingError,
     );
@@ -120,7 +123,7 @@ test("streamed validation checks the entire file and gives NUL precedence over m
       path,
       Buffer.concat([Buffer.from([0xff]), Buffer.alloc(65536, 97), Buffer.from([0])]),
     );
-    assert.equal((await scanTextFile(path)).hasNul, true);
+    assert.equal((await scanTextFile(path, { signal })).hasNul, true);
   }));
 
 test("streamed reads propagate cancellation", async () =>
@@ -149,6 +152,7 @@ test("lossy decoding reports invalid UTF-8 across chunk boundaries and preserves
       () => true,
       (line) => lines.push(line.text ?? ""),
       {
+        signal,
         decoding: "lossy",
       },
     );
@@ -157,7 +161,7 @@ test("lossy decoding reports invalid UTF-8 across chunk boundaries and preserves
     assert.deepEqual(lines, splitLines(source.toString("utf8")));
     assert.equal(stats.revision, byteRevision(source));
     await assert.rejects(
-      scanTextFile(path),
+      scanTextFile(path, { signal }),
       (error: unknown) => error instanceof Utf8DecodingError,
     );
   }));
@@ -173,6 +177,7 @@ test("strict scans encounter invalid UTF-8 → stop emitting text and reject dec
     const emitted: string[] = [];
     await assert.rejects(
       scanTextFile(path, {
+        signal,
         onChunk: (text) => {
           emitted.push(text);
         },
@@ -190,6 +195,7 @@ test("lossy scans flush a multibyte sequence split across chunks and incomplete 
     await writeFile(path, source);
     const emitted: string[] = [];
     const stats = await scanTextFile(path, {
+      signal,
       onChunk: (text) => {
         emitted.push(text);
       },
@@ -214,6 +220,7 @@ test("NUL suppresses its chunk and all later text without flushing a pending seq
     for (const decoding of ["strict", "lossy"] as const) {
       const emitted: string[] = [];
       const stats = await scanTextFile(path, {
+        signal,
         onChunk: (text) => {
           emitted.push(text);
         },
@@ -235,6 +242,7 @@ test("NUL takes precedence over earlier malformed UTF-8 in strict and lossy scan
     for (const decoding of ["strict", "lossy"] as const) {
       const emitted: string[] = [];
       const stats = await scanTextFile(path, {
+        signal,
         onChunk: (text) => {
           emitted.push(text);
         },
@@ -262,6 +270,7 @@ test("valid file truncated across a pending UTF-8 sequence → scans report a ch
       let changed = false;
       await assert.rejects(
         scanTextFile(path, {
+          signal,
           onChunk: () => {
             if (changed) return;
             changed = true;

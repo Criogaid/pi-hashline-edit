@@ -13,7 +13,7 @@ for (const replacement of ["", "汉字\n"]) {
     await writeFile(path, "中文\n");
     await utimes(path, new Date(0), new Date(0));
     await assert.rejects(
-      withFileRead(path, undefined, async (handle) => {
+      withFileRead(path, new AbortController().signal, async (handle) => {
         const bytes = await handle.readFile();
         await writeFile(path, replacement);
         return bytes;
@@ -22,7 +22,9 @@ for (const replacement of ["", "汉字\n"]) {
     );
     assert.equal(await readFile(path, "utf8"), replacement);
     assert.equal(
-      (await withFileRead(path, undefined, (handle) => handle.readFile())).toString("utf8"),
+      (
+        await withFileRead(path, new AbortController().signal, (handle) => handle.readFile())
+      ).toString("utf8"),
       replacement,
     );
   });

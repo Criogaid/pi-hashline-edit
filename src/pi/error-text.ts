@@ -14,8 +14,16 @@ export function cancellationError(): HashlineError<"OPERATION_ABORTED"> {
   return new HashlineError("OPERATION_ABORTED", "Operation aborted.");
 }
 
-export function throwIfCancelled(signal: AbortSignal | undefined): void {
-  if (signal?.aborted) throw cancellationError();
+export function throwIfCancelled(signal: AbortSignal): void {
+  if (signal.aborted) throw cancellationError();
+}
+
+/**
+ * Pi omits the signal when nothing can cancel a call. A signal that never aborts stands in for it
+ * at the tool entry, so every layer below takes one.
+ */
+export function callSignal(signal: AbortSignal | undefined): AbortSignal {
+  return signal ?? new AbortController().signal;
 }
 
 /**

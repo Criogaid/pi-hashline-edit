@@ -84,7 +84,7 @@ for (const operation of ["delete", "replace", "atomic replace"] as const) {
     await writeFile(path, "中文\n");
     await writeFile(replacement, "汉字\n");
     await assert.rejects(
-      withFileRead(path, undefined, async (handle) => {
+      withFileRead(path, new AbortController().signal, async (handle) => {
         const bytes = await handle.readFile();
         if (operation !== "atomic replace") await rm(path);
         if (operation !== "delete") await rename(replacement, path);

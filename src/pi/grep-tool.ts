@@ -24,7 +24,7 @@ import {
   POSITIVE_SAFE_INTEGER,
   STRICT_SAMPLING,
 } from "./schema.ts";
-import { throwIfCancelled } from "./error-text.ts";
+import { callSignal, throwIfCancelled } from "./error-text.ts";
 import { reportResult, runTool, type ReportDetails } from "./report.ts";
 import { SCRIPT_OUTPUT_SCHEMAS } from "./report-schema.ts";
 import type { HashlineEditConfig, ToolEnvironment } from "./config.ts";
@@ -182,8 +182,9 @@ export function makeGrepOverride({ cwd, config, budgets }: ToolEnvironment) {
     async execute(
       _toolCallId: string,
       params: Static<GrepSchema>,
-      signal: AbortSignal | undefined,
+      piSignal: AbortSignal | undefined,
     ) {
+      const signal = callSignal(piSignal);
       const budget = budgets();
       return runTool("grep", { path: params.path, signal, budget }, async () => {
         throwIfCancelled(signal);

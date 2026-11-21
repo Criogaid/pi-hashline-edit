@@ -12,15 +12,16 @@ const fixtures = [
   { bytes: 8 * 1024 * 1024, iterations: 20 },
 ];
 const row = "中文🙂\n";
+const signal = new AbortController().signal;
 const directory = await mkdtemp(join(tmpdir(), "hashline-scan-bench-"));
 try {
   for (const { bytes, iterations } of fixtures) {
     const path = join(directory, String(bytes));
     const source = row.repeat(Math.ceil(bytes / Buffer.byteLength(row)));
     await writeFile(path, source);
-    for (let i = 0; i < WARMUP_SCANS; i++) await scanTextFile(path);
+    for (let i = 0; i < WARMUP_SCANS; i++) await scanTextFile(path, { signal });
     const start = performance.now();
-    for (let i = 0; i < iterations; i++) await scanTextFile(path);
+    for (let i = 0; i < iterations; i++) await scanTextFile(path, { signal });
     console.log(
       JSON.stringify({
         bytes: Buffer.byteLength(source),

@@ -50,6 +50,7 @@ test("diagnostics within the budget are unchanged", () => {
 
 test("search warning aggregation retains the final cause and labels truncation", async () => {
   const { facts, payload } = await grepOutput({
+    signal: new AbortController().signal,
     budget: DEFAULT_OUTPUT_BUDGETS,
     cwd: process.cwd(),
     missing: [],

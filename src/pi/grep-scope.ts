@@ -104,7 +104,7 @@ export async function filterExplicitFilesByGlob(
   cwd: string,
   globs: readonly string[],
   paths: readonly SearchPathInfo[],
-  signal: AbortSignal | undefined,
+  signal: AbortSignal,
 ): Promise<{ readonly searchPaths: string[]; readonly warnings: readonly SearchWarning[] }> {
   const explicitFiles = paths.filter(({ isFile }) => isFile);
   if (globs.length === 0 || explicitFiles.length === 0)

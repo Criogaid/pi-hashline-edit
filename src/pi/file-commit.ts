@@ -38,7 +38,7 @@ import type { Freshness, PublicationStatus } from "./report-schema.ts";
  * that it exist; with `baseRevision` (read-modify-write), the target must still hold the bytes
  * that revision names, and that revision stands in for hashing the target again.
  */
-type CommitOptions = { readonly signal?: AbortSignal } & (
+type CommitOptions = { readonly signal: AbortSignal } & (
   | { readonly mode: "create" }
   | { readonly mode: "overwrite"; readonly baseRevision?: string }
 );
@@ -82,11 +82,14 @@ function requireRegularFile(target: Stats | BigIntStats): void {
 
 const REGULAR_FILE_READ_CHUNK_BYTES = 64 * 1024;
 
+/** Observations of a published target run to completion: the report must state what was published. */
+const UNCANCELLABLE = new AbortController().signal;
+
 /** Read a regular file in full, even when the filesystem returns short reads. */
 async function readRegularFileBytes(
   handle: FileHandle,
   size: bigint,
-  signal: AbortSignal | undefined,
+  signal: AbortSignal,
 ): Promise<Buffer> {
   const chunks: Buffer[] = [];
   let position = 0n;
@@ -113,19 +116,19 @@ async function readRegularFileBytes(
 }
 
 /** Check the opened object before reading; a FIFO must not block even if the path changed. */
-async function readRegularFile(path: string, signal?: AbortSignal): Promise<Buffer> {
+async function readRegularFile(path: string, signal: AbortSignal): Promise<Buffer> {
   return withFileRead(path, signal, async (handle, before) => {
     requireRegularFile(before);
     return readRegularFileBytes(handle, before.size, signal);
   });
 }
 
-async function fileRevision(path: string, signal?: AbortSignal): Promise<string> {
+async function fileRevision(path: string, signal: AbortSignal): Promise<string> {
   return byteRevision(await readRegularFile(path, signal));
 }
 
 /** Decode and bind a mutation snapshot to the exact bytes read. */
-export async function readEditableSnapshot(path: string, signal: AbortSignal | undefined) {
+export async function readEditableSnapshot(path: string, signal: AbortSignal) {
   try {
     const bytes = await readRegularFile(path, signal);
     return { text: decodeEditableText(bytes), baseRevision: byteRevision(bytes) };
@@ -152,7 +155,7 @@ function stepError(step: string, error: unknown): HashlineError {
 async function requireBaseRevision(
   path: string,
   baseRevision: string,
-  signal: AbortSignal | undefined,
+  signal: AbortSignal,
 ): Promise<void> {
   let currentRevision: string;
   try {
@@ -222,7 +225,7 @@ async function writeAndSyncTemp(
   tempPath: string,
   content: Buffer,
   modeBits: number | undefined,
-  signal: AbortSignal | undefined,
+  signal: AbortSignal,
 ): Promise<void> {
   throwIfCancelled(signal);
   // A new file takes the umask's default mode; its private temp directory hides it until publication.
@@ -239,7 +242,7 @@ async function writeAndSyncTemp(
 async function publishCreate(
   tempPath: string,
   targetPath: string,
-  signal: AbortSignal | undefined,
+  signal: AbortSignal,
 ): Promise<void> {
   // link() creates an unclobberable directory entry on the same filesystem, avoiding create/replace races.
   throwIfCancelled(signal);
@@ -258,7 +261,7 @@ async function publishCreate(
 async function publishReplace(
   tempPath: string,
   targetPath: string,
-  signal: AbortSignal | undefined,
+  signal: AbortSignal,
 ): Promise<void> {
   // rename() replaces the directory entry atomically without deleting the old file first; readers observe old or new.
   throwIfCancelled(signal);
@@ -371,7 +374,7 @@ export async function commitFile(
       publication: "PUBLISHED",
     };
     try {
-      return { ...committed, observedRevision: await fileRevision(path) };
+      return { ...committed, observedRevision: await fileRevision(path, UNCANCELLABLE) };
     } catch (error) {
       // Another writer is replacing the published bytes: report a changed target, not a failed
       // mutation whose retry would apply it again.
@@ -430,10 +433,10 @@ export async function observeFreshness(
   settle = false,
 ): Promise<FreshnessObservation> {
   try {
-    const first = await fileRevision(path);
+    const first = await fileRevision(path, UNCANCELLABLE);
     if (settle) {
       await new Promise<void>((resolve) => setImmediate(resolve));
-      if ((await fileRevision(path)) !== first) return { freshness: "changed" };
+      if ((await fileRevision(path, UNCANCELLABLE)) !== first) return { freshness: "changed" };
     }
     return { freshness: first === publishedRevision ? "unchanged" : "changed" };
   } catch (error) {

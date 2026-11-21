@@ -152,6 +152,7 @@ test("real rg AND/OR file prefilter → broad candidates retain exact JS results
     query,
     limit: 100,
     timeoutMs,
+    signal: new AbortController().signal,
   });
   assert.deepEqual(result.warnings, []);
   assert.deepEqual(
@@ -191,6 +192,7 @@ test("oversized line translation → file prefilter fallback preserves JS result
     query,
     limit: 10,
     timeoutMs,
+    signal: new AbortController().signal,
   });
   assert.ok(filePasses > 0);
   assert.deepEqual(result.warnings, []);

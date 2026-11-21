@@ -84,6 +84,7 @@ test("model row allowance grows → anchor failures return complete observations
       "edit",
       describeEditFailure(snapshot.currentText, applied.failures, snapshot.anchors, budget),
       {
+        signal: new AbortController().signal,
         budget,
       },
     );
@@ -107,6 +108,7 @@ test("model budget grows → grep payload and diagnostics use that call's allowa
   const outputs = await Promise.all(
     [small, large].map((budget) =>
       grepOutput({
+        signal: new AbortController().signal,
         cwd: process.cwd(),
         missing: [],
         anchors: createAnchorFormatter(DEFAULT_CONFIG.hashLen),
@@ -154,14 +156,14 @@ test("worker error reaches the tool → text is bounded once using the selected 
       "source",
       [{ find: "source", replace: "target", literal: false }],
       5_000,
-      undefined,
+      new AbortController().signal,
     );
     assert.fail("Worker failure must reject");
   } catch (failure) {
     error = failure;
   }
   const reports = [small, large].map((budget) =>
-    describeMutationFailure("replace", error, { budget }),
+    describeMutationFailure("replace", error, { budget, signal: new AbortController().signal }),
   );
   assert.ok(Buffer.byteLength(reports[0].message!) <= small.fieldBytes);
   assert.ok(Buffer.byteLength(reports[0].cause!.message) <= small.fieldBytes);

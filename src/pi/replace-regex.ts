@@ -19,7 +19,7 @@ export function runRegexReplacements(
   source: string,
   rules: readonly Replacement[],
   timeoutMs: number,
-  signal: AbortSignal | undefined,
+  signal: AbortSignal,
 ): Promise<ReplacementResult> {
   return withRegexWorker<ReplacementRequest, ReplacementResult, ReplacementResult>(
     new URL("./replace-worker.mjs", import.meta.url),

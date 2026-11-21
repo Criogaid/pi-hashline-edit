@@ -212,7 +212,11 @@ function rejectedEdit(
     createAnchorFormatter(DEFAULT_CONFIG.hashLen),
     budget,
   );
-  return describeMutationFailure("edit", error, { path: "file.txt", budget });
+  return describeMutationFailure("edit", error, {
+    signal: new AbortController().signal,
+    path: "file.txt",
+    budget,
+  });
 }
 const oldAnchor = { line: 1, hash: computeLineHash(1, "old", DEFAULT_CONFIG.hashLen) };
 
@@ -316,6 +320,7 @@ test("overlapping edits → ordered conflict and shared recovery", () => {
       (error: unknown) => {
         assert.ok(error instanceof HashlineError);
         const report = describeMutationFailure("edit", error, {
+          signal: new AbortController().signal,
           path: "file.txt",
           budget: DEFAULT_OUTPUT_BUDGETS,
         });

@@ -59,13 +59,13 @@ async function rereadFile<T>(
 export async function rereadMatches<T>(
   files: readonly GrepFileMatch[],
   context: number,
-  signal: AbortSignal | undefined,
+  signal: AbortSignal,
   collect: (file: GrepFileMatch) => LineCollector<T>,
 ): Promise<Reread<T>[]> {
   const results = new Array<Reread<T>>(files.length);
   let nextIndex = 0;
   const workerAbort = new AbortController();
-  const scanSignal = signal ? AbortSignal.any([signal, workerAbort.signal]) : workerAbort.signal;
+  const scanSignal = AbortSignal.any([signal, workerAbort.signal]);
   let failure: { error: unknown } | undefined;
   const workers = Array.from(
     { length: Math.min(MAX_CONCURRENT_FILE_READS, files.length) },

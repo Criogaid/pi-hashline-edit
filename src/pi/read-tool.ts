@@ -32,7 +32,7 @@ import { canonicalPath, serializePath } from "./path.ts";
 import { renderToolError, reportLines, splitReport } from "./render.ts";
 import { POSITIVE_SAFE_INTEGER, STRICT_SAMPLING } from "./schema.ts";
 import { HashlineError, PATH_ERROR_MESSAGES } from "../core/errors.ts";
-import { throwIfCancelled } from "./error-text.ts";
+import { callSignal, throwIfCancelled } from "./error-text.ts";
 import { reportResult, runTool, type ReportDetails } from "./report.ts";
 import { SCRIPT_OUTPUT_SCHEMAS } from "./report-schema.ts";
 import { formatByteSize } from "./budgets.ts";
@@ -236,10 +236,11 @@ export function makeReadOverride({
     async execute(
       toolCallId: string,
       { anchors: anchored, ...params }: ReadInput,
-      signal: AbortSignal | undefined,
+      piSignal: AbortSignal | undefined,
       onUpdate: AgentToolUpdateCallback<ReadToolDetails | undefined> | undefined,
       ctx: ExtensionToolContext,
     ) {
+      const signal = callSignal(piSignal);
       const budget = budgets();
       const maxBytes =
         config.read.maxKiB === undefined ? budget.readBytes : config.read.maxKiB * 1024;

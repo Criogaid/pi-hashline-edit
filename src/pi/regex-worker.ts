@@ -12,7 +12,7 @@ export async function withRegexWorker<Input, Result, Output>(
   entry: URL,
   decode: (value: unknown) => RegexWorkerReply<Result> | undefined,
   timeoutMs: number,
-  signal: AbortSignal | undefined,
+  signal: AbortSignal,
   execute: (run: (input: Input) => Promise<Result>) => Promise<Output>,
   resourceLimits?: ResourceLimits,
 ): Promise<Output> {
@@ -62,7 +62,7 @@ export async function withRegexWorker<Input, Result, Output>(
       }),
     ),
   );
-  signal?.addEventListener("abort", abort, { once: true });
+  signal.addEventListener("abort", abort, { once: true });
   // Keep dispatch asynchronous so cancellation can be observed before posting a request.
   const run = (input: Input): Promise<Result> =>
     Promise.resolve().then(() => {
@@ -86,7 +86,7 @@ export async function withRegexWorker<Input, Result, Output>(
     return await execute(run);
   } finally {
     clear();
-    signal?.removeEventListener("abort", abort);
+    signal.removeEventListener("abort", abort);
     await terminate();
   }
 }

@@ -51,7 +51,7 @@ import {
   type MutationFacts,
 } from "./mutation-result.ts";
 import { canonicalPath } from "./path.ts";
-import { throwIfCancelled } from "./error-text.ts";
+import { callSignal, throwIfCancelled } from "./error-text.ts";
 import { runTool } from "./report.ts";
 import type { OutputBudgets } from "./budgets.ts";
 import type { ToolEnvironment } from "./config.ts";
@@ -71,7 +71,7 @@ type TextMutationDetails = ReturnType<typeof generateMutationDetails>;
 /** The file a mutation targets, resolved once per call. */
 export interface MutationTarget {
   readonly absolutePath: string;
-  readonly signal: AbortSignal | undefined;
+  readonly signal: AbortSignal;
   readonly budget: OutputBudgets;
 }
 
@@ -127,10 +127,13 @@ export function mutationToolBase<
     execute(
       toolCallId: string,
       params: MutationParams<P> & { then_run?: ThenRunInput },
-      signal: AbortSignal | undefined,
-      onUpdate: AgentToolUpdateCallback<MutationResultDetails<TDetails>> | undefined,
+      piSignal: AbortSignal | undefined,
+      piOnUpdate: AgentToolUpdateCallback<MutationResultDetails<TDetails>> | undefined,
       ctx: ExtensionToolContext,
     ): Promise<AgentToolResult<MutationFinalDetails<TDetails>>> {
+      const signal = callSignal(piSignal);
+      // Pi's agent loop always supplies a callback; a direct call without one has no display.
+      const onUpdate = piOnUpdate ?? (() => {});
       const { then_run, ...mutationParams } = params;
       const displayPath = mutationParams.path;
       const budget = budgets();

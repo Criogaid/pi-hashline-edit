@@ -45,7 +45,7 @@ test("worker boundary: malformed external reply → rejects its result and facts
         },
       );
       await assert.rejects(
-        runRegexReplacements("safe", validRules, timeoutMs, undefined),
+        runRegexReplacements("safe", validRules, timeoutMs, new AbortController().signal),
         (error: unknown) =>
           error instanceof HashlineError &&
           error.errorCode === "REGEX_WORKER_FAILED" &&
@@ -80,7 +80,7 @@ test("worker boundary: deep structured cause reply → preserves the complete ca
     },
   );
   await assert.rejects(
-    runRegexReplacements("safe", validRules, timeoutMs, undefined),
+    runRegexReplacements("safe", validRules, timeoutMs, new AbortController().signal),
     (error: unknown) => {
       assert.ok(error instanceof HashlineError);
       assert.equal(error.errorCode, "REGEX_WORKER_FAILED");
@@ -114,7 +114,7 @@ test("worker boundary: cyclic structured cause → rejects a reply accepted with
         },
       );
       await assert.rejects(
-        runRegexReplacements("safe", validRules, timeoutMs, undefined),
+        runRegexReplacements("safe", validRules, timeoutMs, new AbortController().signal),
         (error: unknown) => {
           assert.ok(error instanceof HashlineError);
           if (cyclic) {

@@ -139,7 +139,7 @@ interface FormatMatchesOptions {
   readonly outputMode: GrepOutputMode;
   readonly context: number;
   readonly anchors: AnchorFormatter;
-  readonly signal?: AbortSignal;
+  readonly signal: AbortSignal;
   readonly budget: OutputBudgets;
 }
 
