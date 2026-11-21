@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { test, type TestContext } from "node:test";
 import { Type } from "typebox";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { createBashToolDefinition, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { openTestSession, responseStream } from "../testing/session.testing.ts";
 import type { ActionFusionProgress } from "../pi/report-schema.ts";
 import {
@@ -20,7 +20,7 @@ import type { CommandStatus } from "../pi/report-schema.ts";
 /** Exercise the default runner through a real parent tool call, with no provider traffic. */
 async function openSession(
   t: TestContext,
-  configure?: (pi: ExtensionAPI) => void,
+  configure?: (pi: ExtensionAPI, cwd: string) => void,
   onProgress?: (event: ActionFusionProgress) => void,
 ) {
   const calls: { name: string; parent?: string }[] = [];
@@ -32,7 +32,7 @@ async function openSession(
         calls.push({ name: event.toolName, parent: event.parentToolCallId });
       });
       pi.on("tool_call", observeFusionToolCall);
-      configure?.(pi);
+      configure?.(pi, cwd);
       pi.registerTool(
         makeWriteOverride(
           cwd,
@@ -165,6 +165,36 @@ test("session Bash hook shortens the timeout → reports the nested timeout", {
   assert.equal(result.report?.then_run?.status, "timeout");
 });
 
+for (const { name, timeout, hookTimeout } of [
+  { name: "silent native Bash delegate", timeout: 0.2 },
+  { name: "silent native Bash delegate with a hook-edited timeout", timeout: 10, hookTimeout: 0.2 },
+]) {
+  test(`${name} → reports the effective timeout without a countdown`, {
+    timeout: 15_000,
+  }, async (t) => {
+    const f = await openSession(t, (pi, cwd) => {
+      if (hookTimeout !== undefined) {
+        pi.on("tool_call", (event) => {
+          if (event.toolName === "bash") event.input.timeout = hookTimeout;
+        });
+      }
+      const native = createBashToolDefinition(cwd);
+      pi.registerTool({
+        ...native,
+        execute(id, input, signal, _onUpdate, ctx) {
+          return native.execute(id, input, signal, undefined, ctx);
+        },
+      });
+    });
+    await writeFile(join(f.cwd, "command.mjs"), "setTimeout(() => {}, 30_000);\n");
+    const result = await f.run({ command: "node command.mjs", timeout });
+    assert.equal(result.report?.publication, "PUBLISHED");
+    assert.match(result.text, /Command timed out after 0\.2 seconds/);
+    assert.ok(f.progress.every((event) => event.timing === undefined));
+    assert.equal(result.report?.then_run?.status, "timeout");
+  });
+}
+
 for (const [freshness, source, expectedFile, status] of [
   ["changed", "fs.writeFileSync('saved.txt', 'after'); process.exitCode = 7;", "after", "failed"],
   ["missing", "fs.unlinkSync('saved.txt');", null, "succeeded"],
@@ -241,13 +271,13 @@ test("session Bash permission hook rewrites arguments → shows the executed com
   assert.equal(f.progress.at(-1)?.commandText, "echo checked");
 });
 
-test("session Bash tool_call blocks then_run → no command side effect, mutation stays published", {
+test("session Bash permission hook returns a timeout-shaped denial → reports failure without launching", {
   timeout: 15_000,
 }, async (t) => {
   const f = await openSession(t, (pi) => {
     pi.on("tool_call", (event) =>
       event.toolName === "bash"
-        ? { block: true, reason: "BLOCKED_BY_POLICY", terminate: true }
+        ? { block: true, reason: "Command timed out after 10 seconds", terminate: true }
         : undefined,
     );
   });
@@ -255,10 +285,11 @@ test("session Bash tool_call blocks then_run → no command side effect, mutatio
     join(f.cwd, "command.mjs"),
     "import { writeFileSync } from 'node:fs'; writeFileSync('command-ran', 'yes');\n",
   );
-  const result = await f.run({ command: "node command.mjs" });
+  const result = await f.run({ command: "node command.mjs", timeout: 10 });
   assert.equal(result.report?.publication, "PUBLISHED");
   assert.equal(result.report?.then_run?.status, "failed");
-  assert.match(result.text, /BLOCKED_BY_POLICY/);
+  assert.match(result.text, /Command timed out after 10 seconds/);
+  assert.ok(f.progress.every((event) => event.timing === undefined));
   assert.equal(result.modelRequests, 1, "Preserve the policy hook's request to stop the batch");
   await assert.rejects(readFile(join(f.cwd, "command-ran")), { code: "ENOENT" });
   assert.ok(f.calls.some((call) => call.name === "bash" && call.parent === "fused"));

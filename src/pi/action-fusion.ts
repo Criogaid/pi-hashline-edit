@@ -139,13 +139,17 @@ async function canonicalQueueKey(path: string): Promise<string> {
   }
 }
 
+function bashTimeoutSeconds(timeout: unknown): number | undefined {
+  if (typeof timeout === "number" && timeout > 0 && timeout <= MAX_BASH_TIMEOUT_SECONDS)
+    return timeout;
+}
+
 /**
- * One then_run call's display state and the observers that follow it. Display callbacks are
- * observers: their failures must not change publication or command execution, so the first is
- * kept for the report. The tracker owns the heartbeat lifetime; Pi Bash owns timeout and
- * process cleanup.
+ * Coordinates one session Bash call and its display. Display callbacks are observers.
+ * Their failures are kept for the report without affecting publication or execution.
+ * Fusion owns the heartbeat lifetime. Pi Bash owns timeout and process cleanup.
  */
-function createProgressTracker<TDetails extends object>({
+function createBashCallCoordinator<TDetails extends object>({
   toolCallId,
   thenRun,
   onProgress,
@@ -161,6 +165,7 @@ function createProgressTracker<TDetails extends object>({
   let failure: ObserverFailure | undefined;
   let displayedCommand = thenRun.command;
   let commandResult: CommandResult | undefined;
+  let launchTimeoutSeconds: number | undefined;
   /** A command with a timeout counts down once Bash first reports, refreshed by its heartbeat. */
   let countdown:
     | {
@@ -208,11 +213,12 @@ function createProgressTracker<TDetails extends object>({
       const { command, timeout } = bashCall.input;
       delete bashCall.input;
       if (typeof command === "string") displayedCommand = command;
-      if (typeof timeout === "number" && timeout > 0 && timeout <= MAX_BASH_TIMEOUT_SECONDS) {
-        const deadlineMs = Date.now() + timeout * MILLISECONDS_PER_SECOND;
+      launchTimeoutSeconds = bashTimeoutSeconds(timeout);
+      if (launchTimeoutSeconds !== undefined) {
+        const deadlineMs = Date.now() + launchTimeoutSeconds * MILLISECONDS_PER_SECOND;
         const heartbeat = setInterval(() => report("running", "unknown"), MILLISECONDS_PER_SECOND);
         heartbeat.unref();
-        countdown = { timeoutSeconds: timeout, deadlineMs, heartbeat };
+        countdown = { timeoutSeconds: launchTimeoutSeconds, deadlineMs, heartbeat };
       }
     }
     commandResult = { content: partial.content, details: partial.details };
@@ -221,39 +227,44 @@ function createProgressTracker<TDetails extends object>({
 
   async function runCommand(signal: AbortSignal, ctx: ExtensionToolContext): Promise<CommandFacts> {
     // Use the session's Bash, including overrides and both tool hooks. Pi forwards the parent signal.
-    const { result, isError, durationMs } = await bashCallScope
-      .run(bashCall, () => ctx.executeTool("bash", thenRun, { onUpdate: followCommand }))
-      .finally(() => {
-        delete bashCall.input;
-        if (countdown) clearInterval(countdown.heartbeat);
-      });
-    const command = {
-      terminate: result.terminate,
-      result: { content: result.content, details: result.details },
-    };
-    if (!isError) return { status: "succeeded", ...command };
+    try {
+      const { result, isError, durationMs } = await bashCallScope.run(bashCall, () =>
+        ctx.executeTool("bash", thenRun, { onUpdate: followCommand }),
+      );
+      const command = {
+        terminate: result.terminate,
+        result: { content: result.content, details: result.details },
+      };
+      if (!isError) return { status: "succeeded", ...command };
 
-    const structured = result.structuredContent;
-    const hasExitCode =
-      structured !== null &&
-      typeof structured === "object" &&
-      "exit_code" in structured &&
-      typeof structured.exit_code === "number";
-    // Pi's Bash supplies exit_code for ordinary exits and serializes a thrown timeout as text.
-    // A blocking hook can also mention a timeout but never starts the countdown.
-    const timeoutDiagnostic = `Command timed out after ${countdown?.timeoutSeconds} seconds`;
-    const output = contentText(result.content);
-    const timedOut =
-      countdown !== undefined &&
-      !hasExitCode &&
-      (output === timeoutDiagnostic || output.endsWith(`\n${timeoutDiagnostic}`));
-    // An exit or a timeout wins over cancellation arriving during a result hook. Pi only
-    // measures execute() when the command ran; a cancelled call that never ran has no output.
-    if (signal.aborted && !hasExitCode && !timedOut)
-      return durationMs === undefined
-        ? { status: "cancelled", terminate: result.terminate }
-        : { status: "cancelled", ...command };
-    return { status: timedOut ? "timeout" : "failed", ...command };
+      const structured = result.structuredContent;
+      const hasExitCode =
+        structured !== null &&
+        typeof structured === "object" &&
+        "exit_code" in structured &&
+        typeof structured.exit_code === "number";
+      const executed = durationMs !== undefined;
+      let timedOut = false;
+      // Pi returns a duration only for executed calls. A denial can mimic the timeout text.
+      if (executed && !hasExitCode) {
+        // A silent override leaves only the shared hook input to read at completion.
+        const timeout = launchTimeoutSeconds ?? bashTimeoutSeconds(bashCall.input?.timeout);
+        if (timeout !== undefined) {
+          const diagnostic = `Command timed out after ${timeout} seconds`;
+          const output = contentText(result.content);
+          timedOut = output === diagnostic || output.endsWith(`\n${diagnostic}`);
+        }
+      }
+      // An exit or a timeout wins over cancellation arriving during a result hook.
+      if (signal.aborted && !hasExitCode && !timedOut)
+        return executed
+          ? { status: "cancelled", ...command }
+          : { status: "cancelled", terminate: result.terminate };
+      return { status: timedOut ? "timeout" : "failed", ...command };
+    } finally {
+      delete bashCall.input;
+      if (countdown) clearInterval(countdown.heartbeat);
+    }
   }
 
   return {
@@ -328,7 +339,7 @@ export function createActionFusionScheduler(onProgress: ProgressReporter): Mutat
         outcome: await mutate(),
       }));
 
-    const progress = createProgressTracker({ toolCallId, thenRun, onProgress, onUpdate });
+    const progress = createBashCallCoordinator({ toolCallId, thenRun, onProgress, onUpdate });
     /** A mutation that did not complete keeps its own failure; Fusion adds only the command status. */
     const notRun = (error: unknown, command: "skipped" | "cancelled") => {
       progress.report(command, "unknown");
