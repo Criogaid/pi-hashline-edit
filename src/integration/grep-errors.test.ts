@@ -65,7 +65,7 @@ test("prefilter hits an unreadable path without matches → preserves the diagno
   }
 
   const offered: string[] = [];
-  const { listing } = await listCandidates({
+  const { warnings } = await listCandidates({
     scope: { cwd: directory, searchPaths: [directory], globs: [] },
     query: { patterns: ["needle"], literal: true, ignoreCase: false, multiline: true },
     signal: new AbortController().signal,
@@ -76,6 +76,6 @@ test("prefilter hits an unreadable path without matches → preserves the diagno
     },
   });
   assert.deepEqual(offered, []);
-  assert.equal(listing?.code, 2);
-  assert.match(listing.stderr, /inaccessible/);
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0].reason, /inaccessible/);
 });

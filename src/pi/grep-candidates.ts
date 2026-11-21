@@ -21,10 +21,12 @@ import {
   rgRejectsPatterns,
   runRgLines,
   runRgPaths,
+  searchDiagnostic,
   type CandidateLines,
   type RgRunResult,
 } from "./rg-process.ts";
 import { lineCandidatePatterns, rgCodePoint } from "./rg-regex.ts";
+import type { SearchWarning } from "./error-text.ts";
 
 /** Beyond this many candidate lines, a file's every line is checked instead. */
 const MAX_CANDIDATE_LINES = 64 * 1024;
@@ -70,11 +72,12 @@ export async function listCandidates(options: {
   readonly stopped: () => boolean;
   readonly onCandidate: (candidate: Candidate) => Promise<boolean>;
 }): Promise<{
-  readonly listing?: RgRunResult;
+  /** The listing's own diagnostic, if any. */
+  readonly warnings: readonly SearchWarning[];
   readonly scanLimitReached: boolean;
 }> {
   const { scope, query, signal, stopped, onCandidate } = options;
-  if (scope.searchPaths.length === 0) return { scanLimitReached: false };
+  if (scope.searchPaths.length === 0) return { warnings: [], scanLimitReached: false };
   let scanAll = false;
   let listedAny = false;
   let scanned = 0;
@@ -164,7 +167,7 @@ export async function listCandidates(options: {
       listing.code === 2 &&
       !listedAny &&
       (await rgRejectsPatterns([...BYTE_PATTERN_ARGS, ...patternArgs], cwd, signal));
-    if (!rejected) return { listing, scanLimitReached };
+    if (!rejected) return { warnings: listingWarnings(listing), scanLimitReached };
   }
   scanAll = true;
   const listing = await runRgPaths(
@@ -173,5 +176,10 @@ export async function listCandidates(options: {
     signal,
     (path) => offer(path, "all"),
   );
-  return { listing, scanLimitReached };
+  return { warnings: listingWarnings(listing), scanLimitReached };
+}
+
+function listingWarnings(listing: RgRunResult): readonly SearchWarning[] {
+  const diagnostic = searchDiagnostic(listing);
+  return diagnostic ? [diagnostic] : [];
 }

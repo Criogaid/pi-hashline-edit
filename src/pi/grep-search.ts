@@ -10,7 +10,6 @@ import { countLines } from "../core/lines.ts";
 import type { GrepQuery, LineSearchInput, SearchInput } from "../core/search.ts";
 import { SEARCH_RESULT_SCHEMA, type SearchResult } from "../core/search-schema.ts";
 import { scanTextFile } from "./text-stream.ts";
-import { searchDiagnostic } from "./rg-process.ts";
 import type { SearchScope } from "./grep-scope.ts";
 import { listCandidates, type Candidate } from "./grep-candidates.ts";
 import { withRegexWorker } from "./regex-worker.ts";
@@ -368,8 +367,7 @@ export async function searchFiles(options: {
     if (failure) throw failure.error;
   }
   // After every file's warning, so their order does not depend on when the listing ends.
-  const diagnostic = selection.listing && searchDiagnostic(selection.listing);
-  if (diagnostic) warnings.push(diagnostic);
+  warnings.push(...selection.warnings);
   return {
     files,
     warnings,
