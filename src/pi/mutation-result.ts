@@ -6,20 +6,19 @@
 
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import type { AgentToolUpdateCallback } from "@earendil-works/pi-agent-core";
-import { contentText } from "@earendil-works/pi-ai";
 import type { ExtensionToolContext } from "@earendil-works/pi-coding-agent";
 import type { ThenRunInput } from "./action-fusion.ts";
-import { FileMutationError, type CommitResult, type FreshnessObservation } from "./file-commit.ts";
+import type { CommitResult, FreshnessObservation } from "./file-commit.ts";
 import { generateRangeDiff } from "./mutation-diff.ts";
 import { displayCarriageReturns } from "./anchor-format.ts";
-import { errorMessage } from "../core/errors.ts";
+import { HashlineError } from "../core/errors.ts";
 import type { CopiedSpan } from "../core/copy-span.ts";
 import type {
   ActionFusionProgress,
-  CommandResult,
   CommandStatus,
   FailureReport,
   MutationToolName,
+  PublicationStatus,
   ReportTool,
   MutationFacts,
   SuccessReport,
@@ -61,7 +60,7 @@ export interface MutationOutcome<TDetails, TTool extends MutationToolName = Muta
 }
 
 /** The first failure of a progress observer; any thrown value, `undefined` included. */
-export interface ObserverFailure {
+interface ObserverFailure {
   readonly error: unknown;
 }
 
@@ -70,13 +69,9 @@ export interface ObserverFailure {
  * produced a result was skipped or cancelled; one with a result may still not have run, when a
  * permission hook blocked it with a reason.
  */
-export type CommandFacts = (
-  | { readonly status: Extract<CommandStatus, "skipped" | "cancelled">; readonly result?: never }
-  | { readonly status: Exclude<CommandStatus, "skipped">; readonly result: CommandResult }
-) & {
-  /** The session Bash result's request to stop after this tool batch, as Pi gave it. */
-  readonly terminate?: boolean;
-};
+export type CommandFacts =
+  | { readonly status: Extract<CommandStatus, "skipped" | "cancelled">; readonly output?: never }
+  | { readonly status: Exclude<CommandStatus, "skipped">; readonly output: string };
 
 /**
  * A completed mutation. A call without then_run settles alone, and its commit result states its
@@ -90,9 +85,15 @@ export type SettledMutation<TDetails, TTool extends MutationToolName> =
       readonly outcome: MutationOutcome<TDetails, TTool>;
       readonly observation: FreshnessObservation;
       readonly command: CommandFacts;
-      /** A progress observer failed; command and file outcomes are unaffected. */
-      readonly progressFailure: ObserverFailure | undefined;
     };
+
+/** Command facts available even if reading the result or settling the mutation fails. */
+export interface MutationCommandFacts {
+  readonly status?: CommandStatus;
+  /** The session Bash result's request to stop after this tool batch, as Pi gave it. */
+  readonly terminate?: boolean;
+  readonly progressFailure?: ObserverFailure;
+}
 
 /** One validated mutation call, as the scheduler receives it. */
 export interface MutationCall<TDetails, TTool extends MutationToolName> {
@@ -104,6 +105,7 @@ export interface MutationCall<TDetails, TTool extends MutationToolName> {
   readonly signal: AbortSignal;
   readonly ctx: ExtensionToolContext;
   readonly onUpdate: AgentToolUpdateCallback<MutationResultDetails<TDetails>>;
+  readonly recordCommand: (facts: MutationCommandFacts) => void;
 }
 
 /** Runs mutation calls; chosen once at registration from the actionFusion setting. */
@@ -115,43 +117,24 @@ function observerFailure(failure: ObserverFailure | undefined, budget: OutputBud
   return failure && describeThrown(failure.error, budget.fieldBytes);
 }
 
-/**
- * A mutation that did not complete, so its then_run command never ran. Action
- * Fusion owns the command status; the mutation's own failure stays unchanged.
- */
-export class CommandNotRun extends Error {
-  readonly status: Extract<CommandStatus, "skipped" | "cancelled">;
-  /** A progress observer failed; the mutation's failure is unaffected. */
-  readonly progressFailure: ObserverFailure | undefined;
-
-  constructor(
-    error: unknown,
-    status: Extract<CommandStatus, "skipped" | "cancelled">,
-    progressFailure: ObserverFailure | undefined,
-  ) {
-    super(errorMessage(error), { cause: error });
-    this.name = "CommandNotRun";
-    this.status = status;
-    this.progressFailure = progressFailure;
-  }
-}
-
-/**
- * Classify a mutation tool's failure with what only a mutation states: what it published and,
- * when the call was fused, why its command never ran.
- */
+/** Classify the failure using publication and command facts already recorded by their owners. */
 export function describeMutationFailure(
   tool: ReportTool,
   caught: unknown,
-  context: FailureContext,
+  context: FailureContext & {
+    readonly commit?: CommitResult;
+    readonly failedPublication?: PublicationStatus;
+    readonly command?: MutationCommandFacts;
+  },
 ): FailureReport {
-  const command = caught instanceof CommandNotRun ? caught : undefined;
-  // The mutation's own failure, unchanged.
-  const error = command ? command.cause : caught;
+  const { commit, failedPublication = "NOT_PUBLISHED", command = {} } = context;
+  const error = commit
+    ? new HashlineError("POST_PROCESS_FAILED", "Result generation failed.", { cause: caught })
+    : caught;
   return describeFailure(tool, error, context, {
-    publication: error instanceof FileMutationError ? error.publication : "NOT_PUBLISHED",
-    then_run: command ? { status: command.status } : undefined,
-    progressError: observerFailure(command?.progressFailure, context.budget),
+    publication: commit?.publication ?? failedPublication,
+    then_run: command.status && { status: command.status },
+    progressError: observerFailure(command.progressFailure, context.budget),
   });
 }
 
@@ -163,13 +146,13 @@ export function describeMutationFailure(
 export function finalizeMutation<TDetails extends object>(
   path: string,
   settled: SettledMutation<TDetails, MutationToolName>,
+  progressFailure: ObserverFailure | undefined,
   budget: OutputBudgets,
 ): AgentToolResult<TDetails & ReportDetails<SuccessReport>> {
   const { commit, details, facts } = settled.outcome;
   const observation: FreshnessObservation = settled.kind === "alone" ? commit : settled.observation;
-  const { command, progressFailure } = settled.kind === "fused" ? settled : {};
-  const output =
-    command?.result && boundedText(contentText(command.result.content), budget.fieldBytes);
+  const command = settled.kind === "fused" ? settled.command : undefined;
+  const output = command?.output && boundedText(command.output, budget.fieldBytes);
   return reportResult(
     {
       ...facts,

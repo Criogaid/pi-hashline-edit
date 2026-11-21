@@ -256,40 +256,50 @@ function classify(error: unknown, signal: AbortSignal): HashlineError {
 
 /** The recovery of a failure: publication first, then the throw site's alternative or the code's default. */
 function failureNext(
-  failure: HashlineError,
+  failure: HashlineError | undefined,
   publication: Report["publication"],
 ): string | undefined {
   if (publication === "PUBLISHED" || publication === "UNKNOWN")
     return PUBLICATION_NEXT[publication];
+  if (!failure) return undefined;
   const next = (ERROR_DEFINITIONS[failure.errorCode] as { next?: Record<string, string> }).next;
   return next?.[(failure.next as string | undefined) ?? "default"];
 }
 
-/** Classify a caught failure as the report the model receives. */
+/** Classify a caught failure, retaining the caller's settled facts if inspection fails. */
 export function describeFailure(
   tool: ReportTool,
-  caught: unknown,
+  error: unknown,
   context: FailureContext,
-  mutation?: MutationFailureFacts,
+  facts: MutationFailureFacts = {},
 ): FailureReport {
-  const failure = classify(caught, context.signal);
-  const budget = context.budget;
-  // HashlineError's constructor ties its facts to its code; the union cannot carry that link.
-  return boundFacts(
-    {
-      error: failure.errorCode,
-      tool,
-      path: context.path as Report["path"],
-      publication: mutation?.publication,
-      message: boundedText(failure.message, budget.fieldBytes),
-      cause: causeOf(failure.cause, budget.fieldBytes),
-      ...failure.facts,
-      then_run: mutation?.then_run,
-      progressError: mutation?.progressError,
-      next: failureNext(failure, mutation?.publication),
-    } as FailureReport,
-    budget,
-  );
+  const { budget, signal } = context;
+  const envelope = { tool, path: context.path as Report["path"] };
+  try {
+    const failure = classify(error, signal);
+    return boundFacts(
+      // The constructor ties the facts to the code; the union cannot carry that link.
+      {
+        ...failure.facts,
+        ...envelope,
+        ...facts,
+        error: failure.errorCode,
+        message: boundedText(failure.message, budget.fieldBytes),
+        cause: causeOf(failure.cause, budget.fieldBytes),
+        next: failureNext(failure, facts.publication),
+      } as FailureReport,
+      budget,
+    );
+  } catch {
+    // Preserve the original diagnostic and the mutation facts known before inspection failed.
+    return {
+      ...envelope,
+      ...facts,
+      error: "UNCLASSIFIED",
+      message: boundedText(errorMessage(error), budget.fieldBytes),
+      next: failureNext(undefined, facts.publication),
+    } as FailureReport;
+  }
 }
 
 /** Run one tool execution, returning any failure as its report. */

@@ -37,7 +37,7 @@ import type { Freshness, PublicationStatus } from "./report-schema.ts";
  * it exist and replaces it whole. `update` (read-modify-write) also requires that it still hold
  * the bytes `baseRevision` names, and that revision stands in for hashing the target again.
  */
-type CommitIntent =
+export type CommitIntent =
   | { readonly mode: "create" }
   | { readonly mode: "overwrite" }
   | { readonly mode: "update"; readonly baseRevision: string };

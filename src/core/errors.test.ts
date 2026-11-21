@@ -36,6 +36,10 @@ test("thrown value without a string form → returns a diagnostic", () => {
   assert.equal(errorMessage(Object.create(null)), "The thrown value has no string form.");
 });
 
+test("error with a numeric message → returns its diagnostic as text", () => {
+  assert.equal(errorMessage(Object.assign(new Error(), { message: 17 })), "17");
+});
+
 test("revoked proxy as a thrown value → returns a diagnostic", () => {
   const { proxy, revoke } = Proxy.revocable({}, {});
   revoke();

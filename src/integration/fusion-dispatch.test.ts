@@ -46,6 +46,7 @@ async function openSession(
   });
   return {
     cwd,
+    session,
     calls,
     progress,
     abort: () => session.abort(),
@@ -350,6 +351,82 @@ test("session Bash override and tool_result hook → then_run uses their final r
   await assert.rejects(readFile(join(f.cwd, "command-ran")), { code: "ENOENT" });
   assert.ok(f.calls.some((call) => call.name === "bash" && call.parent === "fused"));
 });
+
+for (const { name, isError, status, damage } of [
+  {
+    name: "shadowed array method",
+    isError: false,
+    status: "succeeded",
+    damage(content: AgentToolResult<unknown>["content"]) {
+      Object.defineProperty(content, "filter", { value: 0 });
+    },
+  },
+  {
+    name: "changing block text",
+    isError: false,
+    status: "succeeded",
+    damage(content: AgentToolResult<unknown>["content"]) {
+      let reads = 0;
+      Object.defineProperty(content[0], "text", {
+        get: () => (reads++ === 0 ? "checked" : "later read"),
+      });
+    },
+  },
+  {
+    name: "throwing array getter with unreadable cause",
+    isError: true,
+    status: "failed",
+    damage(content: AgentToolResult<unknown>["content"]) {
+      const failure = new Error("Unreadable Bash output filter");
+      Object.defineProperty(failure, "cause", {
+        get() {
+          throw new Error("Unreadable cause");
+        },
+      });
+      Object.defineProperty(content, "filter", {
+        get() {
+          throw failure;
+        },
+      });
+    },
+  },
+] as const) {
+  test(`session Bash result with ${name} → preserves output, publication, command status and termination`, async (t) => {
+    const f = await openSession(t, (pi) => {
+      pi.registerTool({
+        name: "bash",
+        label: "bash",
+        description: "Session Bash override",
+        parameters: Type.Object({ command: Type.String() }),
+        async execute() {
+          return { content: [{ type: "text", text: "checked" }], details: {}, terminate: true };
+        },
+      });
+      pi.on("tool_result", (event) => (event.toolName === "bash" ? { isError } : undefined));
+    });
+    let bashEnded = false;
+    const unsubscribe = f.session.subscribe((event) => {
+      if (
+        event.type === "tool_execution_end" &&
+        event.toolName === "bash" &&
+        event.parentToolCallId === "fused"
+      ) {
+        damage(event.result.content);
+        bashEnded = true;
+      }
+    });
+    t.after(unsubscribe);
+
+    const result = await f.run({ command: "check" });
+    assert.equal(bashEnded, true);
+    assert.deepEqual(result.content.slice(0, -1), [{ type: "text", text: "checked" }]);
+    assert.deepEqual(f.progress.at(-1)?.result?.content, result.content.slice(0, -1));
+    const wire = reportOf({ content: result.content }, "write");
+    assert.equal(wire?.publication, "PUBLISHED", result.text);
+    assert.equal(wire.then_run?.status, status);
+    assert.equal(result.modelRequests, 1, "Preserve the nested result's request to stop the batch");
+  });
+}
 
 test("session Bash override writes the target through a nested call → fails without waiting on its own queue", {
   timeout: 3_000,

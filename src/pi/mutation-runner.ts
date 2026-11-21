@@ -32,13 +32,20 @@ import {
   SCRIPT_OUTPUT_SCHEMAS,
   type MutationFacts,
   type MutationToolName,
+  type PublicationStatus,
 } from "./report-schema.ts";
-import { commitFile, FileMutationError } from "./file-commit.ts";
+import {
+  commitFile,
+  FileMutationError,
+  type CommitIntent,
+  type CommitResult,
+} from "./file-commit.ts";
 import { readEditableSnapshot } from "./file-read.ts";
 import {
   describeMutationFailure,
   finalizeMutation,
   generateMutationDetails,
+  type MutationCommandFacts,
   type MutationOutcome,
   type MutationScheduler,
   type MutationFinalDetails,
@@ -69,6 +76,7 @@ type TextMutationDetails = ReturnType<typeof generateMutationDetails>;
 /** The file a mutation targets, resolved once per call. */
 export interface MutationTarget {
   readonly absolutePath: string;
+  publish(text: string, intent: CommitIntent): Promise<CommitResult>;
   readonly signal: AbortSignal;
   readonly budget: OutputBudgets;
 }
@@ -125,7 +133,7 @@ export function mutationToolBase<
     prepareArguments: boundary.prepareArguments,
     constrainedSampling: STRICT_SAMPLING,
     renderShell: "default" as const,
-    execute(
+    async execute(
       toolCallId: string,
       params: MutationParams<P> & { then_run?: ThenRunInput },
       piSignal: AbortSignal | undefined,
@@ -143,11 +151,27 @@ export function mutationToolBase<
       const { then_run, ...mutationParams } = args;
       const displayPath = mutationParams.path;
       const budget = budgets();
-      return runTool(
+      let commit: CommitResult | undefined;
+      let failedPublication: PublicationStatus | undefined;
+      let command: MutationCommandFacts = {};
+      const result = await runTool(
         tool,
         { path: displayPath, signal, budget },
         async () => {
-          const target: MutationTarget = { absolutePath, signal, budget };
+          const target: MutationTarget = {
+            absolutePath,
+            signal,
+            budget,
+            async publish(text, intent) {
+              try {
+                commit = await commitFile(absolutePath, text, intent, signal);
+                return commit;
+              } catch (error) {
+                if (error instanceof FileMutationError) failedPublication = error.publication;
+                throw error;
+              }
+            },
+          };
           const mutate = (): Promise<MutationOutcome<TDetails, TTool>> =>
             withFileMutationQueue(absolutePath, () => spec.run(mutationParams, target, parsed));
           const settled = await schedule({
@@ -158,14 +182,17 @@ export function mutationToolBase<
             signal,
             ctx,
             onUpdate,
+            recordCommand(facts) {
+              // Each fact is final when first observed, including the first display error.
+              command = { ...facts, ...command };
+            },
           });
-          const result = finalizeMutation(displayPath, settled, budget);
-          // Pass on the session Bash result's request to stop after this tool batch.
-          const terminate = settled.kind === "fused" ? settled.command.terminate : undefined;
-          return terminate === undefined ? result : { ...result, terminate };
+          return finalizeMutation(displayPath, settled, command.progressFailure, budget);
         },
-        describeMutationFailure,
+        (tool, error, context) =>
+          describeMutationFailure(tool, error, { ...context, commit, failedPublication, command }),
       );
+      return command.terminate === undefined ? result : { ...result, terminate: command.terminate };
     },
   };
 }
@@ -199,25 +226,10 @@ export async function runTextMutation<TTool extends MutationToolName>(
   // Cancelled before write: don't touch the disk.
   throwIfCancelled(signal);
 
-  const commit = await commitFile(
-    absolutePath,
-    next.text,
-    { mode: "update", baseRevision },
-    signal,
-  );
-  try {
-    return {
-      commit,
-      details: generateMutationDetails(currentText, next.text, next.copied),
-      facts: next.facts,
-    };
-  } catch (error) {
-    // Keep result-building failures distinct from file publication failures.
-    throw new FileMutationError(
-      "POST_PROCESS_FAILED",
-      commit.publication,
-      "Result generation failed.",
-      { cause: error },
-    );
-  }
+  const commit = await target.publish(next.text, { mode: "update", baseRevision });
+  return {
+    commit,
+    details: generateMutationDetails(currentText, next.text, next.copied),
+    facts: next.facts,
+  };
 }

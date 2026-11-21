@@ -63,6 +63,11 @@ const COMMAND_STATUS_SCHEMA = Type.Union([
 ]);
 export type CommandStatus = Static<typeof COMMAND_STATUS_SCHEMA>;
 
+export const COMMAND_IMAGE_SCHEMA = Type.Object(
+  { type: Type.Literal("image"), data: Type.String(), mimeType: Type.String() },
+  { additionalProperties: false },
+);
+
 /** A then_run command's session tool result, as the TUI renders it. */
 const COMMAND_RESULT_SCHEMA = Type.Object(
   {
@@ -76,10 +81,7 @@ const COMMAND_RESULT_SCHEMA = Type.Object(
           },
           { additionalProperties: false },
         ),
-        Type.Object(
-          { type: Type.Literal("image"), data: Type.String(), mimeType: Type.String() },
-          { additionalProperties: false },
-        ),
+        COMMAND_IMAGE_SCHEMA,
       ]),
     ),
     details: opt(Type.Unknown()),

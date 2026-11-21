@@ -502,6 +502,57 @@ test("progress reports skipped mutations and failed commands without rolling bac
   }
 });
 
+test("unreadable Bash image → timeout report and terminal progress keep the diagnostic", async (t) => {
+  const dir = await tempDir();
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const events: ActionFusionProgress[] = [];
+  const fusion = createActionFusionScheduler((event) => events.push(event));
+  const diagnostic = { type: "text", text: "Command timed out after 3 seconds" } as const;
+  const context = await createFusionContext(dir, t, async () => {
+    observeFusionToolCall({
+      type: "tool_call",
+      toolName: "bash",
+      toolCallId: "test/1",
+      parentToolCallId: "test",
+      input: { command: "check", timeout: 3 },
+    });
+    return {
+      ...commandCompletion(
+        {
+          content: [
+            {
+              type: "image",
+              mimeType: "image/png",
+              get data(): string {
+                throw new Error("Unreadable image data");
+              },
+            },
+            diagnostic,
+          ],
+        },
+        true,
+      ),
+      durationMs: 1,
+    };
+  });
+  const result = await callTool(
+    makeWriteOverride(dir, fusion),
+    {
+      path: "saved.txt",
+      mode: "create",
+      content: "saved\n",
+      then_run: { command: "check", timeout: 3 },
+    },
+    { ctx: context },
+  );
+  assert.equal(result.details.report.publication, "PUBLISHED");
+  assert.equal(result.details.report.then_run?.status, "timeout");
+  assert.equal(result.details.report.progressError?.message, "Unreadable image data");
+  assert.equal(commandOutput(result), diagnostic.text);
+  assert.equal(events.at(-1)?.command, "timeout");
+  assert.deepEqual(events.at(-1)?.result?.content, [diagnostic]);
+});
+
 test("progress observer throws undefined first → retains the first failure in the final report", async (t) => {
   const dir = await tempDir();
   try {
@@ -558,6 +609,7 @@ test("case-differing paths on Windows → the Fusion queue serializes mutation s
       },
       signal: new AbortController().signal,
       onUpdate: () => {},
+      recordCommand: () => {},
       ctx: await ctx(dir, t),
     });
     await firstStarted.promise;
@@ -572,6 +624,7 @@ test("case-differing paths on Windows → the Fusion queue serializes mutation s
       },
       signal: new AbortController().signal,
       onUpdate: () => {},
+      recordCommand: () => {},
       ctx: await ctx(dir, t),
     });
     await new Promise((r) => setTimeout(r, 20));
@@ -708,6 +761,7 @@ test("timed command stays silent → heartbeat preserves output and stops after 
           signal: controller.signal,
           ctx: context,
           onUpdate: (update) => updates.push(update),
+          recordCommand: () => {},
         });
         await started.promise;
         assert.equal(events[0].timing, undefined);
@@ -774,6 +828,7 @@ test("command omits timeout → no countdown events occur while it waits", async
       },
       signal: new AbortController().signal,
       onUpdate: () => {},
+      recordCommand: () => {},
       ctx: context,
     });
     await started.promise;

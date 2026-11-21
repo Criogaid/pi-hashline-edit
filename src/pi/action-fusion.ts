@@ -34,15 +34,17 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import { Type, type Static, type TObject, type TProperties } from "typebox";
 import { observeFreshness, type FreshnessObservation } from "./file-commit.ts";
-import {
-  CommandNotRun,
-  type CommandFacts,
-  type MutationResultDetails,
-  type MutationScheduler,
-  type ObserverFailure,
+import { projectBashDetails } from "./fusion-card.ts";
+import type {
+  CommandFacts,
+  MutationCommandFacts,
+  MutationResultDetails,
+  MutationScheduler,
 } from "./mutation-result.ts";
 import { errnoCode, errorMessage, HashlineError } from "../core/errors.ts";
 import { cancellationError, throwIfCancelled } from "./error-text.ts";
+import { Value } from "typebox/value";
+import { COMMAND_IMAGE_SCHEMA } from "./report-schema.ts";
 import type {
   ActionFusionProgress,
   CommandResult,
@@ -144,6 +146,47 @@ function bashTimeoutSeconds(timeout: unknown): number | undefined {
     return timeout;
 }
 
+function hasNumericExitCode(structured: unknown): boolean {
+  return (
+    structured !== null &&
+    typeof structured === "object" &&
+    "exit_code" in structured &&
+    typeof structured.exit_code === "number"
+  );
+}
+
+/** Session listeners can replace array methods and block properties. Read indexed values once. */
+function snapshotOutput(
+  source: CommandResult["content"],
+  recordObserverFailure: (error: unknown) => void,
+) {
+  const content: CommandResult["content"] = [];
+  const length = source.length;
+  for (let i = 0; i < length; i++) {
+    if (!(i in source)) continue;
+    const block = source[i];
+    const type = block.type;
+    if (type === "text") {
+      const { text, textSignature } = block;
+      if (typeof text !== "string") throw new Error("Invalid then_run text block.");
+      content.push(
+        typeof textSignature === "string" ? { type, text, textSignature } : { type, text },
+      );
+      continue;
+    }
+    if (type !== "image") throw new Error("Invalid then_run content block type.");
+    try {
+      const image = { type, data: block.data, mimeType: block.mimeType };
+      if (!Value.Check(COMMAND_IMAGE_SCHEMA, image))
+        throw new Error("Invalid then_run image block.");
+      content.push(image);
+    } catch (error) {
+      recordObserverFailure(error);
+    }
+  }
+  return { content, output: contentText(content) };
+}
+
 /**
  * Coordinates one session Bash call and its display. Display callbacks are observers.
  * Their failures are kept for the report without affecting publication or execution.
@@ -154,17 +197,19 @@ function createBashCallCoordinator<TDetails extends object>({
   thenRun,
   onProgress,
   onUpdate,
+  recordCommand,
 }: {
   toolCallId: string;
   thenRun: ThenRunInput;
   onProgress: ProgressReporter;
   onUpdate: AgentToolUpdateCallback<MutationResultDetails<TDetails>>;
+  recordCommand: (facts: MutationCommandFacts) => void;
 }) {
   const bashCall: BashCallScope = { toolCallId };
   let mutationDetails: TDetails | undefined;
-  let failure: ObserverFailure | undefined;
   let displayedCommand = thenRun.command;
   let commandResult: CommandResult | undefined;
+  let finalStatus: CommandStatus | undefined;
   let launchTimeoutSeconds: number | undefined;
   /** A command with a timeout counts down once Bash first reports, refreshed by its heartbeat. */
   let countdown:
@@ -174,6 +219,13 @@ function createBashCallCoordinator<TDetails extends object>({
         readonly heartbeat: ReturnType<typeof setInterval>;
       }
     | undefined;
+
+  const recordObserverFailure = (error: unknown) => recordCommand({ progressFailure: { error } });
+
+  const recordStatus = (status: CommandStatus) => {
+    finalStatus = status;
+    recordCommand({ status });
+  };
 
   const report = (command: ActionFusionProgress["command"], freshness: Freshness) => {
     const progress: ActionFusionProgress = {
@@ -202,7 +254,7 @@ function createBashCallCoordinator<TDetails extends object>({
       try {
         notify();
       } catch (error) {
-        failure ??= { error };
+        recordObserverFailure(error);
       }
     }
   };
@@ -226,56 +278,87 @@ function createBashCallCoordinator<TDetails extends object>({
   };
 
   async function runCommand(signal: AbortSignal, ctx: ExtensionToolContext): Promise<CommandFacts> {
-    // Use the session's Bash, including overrides and both tool hooks. Pi forwards the parent signal.
+    let completion;
+    let hookInput;
     try {
-      const { result, isError, durationMs } = await bashCallScope.run(bashCall, () =>
+      completion = await bashCallScope.run(bashCall, () =>
         ctx.executeTool("bash", thenRun, { onUpdate: followCommand }),
       );
-      const command = {
-        terminate: result.terminate,
-        result: { content: result.content, details: result.details },
-      };
-      if (!isError) return { status: "succeeded", ...command };
-
-      const structured = result.structuredContent;
-      const hasExitCode =
-        structured !== null &&
-        typeof structured === "object" &&
-        "exit_code" in structured &&
-        typeof structured.exit_code === "number";
-      const executed = durationMs !== undefined;
-      let timedOut = false;
-      // Pi returns a duration only for executed calls. A denial can mimic the timeout text.
-      if (executed && !hasExitCode) {
-        // A silent override leaves only the shared hook input to read at completion.
-        const timeout = launchTimeoutSeconds ?? bashTimeoutSeconds(bashCall.input?.timeout);
-        if (timeout !== undefined) {
-          const diagnostic = `Command timed out after ${timeout} seconds`;
-          const output = contentText(result.content);
-          timedOut = output === diagnostic || output.endsWith(`\n${diagnostic}`);
-        }
-      }
-      // An exit or a timeout wins over cancellation arriving during a result hook.
-      if (signal.aborted && !hasExitCode && !timedOut)
-        return executed
-          ? { status: "cancelled", ...command }
-          : { status: "cancelled", terminate: result.terminate };
-      return { status: timedOut ? "timeout" : "failed", ...command };
+    } catch (error) {
+      const status = signal.aborted ? "cancelled" : "failed";
+      recordStatus(status);
+      const output = errorMessage(error);
+      commandResult = { content: [{ type: "text", text: output }] };
+      return { status, output };
     } finally {
+      hookInput = bashCall.input;
       delete bashCall.input;
       if (countdown) clearInterval(countdown.heartbeat);
     }
+
+    return readCompletion(completion, hookInput, signal);
+  }
+
+  function snapshotCommand(
+    result: CommandResult,
+    status: Exclude<CommandStatus, "skipped">,
+    snapshot = snapshotOutput(result.content, recordObserverFailure),
+  ): CommandFacts {
+    const { content, output } = snapshot;
+    commandResult = { content };
+    try {
+      const details = projectBashDetails(result.details);
+      if (details !== undefined) commandResult = { content, details };
+    } catch (error) {
+      recordObserverFailure(error);
+    }
+    return { status, output };
+  }
+
+  function readCompletion(
+    { result, isError, durationMs }: Awaited<ReturnType<ExtensionToolContext["executeTool"]>>,
+    hookInput: BashCallScope["input"],
+    signal: AbortSignal,
+  ): CommandFacts {
+    // Keep a safe terminal card even if reading the final output fails.
+    commandResult = { content: [] };
+    if (!isError) recordStatus("succeeded");
+    const terminate = result.terminate;
+    if (typeof terminate === "boolean") recordCommand({ terminate });
+    if (!isError) return snapshotCommand(result, "succeeded");
+
+    const finishError = (
+      status: "failed" | "timeout" | "cancelled",
+      snapshot?: ReturnType<typeof snapshotOutput>,
+    ): CommandFacts => {
+      recordStatus(status);
+      return snapshotCommand(result, status, snapshot);
+    };
+
+    if (hasNumericExitCode(result.structuredContent)) return finishError("failed");
+    if (durationMs === undefined) {
+      if (!signal.aborted) return finishError("failed");
+      recordStatus("cancelled");
+      commandResult = undefined;
+      return { status: "cancelled" };
+    }
+    const timeout = launchTimeoutSeconds ?? bashTimeoutSeconds(hookInput?.timeout);
+    if (timeout === undefined) return finishError(signal.aborted ? "cancelled" : "failed");
+    const snapshot = snapshotOutput(result.content, recordObserverFailure);
+    const diagnostic = `Command timed out after ${timeout} seconds`;
+    if (snapshot.output === diagnostic || snapshot.output.endsWith(`\n${diagnostic}`))
+      return finishError("timeout", snapshot);
+    return finishError(signal.aborted ? "cancelled" : "failed", snapshot);
   }
 
   return {
     report,
     runCommand,
-    failure: () => failure,
+    reportCompletion() {
+      if (finalStatus !== undefined) report(finalStatus, "unknown");
+    },
     mutationCompleted(details: TDetails) {
       mutationDetails = details;
-    },
-    commandSettled(result: CommandResult | undefined) {
-      commandResult = result;
     },
   };
 }
@@ -331,6 +414,7 @@ export function createActionFusionScheduler(onProgress: ProgressReporter): Mutat
     signal,
     ctx,
     onUpdate,
+    recordCommand,
   }) => {
     // Without a command, the mutation still waits for a fused call on the same file.
     if (thenRun === undefined)
@@ -339,16 +423,24 @@ export function createActionFusionScheduler(onProgress: ProgressReporter): Mutat
         outcome: await mutate(),
       }));
 
-    const progress = createBashCallCoordinator({ toolCallId, thenRun, onProgress, onUpdate });
-    /** A mutation that did not complete keeps its own failure; Fusion adds only the command status. */
-    const notRun = (error: unknown, command: "skipped" | "cancelled") => {
-      progress.report(command, "unknown");
-      return new CommandNotRun(error, command, progress.failure());
+    const progress = createBashCallCoordinator({
+      toolCallId,
+      thenRun,
+      onProgress,
+      onUpdate,
+      recordCommand,
+    });
+    const notRun = (status: "skipped" | "cancelled") => {
+      recordCommand({ status });
+      progress.report(status, "unknown");
     };
     progress.report("waiting", "unknown");
+    let started = false;
     return withQueue(absolutePath, signal, async () => {
+      started = true;
       const outcome = await mutate().catch((error: unknown) => {
-        throw notRun(error, "skipped");
+        notRun("skipped");
+        throw error;
       });
       progress.mutationCompleted(outcome.details);
 
@@ -361,37 +453,42 @@ export function createActionFusionScheduler(onProgress: ProgressReporter): Mutat
           outcome,
           observation,
           command,
-          progressFailure: progress.failure(),
         };
       };
 
       // A completed mutation remains successful; the command is only started on a fresh target.
       const before = await observeFreshness(absolutePath, publishedRevision, "before-command");
-      if (signal.aborted) return settle(before, { status: "cancelled" });
-      if (before.freshness !== "unchanged") return settle(before, { status: "skipped" });
+      const beforeStatus = signal.aborted
+        ? "cancelled"
+        : before.freshness !== "unchanged"
+          ? "skipped"
+          : undefined;
+      if (beforeStatus !== undefined) {
+        recordCommand({ status: beforeStatus });
+        return settle(before, { status: beforeStatus });
+      }
 
       progress.report("running", "unchanged");
       const scope = { active: true };
-      let command: CommandFacts;
       try {
-        command = await commandScope.run(scope, () => progress.runCommand(signal, ctx));
+        const command = await commandScope
+          .run(scope, () => progress.runCommand(signal, ctx))
+          .finally(() => {
+            scope.active = false;
+          });
+        return settle(
+          await observeFreshness(absolutePath, publishedRevision, "after-command"),
+          command,
+        );
       } catch (error) {
-        command = {
-          status: signal.aborted ? "cancelled" : "failed",
-          result: { content: [{ type: "text", text: errorMessage(error) }] },
-        };
-      } finally {
-        scope.active = false;
+        progress.reportCompletion();
+        throw error;
       }
-      progress.commandSettled(command.result);
-      return settle(
-        await observeFreshness(absolutePath, publishedRevision, "after-command"),
-        command,
-      );
     }).catch((error: unknown) => {
-      if (error instanceof CommandNotRun) throw error;
+      if (started) throw error;
       const cancelled = error instanceof HashlineError && error.errorCode === "OPERATION_ABORTED";
-      throw notRun(error, cancelled ? "cancelled" : "skipped");
+      notRun(cancelled ? "cancelled" : "skipped");
+      throw error;
     });
   };
   return schedule;

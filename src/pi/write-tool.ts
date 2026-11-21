@@ -6,7 +6,6 @@ import {
   type Theme,
   type ToolRenderResultOptions,
 } from "@earendil-works/pi-coding-agent";
-import { commitFile } from "./file-commit.ts";
 import { mutationToolBase, type MutationToolEnvironment } from "./mutation-runner.ts";
 import { throwIfCancelled } from "./error-text.ts";
 import { unwritableTextError } from "../core/text.ts";
@@ -61,15 +60,10 @@ export function makeWriteOverride(env: MutationToolEnvironment) {
       },
       async run(
         params,
-        { absolutePath, signal },
+        { publish, signal },
       ): Promise<MutationOutcome<WriteMutationDetails, "write">> {
         throwIfCancelled(signal);
-        const commit = await commitFile(
-          absolutePath,
-          params.content,
-          { mode: params.mode },
-          signal,
-        );
+        const commit = await publish(params.content, { mode: params.mode });
         return {
           commit,
           details: {},

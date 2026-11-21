@@ -112,6 +112,28 @@ test("structured failure → omits call fields from text and renders the complet
   assert.deepEqual(result, before);
 });
 
+test("thrown error with unreadable cause → returns a structured failure with the original diagnostic", async () => {
+  const failure = new Error("Could not finish the read");
+  Object.defineProperty(failure, "cause", {
+    get() {
+      throw new Error("Unreadable cause");
+    },
+  });
+  const result = await runTool(
+    "read",
+    { signal, path: "source.txt", budget: DEFAULT_OUTPUT_BUDGETS },
+    async () => {
+      throw failure;
+    },
+  );
+  assert.equal(result.isError, true);
+  assert.equal(result.structuredContent, undefined);
+  assert.equal(result.details.report.error, "UNCLASSIFIED");
+  const wire = reportOf({ content: result.content }, "read");
+  assert.equal(wire?.error, "UNCLASSIFIED");
+  assert.equal(wire.message, failure.message);
+});
+
 test("Pi argument failure transported as text → renders field facts after serialization", () => {
   const diagnostic = formatArgumentError(
     [{ field: "pattern", reason: "missing" }],
@@ -305,6 +327,7 @@ test("mutation publication → recovery reflects whether the change was saved", 
     const report = describeMutationFailure("edit", error, {
       signal,
       budget: DEFAULT_OUTPUT_BUDGETS,
+      failedPublication: publication,
     });
     assert.equal(report.publication, publication);
     assert.equal(report.next, expected);

@@ -41,6 +41,26 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
+/** Snapshot the JSON representation of the fields Pi's Bash renderer reads. */
+export function projectBashDetails(details: unknown): unknown {
+  if (!isRecord(details)) return undefined;
+  const { fullOutputPath, truncation } = details;
+  return JSON.parse(
+    JSON.stringify({
+      fullOutputPath,
+      truncation: isRecord(truncation)
+        ? {
+            truncated: truncation.truncated,
+            truncatedBy: truncation.truncatedBy,
+            outputLines: truncation.outputLines,
+            totalLines: truncation.totalLines,
+            maxBytes: truncation.maxBytes,
+          }
+        : undefined,
+    }),
+  );
+}
+
 function decodeCard(read: () => unknown): CommandCardData | undefined {
   try {
     const source = read();
@@ -48,27 +68,9 @@ function decodeCard(read: () => unknown): CommandCardData | undefined {
     const card = { ...source };
     if (isRecord(card.result)) {
       const result = { ...card.result };
-      const details = result.details;
-      // Pi's Bash renderer reads the output path and these truncation fields.
-      if (isRecord(details)) {
-        const { fullOutputPath, truncation } = details;
-        result.details = JSON.parse(
-          JSON.stringify({
-            fullOutputPath,
-            truncation: isRecord(truncation)
-              ? {
-                  truncated: truncation.truncated,
-                  truncatedBy: truncation.truncatedBy,
-                  outputLines: truncation.outputLines,
-                  totalLines: truncation.totalLines,
-                  maxBytes: truncation.maxBytes,
-                }
-              : undefined,
-          }),
-        );
-      } else {
-        delete result.details;
-      }
+      const details = projectBashDetails(result.details);
+      if (details === undefined) delete result.details;
+      else result.details = details;
       card.result = result;
     }
     const data: unknown = structuredClone(card);

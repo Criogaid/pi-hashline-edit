@@ -64,7 +64,7 @@ export const NO_STRING_FORM = "The thrown value has no string form.";
  */
 export function errorMessage(error: unknown): string {
   try {
-    return error instanceof Error ? error.message : String(error);
+    return String(error instanceof Error ? error.message : error);
   } catch {
     return NO_STRING_FORM;
   }
