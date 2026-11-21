@@ -43,7 +43,8 @@ function parseAnchor(value: string | undefined) {
 }
 
 /** Operation item fields besides `action`. */
-type EditItemField = (typeof EDIT_ANCHOR_FIELDS)[number] | "lines";
+const EDIT_ITEM_FIELDS = [...EDIT_ANCHOR_FIELDS, "lines"] as const;
+type EditItemField = (typeof EDIT_ITEM_FIELDS)[number];
 
 /** What one op does and which item fields it takes; it takes no others. */
 interface EditOpSpec {
@@ -182,21 +183,24 @@ function checkEditArguments(
     const spec: EditOpSpec = EDIT_OPS[name];
     const path = `steps[${index}]`;
     const accepted = new Set([...spec.required, ...(spec.optional ?? [])]);
-    for (const [field, declaration] of Object.entries(item.properties)) {
-      if (field === "action") continue;
-      const given = edit[field] !== undefined;
-      if (given && !accepted.has(field as EditItemField))
-        report(`${path}.${field}`, "is not allowed", `"${name}": ${describeEditOp(spec)}`);
-      else if (!given && spec.required.includes(field as EditItemField))
+    const admitted: Partial<Record<EditItemField, unknown>> = {};
+    for (const field of EDIT_ITEM_FIELDS) {
+      const value = edit[field];
+      if (value === undefined && spec.required.includes(field)) {
         report(
           `${path}.${field}`,
           `is required for "${name}"`,
-          Reflect.get(declaration, "description"),
+          Reflect.get(item.properties[field], "description"),
         );
+      } else if (accepted.has(field)) {
+        admitted[field] = value;
+      } else if (value !== undefined) {
+        report(`${path}.${field}`, "is not allowed", `"${name}": ${describeEditOp(spec)}`);
+      }
     }
 
-    const lines = edit.lines;
-    if (accepted.has("lines") && Array.isArray(lines)) {
+    const { lines } = admitted;
+    if (Array.isArray(lines)) {
       if (lines.length === 0) {
         report(
           `${path}.lines`,
@@ -211,8 +215,8 @@ function checkEditArguments(
     }
     const cited: { anchor?: number; end?: number } = {};
     for (const field of EDIT_ANCHOR_FIELDS) {
-      const anchor = edit[field];
-      if (!accepted.has(field) || typeof anchor !== "string") continue;
+      const anchor = admitted[field];
+      if (typeof anchor !== "string") continue;
       const token = parseAnchorToken(anchor);
       if (!token) continue;
       if (Number.isSafeInteger(token.line)) {

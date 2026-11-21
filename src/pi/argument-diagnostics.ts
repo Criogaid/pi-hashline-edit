@@ -188,31 +188,21 @@ function aggregateErrors(
   prepared: unknown,
   objects: ReadonlyMap<string, TObject>,
 ): readonly ArgumentIssue[] {
-  const issues: ArgumentIssue[] = [];
-  const add = (field: string, reason: string, fix?: string) =>
-    issues.push(fix === undefined ? { field, reason } : { field, reason, fix });
-  for (const error of errors) {
+  const issues = errors.flatMap((error): ArgumentIssue[] => {
     const parts = pointerParts(error.instancePath);
     switch (error.keyword) {
       case "required": {
-        for (const key of error.params.requiredProperties)
-          add(
-            propertyPath(valuePath(parts, prepared), key),
+        const parent = valuePath(parts, prepared);
+        return error.params.requiredProperties.map((key) =>
+          argumentIssue(
+            propertyPath(parent, key),
             "is required",
             fieldExplanation(parameters, [...parts, key]),
-          );
-        break;
+          ),
+        );
       }
-      case "additionalProperties": {
-        const path = valuePath(parts, prepared);
-        const fix = shapeExplanation(objects.get(path));
-        for (const key of error.params.additionalProperties)
-          add(propertyPath(path, key), "is not allowed", fix);
-        break;
-      }
-      case "pattern":
-        add(valuePath(parts, prepared) || "$", error.message, fieldExplanation(parameters, parts));
-        break;
+      case "additionalProperties":
+        return undeclaredIssues(valuePath(parts, prepared), error.params.additionalProperties);
       case "boolean": {
         // TypeBox emits a false-schema error per unknown key before its grouped error.
         // Count declared path steps to preserve the entire unknown key, even if it contains '/'.
@@ -222,26 +212,38 @@ function aggregateErrors(
             (segment) =>
               segment === "properties" || segment === "items" || segment === "prefixItems",
           ).length;
-        const parent = valuePath(parts.slice(0, depth), prepared);
-        add(
-          propertyPath(parent, parts.slice(depth).join("/")),
-          "is not allowed",
-          shapeExplanation(objects.get(parent)),
-        );
-        break;
+        return undeclaredIssues(valuePath(parts.slice(0, depth), prepared), [
+          parts.slice(depth).join("/"),
+        ]);
       }
-      case "enum":
-        add(
-          valuePath(parts, prepared) || "$",
-          `expected one of: ${error.params.allowedValues.map((value) => JSON.stringify(value)).join(", ")}`,
-          fieldExplanation(parameters, parts),
-        );
-        break;
+      case "pattern":
+      case "enum": {
+        const reason =
+          error.keyword === "enum"
+            ? `expected one of: ${error.params.allowedValues.map((value) => JSON.stringify(value)).join(", ")}`
+            : error.message;
+        return [
+          argumentIssue(
+            valuePath(parts, prepared) || "$",
+            reason,
+            fieldExplanation(parameters, parts),
+          ),
+        ];
+      }
       default:
-        add(valuePath(parts, prepared) || "$", error.message);
+        return [{ field: valuePath(parts, prepared) || "$", reason: error.message }];
     }
-  }
+  });
   return combineIssues(issues);
+
+  function undeclaredIssues(parent: string, keys: readonly string[]): ArgumentIssue[] {
+    const fix = shapeExplanation(objects.get(parent));
+    return keys.map((key) => argumentIssue(propertyPath(parent, key), "is not allowed", fix));
+  }
+
+  function argumentIssue(field: string, reason: string, fix: string | undefined): ArgumentIssue {
+    return fix === undefined ? { field, reason } : { field, reason, fix };
+  }
 }
 
 /** Detect native capacity through a terminal error, without importing unbundled TypeBox settings. */
