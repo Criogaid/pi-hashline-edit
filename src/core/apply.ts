@@ -220,20 +220,18 @@ export function applyEdits(
   const bom = text.startsWith("\uFEFF") ? "\uFEFF" : "";
   const separator = newLineSeparator(text);
   const contentStart = (line: number) => (line === 0 ? bom.length : lines.start(line));
-  /** A new line's gap: the file's separator. */
-  const fallbackGap: TextFragment = { text: separator };
   /** The source gap after a line, or the separator after an unterminated last line. */
   const gapAfter = (line: number): TextFragment => {
-    const sourceStart = lines.end(line);
+    const start = lines.end(line);
     const end = lines.start(line + 1);
-    return sourceStart !== end ? { text: text.slice(sourceStart, end), sourceStart } : fallbackGap;
+    return start !== end ? [start, end] : separator;
   };
 
   // The previous span's trailing gap connects to the next span, unless it ends the file.
-  const parts: TextFragment[] = [{ text: bom, sourceStart: 0 }];
+  const parts: TextFragment[] = [[0, bom.length]];
   let lineCount = 0;
   let lastLineEmpty = false;
-  let trailingGap = fallbackGap;
+  let trailingGap: TextFragment = separator;
   const appendSpan = (
     content: TextFragment,
     count: number,
@@ -253,7 +251,7 @@ export function applyEdits(
     const sourceStart = contentStart(start);
     const contentEnd = lines.end(last);
     appendSpan(
-      { text: text.slice(sourceStart, contentEnd), sourceStart },
+      [sourceStart, contentEnd],
       end - start,
       contentStart(last) === contentEnd,
       gapAfter(last),
@@ -276,13 +274,10 @@ export function applyEdits(
           ? text.slice(lines.end(op.lo), lines.start(op.lo + usedGaps))
           : "";
       appendSpan(
-        {
-          text:
-            op.newLines.length > 1 ? restoreLineEndings(logical, oldInternal, separator) : logical,
-        },
+        op.newLines.length > 1 ? restoreLineEndings(logical, oldInternal, separator) : logical,
         op.newLines.length,
         logical === "" || logical.endsWith("\n"),
-        op.hi > op.lo ? gapAfter(op.hi - 1) : fallbackGap,
+        op.hi > op.lo ? gapAfter(op.hi - 1) : separator,
       );
     }
     cursor = op.hi;
@@ -293,5 +288,5 @@ export function applyEdits(
   if (lineCount > 0 && (hasFinalNewline(text) || (lastLineEmpty && (lineCount > 1 || !bom)))) {
     parts.push(trailingGap);
   }
-  return { ok: true, ...joinTextFragments(parts) };
+  return { ok: true, ...joinTextFragments(text, parts) };
 }

@@ -114,15 +114,13 @@ export function applyReplacements(
       },
     });
   }
-  const parts: TextFragment[] = [{ text: bom, sourceStart: 0 }];
+  const parts: TextFragment[] = [[0, bom.length]];
+  // The header is copied separately, even when a match consumes it.
   let cursor = bom.length;
   for (const change of changes) {
-    parts.push(
-      { text: source.slice(cursor, Math.max(bom.length, change.start)), sourceStart: cursor },
-      { text: change.text },
-    );
+    parts.push([cursor, Math.max(bom.length, change.start)], change.text);
     cursor = Math.max(bom.length, change.end);
   }
-  parts.push({ text: source.slice(cursor), sourceStart: cursor });
-  return { ...joinTextFragments(parts), count: changes.length };
+  parts.push([cursor, source.length]);
+  return { ...joinTextFragments(source, parts), count: changes.length };
 }

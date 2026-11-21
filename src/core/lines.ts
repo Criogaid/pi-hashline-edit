@@ -16,6 +16,7 @@
  */
 
 import type { CopiedSpan } from "./copy-span.ts";
+import type { HalfOpenRange } from "./ranges.ts";
 
 /** Normalize CRLF boundaries to LF; standalone CR remains content. */
 export function normalizeLineEndings(text: string): string {
@@ -41,13 +42,14 @@ function preserveBoundaryCarriageReturn(previous: string, next: string): string 
   return previous.endsWith("\r") && next.startsWith("\n") ? `\r${next}` : next;
 }
 
-export interface TextFragment {
-  readonly text: string;
-  readonly sourceStart?: number;
-}
+/** Generated text or a half-open interval in the original raw UTF-16 text. */
+export type TextFragment = string | HalfOpenRange;
 
 /** Join raw fragments and report contiguous copied slices past any inserted CR. */
-export function joinTextFragments(parts: readonly TextFragment[]): {
+export function joinTextFragments(
+  source: string,
+  parts: readonly TextFragment[],
+): {
   text: string;
   copied: CopiedSpan[];
 } {
@@ -55,12 +57,14 @@ export function joinTextFragments(parts: readonly TextFragment[]): {
   const copied: CopiedSpan[] = [];
   let previous = "";
   let targetEnd = 0;
-  for (const { text, sourceStart } of parts) {
+  for (const fragment of parts) {
+    const text = typeof fragment === "string" ? fragment : source.slice(...fragment);
     if (!text) continue;
     const part = preserveBoundaryCarriageReturn(previous, text);
     joined.push(part);
-    if (sourceStart !== undefined) {
-      const targetStart = targetEnd + part.length - text.length;
+    if (typeof fragment !== "string") {
+      const [sourceStart] = fragment;
+      const targetStart = targetEnd + (part.length - text.length);
       const last = copied[copied.length - 1];
       if (
         last &&
