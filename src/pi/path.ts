@@ -62,8 +62,11 @@ export function canonicalPath(cwd: string, path: string): string {
 /** Why a model-supplied path names no local path, or undefined when it names one. */
 export function pathSpellingError(path: string): string | undefined {
   try {
-    // A file URL can decode to NUL, which no filesystem path contains.
-    return localPath(path).includes("\0") ? "Path contains a NUL character." : undefined;
+    // No filesystem path contains NUL, spelled or decoded from a file URL. The spelling is checked
+    // too, because normalization can drop the segment that holds it.
+    return path.includes("\0") || localPath(path).includes("\0")
+      ? "Path contains a NUL character."
+      : undefined;
   } catch (error) {
     return errorMessage(error);
   }

@@ -55,6 +55,8 @@ test('grep receives flags: "i" → rejects INVALID_ARGUMENTS before searching', 
 test("path spelling names no local path → rejects the exact path field", async (t) => {
   const cwd = process.cwd();
   const invalidUrl = "file:///%";
+  const fileUrl = process.platform === "win32" ? "file:///C:/x.txt" : "file:///x.txt";
+  const nulReason = "Path contains a NUL character.";
   const read = makeReadOverride(cwd, DEFAULT_CONFIG);
   const grep = makeGrepOverride(cwd, DEFAULT_CONFIG);
   for (const { name, tool, args, field, reason } of [
@@ -77,14 +79,28 @@ test("path spelling names no local path → rejects the exact path field", async
       tool: read,
       args: { path: "file:///C:/x%00y" },
       field: "path",
-      reason: "Path contains a NUL character.",
+      reason: nulReason,
     },
     {
       name: "literal NUL in grep",
       tool: grep,
       args: { path: [".", "x\0y"], pattern: ["text"], literal: true },
       field: "path[1]",
-      reason: "Path contains a NUL character.",
+      reason: nulReason,
+    },
+    {
+      name: "home expansion would discard a segment containing NUL",
+      tool: read,
+      args: { path: "~/bad\u0000/../name" },
+      field: "path",
+      reason: nulReason,
+    },
+    {
+      name: "file URL parsing would strip a trailing NUL",
+      tool: read,
+      args: { path: `${fileUrl}\u0000` },
+      field: "path",
+      reason: nulReason,
     },
   ]) {
     await t.test(name, async () => {
