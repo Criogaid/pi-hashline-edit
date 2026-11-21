@@ -39,7 +39,7 @@ try {
     budgets: () => outputBudgetsFor(undefined),
   }).execute(
     "bench",
-    { path: [directory], pattern: ["needle"], literal: true, limit: files },
+    { path: [directory], pattern: ["needle"], literal: true, limit: files, context: 0 },
     undefined,
   );
   sample();
