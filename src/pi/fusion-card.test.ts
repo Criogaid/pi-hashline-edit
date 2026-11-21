@@ -131,13 +131,17 @@ test("Fusion command outcomes → progress, cards, and reports preserve command 
       scenario: "cancelled-empty",
       command: "cancelled",
       result: { content: [], details: {} },
-      text: /Not run: cancelled\./,
+      text: /cancelled/,
     },
     { scenario: "skipped", command: "skipped", text: /Not run: the mutation did not complete/ },
     { scenario: "cancelled", command: "cancelled", text: /Not run: cancelled\./ },
   ];
   for (const { scenario, command, result: expected, text } of cases) {
-    await t.test(scenario, async (t) => {
+    const name =
+      scenario === "cancelled-empty"
+        ? "started command cancelled with empty output → card omits the not-run reason"
+        : scenario;
+    await t.test(name, async (t) => {
       const dir = await mkdtemp(join(tmpdir(), "hashline-fusion-card-"));
       t.after(() => rm(dir, { recursive: true, force: true }));
       const h = harness();
@@ -192,7 +196,7 @@ test("Fusion command outcomes → progress, cards, and reports preserve command 
       assert.equal(commandOutput(result), output || undefined);
       const rendered = h.card(h.entries[0], true).render(160).join("\n");
       assert.match(rendered, text);
-      if (command === "cancelled") assert.equal(rendered.includes("Not run: cancelled."), !output);
+      if (command === "cancelled" && expected) assert.doesNotMatch(rendered, /Not run/);
     });
   }
 });

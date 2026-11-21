@@ -27,7 +27,6 @@ import {
 import type { TSchema } from "typebox";
 import { Value } from "typebox/value";
 import { ACTION_FUSION_PROGRESS_SCHEMA, type ActionFusionProgress } from "./report-schema.ts";
-import { commandText } from "./mutation-result.ts";
 import type { MutationRenderState } from "./render.ts";
 
 const CARD_TYPE = "hashline-then-run";
@@ -53,8 +52,8 @@ const TARGET_STATE = {
  * states: whether the mutation completed and the target's freshness.
  */
 function notRunReason(card: CommandCardData): string | undefined {
-  if (card.command === "cancelled" && !(card.result && commandText(card.result.content)))
-    return "Not run: cancelled.";
+  // A cancelled command that started has a result, even an empty one.
+  if (card.command === "cancelled" && card.result === undefined) return "Not run: cancelled.";
   if (card.command !== "skipped") return undefined;
   const { mutationCompleted, freshness } = card;
   if (!mutationCompleted) return "Not run: the mutation did not complete.";
