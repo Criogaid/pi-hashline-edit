@@ -82,7 +82,8 @@ async function sample(root: string, scenario: Scenario) {
         publishedRevision: expectedRevision,
         freshness: "unchanged",
       });
-      assert.deepEqual(await observeFreshness(path, expectedRevision, true), {
+      // Older baselines interpret this non-empty phase as a truthy request to settle.
+      assert.deepEqual(await observeFreshness(path, expectedRevision, "before-command"), {
         freshness: "unchanged",
       });
     } else if (readSnapshot) {

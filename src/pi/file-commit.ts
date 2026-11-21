@@ -386,19 +386,19 @@ export type FreshnessObservation =
     };
 
 /**
- * Read the target again and compare it with the published revision. With
- * `settle`, two reads across a turn of the event loop catch a write in progress.
+ * Read the target again and compare it with the published revision. Before a command,
+ * two reads across a turn of the event loop catch a write in progress.
  * A failed read is itself an observation: the mutation is already published, so
  * a concurrent change or deletion must not suggest retrying it.
  */
 export async function observeFreshness(
   path: string,
   publishedRevision: string,
-  settle = false,
+  phase: "before-command" | "after-command",
 ): Promise<FreshnessObservation> {
   try {
     const first = await readFileRevision(path, UNCANCELLABLE);
-    if (settle) {
+    if (phase === "before-command") {
       await new Promise<void>((resolve) => setImmediate(resolve));
       if ((await readFileRevision(path, UNCANCELLABLE)) !== first) return { freshness: "changed" };
     }

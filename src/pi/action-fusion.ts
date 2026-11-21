@@ -366,7 +366,7 @@ export function createActionFusionScheduler(onProgress: ProgressReporter): Mutat
       };
 
       // A completed mutation remains successful; the command is only started on a fresh target.
-      const before = await observeFreshness(absolutePath, publishedRevision, true);
+      const before = await observeFreshness(absolutePath, publishedRevision, "before-command");
       if (signal.aborted) return settle(before, { status: "cancelled" });
       if (before.freshness !== "unchanged") return settle(before, { status: "skipped" });
 
@@ -384,7 +384,10 @@ export function createActionFusionScheduler(onProgress: ProgressReporter): Mutat
         scope.active = false;
       }
       progress.commandSettled(command.result);
-      return settle(await observeFreshness(absolutePath, publishedRevision), command);
+      return settle(
+        await observeFreshness(absolutePath, publishedRevision, "after-command"),
+        command,
+      );
     }).catch((error: unknown) => {
       if (error instanceof CommandNotRun) throw error;
       const cancelled = error instanceof HashlineError && error.errorCode === "OPERATION_ABORTED";
