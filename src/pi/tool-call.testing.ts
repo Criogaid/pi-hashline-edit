@@ -3,8 +3,8 @@
  *
  * In production, input reaches `execute` only after Pi runs the tool's
  * `prepareArguments` and validates (and coerces) the result against the tool
- * schema. Session hooks can then change the arguments. This fixture models calls without a hook;
- * real session tests cover hook edits. Tests that probe invalid or
+ * schema. The fixture applies an optional hook edit after validation, as Pi does.
+ * Tests that probe invalid or
  * unusual arguments go through the same funnel instead of calling `execute`.
  */
 
@@ -29,6 +29,7 @@ export interface ToolCallOptions {
   signal?: AbortSignal;
   onUpdate?: unknown;
   ctx?: unknown;
+  afterValidation?: Readonly<Record<string, unknown>>;
 }
 
 /** prepareArguments → schema validation → execute, failing the way Pi reports invalid calls. */
@@ -47,6 +48,7 @@ export async function callTool(tool: CallableTool, args: unknown, options: ToolC
     // Pi owns shape checking and coercion at this external boundary.
     arguments: prepared as ToolCall["arguments"],
   });
+  if (options.afterValidation) Object.assign(validated as object, options.afterValidation);
   return tool.execute(toolCallId, validated, options.signal, options.onUpdate, options.ctx);
 }
 

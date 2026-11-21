@@ -6,10 +6,10 @@
  */
 import { compile } from "@earendil-works/pi-schema";
 import { formats } from "@earendil-works/pi-schema/formats";
-import type { Static, TObject, TSchema } from "typebox";
+import { IsArray, IsObject, type Static, type TObject, type TSchema } from "typebox";
 import { errorMessage } from "../core/errors.ts";
 import { buildRegex } from "../core/regex.ts";
-import { diagnoseArguments, nativeArgumentIssue } from "./argument-diagnostics.ts";
+import { diagnoseArguments, nativeArgumentIssue, propertyPath } from "./argument-diagnostics.ts";
 import { formatArgumentError } from "./argument-error.ts";
 import type { OutputBudgetProvider } from "./budgets.ts";
 import { pathSpellingError } from "./path.ts";
@@ -86,6 +86,47 @@ function pathArguments(args: unknown): (readonly [string, string])[] {
   );
 }
 
+function arrayShapeIssue(
+  array: readonly unknown[],
+  path: string,
+  items?: TSchema,
+): ArgumentIssue | undefined {
+  const keys = Object.keys(array);
+  // A clone's own indices are dense if their count and last index agree with length.
+  if (
+    keys.length !== array.length ||
+    (keys.length !== 0 && keys.at(-1) !== String(array.length - 1))
+  ) {
+    // Indexed keys precede named keys. Their first mismatch locates the first hole.
+    const mismatch = keys.findIndex((key, index) => key !== String(index));
+    const index = mismatch === -1 ? keys.length : mismatch;
+    if (index < array.length)
+      return { field: `${path}[${index}]`, reason: "is required; arrays must not have holes" };
+    return { field: propertyPath(path, keys[index]), reason: "is not allowed on an array" };
+  }
+
+  if (!IsArray(items) && !IsObject(items)) return undefined;
+  for (const [index, item] of array.entries()) {
+    const issue = firstArrayIssue(items, item, `${path}[${index}]`);
+    if (issue) return issue;
+  }
+  return undefined;
+}
+
+/** Follow declared fields only, so a hook's cyclic object graph cannot drive recursion. */
+function firstArrayIssue(schema: TSchema, value: unknown, path = ""): ArgumentIssue | undefined {
+  if (!(value instanceof Object)) return undefined;
+  if (IsArray(schema))
+    return Array.isArray(value) ? arrayShapeIssue(value, path, schema.items) : undefined;
+  if (Array.isArray(value)) return arrayShapeIssue(value, path);
+  if (!IsObject(schema)) return undefined;
+  for (const [key, child] of Object.entries(schema.properties)) {
+    const issue = firstArrayIssue(child, Reflect.get(value, key), propertyPath(path, key));
+    if (issue) return issue;
+  }
+  return undefined;
+}
+
 function preparationError(cause: unknown, limited: boolean, budgets: OutputBudgetProvider): Error {
   return new Error(
     formatArgumentError([{ field: "$", reason: errorMessage(cause) }], limited, budgets()),
@@ -100,17 +141,23 @@ export function createArgumentBoundary<T extends TObject>(
 ) {
   const validator = compile(parameters, COMPILE_OPTIONS);
 
-  function inspect<Value>(snapshot: () => Value): Value {
-    let checked: Value;
-    let schemaFailed: boolean;
+  function inspectNative<Value>(operation: () => Value): Value {
     try {
-      // parse() only returns errors on failure. Keep the coerced value for both
-      // semantic checks and the bounded, per-field diagnostic pass.
-      checked = snapshot();
-      schemaFailed = !validator.check(checked);
+      return operation();
     } catch (error) {
       throw preparationError(error, false, budgets);
     }
+  }
+
+  function snapshot<Value>(args: Value): Value {
+    const copy = inspectNative(() => structuredClone(args));
+    const issue = firstArrayIssue(parameters, copy);
+    if (issue) throw new Error(formatArgumentError([issue], false, budgets()));
+    return copy;
+  }
+
+  function inspect<Value>(checked: Value): Value {
+    const schemaFailed = !inspectNative(() => validator.check(checked));
     const issues: ArgumentIssue[] = [];
     check?.(checked, (field, reason, fix) =>
       issues.push(fix === undefined ? { field, reason } : { field, reason, fix }),
@@ -121,23 +168,25 @@ export function createArgumentBoundary<T extends TObject>(
     }
     if (!schemaFailed && issues.length === 0) return checked;
     const result = diagnoseArguments(parameters, checked, issues, schemaFailed);
-    // Pi can reject JS values (for example sparse arrays) that TypeBox does not diagnose.
-    const reasons = result.issues.length
-      ? result.issues
-      : validator.errors(checked).map((error) => nativeArgumentIssue(error, checked));
+    // Pi can reject values that TypeBox does not diagnose, for example near-integers.
+    const reasons =
+      schemaFailed && result.issues.length === 0
+        ? validator.errors(checked).map((error) => nativeArgumentIssue(error, checked))
+        : result.issues;
     throw new Error(formatArgumentError(reasons, result.limited, budgets()));
   }
 
   return {
     prepareArguments(args: unknown): Static<T> {
-      inspect(() => validator.coerce(structuredClone(args)));
+      const raw = snapshot(args);
+      inspect(inspectNative(() => validator.coerce(raw)));
       // Pi coerces the raw arguments for its hooks after this preflight.
       return args as Static<T>;
     },
     // A tool_call hook can retain and mutate the validated arguments before or during execution.
     // The tool consumes its own checked snapshot of the canonical arguments the last hook left.
     afterHooks<Input extends Static<T>>(args: Input): Input {
-      return inspect(() => structuredClone(args));
+      return inspect(snapshot(args));
     },
   };
 }

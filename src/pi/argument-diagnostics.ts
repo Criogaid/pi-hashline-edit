@@ -96,7 +96,7 @@ function projectValueSchema(
   return schema;
 }
 
-function propertyPath(path: string, key: string): string {
+export function propertyPath(path: string, key: string): string {
   return /^[A-Za-z_][A-Za-z_0-9]*$/.test(key)
     ? path
       ? `${path}.${key}`
