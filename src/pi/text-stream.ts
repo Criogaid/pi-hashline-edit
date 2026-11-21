@@ -102,8 +102,8 @@ interface ScannedLine {
 /** A bound on the bytes retained per line, and what receives a selected line beyond it. */
 interface LineBound {
   readonly maxBytes: number;
-  /** Receives the number of a selected line longer than maxBytes, in place of onLine. */
-  readonly onExceeded: (number: number) => void;
+  /** Called for a selected line longer than maxBytes, in place of onLine. */
+  readonly onExceeded: () => void;
 }
 
 /** Visit selected logical lines; with a bound, a longer line goes to its onExceeded. */
@@ -129,7 +129,7 @@ export async function scanTextLines(
     if (selected) {
       const stripCr = terminated && lastChar === "\r";
       const logicalBytes = byteLength - (stripCr ? 1 : 0);
-      if (bound && logicalBytes > bound.maxBytes) bound.onExceeded(number);
+      if (bound && logicalBytes > bound.maxBytes) bound.onExceeded();
       else {
         const text = parts.join("");
         onLine({

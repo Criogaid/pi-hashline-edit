@@ -86,19 +86,19 @@ test("streamed scans → return the revision of every original byte and byte-bas
     }
   }));
 
-test("selected line exceeds the byte bound → reports its number and still delivers subsequent fitting lines", async () =>
+test("selected line exceeds the byte bound → calls onExceeded once and still delivers subsequent fitting lines", async () =>
   withFile(async (path) => {
     await writeFile(path, "z".repeat(2 * 1024 * 1024) + "\n界x\r\nkeep\nignored\n");
     const seen: unknown[] = [];
-    const exceeded: number[] = [];
+    let exceeded = 0;
     const stats = await scanTextLines(
       path,
       (number) => number <= 3,
       (line) => seen.push(line),
-      { signal, bound: { maxBytes: 4, onExceeded: (number) => exceeded.push(number) } },
+      { signal, bound: { maxBytes: 4, onExceeded: () => exceeded++ } },
     );
     assert.equal(stats.totalLines, 4);
-    assert.deepEqual(exceeded, [1]);
+    assert.equal(exceeded, 1);
     assert.deepEqual(seen, [
       { number: 2, byteLength: 4, carriageReturns: 0, text: "界x" },
       { number: 3, byteLength: 4, carriageReturns: 0, text: "keep" },
