@@ -79,7 +79,7 @@ greet.ts · 3 lines
 | `replace` | 在单个文件内批量执行字面或正则替换。每条规则都必须有匹配，匹配区域重叠时整批拒绝。 |
 | `write` | 新建文件（`mode: "create"`）或覆盖文件（`mode: "overwrite"`），内容原样写入，缺失的父目录会一并创建。 |
 
-调用这些工具的脚本（例如 Pi 的 codemode）拿到的每个成功结果是一个对象，而不是结果文本：对象里是报告的各个字段，`read` 和 `grep` 另把正文放在 `text` 里。报告因为正文或调用本身已经体现而省略的事实，对象里也有：`grep` 的结果始终带 `matches` 和 `files`；`read` 的窗口之后还有行时始终带 `nextOffset`，包括窗口由调用方的 `limit` 截止的情况；带 `then_run` 的修改，命令有输出时输出在 `then_run.output` 里。例如，被默认行数截断的读取是 `{ text, nextOffset, next }`，新建文件是 `{ publication }`；读图片时拿到 Pi 的图片块；读含 NUL 字节的文件时拿到 `{ text }`，内容是 Pi 原版 read 的输出，续读提示写在这段文本里。`write`、`edit`、`replace` 的结果和文件现有内容相同时不算失败：调用正常返回，`publication` 是 `NOT_PUBLISHED`，没有写入任何内容。调用失败时脚本收到异常，内容是报告文本。
+调用这些工具的脚本（例如 Pi 的 codemode）拿到的每个成功结果是一个对象，而不是结果文本：对象里是报告的各个字段，`read` 和 `grep` 另把正文放在 `text` 里。报告因为正文或调用本身已经体现而省略的事实，对象里也有：`grep` 的结果始终带 `matches` 和 `files`；`read` 至少返回一行且其后还有行时始终带 `nextOffset`，包括窗口由调用方的 `limit` 截止的情况（首行过长放不下时不返回任何行，结果带 `lineTooLong`，不带 `nextOffset`）；带 `then_run` 的修改，命令有输出时输出在 `then_run.output` 里。例如，被默认行数截断的读取是 `{ text, nextOffset, next }`，新建文件是 `{ publication }`；读图片时拿到 Pi 的图片块；读含 NUL 字节的文件时拿到 `{ text }`，内容是 Pi 原版 read 的输出，续读提示写在这段文本里。`write`、`edit`、`replace` 的结果和文件现有内容相同时不算失败：调用正常返回，`publication` 是 `NOT_PUBLISHED`，没有写入任何内容。调用失败时脚本收到异常，内容是报告文本。
 
 ### 路径
 
