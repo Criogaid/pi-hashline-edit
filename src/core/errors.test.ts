@@ -1,6 +1,13 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { errorMessage, filesystemErrorCode, HashlineError, PATH_ERROR_MESSAGES } from "./errors.ts";
+import {
+  errnoCode,
+  errorMessage,
+  filesystemErrorCode,
+  HashlineError,
+  NO_STRING_FORM,
+  PATH_ERROR_MESSAGES,
+} from "./errors.ts";
 
 // npm run typecheck checks these invalid callers; they must never run.
 function invalidErrorConstruction() {
@@ -27,6 +34,21 @@ test("classified code with required facts → retains facts and native cause", (
 
 test("thrown value without a string form → returns a diagnostic", () => {
   assert.equal(errorMessage(Object.create(null)), "The thrown value has no string form.");
+});
+
+test("revoked proxy as a thrown value → returns a diagnostic", () => {
+  const { proxy, revoke } = Proxy.revocable({}, {});
+  revoke();
+  assert.equal(errorMessage(proxy), NO_STRING_FORM);
+});
+
+test("throwing errno getter → returns no code", () => {
+  const error = Object.defineProperty(new Error(), "code", {
+    get() {
+      throw new Error("Cannot read errno");
+    },
+  });
+  assert.equal(errnoCode(error), undefined);
 });
 
 test("filesystem errors → classify missing paths and directories consistently", () => {

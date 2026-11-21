@@ -180,12 +180,22 @@ test("aggregate and cyclic causes → preserve only the linear cause chain", () 
   }
 });
 
-test("revoked proxy as a cause → reports an uninspectable value", () => {
+test("uninspectable cause or errno → preserves the diagnostic it can read", async (t) => {
   const { proxy, revoke } = Proxy.revocable({}, {});
   revoke();
-  assert.deepEqual(causeOf(proxy, DEFAULT_OUTPUT_BUDGETS.fieldBytes), {
-    message: "The thrown value has no string form.",
+  const progressError = Object.defineProperty(new Error("Progress display closed"), "code", {
+    get() {
+      throw new Error("Cannot read errno");
+    },
   });
+  for (const [name, input, message] of [
+    ["revoked proxy", proxy, "The thrown value has no string form."],
+    ["throwing errno getter", progressError, "Progress display closed"],
+  ] as const) {
+    await t.test(name, () => {
+      assert.deepEqual(causeOf(input, DEFAULT_OUTPUT_BUDGETS.fieldBytes), { message });
+    });
+  }
 });
 
 test("oversized cause message → retains opening and terminal text within the message budget", () => {

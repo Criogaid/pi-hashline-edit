@@ -58,26 +58,30 @@ export const PATH_ERROR_MESSAGES = {
 export const NO_STRING_FORM = "The thrown value has no string form.";
 
 /**
- * Message text for a caught value; non-Error throws are stringified. A thrown value may have no
- * string form (a null-prototype object), and describing it must not throw in its place.
+ * Message text for a caught value; non-Error throws are stringified. A thrown value may be
+ * foreign, and inspecting it can throw (a null-prototype object, a revoked proxy, a throwing
+ * getter); describing it must not throw in its place.
  */
 export function errorMessage(error: unknown): string {
-  if (error instanceof Error) return error.message;
   try {
-    return String(error);
+    return error instanceof Error ? error.message : String(error);
   } catch {
     return NO_STRING_FORM;
   }
 }
 
-/** Node's errno code of a filesystem error, if any. */
+/** Node's errno code of a filesystem error, if any; a value whose inspection throws has none. */
 export function errnoCode(error: unknown): string | undefined {
-  return typeof error === "object" &&
-    error !== null &&
-    "code" in error &&
-    typeof error.code === "string"
-    ? error.code
-    : undefined;
+  try {
+    return typeof error === "object" &&
+      error !== null &&
+      "code" in error &&
+      typeof error.code === "string"
+      ? error.code
+      : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /**
