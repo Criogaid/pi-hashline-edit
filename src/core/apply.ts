@@ -106,53 +106,44 @@ function verifyAnchor(
   return { opIndex, which, op, cited, recovery };
 }
 
-type TranslateResult =
-  | { readonly ok: true; readonly op: SpanOp }
-  | { readonly ok: false; readonly anchorFailures: AnchorFailure[] };
-
-/** Verify an Edit against the snapshot and plan its mutation span. */
-function translateEdit(
-  edit: Edit,
-  opIndex: number,
+/** Verify each cited endpoint in input order, including the end of a failed range. */
+function verifyEditAnchors(
+  edits: readonly Edit[],
   lines: ReturnType<typeof indexSourceLines>,
   hashLen: number,
   radius: number,
-): TranslateResult {
-  const verify = (cited: Anchor, which: AnchorFailure["which"]) =>
-    verifyAnchor(lines, cited, which, opIndex, edit.op, hashLen, radius);
+): AnchorFailure[] {
+  const failures: AnchorFailure[] = [];
+  for (const [opIndex, edit] of edits.entries()) {
+    if (!("anchor" in edit)) continue;
+    const anchor = verifyAnchor(lines, edit.anchor, "anchor", opIndex, edit.op, hashLen, radius);
+    if (anchor) failures.push(anchor);
+    if (!("end" in edit) || !edit.end) continue;
+    const end = verifyAnchor(lines, edit.end, "end", opIndex, edit.op, hashLen, radius);
+    if (end) failures.push(end);
+  }
+  return failures;
+}
+
+/** Convert verified line addresses to half-open spans. */
+function planSpan(edit: Edit, lineCount: number): SpanOp {
   switch (edit.op) {
     case "replace":
-    case "delete": {
-      const failures: AnchorFailure[] = [];
-      const anchorF = verify(edit.anchor, "anchor");
-      if (anchorF) failures.push(anchorF);
-      let endLine = edit.anchor.line;
-      if (edit.end) {
-        const endF = verify(edit.end, "end");
-        if (endF) failures.push(endF);
-        endLine = edit.end.line;
-      }
-      if (failures.length > 0) return { ok: false, anchorFailures: failures };
+    case "delete":
       return {
-        ok: true,
-        op: {
-          lo: edit.anchor.line - 1,
-          hi: endLine,
-          newLines: edit.op === "replace" ? edit.body : [],
-        },
+        lo: edit.anchor.line - 1,
+        hi: (edit.end ?? edit.anchor).line,
+        newLines: edit.op === "replace" ? edit.body : [],
       };
-    }
     case "insert_after":
     case "insert_before": {
-      const failure = verify(edit.anchor, "anchor");
-      if (failure) return { ok: false, anchorFailures: [failure] };
       const line = edit.anchor.line - (edit.op === "insert_before" ? 1 : 0);
-      return { ok: true, op: { lo: line, hi: line, newLines: edit.body } };
+      return { lo: line, hi: line, newLines: edit.body };
     }
     case "append":
-      return { ok: true, op: { lo: lines.length, hi: lines.length, newLines: edit.body } };
+      return { lo: lineCount, hi: lineCount, newLines: edit.body };
     case "prepend":
-      return { ok: true, op: { lo: 0, hi: 0, newLines: edit.body } };
+      return { lo: 0, hi: 0, newLines: edit.body };
   }
 }
 
@@ -174,25 +165,13 @@ export function applyEdits(
 ): ApplyResult {
   const lines = indexSourceLines(text);
 
-  const ops: (SpanOp & { readonly opIndex: number })[] = [];
-  const anchorFailures: AnchorFailure[] = [];
+  // Report anchor failures before checking the resulting spans for conflicts.
+  const anchorFailures = verifyEditAnchors(edits, lines, hashLen, shiftRadius);
+  if (anchorFailures.length > 0) return { ok: false, failures: anchorFailures };
 
-  for (let i = 0; i < edits.length; i++) {
-    const t = translateEdit(edits[i], i, lines, hashLen, shiftRadius);
-    if (t.ok) {
-      ops.push({ ...t.op, opIndex: i });
-    } else {
-      anchorFailures.push(...t.anchorFailures);
-    }
-  }
-
-  // Anchor failures take priority: the model must fix anchors first; overlaps
-  // among surviving ops are premature until anchors are corrected.
-  if (anchorFailures.length > 0) {
-    return { ok: false, failures: anchorFailures };
-  }
-
-  const sorted = ops.sort((a, b) => a.lo - b.lo || a.hi - b.hi);
+  const sorted = edits
+    .map((edit, opIndex) => ({ ...planSpan(edit, lines.length), opIndex }))
+    .sort((a, b) => a.lo - b.lo || a.hi - b.hi);
   const conflict = findSortedRangeConflict(
     sorted.map((op) => [op.lo, op.hi]),
     true,
@@ -200,8 +179,8 @@ export function applyEdits(
   if (conflict !== undefined) {
     const current = sorted[conflict];
     const previous = sorted[conflict - 1];
-    const repeatedInsertion =
-      current.lo === current.hi && previous.lo === current.lo && previous.hi === current.hi;
+    // At an empty span, only another insertion at the same gap can conflict.
+    const repeatedInsertion = previous.lo === previous.hi;
     throw new HashlineError(
       "OVERLAPPING_EDITS",
       repeatedInsertion ? "Two steps insert at one position." : "Two steps overlap.",
@@ -231,15 +210,14 @@ export function applyEdits(
   const parts: TextFragment[] = [[0, bom.length]];
   let lineCount = 0;
   let lastLineEmpty = false;
-  let trailingGap: TextFragment = separator;
+  let trailingGap: TextFragment = "";
   const appendSpan = (
     content: TextFragment,
     count: number,
     endsEmpty: boolean,
     gap: TextFragment,
   ) => {
-    if (lineCount > 0) parts.push(trailingGap);
-    parts.push(content);
+    parts.push(trailingGap, content);
     lineCount += count;
     lastLineEmpty = endsEmpty;
     trailingGap = gap;
@@ -261,31 +239,31 @@ export function applyEdits(
   let cursor = 0;
   for (const op of sorted) {
     appendSource(cursor, op.lo);
-    if (op.newLines.length > 0) {
-      let logical = op.newLines.join("\n");
-      // Only replacement of the original first line can carry a copied file BOM.
-      if (bom && op.lo === 0 && op.hi > 0 && logical.startsWith(bom)) logical = logical.slice(1);
-
-      // Borrow only the internal gaps the body can use. Keep the replaced range's
-      // trailing gap at its right boundary.
-      const usedGaps = Math.min(op.hi - op.lo, op.newLines.length) - 1;
-      const oldInternal =
-        usedGaps > 0 && separator === "\r\n"
-          ? text.slice(lines.end(op.lo), lines.start(op.lo + usedGaps))
-          : "";
-      appendSpan(
-        op.newLines.length > 1 ? restoreLineEndings(logical, oldInternal, separator) : logical,
-        op.newLines.length,
-        logical === "" || logical.endsWith("\n"),
-        op.hi > op.lo ? gapAfter(op.hi - 1) : separator,
-      );
-    }
     cursor = op.hi;
+    if (op.newLines.length === 0) continue;
+
+    let logical = op.newLines.join("\n");
+    // Only replacement of the original first line can carry a copied file BOM.
+    if (bom && op.lo === 0 && op.hi > 0 && logical.startsWith(bom)) logical = logical.slice(1);
+
+    // Borrow only the internal gaps the body can use. Keep the replaced range's
+    // trailing gap at its right boundary.
+    const usedGaps = Math.min(op.hi - op.lo, op.newLines.length) - 1;
+    const oldInternal =
+      usedGaps > 0 && separator === "\r\n"
+        ? text.slice(lines.end(op.lo), lines.start(op.lo + usedGaps))
+        : "";
+    appendSpan(
+      op.newLines.length > 1 ? restoreLineEndings(logical, oldInternal, separator) : logical,
+      op.newLines.length,
+      logical === "" || logical.endsWith("\n"),
+      op.hi > op.lo ? gapAfter(op.hi - 1) : separator,
+    );
   }
   appendSource(cursor, lines.length);
 
   // A final blank line needs a terminator unless the BOM alone represents it.
-  if (lineCount > 0 && (hasFinalNewline(text) || (lastLineEmpty && (lineCount > 1 || !bom)))) {
+  if (hasFinalNewline(text) || (lastLineEmpty && (lineCount > 1 || !bom))) {
     parts.push(trailingGap);
   }
   return { ok: true, ...joinTextFragments(text, parts) };
