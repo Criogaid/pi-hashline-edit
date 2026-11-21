@@ -276,6 +276,9 @@ export function renderToolError(
 /** Facts a mutation card presents another way: the command card owns then_run. */
 export const MUTATION_CARD_SHOWN = new Set(["then_run"]);
 
+/** How a mutation card states `publication: NOT_PUBLISHED`, which success reports keep off the fact rows. */
+export const NO_NET_CHANGE = "No net change";
+
 /** The cards of a tool that shows a diff (edit, replace); each supplies only its header and pending text. */
 export function diffCardRenderers<TArgs>(
   tool: MutationToolName,
@@ -323,7 +326,7 @@ export function diffCardRenderers<TArgs>(
       }
       const emptyDiff =
         report?.publication === "NOT_PUBLISHED"
-          ? "No net change"
+          ? NO_NET_CHANGE
           : report?.publication === "PUBLISHED"
             ? "Updated; no logical line diff"
             : "No diff available";

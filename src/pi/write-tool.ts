@@ -10,7 +10,13 @@ import { commitFile } from "./file-commit.ts";
 import { mutationToolBase, type MutationToolEnvironment } from "./mutation-runner.ts";
 import { throwIfCancelled } from "./error-text.ts";
 import { unwritableTextError } from "../core/text.ts";
-import { MUTATION_CARD_SHOWN, reportLines, renderToolError, splitReport } from "./render.ts";
+import {
+  MUTATION_CARD_SHOWN,
+  NO_NET_CHANGE,
+  reportLines,
+  renderToolError,
+  splitReport,
+} from "./render.ts";
 import type { MutationOutcome } from "./mutation-result.ts";
 import type { ReportDetails } from "./report.ts";
 import { filePathField } from "./schema.ts";
@@ -79,8 +85,11 @@ export function makeWriteOverride(env: MutationToolEnvironment) {
       if (context.isError)
         return renderToolError(result, "write", theme, options.expanded, context);
       const { report } = splitReport(result, "write");
-      const facts = report ? reportLines(report, theme, MUTATION_CARD_SHOWN) : [];
-      if (facts.length) return new Text(facts.join("\n"), 0, 0);
+      const lines = [
+        ...(report?.publication === "NOT_PUBLISHED" ? [theme.fg("success", NO_NET_CHANGE)] : []),
+        ...(report ? reportLines(report, theme, MUTATION_CARD_SHOWN) : []),
+      ];
+      if (lines.length) return new Text(lines.join("\n"), 0, 0);
       return builtin.renderResult!({ ...result, details: undefined }, options, theme, context);
     },
   };

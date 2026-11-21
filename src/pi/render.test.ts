@@ -116,6 +116,52 @@ test("empty logical diff → render according to confirmed publication state", (
   }
 });
 
+test("unchanged write → shows No net change above any report facts", () => {
+  initTheme("dark");
+  const cwd = process.cwd();
+  const tool = makeWriteOverride(cwd);
+  const args = { path: "a.txt", content: "saved", mode: "overwrite" as const };
+  const options = { expanded: false, isPartial: false };
+  const context: Parameters<typeof tool.renderResult>[3] = {
+    ...options,
+    args,
+    cwd,
+    toolCallId: "write-publication",
+    state: {},
+    lastComponent: undefined,
+    durationMs: undefined,
+    invalidate() {},
+    executionStarted: true,
+    argsComplete: true,
+    showImages: false,
+    isError: false,
+    outputPad: 0,
+    keyText: () => "",
+    ...hints,
+  };
+  for (const [publication, freshness, expected] of [
+    ["PUBLISHED", undefined, ""],
+    ["PUBLISHED", "missing", "freshness: missing"],
+    ["NOT_PUBLISHED", undefined, "No net change"],
+    ["NOT_PUBLISHED", "missing", "No net change\nfreshness: missing"],
+  ] as const) {
+    const report: SuccessReport = {
+      tool: "write",
+      path: args.path,
+      publication,
+      ...(freshness ? { freshness } : {}),
+    };
+    const card = tool.renderResult(
+      { content: [{ type: "text", text: renderReport(report) }], details: { report } },
+      options,
+      theme,
+      context,
+    );
+    const output = card.render(100).map((line) => stripVTControlCharacters(line).trimEnd());
+    assert.equal(output.join("\n"), expected);
+  }
+});
+
 test("mutation headers refresh in place and retain isolated per-call counts", () => {
   initTheme("dark");
   for (const tool of [
