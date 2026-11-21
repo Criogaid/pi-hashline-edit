@@ -8,6 +8,7 @@
 import { homedir } from "node:os";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { errorMessage } from "../core/errors.ts";
 
 const UNICODE_SPACES = /[\u00A0\u2000-\u200A\u202F\u205F\u3000]/g;
 const WINDOWS_SHELL_DRIVE = /^\/(?:mnt\/|cygdrive\/)?([a-z])(?:\/(.*))?$/is;
@@ -17,8 +18,11 @@ const LOCALHOST_UNC_URL = /^file:\/\/\/\/localhost\//i;
 /** Pi's file tools accept a path with a leading `@`, as the model mentions a file. */
 const withoutMention = (path: string) => (path.startsWith("@") ? path.slice(1) : path);
 
-/** Resolve model-supplied paths with the same input conventions as Pi's built-in file tools. */
-export function canonicalPath(cwd: string, path: string): string {
+/**
+ * The local path a model-supplied spelling names, with the same input conventions as Pi's built-in
+ * file tools; relative paths stay relative. Throws Node's error for a file URL with no local path.
+ */
+function localPath(path: string): string {
   let normalized = withoutMention(path.replace(UNICODE_SPACES, " "));
   if (
     process.platform === "win32" &&
@@ -47,7 +51,22 @@ export function canonicalPath(cwd: string, path: string): string {
         )
       : fileURLToPath(normalized);
   }
-  return resolve(cwd, normalized);
+  return normalized;
+}
+
+/** Resolve model-supplied paths with the same input conventions as Pi's built-in file tools. */
+export function canonicalPath(cwd: string, path: string): string {
+  return resolve(cwd, localPath(path));
+}
+
+/** Why a model-supplied path names no local path, or undefined when it names one. */
+export function pathSpellingError(path: string): string | undefined {
+  try {
+    localPath(path);
+    return undefined;
+  } catch (error) {
+    return errorMessage(error);
+  }
 }
 
 /**

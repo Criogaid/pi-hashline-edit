@@ -13,6 +13,7 @@ import { buildRegex } from "../core/regex.ts";
 import { diagnoseArguments } from "./argument-diagnostics.ts";
 import { formatArgumentError } from "./argument-error.ts";
 import type { OutputBudgetProvider } from "./budgets.ts";
+import { pathSpellingError } from "./path.ts";
 import type { ArgumentIssue, ReportTool } from "./report-schema.ts";
 
 /** Report one semantic issue: what is wrong (a fact), and how to correct it when the fact alone does not say. */
@@ -76,6 +77,16 @@ export function createRenderArguments(parameters: TSchema): (args: unknown) => u
   };
 }
 
+/** A call's path arguments by field; every tool names its path field `path`, grep's a list. */
+function pathArguments(args: unknown): (readonly [string, string])[] {
+  const path = typeof args === "object" && args !== null && "path" in args ? args.path : undefined;
+  if (typeof path === "string") return [["path", path]];
+  if (!Array.isArray(path)) return [];
+  return path.flatMap((item, index) =>
+    typeof item === "string" ? [[`path[${index}]`, item] as const] : [],
+  );
+}
+
 function preparationError(cause: unknown, limited: boolean, budgets: OutputBudgetProvider): Error {
   return new Error(
     formatArgumentError([{ field: "$", reason: errorMessage(cause) }], limited, budgets()),
@@ -106,6 +117,10 @@ export function createArgumentPreparer<T extends TObject>(
     check?.(checked, (field, reason, fix) =>
       issues.push(fix === undefined ? { field, reason } : { field, reason, fix }),
     );
+    for (const [field, path] of pathArguments(checked)) {
+      const reason = pathSpellingError(path);
+      if (reason !== undefined) issues.push({ field, reason });
+    }
     // Keep Pi's preparation contract: the framework performs its own coercion next.
     if (!schemaFailed && issues.length === 0) return args as Static<T>;
     const result = diagnoseArguments(parameters, checked, issues, schemaFailed);

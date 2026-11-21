@@ -52,6 +52,26 @@ test('grep receives flags: "i" → rejects INVALID_ARGUMENTS before searching', 
   assert.equal(searches, 0);
 });
 
+test("file URL without a local path → rejects the exact path field", async (t) => {
+  const cwd = process.cwd();
+  const invalidUrl = "file:///%";
+  for (const { tool, args, field } of [
+    { tool: makeReadOverride(cwd, DEFAULT_CONFIG), args: { path: invalidUrl }, field: "path" },
+    {
+      tool: makeGrepOverride(cwd, DEFAULT_CONFIG),
+      args: { path: [".", invalidUrl], pattern: ["text"], literal: true },
+      field: "path[1]",
+    },
+  ]) {
+    await t.test(tool.name, async () => {
+      await assert.rejects(callTool(tool, args), (error: unknown) => {
+        assert.deepEqual(argumentError(error).issues, [{ field, reason: "URI malformed" }]);
+        return true;
+      });
+    });
+  }
+});
+
 const invalidCommand = { command: "", timeout: 0 };
 const anchorHash = "A".repeat(DEFAULT_CONFIG.hashLen);
 const cases = [
