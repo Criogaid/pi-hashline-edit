@@ -94,8 +94,8 @@ export type CommandFacts = (
 
 /**
  * A completed mutation. A call without then_run settles alone, and its commit result states its
- * freshness; a fused call adds the command and the freshness last observed: after the command,
- * or before it when the command did not start.
+ * freshness; a fused call adds the command and the freshness last observed: after the session's
+ * Bash call returns, or before it when the command was cancelled or skipped first.
  */
 export type SettledMutation<TDetails, TTool extends MutationToolName> =
   | { readonly kind: "alone"; readonly outcome: MutationOutcome<TDetails, TTool> }
