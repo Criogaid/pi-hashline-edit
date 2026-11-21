@@ -5,12 +5,10 @@
  */
 import { formatByteSize } from "./budgets.ts";
 
-/** Cut only at UTF-8 boundaries; diagnostics may contain a single oversized line. */
-function byteSlice(text: string, maxBytes: number, tail: boolean): string {
-  const bytes = Buffer.from(text);
-  let boundary = tail ? Math.max(0, bytes.length - maxBytes) : Math.min(bytes.length, maxBytes);
-  while (boundary < bytes.length && (bytes[boundary] & 0xc0) === 0x80) boundary += tail ? 1 : -1;
-  return (tail ? bytes.subarray(boundary) : bytes.subarray(0, boundary)).toString("utf8");
+/** A cut inside a UTF-8 character moves inward, toward the bytes being kept. */
+function utf8Boundary(bytes: Buffer, boundary: number, step: -1 | 1): number {
+  while (boundary < bytes.length && (bytes[boundary] & 0xc0) === 0x80) boundary += step;
+  return boundary;
 }
 
 export class DiagnosticBuffer {
@@ -37,19 +35,22 @@ export class DiagnosticBuffer {
         this.head = combined;
         return;
       }
-      this.head = byteSlice(combined, this.headBytes, false);
-      this.tail = this.truncateTail(combined);
+      const bytes = Buffer.from(combined);
+      const end = utf8Boundary(bytes, Math.min(bytes.length, this.headBytes), -1);
+      this.head = bytes.subarray(0, end).toString("utf8");
+      this.tail = this.truncateTail(bytes);
       this.truncated = true;
       return;
     }
-    this.tail = this.truncateTail(this.tail + text);
+    this.tail = this.truncateTail(Buffer.from(this.tail + text));
   }
 
   toString(): string {
     return this.truncated ? this.head + this.notice + this.tail : this.head;
   }
 
-  private truncateTail(text: string): string {
-    return byteSlice(text, this.tailBytes, true);
+  private truncateTail(bytes: Buffer): string {
+    const start = utf8Boundary(bytes, Math.max(0, bytes.length - this.tailBytes), 1);
+    return bytes.subarray(start).toString("utf8");
   }
 }
