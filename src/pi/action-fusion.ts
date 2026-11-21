@@ -185,8 +185,14 @@ function createProgressTracker<TDetails extends object>({
   let mutationDetails: TDetails | undefined;
   let failure: ObserverFailure | undefined;
   let commandResult: CommandResult | undefined;
-  let commandTiming: { readonly timeoutSeconds: number; readonly deadlineMs: number } | undefined;
-  let heartbeat: ReturnType<typeof setInterval> | undefined;
+  /** A command with a timeout counts down once Bash first reports, refreshed by its heartbeat. */
+  let countdown:
+    | {
+        readonly timeoutSeconds: number;
+        readonly deadlineMs: number;
+        readonly heartbeat: ReturnType<typeof setInterval>;
+      }
+    | undefined;
 
   const report = (command: ActionFusionProgress["command"], freshness: Freshness) => {
     const progress: ActionFusionProgress = {
@@ -196,13 +202,13 @@ function createProgressTracker<TDetails extends object>({
       freshness,
       ...(commandResult ? { result: commandResult } : {}),
       mutationCompleted: mutationDetails !== undefined,
-      ...(commandTiming
+      ...(countdown
         ? {
             timing: {
-              timeoutSeconds: commandTiming.timeoutSeconds,
+              timeoutSeconds: countdown.timeoutSeconds,
               remainingSeconds: Math.max(
                 0,
-                Math.ceil((commandTiming.deadlineMs - Date.now()) / MILLISECONDS_PER_SECOND),
+                Math.ceil((countdown.deadlineMs - Date.now()) / MILLISECONDS_PER_SECOND),
               ),
             },
           }
@@ -224,13 +230,11 @@ function createProgressTracker<TDetails extends object>({
   const followCommand: AgentToolUpdateCallback<unknown> = (partial) => {
     // Pi Bash emits an initial update even for silent commands. Start its
     // countdown here, after session permission hooks have allowed execution.
-    if (!commandTiming && thenRun.timeout !== undefined) {
-      commandTiming = {
-        timeoutSeconds: thenRun.timeout,
-        deadlineMs: Date.now() + thenRun.timeout * MILLISECONDS_PER_SECOND,
-      };
-      heartbeat = setInterval(() => report("running", "unknown"), MILLISECONDS_PER_SECOND);
+    if (!countdown && thenRun.timeout !== undefined) {
+      const deadlineMs = Date.now() + thenRun.timeout * MILLISECONDS_PER_SECOND;
+      const heartbeat = setInterval(() => report("running", "unknown"), MILLISECONDS_PER_SECOND);
       heartbeat.unref();
+      countdown = { timeoutSeconds: thenRun.timeout, deadlineMs, heartbeat };
     }
     commandResult = { content: partial.content, details: partial.details };
     report("running", "unknown");
@@ -244,7 +248,7 @@ function createProgressTracker<TDetails extends object>({
       mutationDetails = details;
     },
     stopHeartbeat() {
-      if (heartbeat) clearInterval(heartbeat);
+      if (countdown) clearInterval(countdown.heartbeat);
     },
     commandSettled(result: CommandResult | undefined) {
       commandResult = result;
