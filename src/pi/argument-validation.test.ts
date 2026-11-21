@@ -52,20 +52,44 @@ test('grep receives flags: "i" → rejects INVALID_ARGUMENTS before searching', 
   assert.equal(searches, 0);
 });
 
-test("file URL without a local path → rejects the exact path field", async (t) => {
+test("path spelling names no local path → rejects the exact path field", async (t) => {
   const cwd = process.cwd();
   const invalidUrl = "file:///%";
-  for (const { tool, args, field } of [
-    { tool: makeReadOverride(cwd, DEFAULT_CONFIG), args: { path: invalidUrl }, field: "path" },
+  const read = makeReadOverride(cwd, DEFAULT_CONFIG);
+  const grep = makeGrepOverride(cwd, DEFAULT_CONFIG);
+  for (const { name, tool, args, field, reason } of [
     {
-      tool: makeGrepOverride(cwd, DEFAULT_CONFIG),
+      name: "malformed file URL in read",
+      tool: read,
+      args: { path: invalidUrl },
+      field: "path",
+      reason: "URI malformed",
+    },
+    {
+      name: "malformed file URL in grep",
+      tool: grep,
       args: { path: [".", invalidUrl], pattern: ["text"], literal: true },
       field: "path[1]",
+      reason: "URI malformed",
+    },
+    {
+      name: "file URL decodes to NUL in read",
+      tool: read,
+      args: { path: "file:///C:/x%00y" },
+      field: "path",
+      reason: "Path contains a NUL character.",
+    },
+    {
+      name: "literal NUL in grep",
+      tool: grep,
+      args: { path: [".", "x\0y"], pattern: ["text"], literal: true },
+      field: "path[1]",
+      reason: "Path contains a NUL character.",
     },
   ]) {
-    await t.test(tool.name, async () => {
+    await t.test(name, async () => {
       await assert.rejects(callTool(tool, args), (error: unknown) => {
-        assert.deepEqual(argumentError(error).issues, [{ field, reason: "URI malformed" }]);
+        assert.deepEqual(argumentError(error).issues, [{ field, reason }]);
         return true;
       });
     });
