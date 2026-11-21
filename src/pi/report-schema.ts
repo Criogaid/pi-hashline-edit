@@ -111,27 +111,37 @@ export const ACTION_FUSION_PROGRESS_SCHEMA = Type.Object(
 );
 export type ActionFusionProgress = Static<typeof ACTION_FUSION_PROGRESS_SCHEMA>;
 
-const ANCHOR_FAILURE_SCHEMA = Type.Object(
-  {
-    field: Type.String(),
-    action: Type.String(),
-    cited: Type.String(),
-    result: Type.Union([
-      Type.Literal("shifted"),
-      Type.Literal("ambiguous"),
-      Type.Literal("unresolved"),
-    ]),
-    candidate: opt(Type.String()),
-    content: opt(Type.String()),
-    candidates: opt(Type.Array(Type.String())),
+/** One cited anchor's failure with the facts its result carries. */
+function anchorFailureSchema<Result extends string, Facts extends TProperties>(
+  result: Result,
+  facts: Facts,
+) {
+  return Type.Object(
+    {
+      field: Type.String(),
+      action: Type.String(),
+      cited: Type.String(),
+      result: Type.Literal(result),
+      ...facts,
+    },
+    { additionalProperties: false },
+  );
+}
+
+const NOT_SHOWN_SCHEMA = Type.String({
+  description: "Why content (shifted) or observed (unresolved) is absent.",
+});
+
+const ANCHOR_FAILURE_SCHEMA = Type.Union([
+  anchorFailureSchema("shifted", { candidate: Type.String(), content: Type.String() }),
+  anchorFailureSchema("shifted", { candidate: Type.String(), notShown: NOT_SHOWN_SCHEMA }),
+  anchorFailureSchema("ambiguous", {
+    candidates: Type.Array(Type.String()),
     omittedCandidates: opt(Type.Integer({ minimum: 1 })),
-    observed: opt(Type.String()),
-    notShown: opt(
-      Type.String({ description: "Why content (shifted) or observed (unresolved) is absent." }),
-    ),
-  },
-  { additionalProperties: false },
-);
+  }),
+  anchorFailureSchema("unresolved", { observed: Type.String() }),
+  anchorFailureSchema("unresolved", { notShown: NOT_SHOWN_SCHEMA }),
+]);
 export type AnchorFailureFact = Static<typeof ANCHOR_FAILURE_SCHEMA>;
 
 const ARGUMENT_ISSUE_SCHEMA = Type.Object(

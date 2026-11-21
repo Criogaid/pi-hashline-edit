@@ -580,8 +580,9 @@ test("loaded configuration controls hash length and recovery radius", async () =
         }),
         "ANCHOR_MISMATCH",
         (report) => {
-          assert.equal(report.failures?.[0].result, expected);
-          if (expected === "shifted") assert.match(report.failures?.[0].candidate ?? "", /^2#/);
+          const failure = report.failures?.[0];
+          assert.equal(failure?.result, expected);
+          if (failure.result === "shifted") assert.match(failure.candidate, /^2#/);
         },
       );
       assert.equal(await readFile(join(dir, "configured.txt"), "utf8"), text);

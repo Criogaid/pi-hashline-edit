@@ -108,8 +108,6 @@ function ambiguousCandidateNeighborhoods(
   };
 }
 
-const RESULT = { found: "shifted", ambiguous: "ambiguous", none: "unresolved" } as const;
-
 /** One failure entry: what was cited, then what the search found or what the cited line holds. */
 function failureEntry(
   f: AnchorFailure,
@@ -118,47 +116,47 @@ function failureEntry(
   budget: OutputBudgets,
 ): AnchorFailureFact {
   const rowTooLarge = `row exceeds ${formatByteSize(budget.fieldBytes)}`;
-  const entry: { -readonly [K in keyof AnchorFailureFact]: AnchorFailureFact[K] } = {
+  const cited = {
     field: `steps[${f.opIndex}].${f.which}`,
     action: f.op,
     cited: anchors.reference(f.cited.line, f.cited.hash),
-    result: RESULT[f.recovery.kind],
   };
   switch (f.recovery.kind) {
     case "found": {
       const { newLine, newHash } = f.recovery;
-      entry.candidate = anchors.reference(newLine, newHash);
+      const shifted = {
+        ...cited,
+        result: "shifted" as const,
+        candidate: anchors.reference(newLine, newHash),
+      };
       const content = currentLines[newLine - 1];
       // The row budget matches the neighborhoods'; the anchor itself is already `candidate`.
-      if (Buffer.byteLength(anchors.row(newLine, content), "utf8") <= budget.fieldBytes) {
-        entry.content = displayCarriageReturns(content);
-      } else {
-        entry.notShown = rowTooLarge;
-      }
-      break;
+      return Buffer.byteLength(anchors.row(newLine, content), "utf8") <= budget.fieldBytes
+        ? { ...shifted, content: displayCarriageReturns(content) }
+        : { ...shifted, notShown: rowTooLarge };
     }
     case "ambiguous": {
       const candidates = selectAmbiguousCandidates(f.recovery.candidates);
-      entry.candidates = candidates.map((candidate) =>
-        anchors.reference(candidate.line, candidate.hash),
-      );
       const omitted = f.recovery.candidates.length - candidates.length;
-      if (omitted) entry.omittedCandidates = omitted;
-      break;
+      return {
+        ...cited,
+        result: "ambiguous",
+        candidates: candidates.map((candidate) =>
+          anchors.reference(candidate.line, candidate.hash),
+        ),
+        ...(omitted ? { omittedCandidates: omitted } : {}),
+      };
     }
     case "none": {
+      const unresolved = { ...cited, result: "unresolved" as const };
       const content = currentLines[f.cited.line - 1];
-      if (content === undefined) {
-        entry.notShown = "cited line is out of range";
-        break;
-      }
+      if (content === undefined) return { ...unresolved, notShown: "cited line is out of range" };
       const row = anchors.row(f.cited.line, content);
-      if (Buffer.byteLength(row, "utf8") <= budget.fieldBytes) entry.observed = row;
-      else entry.notShown = rowTooLarge;
-      break;
+      return Buffer.byteLength(row, "utf8") <= budget.fieldBytes
+        ? { ...unresolved, observed: row }
+        : { ...unresolved, notShown: rowTooLarge };
     }
   }
-  return entry;
 }
 
 /** Classify a batch's anchor failures; each entry's rows fit the field budget, and the report layer bounds the list. */

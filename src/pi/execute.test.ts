@@ -208,7 +208,9 @@ test("unresolved observations require target confirmation before retrying a move
     assert.equal(report.error, "ANCHOR_MISMATCH");
     assert.equal(report.publication, "NOT_PUBLISHED");
     assert.match(report.next ?? "", /confirm.*intended target.*before reusing/i);
-    assert.match(report.failures?.[0].observed ?? "", /^5#[0-9A-Z]+│changed$/);
+    const failure = report.failures?.[0];
+    assert.ok(failure && "observed" in failure);
+    assert.match(failure.observed, /^5#[0-9A-Z]+│changed$/);
     const read = await call(makeReadOverride(dir, DEFAULT_CONFIG), { path: "recover.txt" });
     const retryAnchor = anchorLine(read.content[0].text, 7);
     await call(edit, {
@@ -587,7 +589,6 @@ test("local and full-file recovery return copyable anchors without changing the 
     for (const prefixLines of [1, 40]) {
       const prefix = "prefix\n".repeat(prefixLines);
       await writeFile(join(dir, "shift.txt"), prefix + original);
-      let replacement = "";
       const report = failureReport(
         await call(edit, {
           path: "shift.txt",
@@ -595,8 +596,8 @@ test("local and full-file recovery return copyable anchors without changing the 
         }),
       );
       const failure = report.failures?.[0];
-      assert.ok(failure);
-      replacement = failure.candidate ?? "";
+      assert.ok(failure && "content" in failure);
+      const replacement = failure.candidate;
       assert.equal(replacement, h(prefix + original, prefixLines + 2));
       assert.equal(failure.content, "b");
       assert.match(report.next ?? "", /confirm.*intended target/i);
@@ -622,12 +623,15 @@ test("shifted-anchor recovery keeps the read fallback for oversized candidates",
         steps: [{ action: "replace", anchor: h(original, 2), lines: ["B"] }],
       }),
     );
+    const failure = report.failures?.[0];
+    assert.equal(failure?.result, "shifted");
+    assert.ok("notShown" in failure);
     assert.match(
-      report.failures?.[0].notShown ?? "",
+      failure.notShown,
       new RegExp(`exceeds ${formatByteSize(DEFAULT_OUTPUT_BUDGETS.fieldBytes)}`),
     );
     assert.match(report.next ?? "", /use read or grep/);
-    assert.equal(report.failures?.[0].content, undefined);
+    assert.equal("content" in failure, false);
   }));
 
 test("failed commands preserve mutation results and stay out of all main card renderers", async () =>
@@ -992,10 +996,12 @@ test("failed steps return candidate code for a verified fused retry", async () =
     );
     assert.equal(report.then_run?.status, "skipped");
     assert.equal(report.publication, "NOT_PUBLISHED");
-    assert.equal(report.failures?.[0].field, "steps[0].anchor");
-    assert.equal(report.failures?.[0].cited, stale);
-    assert.equal(report.failures?.[0].candidate, candidate);
-    assert.equal(report.failures?.[0].content, original[4]);
+    const failure = report.failures?.[0];
+    assert.ok(failure && "content" in failure);
+    assert.equal(failure.field, "steps[0].anchor");
+    assert.equal(failure.cited, stale);
+    assert.equal(failure.candidate, candidate);
+    assert.equal(failure.content, original[4]);
     assert.equal(report.candidateNeighborhoods, undefined);
     assert.equal(report.omittedFailures, undefined);
     assert.equal(await readFile(file, "utf8"), before);
@@ -1007,7 +1013,7 @@ test("failed steps return candidate code for a verified fused retry", async () =
         steps: [
           {
             action: "insert_after",
-            anchor: report.failures![0].candidate!,
+            anchor: failure.candidate,
             lines: ["const hashLen = 4;"],
           },
           { action: "replace", anchor: stable, lines: ["changed"] },
@@ -1146,7 +1152,10 @@ test("failed batches over forty steps → report every failed anchor and its can
     );
     assert.ok(
       report.failures?.every(
-        (failure) => failure.candidate === h(before, 3) && failure.content === "target",
+        (failure) =>
+          "content" in failure &&
+          failure.candidate === h(before, 3) &&
+          failure.content === "target",
       ),
     );
     assert.equal(await readFile(file, "utf8"), before);
@@ -1164,10 +1173,12 @@ test("unique candidate content is independent of oversized neighboring rows", as
         steps: [{ action: "replace", anchor: h(original, 2), lines: ["updated"] }],
       }),
     );
-    const candidate = report.failures?.[0].candidate;
+    const failure = report.failures?.[0];
+    assert.ok(failure && "content" in failure);
+    const { candidate, content } = failure;
     assert.ok(candidate);
     assert.equal(candidate, h(before, 3));
-    assert.equal(report.failures?.[0].content, "target");
+    assert.equal(content, "target");
     assert.equal(report.candidateNeighborhoods, undefined);
     assert.equal(report.omittedFailures, undefined);
     assert.equal(await readFile(file, "utf8"), before);
@@ -1213,8 +1224,10 @@ test("shifted unique candidate → displays standalone CR without altering its a
         steps: [{ action: "delete", anchor: h(before, 2) }],
       }),
     );
-    assert.equal(report.failures?.[0].candidate, h("a\rb\n", 1));
-    assert.equal(report.failures?.[0].content, "a␍b");
+    const failure = report.failures?.[0];
+    assert.ok(failure && "content" in failure);
+    assert.equal(failure.candidate, h("a\rb\n", 1));
+    assert.equal(failure.content, "a␍b");
   }));
 
 test("edit receives multiple wrong-length anchors → reports each location with one recovery hint", async () =>
@@ -1281,7 +1294,9 @@ test("unresolved snapshot rows support direct retry and revalidate after further
         steps: [{ action: "replace", anchor: h(observed, 2), lines: ["target = new"] }],
       }),
     );
-    const diagnostic = report.failures?.[0].observed ?? "";
+    const failure = report.failures?.[0];
+    assert.ok(failure && "observed" in failure);
+    const diagnostic = failure.observed;
     assert.match(diagnostic, /^2#[0-9A-Z]+│target = pending$/);
     assert.deepEqual(await readFile(file), Buffer.from(current));
     const retryAnchor = anchorLine(diagnostic, 2);
@@ -1318,9 +1333,12 @@ test("unresolved oversized and out-of-range rows require more context without pa
         }),
       );
       assert.match(report.next ?? "", /read or grep/);
-      assert.equal(report.failures?.[0].observed, undefined);
+      const failure = report.failures?.[0];
+      assert.equal(failure?.result, "unresolved");
+      assert.ok("notShown" in failure);
+      assert.equal("observed" in failure, false);
       assert.equal(
-        report.failures?.[0].notShown,
+        failure.notShown,
         anchor.startsWith("99#")
           ? "cited line is out of range"
           : `row exceeds ${formatByteSize(DEFAULT_OUTPUT_BUDGETS.fieldBytes)}`,
@@ -1358,9 +1376,11 @@ test("ambiguous failure lists and neighborhoods select the same first eight cand
         steps: [{ action: "delete", anchor: `200#${computeLineHash(200, "target", 4)}` }],
       }),
     );
-    assert.equal(report.failures?.[0].omittedCandidates, 1);
+    const failure = report.failures?.[0];
+    assert.equal(failure?.result, "ambiguous");
+    assert.equal(failure.omittedCandidates, 1);
     assert.deepEqual(
-      report.failures?.[0].candidates,
+      failure.candidates,
       positions.slice(0, 8).map((position) => h(text, position)),
     );
     const rows = report.candidateNeighborhoods?.flatMap((group) => group.rows) ?? [];

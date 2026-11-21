@@ -201,8 +201,9 @@ test("registered tools retain their configuration when another tool set is regis
           }),
           "ANCHOR_MISMATCH",
           (report) => {
-            assert.equal(report.failures?.[0].result, shiftRadius === 0 ? "unresolved" : "shifted");
-            if (shiftRadius !== 0) assert.match(report.failures?.[0].candidate ?? "", /^2#/);
+            const failure = report.failures?.[0];
+            assert.equal(failure?.result, shiftRadius === 0 ? "unresolved" : "shifted");
+            if (failure.result === "shifted") assert.match(failure.candidate, /^2#/);
           },
         );
         assert.equal(await readFile(join(directory, path), "utf8"), text);

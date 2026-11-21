@@ -270,7 +270,9 @@ test("multiple unresolved anchors and candidate context → one recovery survive
     assert.doesNotMatch(JSON.stringify(facts), /\b(?:confirm|read|grep|retries)\b/i);
     if (fixture.radius === 0) {
       assert.ok(
-        report.failures?.every((entry) => /1#[0-9A-Z]+│current/.test(entry.observed ?? "")),
+        report.failures?.every(
+          (entry) => "observed" in entry && /1#[0-9A-Z]+│current/.test(entry.observed),
+        ),
       );
       assert.ok(report.failures && report.failures.length > 0);
       assert.equal(report.failures.length + (report.omittedFailures ?? 0), fixture.edits.length);
@@ -281,10 +283,13 @@ test("multiple unresolved anchors and candidate context → one recovery survive
       assert.ok(report.candidateNeighborhoods?.some((group) => group.rows.includes(row)));
       const entry = report.failures?.[1];
       assert.ok(entry);
-      assert.equal(entry.notShown, undefined);
-      if (entry.result === "unresolved") assert.equal(entry.observed, row);
-      else {
+      assert.equal("notShown" in entry, false);
+      if (entry.result === "unresolved") {
+        assert.ok("observed" in entry);
+        assert.equal(entry.observed, row);
+      } else {
         assert.equal(entry.result, "shifted");
+        assert.ok("content" in entry);
         assert.equal(entry.content, "neighbor");
       }
     }
@@ -347,8 +352,11 @@ test("unresolved row out of range or oversized → omission facts contain no rec
   for (const { anchor, reason } of cases) {
     const report = rejectedEdit(text, [{ op: "delete", anchor }]);
     assert.equal(report.error, "ANCHOR_MISMATCH");
-    assert.match(report.failures?.[0].notShown ?? "", reason);
-    assert.equal(report.failures?.[0].observed, undefined);
+    const failure = report.failures?.[0];
+    assert.equal(failure?.result, "unresolved");
+    assert.ok("notShown" in failure);
+    assert.match(failure.notShown, reason);
+    assert.equal("observed" in failure, false);
     assert.doesNotMatch(
       JSON.stringify(report.failures),
       /\b(?:confirm|read|grep|retry|retries)\b/i,
