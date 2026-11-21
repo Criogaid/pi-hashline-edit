@@ -220,25 +220,27 @@ export function applyEdits(
   const bom = text.startsWith("\uFEFF") ? "\uFEFF" : "";
   const separator = newLineSeparator(text);
   const contentStart = (line: number) => (line === 0 ? bom.length : lines.start(line));
-  const gapAfter = (line: number): TextFragment | undefined => {
+  /** A new line's gap: the file's separator. */
+  const fallbackGap: TextFragment = { text: separator };
+  /** The source gap after a line, or the separator after an unterminated last line. */
+  const gapAfter = (line: number): TextFragment => {
     const sourceStart = lines.end(line);
     const end = lines.start(line + 1);
-    if (sourceStart !== end) return { text: text.slice(sourceStart, end), sourceStart };
+    return sourceStart !== end ? { text: text.slice(sourceStart, end), sourceStart } : fallbackGap;
   };
 
   // The previous span's trailing gap connects to the next span, unless it ends the file.
   const parts: TextFragment[] = [{ text: bom, sourceStart: 0 }];
-  const fallbackGap = { text: separator };
   let lineCount = 0;
   let lastLineEmpty = false;
-  let trailingGap: TextFragment | undefined;
+  let trailingGap = fallbackGap;
   const appendSpan = (
     content: TextFragment,
     count: number,
     endsEmpty: boolean,
-    gap: TextFragment | undefined,
+    gap: TextFragment,
   ) => {
-    if (lineCount > 0) parts.push(trailingGap ?? fallbackGap);
+    if (lineCount > 0) parts.push(trailingGap);
     parts.push(content);
     lineCount += count;
     lastLineEmpty = endsEmpty;
@@ -280,7 +282,7 @@ export function applyEdits(
         },
         op.newLines.length,
         logical === "" || logical.endsWith("\n"),
-        op.hi > op.lo ? gapAfter(op.hi - 1) : undefined,
+        op.hi > op.lo ? gapAfter(op.hi - 1) : fallbackGap,
       );
     }
     cursor = op.hi;
@@ -289,7 +291,7 @@ export function applyEdits(
 
   // A final blank line needs a terminator unless the BOM alone represents it.
   if (lineCount > 0 && (hasFinalNewline(text) || (lastLineEmpty && (lineCount > 1 || !bom)))) {
-    parts.push(trailingGap ?? fallbackGap);
+    parts.push(trailingGap);
   }
   return { ok: true, ...joinTextFragments(parts) };
 }
