@@ -35,7 +35,7 @@ import { HashlineError, PATH_ERROR_MESSAGES } from "../core/errors.ts";
 import { callSignal, throwIfCancelled } from "./error-text.ts";
 import { reportResult, runTool, type ReportDetails } from "./report.ts";
 import { SCRIPT_OUTPUT_SCHEMAS } from "./report-schema.ts";
-import { formatByteSize } from "./budgets.ts";
+import { formatByteSize, type OutputBudgets } from "./budgets.ts";
 import type { ToolEnvironment } from "./config.ts";
 import { createArgumentPreparer } from "./argument-validation.ts";
 
@@ -145,6 +145,34 @@ function renderReadBody(
   return out.join("\n");
 }
 
+const BYTES_PER_KIB = 1024;
+
+/** Where a read window ended: the file's end, a line limit, the byte budget, or its first line. */
+type WindowEnd =
+  | { readonly kind: "fileEnd" }
+  | { readonly kind: "lineLimit"; readonly nextOffset: number; readonly callerLimit: boolean }
+  | { readonly kind: "byteLimit"; readonly nextOffset: number }
+  | { readonly kind: "firstLineTooLong" };
+
+/**
+ * The report facts a window end states. A caller's line limit alone tells the model where its
+ * window ended, so the text states no continuation for it; scripts receive nextOffset either way.
+ */
+function windowFacts(end: WindowEnd, limitText: string) {
+  switch (end.kind) {
+    case "fileEnd":
+      return { stated: {}, implied: {} };
+    case "lineLimit":
+      return end.callerLimit
+        ? { stated: {}, implied: { nextOffset: end.nextOffset } }
+        : { stated: { nextOffset: end.nextOffset }, implied: {} };
+    case "byteLimit":
+      return { stated: { nextOffset: end.nextOffset, outputLimit: limitText }, implied: {} };
+    case "firstLineTooLong":
+      return { stated: { lineTooLong: limitText }, implied: {} };
+  }
+}
+
 /** Build the read override (a ToolDefinition fragment for registerTool). */
 export function makeReadOverride({
   cwd,
@@ -155,7 +183,12 @@ export function makeReadOverride({
   ReadDetails | undefined
 > {
   const { hashLen } = config;
-  const { defaultLimit } = config.read;
+  const { defaultLimit, maxKiB } = config.read;
+  // An explicit read.maxKiB caps read output; otherwise the selected model's budget does.
+  const readCap =
+    maxKiB === undefined
+      ? (budget: OutputBudgets) => budget.readBytes
+      : () => maxKiB * BYTES_PER_KIB;
   const builtin = createReadToolDefinition(cwd);
   // A TypeBox object, not a spread of Pi's plain JSON schema: argument diagnostics pick
   // single fields from it, which needs TypeBox's own schema kinds.
@@ -242,8 +275,7 @@ export function makeReadOverride({
     ) {
       const signal = callSignal(piSignal);
       const budget = budgets();
-      const maxBytes =
-        config.read.maxKiB === undefined ? budget.readBytes : config.read.maxKiB * 1024;
+      const maxBytes = readCap(budget);
       return runTool("read", { path: params.path, signal, budget }, async () => {
         throwIfCancelled(signal);
         const start = params.offset ?? DEFAULT_OFFSET;
@@ -290,10 +322,10 @@ export function makeReadOverride({
         const rows: string[] = [];
         const crExpansion = Buffer.byteLength(displayCarriageReturns("\r")) - 1;
         let outputBytes = 0;
-        let firstOmittedLine: number | undefined;
+        let budgetExceeded = false;
         const stats = await scanTextLines(
           absPath,
-          (number) => firstOmittedLine === undefined && number >= start && number - start < limit,
+          (number) => !budgetExceeded && number >= start && number - start < limit,
           (line) => {
             const rowBytes =
               line.byteLength +
@@ -301,7 +333,7 @@ export function makeReadOverride({
               Buffer.byteLength(formatRow(line.number, ""));
             const nextBytes = outputBytes + rowBytes + (rows.length > 0 ? 1 : 0);
             if (nextBytes > maxBytes) {
-              firstOmittedLine = line.number;
+              budgetExceeded = true;
               return;
             }
             rows.push(formatRow(line.number, line.text!));
@@ -318,15 +350,15 @@ export function makeReadOverride({
             ...(stats.totalLines === 0 ? { next: "emptyFile" as const } : {}),
           });
         }
-        const firstLineTooLong = firstOmittedLine === start;
-        // Rows stop before the last line: at the byte budget, the default line limit, or the caller's.
-        const nextOffset =
-          rows.length > 0 && start + rows.length <= stats.totalLines
-            ? start + rows.length
-            : undefined;
-        // A caller's line limit alone tells the model where its window ended, so the text states no
-        // continuation for it; scripts receive nextOffset either way.
-        const callerLimitOnly = params.limit !== undefined && firstOmittedLine === undefined;
+        const nextOffset = start + rows.length;
+        const windowEnd: WindowEnd = budgetExceeded
+          ? rows.length === 0
+            ? { kind: "firstLineTooLong" }
+            : { kind: "byteLimit", nextOffset }
+          : rows.length > 0 && nextOffset <= stats.totalLines
+            ? { kind: "lineLimit", nextOffset, callerLimit: params.limit !== undefined }
+            : { kind: "fileEnd" };
+        const { stated, implied } = windowFacts(windowEnd, formatByteSize(maxBytes));
         const header = formatReadHeader(
           serializePath(cwd, absPath),
           stats.totalLines,
@@ -334,23 +366,11 @@ export function makeReadOverride({
           stats.finalNewline,
         );
         const text = anchored === false ? rows.join("\n") : `${header}\n${rows.join("\n")}`;
-        const limitText = formatByteSize(maxBytes);
 
-        return reportResult(
-          {
-            ...report,
-            nextOffset: callerLimitOnly ? undefined : nextOffset,
-            outputLimit:
-              firstOmittedLine !== undefined && !firstLineTooLong ? limitText : undefined,
-            lineTooLong: firstLineTooLong ? limitText : undefined,
-          },
-          [{ type: "text" as const, text }],
-          budget,
-          {
-            details: anchored === false ? { header } : undefined,
-            implied: callerLimitOnly ? { nextOffset } : undefined,
-          },
-        );
+        return reportResult({ ...report, ...stated }, [{ type: "text" as const, text }], budget, {
+          details: anchored === false ? { header } : undefined,
+          implied,
+        });
       });
     },
   };
