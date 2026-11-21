@@ -22,7 +22,8 @@ export async function scanTextFile(
   const { onChunk, signal, decoding = "strict" } = options;
   const decode = createUtf8Decoder();
   // Strict decoding always decides validity; lossy text is decoded only for a chunk consumer.
-  const lossy = decoding === "lossy" && onChunk ? createUtf8Decoder("lossy") : undefined;
+  const lossy =
+    decoding === "lossy" && onChunk ? { decode: createUtf8Decoder("lossy"), onChunk } : undefined;
   let byteLength = 0;
   let lineFeeds = 0;
   let lastByte = -1;
@@ -53,13 +54,16 @@ export async function scanTextFile(
       // NUL takes precedence even when an earlier chunk contained malformed UTF-8.
       if (hasNul) return;
       const text = decodeStrict(bytes);
-      if (lossy) return onChunk?.(lossy(bytes, true), byteLength);
+      if (lossy) {
+        const { decode, onChunk } = lossy;
+        return onChunk(decode(bytes, true), byteLength);
+      }
       if (text !== undefined) return onChunk?.(text, byteLength);
     },
     onEnd() {
       if (hasNul) return;
       let tail = decodeStrict();
-      if (lossy) tail = lossy();
+      if (lossy) tail = lossy.decode();
       if (tail) return onChunk?.(tail, byteLength);
     },
   });
@@ -107,18 +111,17 @@ export async function scanTextLines(
   let parts: string[] = [];
   let selected = select(number);
   let lastChar = "";
-  const finish = (terminated: boolean) => {
+  const finish = (terminatorCrBytes: 0 | 1) => {
     if (selected) {
-      const stripCr = terminated && lastChar === "\r";
-      const logicalBytes = byteLength - (stripCr ? 1 : 0);
+      const logicalBytes = byteLength - terminatorCrBytes;
       if (bound && logicalBytes > bound.maxBytes) bound.onExceeded();
       else {
         const text = parts.join("");
         onLine({
           number,
           byteLength: logicalBytes,
-          carriageReturns: carriageReturns - (stripCr ? 1 : 0),
-          text: stripCr ? text.slice(0, -1) : text,
+          carriageReturns: carriageReturns - terminatorCrBytes,
+          text: terminatorCrBytes === 0 ? text : text.slice(0, -terminatorCrBytes),
         });
       }
       carriageReturns = 0;
@@ -151,11 +154,11 @@ export async function scanTextLines(
           else parts = [];
         }
         if (lf === -1) break;
-        finish(true);
+        finish(lastChar === "\r" ? 1 : 0);
         start = lf + 1;
       }
     },
   });
-  if (!stats.hasNul && byteLength > 0) finish(false);
+  if (!stats.hasNul && byteLength > 0) finish(0);
   return stats;
 }
