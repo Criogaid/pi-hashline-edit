@@ -122,6 +122,10 @@ test("Fusion command outcomes → progress, cards, and reports preserve command 
     content: [{ type: "text", text: timeoutDiagnostic }],
     details: {},
   };
+  const blocked: CommandResult = {
+    content: [{ type: "text", text: `Permission denied\n${timeoutDiagnostic}` }],
+    details: {},
+  };
   const cases: readonly {
     scenario:
       | "succeeded"
@@ -129,6 +133,7 @@ test("Fusion command outcomes → progress, cards, and reports preserve command 
       | "cancelled-error"
       | "cancelled-after-exit"
       | "cancelled-after-timeout"
+      | "blocked-with-timeout-reason"
       | "cancelled-before-execute"
       | "cancelled-empty"
       | "skipped"
@@ -153,6 +158,12 @@ test("Fusion command outcomes → progress, cards, and reports preserve command 
       text: new RegExp(timeoutDiagnostic),
     },
     {
+      scenario: "blocked-with-timeout-reason",
+      command: "failed",
+      result: blocked,
+      text: /Permission denied/,
+    },
+    {
       scenario: "cancelled-before-execute",
       command: "cancelled",
       text: /Not run: cancelled\./,
@@ -175,7 +186,9 @@ test("Fusion command outcomes → progress, cards, and reports preserve command 
       "cancelled-after-timeout":
         "cancellation after a command times out → preserves the timeout and diagnostic",
       "cancelled-before-execute":
-        "cancellation before command execution → omits output and shows not run",
+        "blocked command with a timeout reason and cancellation → omits output and shows not run",
+      "blocked-with-timeout-reason":
+        "blocked command with a timeout reason → preserves the failure",
     };
     const name = names[scenario] ?? scenario;
     await t.test(name, async (t) => {
@@ -192,10 +205,9 @@ test("Fusion command outcomes → progress, cards, and reports preserve command 
         switch (scenario) {
           case "cancelled-before-execute":
             controller.abort();
-            return commandCompletion(
-              { content: [{ type: "text", text: "Operation aborted" }] },
-              true,
-            );
+            return commandCompletion(blocked, true);
+          case "blocked-with-timeout-reason":
+            return commandCompletion(blocked, true);
           case "cancelled-after-exit":
             controller.abort();
             return {
@@ -229,7 +241,11 @@ test("Fusion command outcomes → progress, cards, and reports preserve command 
           content: "saved\n",
           then_run: {
             command: "check",
-            ...(scenario === "cancelled-after-timeout" ? { timeout: timeoutSeconds } : {}),
+            ...(scenario === "cancelled-after-timeout" ||
+            scenario === "cancelled-before-execute" ||
+            scenario === "blocked-with-timeout-reason"
+              ? { timeout: timeoutSeconds }
+              : {}),
           },
         },
         { ctx: context, signal: controller.signal },

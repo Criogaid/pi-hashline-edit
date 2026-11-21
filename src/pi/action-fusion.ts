@@ -145,10 +145,12 @@ async function runCommand(
     typeof structured.exit_code === "number";
   // Pi's Bash supplies exit_code for ordinary exits, but serializes a thrown
   // timeout as text. Only recognize its final diagnostic for the requested
-  // timeout; a failed command's output may itself mention or quote a timeout.
+  // timeout from a command that ran (Pi measures execute() only then); a failed
+  // command's output or a blocking hook's reason may itself mention a timeout.
   const timeoutDiagnostic = `Command timed out after ${input.timeout} seconds`;
   const output = commandText(result.content);
   const timedOut =
+    durationMs !== undefined &&
     !hasExitCode &&
     input.timeout !== undefined &&
     (output === timeoutDiagnostic || output.endsWith(`\n${timeoutDiagnostic}`));
