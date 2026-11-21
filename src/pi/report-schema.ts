@@ -136,7 +136,7 @@ const ANCHOR_FAILURE_SCHEMA = Type.Union([
   anchorFailureSchema("shifted", { candidate: Type.String(), content: Type.String() }),
   anchorFailureSchema("shifted", { candidate: Type.String(), notShown: NOT_SHOWN_SCHEMA }),
   anchorFailureSchema("ambiguous", {
-    candidates: Type.Array(Type.String()),
+    candidates: Type.Array(Type.String(), { minItems: 2 }),
     omittedCandidates: opt(Type.Integer({ minimum: 1 })),
   }),
   anchorFailureSchema("unresolved", { observed: Type.String() }),
