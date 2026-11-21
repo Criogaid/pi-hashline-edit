@@ -31,7 +31,7 @@
 
 import { computeLineHash } from "./hash.ts";
 import {
-  detectLineEnding,
+  newLineSeparator,
   hasFinalNewline,
   indexSourceLines,
   joinTextFragments,
@@ -218,7 +218,7 @@ export function applyEdits(
   }
 
   const bom = text.startsWith("\uFEFF") ? "\uFEFF" : "";
-  const separator = detectLineEnding(text) === "crlf" ? "\r\n" : "\n";
+  const separator = newLineSeparator(text);
   const contentStart = (line: number) => (line === 0 ? bom.length : lines.start(line));
   const gapAfter = (line: number): TextFragment | undefined => {
     const sourceStart = lines.end(line);

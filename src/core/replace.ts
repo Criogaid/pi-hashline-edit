@@ -10,7 +10,7 @@
 import { buildRegex } from "./regex.ts";
 import {
   createLfTextView,
-  detectLineEnding,
+  newLineSeparator,
   joinTextFragments,
   normalizeLineEndings,
   restoreLineEndings,
@@ -75,7 +75,7 @@ export function applyReplacements(
   const changes: { start: number; end: number; text: string; rule: number }[] = [];
   const view = createLfTextView(source);
   const bom = source.startsWith("\uFEFF") ? source[0] : "";
-  const fallbackEnding = detectLineEnding(source) === "crlf" ? "\r\n" : "\n";
+  const fallbackEnding = newLineSeparator(source);
   const unmatched: string[] = [];
   for (const [index, rule] of rules.entries()) {
     const regex = buildRegex(rule.find, rule.literal, rule.flags);

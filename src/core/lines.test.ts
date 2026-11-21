@@ -4,7 +4,7 @@ import {
   createLfTextView,
   normalizeLineEndings,
   splitLines,
-  detectLineEnding,
+  newLineSeparator,
   hasFinalNewline,
 } from "./lines.ts";
 
@@ -42,10 +42,10 @@ test("hasFinalNewline", () => {
   assert.equal(hasFinalNewline(""), true);
 });
 
-test("detectLineEnding", () => {
-  assert.equal(detectLineEnding("a\nb\n"), "lf");
-  assert.equal(detectLineEnding("a\r\nb\r\n"), "crlf");
-  assert.equal(detectLineEnding("a\nb\r\nc\n"), "crlf");
+test("newLineSeparator", () => {
+  assert.equal(newLineSeparator("a\nb\n"), "\n");
+  assert.equal(newLineSeparator("a\r\nb\r\n"), "\r\n");
+  assert.equal(newLineSeparator("a\nb\r\nc\n"), "\r\n");
 });
 
 test("LF views map every UTF-16 boundary back to original CRLF bytes", () => {

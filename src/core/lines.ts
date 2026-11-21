@@ -1,11 +1,10 @@
 /**
- * Line text helpers: split/join with CRLF normalization, line-ending detection
+ * Line text helpers: split/join with CRLF normalization, the separator for new lines,
  * and final-newline fidelity.
  *
  * CRLF: splitLines normalizes `\r\n` boundaries while preserving standalone
- * `\r` content. detectLineEnding records whether the file uses CRLF at all
- * (any `\r\n` counts) so new boundaries added by an edit can use the file's
- * customary ending.
+ * `\r` content. newLineSeparator gives the separator for line boundaries an
+ * edit adds: CRLF when the file uses it at all (any `\r\n` counts), LF otherwise.
  *
  * Final newline: splitLines discards whether the input ended with a terminator
  * (a trailing newline terminates the last line, it does not create one).
@@ -151,9 +150,9 @@ export function indexSourceLines(text: string) {
   };
 }
 
-/** Whether the text uses CRLF at all (any `\r\n` counts; mixed files report "crlf"). */
-export function detectLineEnding(text: string): "lf" | "crlf" {
-  return text.includes("\r\n") ? "crlf" : "lf";
+/** The separator for a new line boundary: CRLF when the text uses it at all, mixed files included. */
+export function newLineSeparator(text: string): "\r\n" | "\n" {
+  return text.includes("\r\n") ? "\r\n" : "\n";
 }
 
 /**
