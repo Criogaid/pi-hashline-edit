@@ -260,7 +260,7 @@ test("some grep paths are missing → searches existing paths and reports missin
           report?.missing,
           missing.map((name) => join(dir, name).replaceAll("\\", "/")),
         );
-        assert.match(report?.next ?? "", /Correct the paths in missing/);
+        assert.match(report?.next ?? "", /Correct the missing paths/);
         const payload = text(result);
         for (const name of existing.slice(0, limit))
           assert.ok(payload.includes(`${name} · 1 match`));
@@ -442,7 +442,7 @@ test("existing grep paths have no matches alongside a missing path → succeeds 
         assert.equal(report?.matches, 0);
         assert.equal(report?.files, 0);
         assert.deepEqual(report?.missing, [join(dir, "missing.txt").replaceAll("\\", "/")]);
-        assert.match(report?.next ?? "", /Correct the paths in missing/);
+        assert.match(report?.next ?? "", /Correct the missing paths/);
       });
     }
   }));

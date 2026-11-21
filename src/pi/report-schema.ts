@@ -538,7 +538,7 @@ export const OUTCOME_NEXT: readonly OutcomeRule[] = [
   // Ahead of grep's limits: repeating the corrected search states them again.
   [
     "missing",
-    "Only the existing paths were searched. Correct the paths in missing and repeat the search.",
+    "Only the existing paths were searched. Correct the missing paths and repeat the search.",
   ],
   // Ahead of matchLimit: once the byte budget cuts the output, raising limit shows nothing more.
   ["outputLimit", OUTPUT_LIMIT_NEXT],
