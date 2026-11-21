@@ -77,6 +77,7 @@ export async function readFileRevision(
   try {
     throwIfCancelled(signal);
     const before = await handle.stat({ bigint: true });
+    throwIfCancelled(signal);
     const revision = createRevisionHasher();
     try {
       // Snapshots retain blocks. A revision alone can reuse its first block up to the final slice.
@@ -87,7 +88,6 @@ export async function readFileRevision(
               fd: handle,
               autoClose: false,
               highWaterMark: READ_CHUNK_BYTES,
-              signal,
             })
           : sizedChunks(
               handle,
@@ -98,6 +98,8 @@ export async function readFileRevision(
                 : (length) => (scratch ??= Buffer.allocUnsafe(length)).subarray(0, length),
             );
       for await (const chunk of chunks) {
+        // Keep cancellation in the consumer so it cannot emit a stream error during teardown.
+        throwIfCancelled(signal);
         // The Node stream has no encoding set; both sources produce Buffers.
         const bytes = chunk as Buffer;
         revision.update(bytes);
