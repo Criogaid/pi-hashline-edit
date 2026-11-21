@@ -27,14 +27,13 @@ function expandReplacement(template: string, match: RegExpExecArray, regex: RegE
   const consumesHeader = index === 0 && match[0].startsWith("\uFEFF");
   // Without named captures, $<...> is ordinary text and may contain other $ tokens.
   const tokens = groups === undefined ? /\$(\$|&|`|'|\d{1,2})/g : /\$(\$|&|`|'|<[^>]*>|\d{1,2})/g;
-  // Only tokens preceded entirely by empty expansions can emit the first output character.
-  let leadingOffset = 0;
+  // Track where a copy of the header can still be the first output character.
+  let leadingOffset = consumesHeader ? 0 : -1;
   return template.replace(tokens, (token, key: string, offset: number) => {
-    const leading = consumesHeader && offset === leadingOffset;
     if (key === "$") return "$";
-    if (key === "&") return leading ? match[0].slice(1) : match[0];
+    if (key === "&") return offset === leadingOffset ? match[0].slice(1) : match[0];
 
-    let text = token;
+    let text: string;
     let capture: string | number | undefined;
     if (key === "`") text = input.slice(0, index);
     else if (key === "'") text = input.slice(index + match[0].length);
@@ -42,20 +41,18 @@ function expandReplacement(template: string, match: RegExpExecArray, regex: RegE
       capture = key.slice(1, -1);
       text = groups?.[capture] ?? "";
     } else {
-      const number = Number(key);
-      const first = Number(key[0]);
-      if (number > 0 && number < match.length) {
-        capture = number;
-        text = match[number] ?? "";
-      } else if (key.length === 2 && first > 0 && first < match.length) {
-        // $12 falls back to capture 1 plus literal 2 when capture 12 does not exist.
-        capture = first;
-        text = (match[first] ?? "") + key[1];
-      }
+      // Prefer the whole reference ($01 is capture 1), then try just its first digit.
+      const digits = Number(key) < match.length ? key : key[0];
+      capture = Number(digits);
+      if (capture === 0 || capture >= match.length) return token;
+      text = (match[capture] ?? "") + key.slice(digits.length);
     }
 
-    if (!leading) return text;
-    if (text === "") leadingOffset += token.length;
+    if (offset !== leadingOffset) return text;
+    if (text === "") {
+      leadingOffset += token.length;
+      return text;
+    }
     if (capture === undefined || text[0] !== input[0]) return text;
 
     // Adding d to the same regex at offset zero yields this match with capture offsets.
