@@ -116,12 +116,19 @@ test("Fusion command outcomes → progress, cards, and reports preserve command 
     content: [{ type: "text", text: "Command exited with code 7" }],
     details: {},
   };
+  const timeoutSeconds = 10;
+  const timeoutDiagnostic = `Command timed out after ${timeoutSeconds} seconds`;
+  const timedOut: CommandResult = {
+    content: [{ type: "text", text: timeoutDiagnostic }],
+    details: {},
+  };
   const cases: readonly {
     scenario:
       | "succeeded"
       | "failed"
       | "cancelled-error"
       | "cancelled-after-exit"
+      | "cancelled-after-timeout"
       | "cancelled-before-execute"
       | "cancelled-empty"
       | "skipped"
@@ -138,6 +145,12 @@ test("Fusion command outcomes → progress, cards, and reports preserve command 
       command: "failed",
       result: exited,
       text: /Command exited with code 7/,
+    },
+    {
+      scenario: "cancelled-after-timeout",
+      command: "timeout",
+      result: timedOut,
+      text: new RegExp(timeoutDiagnostic),
     },
     {
       scenario: "cancelled-before-execute",
@@ -159,6 +172,8 @@ test("Fusion command outcomes → progress, cards, and reports preserve command 
         "started command cancelled with empty output → card omits the not-run reason",
       "cancelled-after-exit":
         "cancellation after a command exits → preserves the failure and exit diagnostic",
+      "cancelled-after-timeout":
+        "cancellation after a command times out → preserves the timeout and diagnostic",
       "cancelled-before-execute":
         "cancellation before command execution → omits output and shows not run",
     };
@@ -187,6 +202,9 @@ test("Fusion command outcomes → progress, cards, and reports preserve command 
               ...commandCompletion(exited, true, undefined, { exit_code: 7 }),
               durationMs: 1,
             };
+          case "cancelled-after-timeout":
+            controller.abort();
+            return { ...commandCompletion(timedOut, true), durationMs: 1 };
           case "cancelled-error":
             controller.abort();
             return { ...commandCompletion(failure, true), durationMs: 1 };
@@ -209,7 +227,10 @@ test("Fusion command outcomes → progress, cards, and reports preserve command 
           path: "file.txt",
           mode: scenario === "skipped" ? "overwrite" : "create",
           content: "saved\n",
-          then_run: { command: "check" },
+          then_run: {
+            command: "check",
+            ...(scenario === "cancelled-after-timeout" ? { timeout: timeoutSeconds } : {}),
+          },
         },
         { ctx: context, signal: controller.signal },
       );

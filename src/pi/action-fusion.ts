@@ -143,12 +143,6 @@ async function runCommand(
     typeof structured === "object" &&
     "exit_code" in structured &&
     typeof structured.exit_code === "number";
-  // An exit code is the command's own outcome, even when cancellation arrived during a result hook.
-  // Pi measures execute() only when the command ran; a cancelled call that never ran has no output.
-  if (signal?.aborted && !hasExitCode)
-    return durationMs === undefined
-      ? { status: "cancelled", terminate: result.terminate }
-      : { status: "cancelled", ...command };
   // Pi's Bash supplies exit_code for ordinary exits, but serializes a thrown
   // timeout as text. Only recognize its final diagnostic for the requested
   // timeout; a failed command's output may itself mention or quote a timeout.
@@ -158,6 +152,13 @@ async function runCommand(
     !hasExitCode &&
     input.timeout !== undefined &&
     (output === timeoutDiagnostic || output.endsWith(`\n${timeoutDiagnostic}`));
+  // An exit or a timeout is the command's own outcome, even when cancellation arrived during a
+  // result hook. Pi measures execute() only when the command ran; a cancelled call that never ran
+  // has no output.
+  if (signal?.aborted && !hasExitCode && !timedOut)
+    return durationMs === undefined
+      ? { status: "cancelled", terminate: result.terminate }
+      : { status: "cancelled", ...command };
   return { status: timedOut ? "timeout" : "failed", ...command };
 }
 
