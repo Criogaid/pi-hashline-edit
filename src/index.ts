@@ -27,6 +27,7 @@ import { makeWriteOverride } from "./pi/write-tool.ts";
 import { createActionFusionScheduler, observeFusionToolCall } from "./pi/action-fusion.ts";
 import { runAlone } from "./pi/mutation-runner.ts";
 import { registerFusionCards, withMutationStatus } from "./pi/fusion-card.ts";
+import type { ToolGuidelines } from "./pi/schema.ts";
 import { NEXT_GUIDELINE } from "./pi/report-schema.ts";
 import { resolveWorkspace } from "./pi/workspace.ts";
 
@@ -47,14 +48,14 @@ export default async function (pi: ExtensionAPI) {
     if (config.actionFusion) pi.on("tool_call", observeFusionToolCall);
     // Every tool returns a report; Pi prints this shared guideline once.
     const register = <TParams extends TSchema, TDetails, TState>(
-      tool: ToolDefinition<TParams, TDetails, TState>,
+      tool: ToolDefinition<TParams, TDetails, TState> & ToolGuidelines,
     ) => {
       const { renderCall, renderResult } = tool;
       const coerce = createRenderArguments(tool.parameters);
       const view = (args: unknown) => coerce(args) as Static<TParams>;
       const registered: ToolDefinition<TParams, TDetails, TState> = {
         ...tool,
-        promptGuidelines: [...(tool.promptGuidelines ?? []), NEXT_GUIDELINE],
+        promptGuidelines: [...tool.promptGuidelines, NEXT_GUIDELINE],
         renderCall:
           renderCall &&
           ((args, theme, context) => {
@@ -70,7 +71,7 @@ export default async function (pi: ExtensionAPI) {
       pi.registerTool(registered);
     };
     const registerMutation = <TParams extends TSchema, TDetails>(
-      tool: ToolDefinition<TParams, TDetails>,
+      tool: ToolDefinition<TParams, TDetails> & ToolGuidelines,
     ) => register(config.actionFusion ? withMutationStatus(tool) : tool);
     const env = { cwd, config, budgets };
     const mutationEnv = { ...env, schedule };

@@ -30,6 +30,7 @@ import type { TSchema } from "typebox";
 import { Value } from "typebox/value";
 import { ACTION_FUSION_PROGRESS_SCHEMA, type ActionFusionProgress } from "./report-schema.ts";
 import type { MutationRenderState } from "./render.ts";
+import type { ToolGuidelines } from "./schema.ts";
 
 const CARD_TYPE = "hashline-then-run";
 const RESULT_TYPE = "hashline-then-run-result";
@@ -327,8 +328,8 @@ interface FusedMutationRenderState extends MutationRenderState {
 
 /** Finish the mutation card independently while the fused command remains active. */
 export function withMutationStatus<TParams extends TSchema, TDetails>(
-  tool: ToolDefinition<TParams, TDetails, FusedMutationRenderState>,
-): ToolDefinition<TParams, TDetails, FusedMutationRenderState> {
+  tool: ToolDefinition<TParams, TDetails, FusedMutationRenderState> & ToolGuidelines,
+): ToolDefinition<TParams, TDetails, FusedMutationRenderState> & ToolGuidelines {
   return {
     ...tool,
     renderShell: "self",

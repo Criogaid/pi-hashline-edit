@@ -7,8 +7,12 @@
  * @module pi-hashline-edit/pi
  */
 
+import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import type { ConstrainedSamplingConfig } from "@earendil-works/pi-ai";
 import { Type, type TLiteral, type TSchemaOptions } from "typebox";
+
+/** Hashline tool factories supply a guideline array, including when it is empty. */
+export type ToolGuidelines = Required<Pick<ToolDefinition, "promptGuidelines">>;
 
 /**
  * Every tool's sampling request: providers that support it enforce the parameter schema while
