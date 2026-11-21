@@ -15,6 +15,7 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { performance } from "node:perf_hooks";
 
 const VARIANTS = ["tiers", "v8", "pcre2"] as const;
@@ -183,9 +184,12 @@ async function runParent() {
   const args = process.argv.slice(2);
   const repsIndex = args.indexOf("--reps");
   const reps = repsIndex === -1 ? 3 : Number(args[repsIndex + 1]);
-  const corpora = args.filter((arg, index) => index !== repsIndex && index !== repsIndex + 1);
+  const corpora =
+    repsIndex === -1
+      ? args
+      : args.filter((_, index) => index !== repsIndex && index !== repsIndex + 1);
   if (corpora.length === 0) throw new Error("Pass at least one corpus directory.");
-  const script = new URL(import.meta.url).pathname.replace(/^\/(\w:)/, "$1");
+  const script = fileURLToPath(import.meta.url);
   const median = (values: number[]) => {
     const sorted = [...values].sort((a, b) => a - b);
     const middle = sorted.length >> 1;
