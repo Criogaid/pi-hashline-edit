@@ -361,6 +361,9 @@ export async function searchFiles(options: {
     files,
     warnings,
     matchLimitReached,
-    scanLimitReached: selection.scanLimitReached,
+    // Every file the budget held back lists after every queued file. When the queued files
+    // reach the match limit, the budget changed nothing, whichever of the two stopped the
+    // listing first.
+    scanLimitReached: selection.scanLimitReached && !matchLimitReached,
   };
 }

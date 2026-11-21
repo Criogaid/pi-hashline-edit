@@ -1,18 +1,25 @@
-import { makeMockGrep } from "../pi/grep-rg.testing.ts";
 import assert from "node:assert/strict";
-import { mkdtemp, rm, truncate, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import fs, { mkdtemp, rm, truncate, writeFile } from "node:fs/promises";
+import { syncBuiltinESMExports } from "node:module";
+import os, { tmpdir } from "node:os";
 import { join } from "node:path";
-import { test } from "node:test";
+import { mock, test } from "node:test";
 import { formatByteSize } from "../pi/budgets.ts";
-const { DEFAULT_CONFIG, makeGrepOverride } = await import("../pi/tool-factories.testing.ts");
-const MAX_MULTILINE_SEARCH_BYTES = 64 * 1024 * 1024;
-const { MAX_UNNARROWED_SCAN_BYTES } = await import("../pi/grep-candidates.ts");
-
 import { OUTCOME_NEXT } from "../pi/report-schema.ts";
 import { reportOf } from "../pi/report.ts";
-const { grepCounts } = await import("../pi/grep-output.testing.ts");
 import { callTool } from "../pi/tool-call.testing.ts";
+
+// The scan-order fixture holds one worker while listing a second candidate, even on single-core hosts.
+const parallelism = mock.method(os, "availableParallelism", () => 3);
+syncBuiltinESMExports();
+const { makeMockGrep } = await import("../pi/grep-rg.testing.ts").finally(() => {
+  parallelism.mock.restore();
+  syncBuiltinESMExports();
+});
+const { DEFAULT_CONFIG, makeGrepOverride } = await import("../pi/tool-factories.testing.ts");
+const { MAX_UNNARROWED_SCAN_BYTES } = await import("../pi/grep-candidates.ts");
+const { grepCounts } = await import("../pi/grep-output.testing.ts");
+const MAX_MULTILINE_SEARCH_BYTES = 64 * 1024 * 1024;
 
 test("repeated all-file candidates → count each file once toward the scan budget", async (t) => {
   const directory = await mkdtemp(join(tmpdir(), "hl-grep-repeated-scan-"));
@@ -108,4 +115,57 @@ test("all-file candidates exceed the scan budget → stop listing and retain sca
       }
     });
   }
+});
+
+test("scan budget stops listing before the match limit → report only the match limit", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "hl-grep-match-before-budget-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const first = join(directory, "a.txt");
+  const padding = join(directory, "b.bin");
+  const blocked = join(directory, "c.txt");
+  await writeFile(first, "hit\n");
+  await writeFile(padding, "");
+  await truncate(padding, MAX_UNNARROWED_SCAN_BYTES);
+  await writeFile(blocked, "hit\n");
+
+  // Keep the first match from committing until the listing has checked the scan budget.
+  const listingDone = Promise.withResolvers<void>();
+  const open = fs.open;
+  const mock = t.mock.method(fs, "open", async (...args: Parameters<typeof fs.open>) => {
+    if (args[0] === first) await listingDone.promise;
+    return open(...args);
+  });
+  syncBuiltinESMExports();
+  t.after(() => {
+    mock.mock.restore();
+    syncBuiltinESMExports();
+  });
+  const offered: string[] = [];
+  const tool = makeMockGrep(directory, DEFAULT_CONFIG, {
+    runRgPaths: async (_args, _cwd, _signal, onFile) => {
+      try {
+        for (const path of [first, padding, blocked]) {
+          offered.push(path);
+          if (!(await onFile(path))) return { code: 0, stderr: "", stopped: true };
+        }
+        return { code: 0, stderr: "", stopped: false };
+      } finally {
+        listingDone.resolve();
+      }
+    },
+  });
+  const result = await callTool(tool, {
+    path: ["."],
+    pattern: ["."],
+    literal: false,
+    multiline: true,
+    limit: 1,
+    outputMode: "files",
+  });
+  const report = reportOf(result, "grep");
+  assert.equal(result.isError, undefined, JSON.stringify(report));
+  assert.deepEqual(offered, [first, padding, blocked]);
+  assert.deepEqual(result.content[0], { type: "text", text: "a.txt" });
+  assert.equal(report?.matchLimit, 1);
+  assert.equal(report.scanLimit, undefined);
 });
