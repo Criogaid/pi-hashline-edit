@@ -85,19 +85,20 @@ export function renderReport(report: ReportText): string {
   return JSON.stringify(statedFields(report), null, 2);
 }
 
-/** Decode a text report; the text omits its tool, which the originating call supplies. */
+function checkWireReport(value: unknown): Report | undefined {
+  // Report retains the checked variants that TypeBox cannot infer from the assembled union.
+  return Value.Check(WIRE_REPORT_SCHEMA, value) ? (value as Report) : undefined;
+}
+
+/** Only text reports may omit their tool; the originating call supplies it. */
 function decodeReport(text: string, contextTool: ReportTool): Report | undefined {
   if (!text.startsWith("{")) return undefined;
   try {
-    let value: unknown = JSON.parse(text);
-    if (typeof value === "object" && value !== null && !Array.isArray(value)) {
-      if ("tool" in value) {
-        if (value.tool !== contextTool) return undefined;
-      } else {
-        value = { tool: contextTool, ...value };
-      }
-    }
-    return Value.Check(WIRE_REPORT_SCHEMA, value) ? (value as Report) : undefined;
+    // A successful JSON parse starting with '{' produces an object.
+    const value = JSON.parse(text) as Record<string, unknown>;
+    const hasTool = "tool" in value;
+    if (hasTool && value.tool !== contextTool) return undefined;
+    return checkWireReport(hasTool ? value : { tool: contextTool, ...value });
   } catch (error) {
     if (error instanceof SyntaxError || error instanceof RangeError || error instanceof TypeError)
       return undefined;
@@ -115,9 +116,8 @@ export function detailsReport(details: unknown, contextTool: ReportTool): Report
   try {
     // Hooks can introduce cycles; reject non-JSON reports before recursive schema validation.
     JSON.stringify(report);
-    if (report === undefined || !Value.Check(WIRE_REPORT_SCHEMA, report)) return undefined;
-    const checked = report as Report;
-    return checked.tool === contextTool ? checked : undefined;
+    const checked = report === undefined ? undefined : checkWireReport(report);
+    return checked?.tool === contextTool ? checked : undefined;
   } catch (error) {
     if (error instanceof TypeError || error instanceof RangeError) return undefined;
     throw error;
@@ -186,13 +186,13 @@ export function reportResult<TDetails extends object | undefined>(
   const bounded = boundFacts(outcome, budget);
   const command = bounded.then_run;
   const payload: Content = command?.output ? [{ type: "text", text: command.output }] : toolPayload;
-  const complete = Object.fromEntries(
-    reportEntries(bounded).flatMap(([key, value]) => {
-      if (bounded.callShowsNextOffset && key === "nextOffset") return [];
-      if (bounded.payloadShowsCounts && (key === "matches" || key === "files")) return [];
-      return [[key, key === "then_run" && command ? { status: command.status } : value]];
-    }),
-  ) as SuccessReport;
+  const complete = Object.fromEntries(reportEntries(bounded)) as SuccessReport;
+  if (bounded.callShowsNextOffset) delete complete.nextOffset;
+  if (bounded.payloadShowsCounts) {
+    delete complete.matches;
+    delete complete.files;
+  }
+  if (command) complete.then_run = { status: command.status };
   const next = outcomeNext(complete, variant);
   if (next !== undefined) complete.next = next;
   const appendReport =

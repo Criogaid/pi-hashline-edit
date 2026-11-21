@@ -379,20 +379,18 @@ test("success facts without a tool → use call context and enforce tool-specifi
     assert.equal(reportFromText(serialized, tool), undefined);
   for (const tool of ["edit", "replace"] as const)
     assert.deepEqual(reportFromText(serialized, tool), { tool, publication: "PUBLISHED" });
+  assert.deepEqual(reportFromText(JSON.stringify(report), "write"), report);
   for (const invalid of [
     '{"created":true,"foreign":true}',
     '{"error":"INVALID_ARGUMENTS","message":"missing issues"}',
-    '{"tool":"foreign","created":true}',
+    '{"tool":"foreign","publication":"PUBLISHED"}',
+    '{"tool":"edit","publication":"PUBLISHED"}',
+    '{"tool":null,"publication":"PUBLISHED"}',
+    "{",
     "[]",
     "null",
   ])
-    assert.equal(reportFromText(invalid, "write"), undefined);
-  const foreign: Report = { tool: "grep", matches: 1 };
-  const foreignText = JSON.stringify(foreign);
-  const hooked = { content: [text(foreignText)], details: { report: foreign } };
-  assert.equal(reportFromText(foreignText, "read"), undefined);
-  assert.equal(reportOf(hooked, "read"), undefined);
-  assert.deepEqual(splitReport(hooked, "read"), { content: hooked.content, report: undefined });
+    assert.equal(reportFromText(invalid, "write"), undefined, invalid);
 });
 
 test("hook changes a success result → strips no block without matching report position and text", () => {
@@ -551,15 +549,26 @@ test("text-only error contains facts invalid for the originating tool → preser
 });
 
 test("invalid details report → falls back to valid text and leaves content intact", () => {
-  const details = { report: { tool: "grep", matches: "x" } };
-  const fallback: SuccessReport = { tool: "grep", matches: 1, files: 1 };
-  for (const expected of [undefined, fallback]) {
-    const last = expected ? renderReport(expected) : JSON.stringify({ matches: "x" }, null, 2);
-    const result = { details, content: [text("payload"), text(last)] };
-    assert.deepEqual(reportOf(result, "grep"), expected);
-    assert.deepEqual(splitReport(result, "grep"), { content: result.content, report: undefined });
-    assert.equal(result.content.length, 2);
+  const tool = "write";
+  const fallback: SuccessReport = { tool, publication: "PUBLISHED" };
+  const invalidReports: readonly unknown[] = [
+    { tool, publication: "invalid" },
+    { ...fallback, tool: "edit" },
+    { publication: "NOT_PUBLISHED" },
+  ];
+  const content = [text("payload"), text(renderReport(fallback))];
+  for (const report of invalidReports) {
+    const result = { details: { report, reportBlockIndex: 1 }, content };
+    assert.deepEqual(reportOf(result, tool), fallback);
+    const split = splitReport(result, tool);
+    assert.equal(split.report, undefined);
+    assert.equal(split.content, content);
   }
+});
+
+test("live details with an inherited tool → returns the checked report by reference", () => {
+  const report = Object.setPrototypeOf({ publication: "NOT_PUBLISHED" }, { tool: "write" });
+  assert.equal(reportOf({ details: { report }, content: [] }, "write"), report);
 });
 
 test("output byte limit → follows the scan limit and precedes the line preview limit", () => {
@@ -587,6 +596,41 @@ test("hooked details contain a cyclic report cause → preserves payload and dec
   const result = { details: { report: { ...fallback, cause } }, content };
   assert.deepEqual(reportOf(result, "read"), fallback);
   assert.deepEqual(splitReport(result, "read"), { content, report: undefined });
+});
+
+test("hook throws while serializing report details → only JSON representation errors allow fallback", () => {
+  const fallback = { tool: "read", nextOffset: 2 } satisfies Report;
+  const content = [text(renderReport(fallback))];
+  const report = {
+    ...fallback,
+    toJSON() {
+      throw new RangeError("hook range");
+    },
+  };
+  assert.deepEqual(reportOf({ details: { report }, content }, "read"), fallback);
+
+  const unexpected = new SyntaxError("hook syntax");
+  const foreign = {
+    tool: "write",
+    toJSON() {
+      throw unexpected;
+    },
+  };
+  assert.throws(
+    () => reportOf({ details: { report: foreign }, content }, "read"),
+    (error) => error === unexpected,
+  );
+
+  const unreadable = new TypeError("details getter");
+  const details = {
+    get report() {
+      throw unreadable;
+    },
+  };
+  assert.throws(
+    () => reportOf({ details, content }, "read"),
+    (error) => error === unreadable,
+  );
 });
 
 test("native mutation failure before commit → retains publication", () => {
