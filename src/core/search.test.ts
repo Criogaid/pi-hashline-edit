@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { searchLines, searchText } from "./search.ts";
+import { searchText } from "./search.ts";
 import { unsupportedByHost } from "../testing/regex-host.testing.ts";
 
 const cases = [
@@ -114,19 +114,23 @@ test("JS search: columns retain UTF-16 positions inside supplementary characters
   assert.deepEqual(result.lines, [{ lineNumber: 1, column: 1 }]);
 });
 
-test("selected lines ending in CR → matching preserves the CR and uses 1-based positions", () => {
-  const query = { patterns: ["\\r$"], literal: false, ignoreCase: false, multiline: false };
-  assert.deepEqual(searchLines({ lines: "skip\na\r\nb\r\n", query, limit: 10 }), {
-    lines: [
-      { lineNumber: 2, column: 1 },
-      { lineNumber: 3, column: 1 },
-    ],
+test("CR before CRLF or at EOF → line matches point to the retained CR", () => {
+  const result = searchText({
+    source: "plain\r\nneedle\r\r\n\ntail\r",
+    query: { patterns: ["\\r$"], literal: false, ignoreCase: false, multiline: false },
+    limit: 10,
   });
+  assert.deepEqual(result.lines, [
+    { lineNumber: 2, column: 6 },
+    { lineNumber: 4, column: 4 },
+  ]);
 });
 
-test("selected lines exceed limit → matching rows truncate at the limit", () => {
-  const query = { patterns: ["a", "b"], literal: true, ignoreCase: false, multiline: false };
-  assert.deepEqual(searchLines({ lines: "skip\nxa\nb\na\n", query, limit: 1 }), {
-    lines: [{ lineNumber: 2, column: 1 }],
+test("line-mode alternatives under a row limit → return the first row with its leftmost match", () => {
+  const result = searchText({
+    source: "skip\nxba\nb\na\n",
+    query: { patterns: ["a", "b"], literal: true, ignoreCase: false, multiline: false },
+    limit: 1,
   });
+  assert.deepEqual(result.lines, [{ lineNumber: 2, column: 1 }]);
 });

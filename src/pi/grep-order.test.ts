@@ -7,7 +7,7 @@ import { test } from "node:test";
 import { setImmediate } from "node:timers/promises";
 import { Worker } from "node:worker_threads";
 import { computeLineHash } from "../core/hash.ts";
-import { searchText, type LineSearchInput, type SearchInput } from "../core/search.ts";
+import { searchText, type SearchInput } from "../core/search.ts";
 import { loadConfig } from "./config.ts";
 const DEFAULT_CONFIG = loadConfig(os.tmpdir());
 import { reportOf } from "./report.ts";
@@ -75,15 +75,10 @@ test("out-of-order file completions → listing order fixes rows, warnings, and 
           return open(...args);
         });
         syncBuiltinESMExports();
-        t.mock.method(
-          Worker.prototype,
-          "postMessage",
-          function (this: Worker, input: SearchInput | LineSearchInput) {
-            assert.ok("source" in input);
-            const name = input.source.includes("01-slow.txt") ? "01-slow.txt" : "02-fast.txt";
-            hold(name, () => this.emit("message", { result: searchText(input) }));
-          },
-        );
+        t.mock.method(Worker.prototype, "postMessage", function (this: Worker, input: SearchInput) {
+          const name = input.source.includes("01-slow.txt") ? "01-slow.txt" : "02-fast.txt";
+          hold(name, () => this.emit("message", { result: searchText(input) }));
+        });
         const backend: MockRg = {
           runRgPaths: async () => assert.fail("This query uses line candidates"),
           runRgLines: async (_args, _cwd, _signal, _maxLines, onFile) => {
@@ -168,15 +163,10 @@ test("match limit reached before a repeated candidate → stop listing before la
   ]) {
     await t.test(JSON.stringify(query), async (t) => {
       const evaluated = Promise.withResolvers<void>();
-      t.mock.method(
-        Worker.prototype,
-        "postMessage",
-        function (this: Worker, input: SearchInput | LineSearchInput) {
-          assert.ok("source" in input);
-          this.emit("message", { result: searchText(input) });
-          evaluated.resolve();
-        },
-      );
+      t.mock.method(Worker.prototype, "postMessage", function (this: Worker, input: SearchInput) {
+        this.emit("message", { result: searchText(input) });
+        evaluated.resolve();
+      });
       const list = async (onFile: (path: string) => boolean | Promise<boolean>) => {
         await onFile(file);
         await evaluated.promise;
@@ -262,8 +252,7 @@ test("file-associated failure → listing position decides failure or cutoff, wh
             t.mock.method(
               Worker.prototype,
               "postMessage",
-              function (this: Worker, input: SearchInput | LineSearchInput) {
-                assert.ok("source" in input);
+              function (this: Worker, input: SearchInput) {
                 const name = input.source.includes("a.txt") ? "a.txt" : "z.txt";
                 pending.set(name, { worker: this, input, stopped: Promise.withResolvers<void>() });
                 if (pending.size === names.length) ready.resolve();
@@ -362,22 +351,17 @@ test("partial budget consumed by an earlier file → later file has the same reg
           stopped.get(this)?.();
           return terminate.call(this);
         });
-        t.mock.method(
-          Worker.prototype,
-          "postMessage",
-          function (this: Worker, input: SearchInput | LineSearchInput) {
-            assert.ok("source" in input);
-            if (input.source === "slow tail\n") {
-              this.emit("message", { error: REGEX_TIMEOUT });
-            } else {
-              const request = input.source.startsWith("needle early") ? earlyRequest : lateRequest;
-              request.resolve({
-                worker: this,
-                finish: () => this.emit("message", { result: searchText(input) }),
-              });
-            }
-          },
-        );
+        t.mock.method(Worker.prototype, "postMessage", function (this: Worker, input: SearchInput) {
+          if (input.source === "slow tail\n") {
+            this.emit("message", { error: REGEX_TIMEOUT });
+          } else {
+            const request = input.source.startsWith("needle early") ? earlyRequest : lateRequest;
+            request.resolve({
+              worker: this,
+              finish: () => this.emit("message", { result: searchText(input) }),
+            });
+          }
+        });
         const controller = new AbortController();
         const running = callTool(
           makeMockGrep(dir, DEFAULT_CONFIG, backend),
@@ -416,19 +400,14 @@ test("regex request fails before a later NUL → skip that file and search the n
   const binarySource = `${"binary request\n".repeat(100_000)}\0`;
   await Promise.all(binaries.map((file) => fs.writeFile(file, binarySource)));
   await fs.writeFile(text, "needle\n");
-  t.mock.method(
-    Worker.prototype,
-    "postMessage",
-    function (this: Worker, input: SearchInput | LineSearchInput) {
-      assert.ok("source" in input);
-      this.emit(
-        "message",
-        input.source.startsWith("binary request")
-          ? { error: REGEX_TIMEOUT }
-          : { result: searchText(input) },
-      );
-    },
-  );
+  t.mock.method(Worker.prototype, "postMessage", function (this: Worker, input: SearchInput) {
+    this.emit(
+      "message",
+      input.source.startsWith("binary request")
+        ? { error: REGEX_TIMEOUT }
+        : { result: searchText(input) },
+    );
+  });
   const tool = makeMockGrep(dir, DEFAULT_CONFIG, {
     runRgLines: async (_args, _cwd, _signal, _maxLines, onFile) => {
       for (const file of [...binaries, text]) if (!(await onFile(file, "all"))) break;

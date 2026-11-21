@@ -13,16 +13,9 @@ export interface GrepQuery {
   readonly multiline: boolean;
 }
 export interface SearchInput {
+  /** Decoded physical lines with original terminators. Multiline needs the whole file.
+   * Result line numbers start at 1 in this input, including when line mode receives a subset. */
   readonly source: string;
-  readonly query: GrepQuery;
-  readonly limit: number;
-}
-/**
- * Selected physical lines of an LF view, each followed by a line feed. Unlike a source, they
- * are not normalized: a line keeps a CR that ends it.
- */
-export interface LineSearchInput {
-  readonly lines: string;
   readonly query: GrepQuery;
   readonly limit: number;
 }
@@ -113,9 +106,4 @@ export function searchText({ source: raw, query, limit }: SearchInput): SearchRe
       lines = mergeRows(lines, multilineRows(source, regex, limit), limit);
   } else lines = lineRows(source, regexes, limit);
   return { lines };
-}
-
-/** Line-mode matching of selected lines; a row's lineNumber is the line's 1-based position. */
-export function searchLines({ lines, query, limit }: LineSearchInput): SearchResult {
-  return { lines: lineRows(lines, queryRegexes(query), limit) };
 }

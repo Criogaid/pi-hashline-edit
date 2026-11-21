@@ -7,7 +7,7 @@
  */
 import { availableParallelism } from "node:os";
 import { countLines } from "../core/lines.ts";
-import type { GrepQuery, LineSearchInput, SearchInput } from "../core/search.ts";
+import type { GrepQuery, SearchInput } from "../core/search.ts";
 import { SEARCH_RESULT_SCHEMA, type SearchResult } from "../core/search-schema.ts";
 import { scanTextFile } from "./text-stream.ts";
 import type { SearchScope } from "./grep-scope.ts";
@@ -54,7 +54,7 @@ class SearchFileLimitError extends Error {
 
 const decodeReply = workerReplyDecoder(SEARCH_RESULT_SCHEMA);
 type Rows = SearchResult["lines"];
-type Run = (input: SearchInput | LineSearchInput) => Promise<SearchResult>;
+type Run = (input: SearchInput) => Promise<SearchResult>;
 /** A listed candidate and its position in the listing. */
 interface Queued {
   readonly candidate: Candidate;
@@ -79,12 +79,10 @@ type Settled =
   | { readonly kind: "error"; readonly error: unknown };
 
 /**
- * The candidate lines among the next lines of a request source, as the LF view shows them.
- * `next` indexes the first candidate in source; a returned line number is 1-based in source.
- * `lines` holds the lines a worker matches.
+ * Select whole physical lines with their original terminators, if any.
+ * `next` indexes the first candidate in this chunk and in the selected rows' file-line map.
  */
 function selectLines(source: string, offset: number, wanted: readonly number[], next: number) {
-  const numbers: number[] = [];
   const texts: string[] = [];
   let start = 0;
   let line = offset + 1;
@@ -96,12 +94,10 @@ function selectLines(source: string, offset: number, wanted: readonly number[], 
     }
     if (start >= source.length) break;
     const lf = source.indexOf("\n", start);
-    // A CRLF line feeds its view without the CR; a CR before the end of the file stays.
-    const end = lf === -1 ? source.length : source[lf - 1] === "\r" ? lf - 1 : lf;
-    numbers.push(line - offset);
-    texts.push(source.slice(start, end), "\n");
+    const end = lf === -1 ? source.length : lf + 1;
+    texts.push(source.slice(start, end));
   }
-  return { numbers, lines: texts.join("") };
+  return texts.join("");
 }
 
 /**
@@ -130,16 +126,15 @@ async function searchFile(
     const limit = fileLimit - rows.length;
     if (candidates > 0 && limit > 0) {
       // Selecting most lines costs more than matching them all, with the same results.
-      const selected =
-        wanted !== "all" && candidates * 2 <= lines
-          ? selectLines(source, lineOffset, wanted, nextWanted)
-          : undefined;
-      const found = await run(
-        selected ? { lines: selected.lines, query, limit } : { source, query, limit },
-      );
+      const sparse = wanted !== "all" && candidates * 2 <= lines;
+      const found = await run({
+        source: sparse ? selectLines(source, lineOffset, wanted, nextWanted) : source,
+        query,
+        limit,
+      });
       for (const { lineNumber, column } of found.lines)
         rows.push({
-          lineNumber: lineOffset + (selected ? selected.numbers[lineNumber - 1] : lineNumber),
+          lineNumber: sparse ? wanted[nextWanted + lineNumber - 1] : lineOffset + lineNumber,
           column,
         });
     }
@@ -315,7 +310,7 @@ export async function searchFiles(options: {
     try {
       while (!stopped()) {
         const outcome = await withRegexWorker<
-          SearchInput | LineSearchInput,
+          SearchInput,
           SearchResult,
           Awaited<ReturnType<typeof consume>>
         >(

@@ -1739,30 +1739,39 @@ for (const multiline of [false, true]) {
     }));
 }
 
-test("sparse, dense, or overflowed candidate lines → matching preserves original line numbers and CR", async () =>
+test("sparse, dense, all-line, and multiline requests → keep empty rows, standalone CR, and original line numbers", async () =>
   withDir(async (dir) => {
     const file = join(dir, "input.txt");
-    await writeFile(file, "miss\r\nneedle\r\nmiss\nmiss\nneedle\r");
-    for (const lines of [[2, 5], [1, 2, 4, 5], "all"] as const) {
+    await writeFile(file, "miss\r\nneedle\r\n\r\nmiss\nneedle\r\r\nmiss\nmiss\ntail\r");
+    for (const [lines, multiline] of [
+      [[2, 3, 5, 8], false],
+      [[1, 2, 3, 4, 5, 8], false],
+      ["all", false],
+      ["all", true],
+    ] as const) {
       const fake = fakeBackend({ paths: [file], lines });
       const result = await callTool(makeMockGrep(dir, DEFAULT_CONFIG, fake.backend), {
         path: file,
-        pattern: "needle",
-        literal: true,
+        pattern: ["^$", "\\r$"],
+        literal: false,
+        multiline,
         context: 0,
       });
-      assert.equal(grepCounts(result).matches, 2);
-      assert.match(text(result), /2#[0-9A-Z]+│needle/);
-      assert.match(text(result), /5#[0-9A-Z]+│needle␍/);
+      assert.deepEqual(
+        fake.calls.map(({ kind }) => kind),
+        [multiline ? "paths" : "lines"],
+      );
+      assert.equal(grepCounts(result).matches, 3);
+      const rows = text(result)
+        .split("\n")
+        .map(parseHashline)
+        .filter((row) => row !== null);
+      assert.deepEqual(rows, [
+        { lineNo: "3", content: "" },
+        { lineNo: "5", content: "needle␍" },
+        { lineNo: "8", content: "tail␍" },
+      ]);
     }
-    const fake = fakeBackend({ paths: [file], lines: [2, 5] });
-    const result = await callTool(makeMockGrep(dir, DEFAULT_CONFIG, fake.backend), {
-      path: file,
-      pattern: "\\r$",
-      literal: false,
-    });
-    assert.equal(grepCounts(result).matches, 1);
-    assert.match(text(result), /5#[0-9A-Z]+│needle␍/);
   }));
 
 test("native-valid pattern exceeds parser limits → use the all-file prefilter", async (t) =>
