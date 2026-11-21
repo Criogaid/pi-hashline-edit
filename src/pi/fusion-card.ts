@@ -32,9 +32,27 @@ import type { MutationRenderState } from "./render.ts";
 const CARD_TYPE = "hashline-then-run";
 const RESULT_TYPE = "hashline-then-run-result";
 
-/** A command card persists its progress as is; restored entries are checked against the same schema. */
-const COMMAND_CARD_SCHEMA = ACTION_FUSION_PROGRESS_SCHEMA;
 type CommandCardData = ActionFusionProgress;
+
+function decodeCard(read: () => unknown): CommandCardData | undefined {
+  try {
+    const source = read();
+    if (source === undefined) return undefined;
+    const data: unknown = structuredClone(source);
+    if (!Value.Check(ACTION_FUSION_PROGRESS_SCHEMA, data)) return undefined;
+    const content = data.result?.content;
+    // Pi calls array methods outside its renderer guard. Accept only dense, indexed content.
+    if (content) {
+      const keys = Object.keys(content);
+      if (keys.length !== content.length || keys.some((key, i) => key !== String(i)))
+        return undefined;
+    }
+    return data;
+  } catch {
+    // Foreign entries may throw during access, cloning, or schema inspection.
+    return undefined;
+  }
+}
 
 const commandPending = ({ command }: CommandCardData) =>
   command === "waiting" || command === "running";
@@ -104,13 +122,13 @@ export function registerFusionCards(pi: ExtensionAPI) {
     active.clear();
     cards.clear();
     for (const entry of ctx.sessionManager.getBranch()) {
-      if (
-        entry.type !== "custom" ||
-        (entry.customType !== CARD_TYPE && entry.customType !== RESULT_TYPE)
-      )
-        continue;
-      const data = entry.data;
-      if (Value.Check(COMMAND_CARD_SCHEMA, data)) states.set(data.toolCallId, data);
+      const data = decodeCard(() =>
+        entry.type === "custom" &&
+        (entry.customType === CARD_TYPE || entry.customType === RESULT_TYPE)
+          ? entry.data
+          : undefined,
+      );
+      if (data) states.set(data.toolCallId, data);
     }
   };
   pi.on("session_start", (_event, ctx) => {
@@ -131,16 +149,11 @@ export function registerFusionCards(pi: ExtensionAPI) {
   });
   pi.on("session_tree", (_event, ctx) => restore(ctx));
 
-  pi.registerEntryRenderer<CommandCardData>(CARD_TYPE, function renderCard(entry, options):
-    | Component
-    | undefined {
-    const { expanded } = options;
-    const initial = entry.data;
-    if (!Value.Check(COMMAND_CARD_SCHEMA, initial)) return undefined;
+  function renderCard(initial: CommandCardData, expanded: boolean): Component {
     if (!tui) {
       // Pi may rebuild history before session_start supplies its UI context.
       let component: Component | undefined;
-      const ready = () => (component ??= tui ? renderCard(entry, options) : undefined);
+      const ready = () => (component ??= tui ? renderCard(initial, expanded) : undefined);
       return {
         render: (width) => ready()?.render(width) ?? [],
         invalidate: () => component?.invalidate(),
@@ -247,17 +260,24 @@ export function registerFusionCards(pi: ExtensionAPI) {
     card.setImageWidthCells(settings.getImageWidthCells());
     card.setGlobalExpanded(expanded);
     return card;
+  }
+
+  pi.registerEntryRenderer(CARD_TYPE, (entry, { expanded }) => {
+    const data = decodeCard(() => entry.data);
+    return data && renderCard(data, expanded);
   });
 
-  return (progress: ActionFusionProgress) => {
+  return (input: ActionFusionProgress) => {
+    const progress = decodeCard(() => input);
+    if (!progress) throw new Error("Invalid then_run card progress.");
     const first = !states.has(progress.toolCallId);
     states.set(progress.toolCallId, progress);
     const pending = commandPending(progress);
     if (pending) active.add(progress.toolCallId);
     else active.delete(progress.toolCallId);
     // Only endpoints are persisted; streaming snapshots reuse Bash's bounded output.
-    if (first) pi.appendEntry(CARD_TYPE, progress);
-    if (!pending) pi.appendEntry(RESULT_TYPE, progress);
+    if (first) pi.appendEntry(CARD_TYPE, structuredClone(progress));
+    if (!pending) pi.appendEntry(RESULT_TYPE, structuredClone(progress));
   };
 }
 

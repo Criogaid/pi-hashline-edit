@@ -1,3 +1,5 @@
+import { Value } from "typebox/value";
+import { ACTION_FUSION_PROGRESS_SCHEMA } from "./report-schema.ts";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { initTheme, type AgentSession } from "@earendil-works/pi-coding-agent";
@@ -140,4 +142,118 @@ test("command entries rebuilt before session_start → remain visible and become
     true,
   );
   assert.match(host.render(100).join("\n"), /command output 0\b/);
+});
+
+const commandCard = {
+  toolCallId: "owned",
+  commandText: "check",
+  command: "running" as const,
+  freshness: "unchanged" as const,
+  mutationCompleted: true,
+};
+
+test("synchronous entry subscriber rewrites command output → live card retains the observed result", async (t) => {
+  initTheme("dark");
+  let report: ReturnType<typeof registerFusionCards> | undefined;
+  const { session, sessionManager } = await openTestSession(t, {
+    tools: [],
+    configure(pi) {
+      report = registerFusionCards(pi);
+    },
+  });
+  await bindTui(session);
+  assert.ok(report);
+  report(commandCard);
+  const entry = sessionManager.getBranch().find((e) => e.type === "custom");
+  const renderer = session.extensionRunner.getEntryRenderer("hashline-then-run");
+  assert.ok(entry?.type === "custom" && renderer);
+  const host = new CustomEntryComponent(entry, renderer);
+  const content = [{ type: "text" as const, text: "original output" }];
+  session.subscribe((event) => {
+    if (
+      event.type === "entry_appended" &&
+      event.entry.type === "custom" &&
+      event.entry.customType === "hashline-then-run-result"
+    ) {
+      const { data } = event.entry;
+      assert.ok(Value.Check(ACTION_FUSION_PROGRESS_SCHEMA, data));
+      const block = data.result?.content[0];
+      assert.ok(block?.type === "text");
+      block.text = "subscriber output";
+    }
+  });
+  report({ ...commandCard, command: "succeeded", result: { content } });
+  content[0].text = "producer output";
+  assert.match(host.render(100).join("\n"), /original output/);
+});
+
+test("foreign command entries → renderer and branch restore reject unusable snapshots", async (t) => {
+  initTheme("dark");
+  const { session, sessionManager } = await openTestSession(t, {
+    tools: [],
+    configure(pi) {
+      registerFusionCards(pi);
+    },
+  });
+  const start = sessionManager.appendCustomEntry("hashline-then-run", commandCard);
+  const entry = sessionManager.getEntry(start);
+  const renderer = session.extensionRunner.getEntryRenderer("hashline-then-run");
+  assert.ok(entry?.type === "custom" && renderer);
+  for (const result of [
+    { content: Object.assign([], { filter: 0 }) },
+    { content: Object.assign([], { every: 0 }) },
+    {
+      get content() {
+        throw undefined;
+      },
+    },
+  ]) {
+    const bad = { ...commandCard, command: "failed", result };
+    sessionManager.appendCustomEntry("hashline-then-run-result", bad);
+    assert.equal(new CustomEntryComponent({ ...entry, data: bad }, renderer).hasContent(), false);
+  }
+  await bindTui(session);
+  assert.match(new CustomEntryComponent(entry, renderer).render(100).join("\n"), /interrupted/);
+  const override = {
+    ...commandCard,
+    toolCallId: "override",
+    result: {
+      content: [{ type: "text", text: "override output" }],
+      details: { fullOutputPath: { toString: 0 } },
+    },
+  };
+  assert.match(
+    new CustomEntryComponent({ ...entry, data: override }, renderer).render(100).join("\n"),
+    /override output/,
+  );
+});
+
+test("foreign entry discriminator throws → restore still reads the following command outcome", async (t) => {
+  initTheme("dark");
+  const { session, sessionManager } = await openTestSession(t, {
+    tools: [],
+    configure(pi) {
+      registerFusionCards(pi);
+    },
+  });
+  const start = sessionManager.appendCustomEntry("hashline-then-run", commandCard);
+  for (const key of ["type", "customType"]) {
+    const id = sessionManager.appendCustomEntry("foreign", {});
+    const entry = sessionManager.getEntry(id);
+    assert.ok(entry);
+    Object.defineProperty(entry, key, {
+      get() {
+        throw undefined;
+      },
+    });
+  }
+  sessionManager.appendCustomEntry("hashline-then-run-result", {
+    ...commandCard,
+    command: "succeeded",
+  });
+  await bindTui(session);
+  const entry = sessionManager.getEntry(start);
+  const renderer = session.extensionRunner.getEntryRenderer("hashline-then-run");
+  assert.ok(entry?.type === "custom" && renderer);
+  assert.match(new CustomEntryComponent(entry, renderer).render(100).join("\n"), /succeeded/);
 });
