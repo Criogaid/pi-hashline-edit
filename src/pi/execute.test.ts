@@ -917,7 +917,7 @@ test("edit rejects unwritable body lines before reading a missing target", async
     const target = join(dir, "missing.txt");
     const edit = makeEditOverride(dir, DEFAULT_CONFIG);
     const valid = { path: target, steps: [{ action: "append" as const, lines: ["ok"] }] };
-    assert.equal(edit.prepareArguments(valid), valid);
+    assert.deepEqual(edit.prepareArguments(valid), valid);
     for (const [line, expected] of [
       ["bad\0", rejectsArgument("steps[0].lines[1]", /NUL/)],
       ["\ud800", rejectsArgument("steps[0].lines[1]", /losslessly.*UTF-8/)],

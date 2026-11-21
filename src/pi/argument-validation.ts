@@ -1,7 +1,7 @@
 /**
  * Shared tool argument boundary. Prepare with Pi's schema engine so semantic
  * checks and bounded diagnostics see the same coerced value, including on
- * schema failure. Pi still validates the original arguments after preparation.
+ * schema failure. Pi coerces and validates the same observed snapshot.
  * Tool schemas have no cross-field constraints.
  */
 import { resolve } from "node:path";
@@ -180,8 +180,8 @@ export function createArgumentBoundary<T extends TObject, Parsed>(
     prepareArguments(args: unknown): Static<T> {
       const raw = snapshot(args);
       verdict(withArgumentError(() => validator.coerce(raw)));
-      // Pi coerces the raw arguments for its hooks after this preflight.
-      return args as Static<T>;
+      // Coercion is copy-on-write. Pi applies it to this snapshot before passing args to hooks.
+      return raw as Static<T>;
     },
     // A tool_call hook can retain and mutate the validated arguments before or during execution.
     // The tool consumes its own checked snapshot of the canonical arguments the last hook left.
