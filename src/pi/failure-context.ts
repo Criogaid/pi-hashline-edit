@@ -161,7 +161,7 @@ function failureEntry(
   return entry;
 }
 
-/** Classify a batch's anchor failures with their bounded facts. */
+/** Classify a batch's anchor failures; each entry's rows fit the field budget, and the report layer bounds the list. */
 export function describeEditFailure(
   currentText: string,
   failures: readonly AnchorFailure[],
