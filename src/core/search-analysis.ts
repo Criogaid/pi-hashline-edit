@@ -88,7 +88,7 @@ function distinct<T>(values: readonly T[]): T[] {
 
 function literalFilter(values: readonly Literal[]): Prefilter {
   let literals = distinct(values);
-  if (!literals.length || literals.some((literal) => !literal.length)) return ALL;
+  if (!literals.length) return ALL;
   if (literals.length <= MAX_LITERALS) return { kind: "literals", literals };
   // Keep every branch while shortening its necessary prefix or suffix.
   for (let length = MAX_SEQUENCE_LENGTH; length >= 1; length = Math.floor(length / 2)) {
