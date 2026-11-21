@@ -130,6 +130,23 @@ type EditParams = Static<EditSchema>;
 type EditOpInput = EditParams["steps"][number];
 type EditOpSchema = EditSchema["properties"]["steps"]["items"];
 
+/** The fields an op declares under `required` or `optional` in EDIT_OPS. */
+type OpFields<
+  Name extends EditOpName,
+  Kind extends "required" | "optional",
+> = (typeof EDIT_OPS)[Name] extends { readonly [K in Kind]: readonly (infer Field)[] }
+  ? Field
+  : never;
+
+/** A step as argument checks admit it: each field its action requires, and no field it does not take. */
+type CheckedEditOp = {
+  [Name in EditOpName]: { readonly action: Name } & {
+    readonly [Field in OpFields<Name, "required"> & keyof EditOpInput]-?: NonNullable<
+      EditOpInput[Field]
+    >;
+  } & { readonly [Field in OpFields<Name, "optional"> & keyof EditOpInput]?: EditOpInput[Field] };
+}[EditOpName];
+
 /** How to correct edit argument issues; each reason states only what is wrong. */
 const EDIT_ISSUE_FIX = {
   emptyReplace: 'Use {"action":"delete"} to remove lines, or supply the replacement lines.',
@@ -217,28 +234,25 @@ function checkEditArguments(
   });
 }
 
-/**
- * Translate validated public operations into core steps, parsing numeric anchor
- * positions. Argument checks guarantee each op carries exactly the fields it takes.
- */
-function toCoreEdits(ops: readonly EditOpInput[]): Edit[] {
+/** Translate checked public operations into core steps, parsing numeric anchor positions. */
+function toCoreEdits(ops: readonly CheckedEditOp[]): Edit[] {
   return ops.map((op) => {
     switch (op.action) {
       case "replace":
         return {
           op: "replace",
-          anchor: parseAnchor(op.anchor!),
+          anchor: parseAnchor(op.anchor),
           end: parseAnchor(op.end),
-          body: op.lines!,
+          body: op.lines,
         };
       case "delete":
-        return { op: "delete", anchor: parseAnchor(op.anchor!), end: parseAnchor(op.end) };
+        return { op: "delete", anchor: parseAnchor(op.anchor), end: parseAnchor(op.end) };
       case "insert_after":
       case "insert_before":
-        return { op: op.action, anchor: parseAnchor(op.anchor!), body: op.lines! };
+        return { op: op.action, anchor: parseAnchor(op.anchor), body: op.lines };
       case "append":
       case "prepend":
-        return { op: op.action, body: op.lines! };
+        return { op: op.action, body: op.lines };
     }
   });
 }
@@ -306,7 +320,9 @@ function runEdit(
     // Recovery reports checksum candidates from nearby lines, then the whole file
     // if needed. Every failed anchor still rejects the batch; callers inspect
     // candidates and resubmit with fresh anchors.
-    const result = applyEdits(currentText, toCoreEdits(editOps), hashLen, shiftRadius);
+    // checkEditArguments ran in prepareArguments: each step carries exactly its action's fields.
+    const checked = editOps as readonly CheckedEditOp[];
+    const result = applyEdits(currentText, toCoreEdits(checked), hashLen, shiftRadius);
     if (!result.ok) {
       throw describeEditFailure(currentText, result.failures, anchorFormatter, target.budget);
     }
