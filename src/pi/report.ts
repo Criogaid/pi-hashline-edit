@@ -171,7 +171,7 @@ export function reportResult<
   TTool extends ReportTool = ReportTool,
 >(
   report: SuccessReport & { tool: TTool },
-  payload: Content = [],
+  payload: Content,
   details?: TDetails,
   variant?: OutcomeVariant,
   implied?: ImpliedFacts<TTool>,

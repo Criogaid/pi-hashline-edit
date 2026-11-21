@@ -432,11 +432,14 @@ test("success facts survive details and model serialization", () => {
 });
 
 test("grep preview from invalid UTF-8 → recovery selects bash for the listed paths", () => {
-  const result = reportResult({
-    tool: "grep",
-    linePreviewLimit: DEFAULT_OUTPUT_BUDGETS.grepPreviewUnits,
-    invalidUtf8: ["invalid.txt"],
-  });
+  const result = reportResult(
+    {
+      tool: "grep",
+      linePreviewLimit: DEFAULT_OUTPUT_BUDGETS.grepPreviewUnits,
+      invalidUtf8: ["invalid.txt"],
+    },
+    [],
+  );
   const next = reportOf(result, "grep")?.next ?? "";
   assert.match(next, /invalidUtf8.*bash/);
 });
@@ -445,15 +448,18 @@ test("grep limits coincide → recovery prioritizes output, then match, then sca
   for (const key of ["matchLimit", "outputLimit"] as const) {
     const next = OUTCOME_NEXT.find(([fact]) => fact === key)?.[1];
     assert.ok(next);
-    const result = reportResult({
-      tool: "grep",
-      matches: 1,
-      matchLimit: 1,
-      scanLimit: formatByteSize(MAX_UNNARROWED_SCAN_BYTES),
-      ...(key === "outputLimit" && {
-        outputLimit: formatByteSize(DEFAULT_OUTPUT_BUDGETS.grepBytes),
-      }),
-    });
+    const result = reportResult(
+      {
+        tool: "grep",
+        matches: 1,
+        matchLimit: 1,
+        scanLimit: formatByteSize(MAX_UNNARROWED_SCAN_BYTES),
+        ...(key === "outputLimit" && {
+          outputLimit: formatByteSize(DEFAULT_OUTPUT_BUDGETS.grepBytes),
+        }),
+      },
+      [],
+    );
     assert.equal(reportOf(result, "grep")?.next, typeof next === "string" ? next : next.default);
   }
 });
@@ -461,11 +467,14 @@ test("grep limits coincide → recovery prioritizes output, then match, then sca
 test("output limit with read next offset → recovery prioritizes the next offset", () => {
   const next = OUTCOME_NEXT.find(([key]) => key === "nextOffset")?.[1];
   assert.ok(next);
-  const result = reportResult({
-    tool: "read",
-    nextOffset: 2,
-    outputLimit: formatByteSize(DEFAULT_OUTPUT_BUDGETS.readBytes),
-  });
+  const result = reportResult(
+    {
+      tool: "read",
+      nextOffset: 2,
+      outputLimit: formatByteSize(DEFAULT_OUTPUT_BUDGETS.readBytes),
+    },
+    [],
+  );
   assert.equal(reportOf(result, "read")?.next, next);
 });
 
@@ -548,7 +557,7 @@ test("failure classification without mutation facts → omits mutation state for
 
 test("mutation freshness → retains the fact and requests reread only for an existing or unknown target", () => {
   for (const freshness of ["missing", "changed", "unknown"] as const) {
-    const result = reportResult({ tool: "edit", publication: "PUBLISHED", freshness });
+    const result = reportResult({ tool: "edit", publication: "PUBLISHED", freshness }, []);
     const report = reportOf(result, "edit");
     assert.equal(report?.freshness, freshness);
     if (freshness === "missing") assert.equal(report?.next, undefined);
