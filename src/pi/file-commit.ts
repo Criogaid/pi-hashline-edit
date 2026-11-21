@@ -290,6 +290,24 @@ async function makeTempDirectory(directory: string): Promise<string> {
   return mkdtemp(prefix);
 }
 
+/** After the publish syscall succeeds, an unstable target is a change by another writer. */
+async function publishedFreshness(
+  path: string,
+  revision: string,
+): Promise<"unchanged" | "changed"> {
+  try {
+    return (await readFileRevision(path, UNCANCELLABLE)) === revision ? "unchanged" : "changed";
+  } catch (error) {
+    if (error instanceof FileChangedDuringReadError) return "changed";
+    throw new FileMutationError(
+      "POST_PROCESS_FAILED",
+      "PUBLISHED",
+      "Final revision could not be read.",
+      { cause: error },
+    );
+  }
+}
+
 /** Validate the target, skip identical content, otherwise sync and publish. Callers own the file queue. */
 export async function commitFile(
   path: string,
@@ -323,51 +341,35 @@ export async function commitFile(
     });
   }
   const tempPath = join(tempDir, "content");
-  let published = false;
   try {
-    await writeAndSyncTemp(tempPath, bytes, signal);
-    if (plan.kind === "replace") {
-      // A replacement keeps the target's mode bits.
-      await chmod(tempPath, plan.target.modeBits & 0o7777);
-      await recheckReplace(path, plan, signal);
-      await publishReplace(tempPath, publishPath, signal);
-    } else {
-      await publishCreate(tempPath, publishPath, signal);
-    }
-    published = true;
-    await syncDirectory(publishDirectory);
-    const committed = (freshness: "unchanged" | "changed"): CommitResult => ({
-      publication: "PUBLISHED",
-      publishedRevision,
-      freshness,
-    });
     try {
-      const observed = await readFileRevision(path, UNCANCELLABLE);
-      return committed(observed === publishedRevision ? "unchanged" : "changed");
+      await writeAndSyncTemp(tempPath, bytes, signal);
+      if (plan.kind === "replace") {
+        await chmod(tempPath, plan.target.modeBits & 0o7777);
+        await recheckReplace(path, plan, signal);
+        await publishReplace(tempPath, publishPath, signal);
+      } else {
+        await publishCreate(tempPath, publishPath, signal);
+      }
     } catch (error) {
-      // Another writer is replacing the published bytes: report a changed target, not a failed
-      // mutation whose retry would apply it again.
-      if (error instanceof FileChangedDuringReadError) return committed("changed");
-      throw new FileMutationError(
-        "POST_PROCESS_FAILED",
-        "PUBLISHED",
-        "Final revision could not be read.",
-        { cause: error },
-      );
+      if (error instanceof HashlineError) throw error;
+      throw new HashlineError("PUBLISH_FAILED", "Unable to prepare or publish target.", {
+        cause: error,
+      });
     }
-  } catch (error) {
-    // Already classified, including cancellation and every publication failure.
-    if (error instanceof HashlineError) throw error;
-    if (published)
+    await syncDirectory(publishDirectory).catch((error: unknown) => {
       throw new FileMutationError(
         "POST_PROCESS_FAILED",
         "PUBLISHED",
         "Post-publication processing failed.",
         { cause: error },
       );
-    throw new HashlineError("PUBLISH_FAILED", "Unable to prepare or publish target.", {
-      cause: error,
     });
+    return {
+      publication: "PUBLISHED",
+      publishedRevision,
+      freshness: await publishedFreshness(path, publishedRevision),
+    };
   } finally {
     // Best effort: a leftover temporary directory changes neither the publication nor the recovery.
     await rm(tempDir, { recursive: true, force: true }).catch(() => undefined);

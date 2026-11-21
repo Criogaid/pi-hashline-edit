@@ -30,6 +30,36 @@ type ByteConsumer = {
   | { readonly extent: "eof"; readonly onEnd: () => void | Promise<void> }
 );
 
+/** Fill each block before handing it to a consumer, even when the handle returns short reads. */
+async function* sizedChunks(
+  handle: Awaited<ReturnType<typeof open>>,
+  before: BigIntStats,
+  signal: AbortSignal,
+  allocate: (length: number) => Buffer,
+) {
+  requireRegularFile(before);
+  for (let position = 0n; position < before.size; ) {
+    const length = Math.min(Number(before.size - position), READ_CHUNK_BYTES);
+    const buffer = allocate(length);
+    let offset = 0;
+    while (offset < length) {
+      throwIfCancelled(signal);
+      const remaining = length - offset;
+      const { bytesRead } = await handle.read({
+        buffer,
+        offset,
+        length: remaining,
+        position: Number(position + BigInt(offset)),
+      });
+      throwIfCancelled(signal);
+      if (bytesRead <= 0 || bytesRead > remaining) throw new FileChangedDuringReadError();
+      offset += bytesRead;
+    }
+    yield buffer;
+    position += BigInt(length);
+  }
+}
+
 /**
  * Hash the actual bytes and check the opened file and current path before returning their revision.
  * Metadata cannot detect changes hidden by timestamp resolution.
@@ -48,54 +78,35 @@ export async function readFileRevision(
     throwIfCancelled(signal);
     const before = await handle.stat({ bigint: true });
     const revision = createRevisionHasher();
-    const consume = (bytes: Buffer) => {
-      revision.update(bytes);
-      return consumer?.onChunk(bytes);
-    };
     try {
+      // Snapshots retain blocks. A revision alone can reuse its first block up to the final slice.
+      let scratch: Buffer | undefined;
+      const chunks =
+        consumer?.extent === "eof"
+          ? createReadStream(path, {
+              fd: handle,
+              autoClose: false,
+              highWaterMark: READ_CHUNK_BYTES,
+              signal,
+            })
+          : sizedChunks(
+              handle,
+              before,
+              signal,
+              consumer
+                ? Buffer.allocUnsafe
+                : (length) => (scratch ??= Buffer.allocUnsafe(length)).subarray(0, length),
+            );
+      for await (const chunk of chunks) {
+        // The Node stream has no encoding set; both sources produce Buffers.
+        const bytes = chunk as Buffer;
+        revision.update(bytes);
+        const pending = consumer?.onChunk(bytes);
+        if (pending) await pending;
+      }
       if (consumer?.extent === "eof") {
-        const stream = createReadStream(path, {
-          fd: handle,
-          autoClose: false,
-          highWaterMark: READ_CHUNK_BYTES,
-          signal,
-        });
-        for await (const chunk of stream) {
-          // With no encoding set, Node emits Buffers.
-          const pending = consume(chunk as Buffer);
-          if (pending) await pending;
-        }
         throwIfCancelled(signal);
         await consumer.onEnd();
-      } else {
-        requireRegularFile(before);
-        if (before.size > 0n) {
-          const scratch = consumer
-            ? undefined
-            : Buffer.allocUnsafe(Math.min(Number(before.size), READ_CHUNK_BYTES));
-          let position = 0n;
-          while (position < before.size) {
-            const length = Math.min(Number(before.size - position), READ_CHUNK_BYTES);
-            const buffer = scratch ?? Buffer.allocUnsafe(length);
-            let offset = 0;
-            while (offset < length) {
-              throwIfCancelled(signal);
-              const remaining = length - offset;
-              const { bytesRead } = await handle.read({
-                buffer,
-                offset,
-                length: remaining,
-                position: Number(position + BigInt(offset)),
-              });
-              throwIfCancelled(signal);
-              if (bytesRead <= 0 || bytesRead > remaining) throw new FileChangedDuringReadError();
-              offset += bytesRead;
-            }
-            const pending = consume(length === buffer.length ? buffer : buffer.subarray(0, length));
-            if (pending) await pending;
-            position += BigInt(length);
-          }
-        }
       }
     } catch (error) {
       throwIfCancelled(signal);
