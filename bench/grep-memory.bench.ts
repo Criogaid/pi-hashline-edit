@@ -37,7 +37,11 @@ try {
     cwd: directory,
     config: loadConfig(directory),
     budgets: () => outputBudgetsFor(undefined),
-  }).execute("bench", { path: [directory], pattern: ["needle"], literal: true }, undefined);
+  }).execute(
+    "bench",
+    { path: [directory], pattern: ["needle"], literal: true, limit: files },
+    undefined,
+  );
   sample();
   const text = result.content[0];
   if (text.type !== "text" || (text.text.match(/ · 1 match\n/g) ?? []).length !== files)
