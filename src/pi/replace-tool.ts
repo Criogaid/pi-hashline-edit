@@ -120,6 +120,6 @@ function runReplace(
     const { text, count, copied } = rules.some((rule) => !rule.literal)
       ? await runRegexReplacements(currentText, rules, config.replace.regexTimeoutMs, target.signal)
       : applyReplacements(currentText, rules);
-    return { text, copied, facts: { matches: count } };
+    return { text, copied, facts: { tool: "replace", matches: count } };
   });
 }

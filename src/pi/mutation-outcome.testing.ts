@@ -10,7 +10,7 @@ export function publishedMutation<T extends object | undefined>(
   const revision = byteRevision(Buffer.from(content));
   return {
     details: (result.details ?? {}) as T extends object ? T : object,
-    facts: {},
+    facts: { tool: "write" },
     commit: {
       publication: "PUBLISHED",
       publishedRevision: revision,

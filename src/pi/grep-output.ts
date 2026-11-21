@@ -57,9 +57,6 @@ function searchDiagnostics(
   return diagnostics.toString().trimEnd();
 }
 
-/** The counts a script reads when the payload already shows them and the report leaves them out. */
-type ShownCounts = Required<Pick<SuccessFacts<"grep">, "matches" | "files">>;
-
 /** How the search was bounded and which named paths it skipped; stated with success and failure alike. */
 type SearchFacts = Pick<Report, "scanLimit" | "missing">;
 
@@ -328,14 +325,11 @@ function contextHidesHit(
   return withoutContext.reduce((sum, count) => sum + Math.max(0, count - 1), 0) > shownHits;
 }
 
-/**
- * Join the payload within the call's byte budget and state each limit, omission, and diagnostic
- * once. `implied` holds the counts the payload already shows, which the report leaves out.
- */
+/** Join the payload within the byte budget and state its limits, omissions, and diagnostics. */
 function assembleGrepOutput(options: AssembleGrepOutputOptions): {
   payload: string;
   facts: SuccessFacts<"grep">;
-  implied?: ShownCounts;
+  payloadShowsCounts?: true;
   next?: OutcomeVariant;
 } {
   const { formatted, cwd, warnings, matchLimitReached, effectiveLimit, searchFacts, budget } =
@@ -377,7 +371,8 @@ function assembleGrepOutput(options: AssembleGrepOutputOptions): {
   return {
     payload: kept.join("\n"),
     facts: {
-      ...(countsShown ? {} : { matches, files }),
+      matches,
+      files,
       ...searchFacts,
       matchLimit: matchLimitReached ? effectiveLimit : undefined,
       outputLimit: truncated ? formatByteSize(budget.grepBytes) : undefined,
@@ -385,7 +380,7 @@ function assembleGrepOutput(options: AssembleGrepOutputOptions): {
       invalidUtf8: invalidUtf8.length ? invalidUtf8 : undefined,
       diagnostics: warnings.length ? searchDiagnostics(warnings, cwd, budget) : undefined,
     },
-    implied: countsShown ? { matches, files } : undefined,
+    payloadShowsCounts: countsShown || undefined,
     next:
       truncated &&
       blocks.mode === "content" &&
@@ -397,9 +392,8 @@ function assembleGrepOutput(options: AssembleGrepOutputOptions): {
 }
 
 /**
- * grep's payload and report facts for a finished search, with the counts the payload already
- * shows as `implied`. The payload is absent when nothing matched; a search that cannot confirm
- * any result fails with SEARCH_INCOMPLETE instead.
+ * grep's payload and facts for a finished search. The payload is absent when nothing matched;
+ * a search that cannot confirm any result fails with SEARCH_INCOMPLETE instead.
  */
 export async function grepOutput(
   options: Omit<FormatMatchesOptions, "files"> & {
@@ -415,7 +409,7 @@ export async function grepOutput(
 ): Promise<{
   payload?: string;
   facts: SuccessFacts<"grep">;
-  implied?: ShownCounts;
+  payloadShowsCounts?: true;
   next?: OutcomeVariant;
 }> {
   const { cwd, search, warnings, missing, outputMode, effectiveLimit, literalPipe, budget } =

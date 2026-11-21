@@ -333,6 +333,6 @@ function runEdit(
     if (!result.ok) {
       throw describeEditFailure(currentText, result.failures, anchorFormatter, target.budget);
     }
-    return { text: result.text, copied: result.copied, facts: {} };
+    return { text: result.text, copied: result.copied, facts: { tool: "edit" } };
   });
 }

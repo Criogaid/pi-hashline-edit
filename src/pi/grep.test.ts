@@ -487,15 +487,13 @@ test("grep payload blocks → only a single complete content or count block omit
         ...DEFAULT_OUTPUT_BUDGETS,
         grepBytes: truncated ? truncatedBytes : DEFAULT_OUTPUT_BUDGETS.grepBytes,
       };
-      const result = await callTool(
-        makeMockGrep(dir, DEFAULT_CONFIG, backend, () => budget),
-        {
-          path: dir,
-          pattern: "needle",
-          literal: true,
-          outputMode,
-        },
-      );
+      const tool = makeMockGrep(dir, DEFAULT_CONFIG, backend, () => budget);
+      const result = await callTool(tool, {
+        path: dir,
+        pattern: "needle",
+        literal: true,
+        outputMode,
+      });
       assert.equal(result.isError, undefined);
       const report = reportOf(result, "grep");
       assert.ok(report);
@@ -511,7 +509,21 @@ test("grep payload blocks → only a single complete content or count block omit
         truncated ? formatByteSize(budget.grepBytes) : undefined,
         context,
       );
-      assert.deepEqual(grepCounts(result), { matches: fileCount * 2, files: fileCount }, context);
+      const blocks = fileCount === 0 || !reported ? 1 : 2;
+      assert.equal(result.content.length, blocks, context);
+      assert.ok(
+        tool.outputSchema && Value.Check(tool.outputSchema, result.structuredContent),
+        context,
+      );
+      assert.partialDeepStrictEqual(
+        result.structuredContent,
+        {
+          text: fileCount === 0 ? "" : text(result),
+          matches: fileCount * 2,
+          files: fileCount,
+        },
+        context,
+      );
     }
   }));
 
@@ -959,21 +971,6 @@ test("context preserves logical CRLF anchors around a matched line", async () =>
         `5#${computeLineHash(5, "after survivor", 4)}│after survivor`,
       ].join("\n"),
     );
-  });
-});
-
-test("one matching file in each output mode → scripts receive its counts, which only files mode states in text", async () => {
-  await withDir(async (dir) => {
-    const a = join(dir, "a.ts");
-    await writeFile(a, "foo\n");
-    const tool = makeMockGrep(dir, DEFAULT_CONFIG, fakeBackend({ paths: [a] }).backend);
-    assert.ok(tool.outputSchema);
-    for (const outputMode of ["content", "count", "files"] as const) {
-      const result = await call(tool, { pattern: ["foo"], literal: true, outputMode });
-      assert.equal(result.content.length, outputMode === "files" ? 2 : 1);
-      assert.deepEqual(result.structuredContent, { text: text(result), matches: 1, files: 1 });
-      assert.ok(Value.Check(tool.outputSchema, result.structuredContent));
-    }
   });
 });
 

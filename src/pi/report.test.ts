@@ -22,11 +22,34 @@ import {
   SCRIPT_OUTPUT_SCHEMAS,
   type Report,
   type ReportTool,
+  type SuccessOutcome,
   type SuccessReport,
 } from "./report-schema.ts";
 
 // npm run typecheck checks these invalid callers; they must never run.
 const signal = new AbortController().signal;
+
+function invalidSuccessProducers() {
+  // @ts-expect-error A successful edit requires its publication status.
+  reportResult({ tool: "edit" }, [], DEFAULT_OUTPUT_BUDGETS);
+  // @ts-expect-error A successful write requires its publication status.
+  reportResult({ tool: "write" }, [], DEFAULT_OUTPUT_BUDGETS);
+  // @ts-expect-error A successful replacement requires its match count.
+  reportResult({ tool: "replace", publication: "PUBLISHED" }, [], DEFAULT_OUTPUT_BUDGETS);
+  // @ts-expect-error Grep must produce both counts, even when the payload shows them.
+  reportResult({ tool: "grep", matches: 1 }, [], DEFAULT_OUTPUT_BUDGETS);
+  // @ts-expect-error A payload showing counts still requires a match count.
+  reportResult({ tool: "grep", files: 1, payloadShowsCounts: true }, [], DEFAULT_OUTPUT_BUDGETS);
+  reportResult(
+    { tool: "read", nextOffset: 2 },
+    [],
+    DEFAULT_OUTPUT_BUDGETS,
+    // @ts-expect-error Visibility cannot provide a second value for a fact.
+    { implied: { nextOffset: 3 } },
+  );
+  // @ts-expect-error A read cannot hide grep counts.
+  reportResult({ tool: "read", payloadShowsCounts: true }, [], DEFAULT_OUTPUT_BUDGETS);
+}
 
 function invalidReportConstruction(report: Report) {
   // @ts-expect-error Removed facts cannot be supplied to a report.
@@ -290,7 +313,7 @@ test("mutation publication → recovery reflects whether the change was saved", 
 });
 
 test("success reports → omit repeated call fields while retaining details and payload", () => {
-  const report: SuccessReport = {
+  const report: SuccessOutcome = {
     tool: "write",
     path: "target.txt",
     publication: "PUBLISHED",
@@ -306,7 +329,7 @@ test("success reports → omit repeated call fields while retaining details and 
 });
 
 test("success results → scripts receive the stated fields, after the payload text for read and grep", () => {
-  const cases: [SuccessReport, string | undefined][] = [
+  const cases: [SuccessOutcome, string | undefined][] = [
     [{ tool: "read", path: "a.txt", nextOffset: 3 }, "one\ntwo"],
     [{ tool: "read", path: "a.txt" }, "one"],
     [{ tool: "grep", path: ["src"], matches: 2, files: 1 }, "src/a.ts"],
@@ -345,41 +368,6 @@ test("declared script outputs → require the fields every success of the tool c
     assert.equal(Value.Check(SCRIPT_OUTPUT_SCHEMAS[tool], value), false, JSON.stringify(value));
 });
 
-test("facts the payload or the call already shows → scripts receive them while text and details stay the same", () => {
-  const payload = [text("a.ts · 2 matches")];
-  const plain = reportResult(
-    { tool: "grep", path: ["a.ts"], matchLimit: 2 },
-    payload,
-    DEFAULT_OUTPUT_BUDGETS,
-  );
-  const counted = reportResult(
-    { tool: "grep", path: ["a.ts"], matchLimit: 2 },
-    payload,
-    DEFAULT_OUTPUT_BUDGETS,
-    { implied: { matches: 2, files: 1 } },
-  );
-  assert.deepEqual(counted.content, plain.content);
-  assert.deepEqual(counted.details, plain.details);
-  assert.deepEqual(counted.structuredContent, {
-    text: "a.ts · 2 matches",
-    matches: 2,
-    files: 1,
-    matchLimit: 2,
-    next: plain.details.report.next,
-  });
-  assert.ok(Value.Check(SCRIPT_OUTPUT_SCHEMAS.grep, counted.structuredContent));
-
-  const read = reportResult(
-    { tool: "read", path: "a.txt" },
-    [text("one")],
-    DEFAULT_OUTPUT_BUDGETS,
-    { implied: { nextOffset: 2 } },
-  );
-  assert.deepEqual(read.content, [text("one")]);
-  assert.deepEqual(read.structuredContent, { text: "one", nextOffset: 2 });
-  assert.ok(Value.Check(SCRIPT_OUTPUT_SCHEMAS.read, read.structuredContent));
-});
-
 test("success facts without a tool → use call context and enforce tool-specific fields", () => {
   const report: Report = { tool: "write", publication: "PUBLISHED" };
   const serialized = renderReport(report);
@@ -408,7 +396,7 @@ test("success facts without a tool → use call context and enforce tool-specifi
 });
 
 test("hook changes a success result → strips no block without matching report position and text", () => {
-  const report: SuccessReport = { tool: "write", path: "saved.txt", publication: "PUBLISHED" };
+  const report: SuccessOutcome = { tool: "write", path: "saved.txt", publication: "PUBLISHED" };
   const payload = [text(renderReport(report))];
   const original = reportResult(report, payload, DEFAULT_OUTPUT_BUDGETS);
   const cases = [
@@ -490,6 +478,8 @@ test("grep preview from invalid UTF-8 → recovery selects bash for the listed p
   const result = reportResult(
     {
       tool: "grep",
+      matches: 1,
+      files: 1,
       linePreviewLimit: DEFAULT_OUTPUT_BUDGETS.grepPreviewUnits,
       invalidUtf8: ["invalid.txt"],
     },
@@ -508,6 +498,7 @@ test("grep limits coincide → recovery prioritizes output, then match, then sca
       {
         tool: "grep",
         matches: 1,
+        files: 1,
         matchLimit: 1,
         scanLimit: formatByteSize(MAX_UNNARROWED_SCAN_BYTES),
         ...(key === "outputLimit" && {

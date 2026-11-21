@@ -198,7 +198,7 @@ export function makeGrepOverride({ cwd, config, budgets }: ToolEnvironment) {
           timeoutMs: config.grep.regexTimeoutMs,
           signal,
         });
-        const { payload, facts, implied, next } = await grepOutput({
+        const { payload, facts, payloadShowsCounts, next } = await grepOutput({
           cwd,
           search,
           outputMode,
@@ -213,10 +213,10 @@ export function makeGrepOverride({ cwd, config, budgets }: ToolEnvironment) {
           budget,
         });
         return reportResult(
-          { tool: "grep" as const, path: params.path, ...facts },
+          { tool: "grep", path: params.path, ...facts, payloadShowsCounts },
           payload === undefined ? [] : [{ type: "text" as const, text: payload }],
           budget,
-          { variant: next, implied },
+          { variant: next },
         );
       });
     },

@@ -28,7 +28,11 @@ import type { AgentToolResult, AgentToolUpdateCallback } from "@earendil-works/p
 import type { Static, TObject, TProperties } from "typebox";
 import { ACTION_FUSION_GUIDELINES, withThenRunSchema, type ThenRunInput } from "./action-fusion.ts";
 import { createArgumentBoundary, type CheckArguments } from "./argument-validation.ts";
-import { SCRIPT_OUTPUT_SCHEMAS, type MutationToolName } from "./report-schema.ts";
+import {
+  SCRIPT_OUTPUT_SCHEMAS,
+  type MutationFacts,
+  type MutationToolName,
+} from "./report-schema.ts";
 import { commitFile, FileMutationError, readEditableSnapshot } from "./file-commit.ts";
 import {
   describeMutationFailure,
@@ -38,7 +42,6 @@ import {
   type MutationScheduler,
   type MutationFinalDetails,
   type MutationResultDetails,
-  type MutationFacts,
 } from "./mutation-result.ts";
 import { canonicalPath } from "./path.ts";
 import { callSignal, throwIfCancelled } from "./error-text.ts";
@@ -88,7 +91,7 @@ interface MutationToolSpec<P extends TProperties, TDetails, TTool extends Mutati
   run(
     params: Omit<MutationParams<P>, "then_run">,
     target: MutationTarget,
-  ): Promise<MutationOutcome<TDetails, TTool>>;
+  ): Promise<MutationOutcome<TDetails, NoInfer<TTool>>>;
 }
 
 /**
@@ -150,7 +153,7 @@ export function mutationToolBase<
             ctx,
             onUpdate,
           });
-          const result = finalizeMutation(tool, displayPath, settled, budget);
+          const result = finalizeMutation(displayPath, settled, budget);
           // Pass on the session Bash result's request to stop after this tool batch.
           const terminate = settled.kind === "fused" ? settled.command.terminate : undefined;
           return terminate === undefined ? result : { ...result, terminate };

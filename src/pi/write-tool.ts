@@ -71,7 +71,7 @@ export function makeWriteOverride(env: MutationToolEnvironment) {
         return {
           commit,
           details: {},
-          facts: {},
+          facts: { tool: "write" },
         };
       },
     }),

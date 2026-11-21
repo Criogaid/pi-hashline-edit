@@ -45,10 +45,9 @@ import {
   type FailureReport,
   type OutcomeVariant,
   type ModelOmittedField,
-  type MutationToolName,
   type Report,
   type ReportTool,
-  type SuccessFacts,
+  type SuccessOutcome,
   type SuccessReport,
 } from "./report-schema.ts";
 
@@ -169,42 +168,36 @@ function boundFacts<R extends Partial<Report>>(report: R, budget: OutputBudgets)
 }
 
 /**
- * Facts a producer hands to scripts only, because the payload or the call already shows them to
- * the model: its tool's own facts, and a mutation's command outcome with the output that the
- * payload shows.
+ * Project one complete outcome into the script fields, the report, and the payload. Command
+ * output is payload text, and the report omits facts the call or payload already shows.
  */
-type ImpliedFacts<TTool extends ReportTool> = Partial<SuccessFacts<TTool>> &
-  (TTool extends MutationToolName ? Pick<Report, "then_run"> : unknown);
-
-/**
- * A successful result: the tool's payload, then its report when it states
- * anything beyond tool and path or when there is no payload. `variant` is the recovery
- * alternative the producing layer selected. Scripts receive one object
- * (`SCRIPT_OUTPUT_SCHEMAS`): the payload's text as `text` for `read` and `grep`, then the
- * stated fields and `implied`. The text, its `next`, and the details leave `implied` out.
- */
-export function reportResult<
-  TDetails extends object | undefined,
-  TTool extends ReportTool = ReportTool,
->(
-  report: SuccessReport & { tool: TTool },
-  payload: Content,
+export function reportResult<TDetails extends object | undefined>(
+  outcome: SuccessOutcome,
+  toolPayload: Content,
   budget: OutputBudgets,
   {
     details,
     variant,
-    implied,
   }: {
     readonly details?: TDetails;
     readonly variant?: OutcomeVariant;
-    readonly implied?: ImpliedFacts<TTool>;
   } = {},
 ): AgentToolResult<TDetails & ReportDetails<SuccessReport>> {
+  const bounded = boundFacts(outcome, budget);
+  const command = bounded.then_run;
+  const payload: Content = command?.output ? [{ type: "text", text: command.output }] : toolPayload;
   const complete = Object.fromEntries(
-    reportEntries({ ...boundFacts(report, budget), next: outcomeNext(report, variant) }),
+    reportEntries(bounded).flatMap(([key, value]) => {
+      if (bounded.callShowsNextOffset && key === "nextOffset") return [];
+      if (bounded.payloadShowsCounts && (key === "matches" || key === "files")) return [];
+      return [[key, key === "then_run" && command ? { status: command.status } : value]];
+    }),
   ) as SuccessReport;
-  const appendReport = Object.keys(statedFields(complete)).length > 0 || payload.length === 0;
-  const text = payload.flatMap((block) => (block.type === "text" ? [block.text] : [])).join("\n");
+  const next = outcomeNext(complete, variant);
+  if (next !== undefined) complete.next = next;
+  const appendReport =
+    reportEntries(complete).some(([key]) => !MODEL_OMITTED_FIELDS.has(key as ModelOmittedField)) ||
+    payload.length === 0;
   return {
     content: appendReport ? [...payload, { type: "text", text: renderReport(complete) }] : payload,
     details: {
@@ -212,10 +205,16 @@ export function reportResult<
       report: complete,
       ...(appendReport ? { reportBlockIndex: payload.length } : {}),
     } as TDetails & ReportDetails<SuccessReport>,
-    // Report fields are JSON values: the wire schema admits nothing else.
+    // The schema-derived outcome carries only JSON facts. The codec projects them in wire order.
     structuredContent: {
-      ...("text" in SCRIPT_OUTPUT_SCHEMAS[report.tool].properties ? { text } : {}),
-      ...statedFields({ ...complete, ...implied }),
+      ...("text" in SCRIPT_OUTPUT_SCHEMAS[bounded.tool].properties
+        ? {
+            text: payload
+              .flatMap((block) => (block.type === "text" ? [block.text] : []))
+              .join("\n"),
+          }
+        : {}),
+      ...statedFields({ ...bounded, next }),
     } as NonNullable<AgentToolResult<unknown>["structuredContent"]>,
   };
 }

@@ -142,32 +142,6 @@ function renderReadBody(
 
 const BYTES_PER_KIB = 1024;
 
-/** Where a read window ended: the file's end, a line limit, the byte budget, or its first line. */
-type WindowEnd =
-  | { readonly kind: "fileEnd" }
-  | { readonly kind: "lineLimit"; readonly nextOffset: number; readonly callerLimit: boolean }
-  | { readonly kind: "byteLimit"; readonly nextOffset: number }
-  | { readonly kind: "firstLineTooLong" };
-
-/**
- * The report facts a window end states. A caller's line limit alone tells the model where its
- * window ended, so the text states no continuation for it; scripts receive nextOffset either way.
- */
-function windowFacts(end: WindowEnd, limitText: string) {
-  switch (end.kind) {
-    case "fileEnd":
-      return { stated: {}, implied: {} };
-    case "lineLimit":
-      return end.callerLimit
-        ? { stated: {}, implied: { nextOffset: end.nextOffset } }
-        : { stated: { nextOffset: end.nextOffset }, implied: {} };
-    case "byteLimit":
-      return { stated: { nextOffset: end.nextOffset, outputLimit: limitText }, implied: {} };
-    case "firstLineTooLong":
-      return { stated: { lineTooLong: limitText }, implied: {} };
-  }
-}
-
 /** Build the read override (a ToolDefinition fragment for registerTool). */
 export function makeReadOverride({ cwd, config, budgets }: ToolEnvironment) {
   const { hashLen } = config;
@@ -346,14 +320,8 @@ export function makeReadOverride({ cwd, config, budgets }: ToolEnvironment) {
           });
         }
         const nextOffset = start + rows.length;
-        const windowEnd: WindowEnd = budgetExceeded
-          ? rows.length === 0
-            ? { kind: "firstLineTooLong" }
-            : { kind: "byteLimit", nextOffset }
-          : rows.length > 0 && nextOffset <= stats.totalLines
-            ? { kind: "lineLimit", nextOffset, callerLimit: params.limit !== undefined }
-            : { kind: "fileEnd" };
-        const { stated, implied } = windowFacts(windowEnd, formatByteSize(maxBytes));
+        const hasMoreLines = rows.length > 0 && (budgetExceeded || nextOffset <= stats.totalLines);
+        const limitText = budgetExceeded ? formatByteSize(maxBytes) : undefined;
         const header = formatReadHeader(
           serializePath(cwd, absPath),
           stats.totalLines,
@@ -362,10 +330,18 @@ export function makeReadOverride({ cwd, config, budgets }: ToolEnvironment) {
         );
         const text = anchored === false ? rows.join("\n") : `${header}\n${rows.join("\n")}`;
 
-        return reportResult({ ...report, ...stated }, [{ type: "text" as const, text }], budget, {
-          details: anchored === false ? { header } : undefined,
-          implied,
-        });
+        return reportResult(
+          {
+            ...report,
+            nextOffset: hasMoreLines ? nextOffset : undefined,
+            callShowsNextOffset: !budgetExceeded && params.limit !== undefined ? true : undefined,
+            outputLimit: hasMoreLines ? limitText : undefined,
+            lineTooLong: hasMoreLines ? undefined : limitText,
+          },
+          [{ type: "text", text }],
+          budget,
+          { details: anchored === false ? { header } : undefined },
+        );
       });
     },
   } satisfies ToolDefinition<typeof parameters, ReadDetails | undefined>;

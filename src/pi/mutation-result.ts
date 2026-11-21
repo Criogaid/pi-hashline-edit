@@ -20,7 +20,7 @@ import type {
   FailureReport,
   MutationToolName,
   ReportTool,
-  SuccessFacts,
+  MutationFacts,
   SuccessReport,
 } from "./report-schema.ts";
 import {
@@ -50,13 +50,6 @@ export function generateMutationDetails(
 ) {
   return { diff: displayCarriageReturns(generateRangeDiff(before, after, copied)) };
 }
-
-/** The facts a mutation tool states about its own outcome. */
-export type MutationFacts<TTool extends MutationToolName = MutationToolName> = {
-  [T in TTool]: SuccessFacts<T> & {
-    [K in Exclude<"matches", keyof SuccessFacts<T>>]?: never;
-  };
-}[TTool];
 
 /** A published (or no-op) mutation with its commit facts, before freshness is known. */
 export interface MutationOutcome<TDetails, TTool extends MutationToolName = MutationToolName> {
@@ -174,37 +167,31 @@ export function describeMutationFailure(
  * details. A fused call's command output is the result's payload, which the report follows with
  * the command's status; scripts read both in `then_run`.
  */
-export function finalizeMutation<TDetails extends object, TTool extends MutationToolName>(
-  tool: TTool,
+export function finalizeMutation<TDetails extends object>(
   path: string,
-  settled: SettledMutation<TDetails, NoInfer<TTool>>,
+  settled: SettledMutation<TDetails, MutationToolName>,
   budget: OutputBudgets,
 ): AgentToolResult<TDetails & ReportDetails<SuccessReport>> {
   const { commit, details, facts } = settled.outcome;
   const observation: FreshnessObservation = settled.kind === "alone" ? commit : settled.observation;
-  // Tool-indexed facts preserve the correlation that object spread loses.
-  const report = {
-    tool,
-    path,
-    publication: commit.publication,
-    ...facts,
-    freshness: observation.freshness === "unchanged" ? undefined : observation.freshness,
-    freshnessError:
-      observation.freshness === "unknown"
-        ? describeThrown(observation.error, budget.fieldBytes)
-        : undefined,
-  } as SuccessReport & { tool: MutationToolName };
-  if (settled.kind === "alone")
-    return reportResult<TDetails, MutationToolName>(report, [], budget, { details });
-
-  const { command } = settled;
-  const then_run = { status: command.status };
-  const output = command.result === undefined ? "" : commandText(command.result.content);
-  const shown = boundedText(output, budget.fieldBytes);
-  return reportResult<TDetails, MutationToolName>(
-    { ...report, then_run, progressError: observerFailure(settled.progressFailure, budget) },
-    shown ? [{ type: "text", text: shown }] : [],
+  const { command, progressFailure } = settled.kind === "fused" ? settled : {};
+  const output =
+    command?.result && boundedText(commandText(command.result.content), budget.fieldBytes);
+  return reportResult(
+    {
+      ...facts,
+      path,
+      publication: commit.publication,
+      freshness: observation.freshness === "unchanged" ? undefined : observation.freshness,
+      freshnessError:
+        observation.freshness === "unknown"
+          ? describeThrown(observation.error, budget.fieldBytes)
+          : undefined,
+      then_run: command && { status: command.status, ...(output ? { output } : {}) },
+      progressError: observerFailure(progressFailure, budget),
+    },
+    [],
     budget,
-    { details, implied: shown ? { then_run: { ...then_run, output: shown } } : {} },
+    { details },
   );
 }

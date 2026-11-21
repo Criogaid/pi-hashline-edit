@@ -399,6 +399,10 @@ test("successful write, edit, or replace → scripts receive the report's stated
       const result = await call(tool, args);
       assert.equal(result.isError, undefined);
       assert.equal(result.content.length, 1);
+      assert.deepEqual(result.structuredContent, {
+        publication: "PUBLISHED",
+        ...(tool.name === "replace" ? { matches: 1 } : {}),
+      });
       assert.deepEqual(result.structuredContent, JSON.parse(result.content[0].text));
       assert.ok(tool.outputSchema);
       assert.ok(Value.Check(tool.outputSchema, result.structuredContent));

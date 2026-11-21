@@ -11,7 +11,7 @@ import { join } from "node:path";
 import { createActionFusionScheduler } from "./action-fusion.ts";
 import { makeWriteOverride, DEFAULT_OUTPUT_BUDGETS } from "./tool-factories.testing.ts";
 import { makeReplaceTool } from "./tool-factories.testing.ts";
-import type { SuccessReport } from "./report-schema.ts";
+import type { MutationFacts, SuccessReport } from "./report-schema.ts";
 import { callTool, createToolContext } from "./tool-call.testing.ts";
 import { reportOf } from "./report.ts";
 
@@ -20,6 +20,8 @@ function invalidMutationResults(
   replacement: Extract<SuccessReport, { tool: "replace" }>,
   result: Awaited<ReturnType<ReturnType<typeof makeReplaceTool>["execute"]>>,
 ) {
+  // @ts-expect-error A replacement transform must supply the actual count before commit.
+  const missingMatches: MutationFacts<"replace"> = { tool: "replace" };
   // @ts-expect-error Edit reports cannot carry replacement counts.
   const countedEdit: Extract<SuccessReport, { tool: "edit" }> = { tool: "edit", matches: 1 };
   // @ts-expect-error A replacement report cannot be used as an edit report.
@@ -108,6 +110,8 @@ test("oversized command diagnostic → bounds model output and retains the origi
   const shown = commandOutput(result);
   assert.ok(shown && Buffer.byteLength(shown) <= budget.fieldBytes);
   assert.ok(shown.startsWith("opening\n") && shown.endsWith("\nlast line"));
+  assert.deepEqual(result.content[0], { type: "text", text: shown });
+  assert.equal(report?.then_run?.output, undefined);
   assert.deepEqual(displayedOutput, { type: "text", text: output });
 });
 

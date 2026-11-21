@@ -582,40 +582,62 @@ export const REPORT_SCHEMA = Type.Object({
 });
 type ReportFields = Static<typeof REPORT_SCHEMA>;
 
-const SUCCESS_DEFINITIONS = {
-  read: facts([], ["nextOffset", "outputLimit", "lineTooLong"]),
-  grep: facts(
-    [],
-    [
-      "matches",
-      "files",
-      "missing",
-      "omittedMissing",
-      "matchLimit",
-      "scanLimit",
-      "outputLimit",
-      "linePreviewLimit",
-      "invalidUtf8",
-      "diagnostics",
-      "literalPipe",
-    ],
-  ),
-  edit: facts([]),
-  replace: facts([], ["matches"]),
-  write: facts([]),
-} as const;
-export type ReportTool = keyof typeof SUCCESS_DEFINITIONS;
+const TEXT_OUTPUT = { text: Type.String() };
+const FILE_PUBLICATION = { publication: PUBLICATION_SCHEMA };
+const MUTATION_OUTPUT = facts([], ["freshness", "freshnessError", "then_run"]).properties;
+
+function scriptOutput<P extends TProperties>(properties: P) {
+  const fields = { ...properties, next: REPORT_SCHEMA.properties.next };
+  const order = Object.keys(REPORT_SCHEMA.properties);
+  // The payload's text sorts first. Reordering preserves the exact property schemas.
+  const ordered = Object.fromEntries(
+    Object.entries(fields).sort(([a], [b]) => order.indexOf(a) - order.indexOf(b)),
+  ) as typeof fields;
+  return Type.Object(ordered, { additionalProperties: false });
+}
+
+/** The full facts of each success, in script output order. Reports may omit facts already shown. */
+export const SCRIPT_OUTPUT_SCHEMAS = {
+  read: scriptOutput({
+    ...TEXT_OUTPUT,
+    ...facts([], ["nextOffset", "lineTooLong", "outputLimit"]).properties,
+  }),
+  grep: scriptOutput({
+    ...TEXT_OUTPUT,
+    ...facts(
+      ["matches", "files"],
+      [
+        "missing",
+        "omittedMissing",
+        "matchLimit",
+        "scanLimit",
+        "outputLimit",
+        "linePreviewLimit",
+        "invalidUtf8",
+        "diagnostics",
+        "literalPipe",
+      ],
+    ).properties,
+  }),
+  edit: scriptOutput({ ...FILE_PUBLICATION, ...MUTATION_OUTPUT }),
+  replace: scriptOutput({
+    ...FILE_PUBLICATION,
+    ...facts(["matches"]).properties,
+    ...MUTATION_OUTPUT,
+  }),
+  write: scriptOutput({ ...FILE_PUBLICATION, ...MUTATION_OUTPUT }),
+};
+export type ReportTool = keyof typeof SCRIPT_OUTPUT_SCHEMAS;
 /** Tools whose reports carry publication, freshness, and the then_run outcome. */
 const MUTATION_TOOLS = ["edit", "replace", "write"] as const satisfies readonly ReportTool[];
 export type MutationToolName = (typeof MUTATION_TOOLS)[number];
 /** Argument rejections may omit message; Pi supplies none for them. */
 const MESSAGE_OPTIONAL = "INVALID_ARGUMENTS" satisfies ErrorCode;
 
-const REPORT_TOOLS = Object.keys(SUCCESS_DEFINITIONS) as ReportTool[];
-const NON_MUTATION_TOOLS = REPORT_TOOLS.filter(
-  (tool): tool is Exclude<ReportTool, MutationToolName> =>
-    !(MUTATION_TOOLS as readonly ReportTool[]).includes(tool),
-);
+const REPORT_TOOLS = Object.keys(SCRIPT_OUTPUT_SCHEMAS) as ReportTool[];
+const isMutationTool = (tool: ReportTool): tool is MutationToolName =>
+  (MUTATION_TOOLS as readonly ReportTool[]).includes(tool);
+const NON_MUTATION_TOOLS = REPORT_TOOLS.filter((tool) => !isMutationTool(tool));
 const COMMON_WIRE_FIELDS = {
   path: REPORT_SCHEMA.properties.path,
   next: REPORT_SCHEMA.properties.next,
@@ -625,11 +647,7 @@ const MUTATION_WIRE_FIELDS = {
   then_run: REPORT_SCHEMA.properties.then_run,
   progressError: REPORT_SCHEMA.properties.progressError,
 };
-const MUTATION_SUCCESS_WIRE_FIELDS = {
-  ...MUTATION_WIRE_FIELDS,
-  freshness: REPORT_SCHEMA.properties.freshness,
-  freshnessError: REPORT_SCHEMA.properties.freshnessError,
-};
+const MUTATION_PRESENTATION = { progressError: REPORT_SCHEMA.properties.progressError };
 const FAILURE_SCHEMAS = [
   { tool: literalUnion(NON_MUTATION_TOOLS) },
   { tool: literalUnion(MUTATION_TOOLS), ...MUTATION_WIRE_FIELDS },
@@ -648,75 +666,30 @@ const FAILURE_SCHEMAS = [
     ),
   ),
 );
-/** The fields a success report of `tool` may carry beside its tool. */
-const successFields = (tool: ReportTool): TProperties => ({
-  ...COMMON_WIRE_FIELDS,
-  ...((MUTATION_TOOLS as readonly ReportTool[]).includes(tool) ? MUTATION_SUCCESS_WIRE_FIELDS : {}),
-  ...SUCCESS_DEFINITIONS[tool].properties,
-});
 const SUCCESS_SCHEMAS = REPORT_TOOLS.map((tool) =>
   Type.Object(
-    { ...successFields(tool), tool: Type.Literal(tool) },
+    {
+      ...COMMON_WIRE_FIELDS,
+      ...Type.Partial(Type.Omit(SCRIPT_OUTPUT_SCHEMAS[tool], ["text"])).properties,
+      ...(isMutationTool(tool) ? MUTATION_PRESENTATION : {}),
+      tool: Type.Literal(tool),
+    },
     { additionalProperties: false },
   ),
 );
-
-/**
- * Facts every success of a tool carries, so its script object requires them. grep's report text
- * leaves its counts out when the payload already shows them.
- */
-const SCRIPT_REQUIRED_FACTS: {
-  readonly [T in ReportTool]?: readonly (keyof SuccessFacts<T>)[];
-} = { grep: ["matches", "files"], replace: ["matches"] };
-
-/**
- * What a script receives from a successful call, by tool: one object with the content payload of
- * read and grep as `text`, then the tool's success fields in output order. A field is present
- * when the report text states it, or when the payload or the call already shows the model that
- * fact.
- */
-export const SCRIPT_OUTPUT_SCHEMAS = Object.fromEntries(
-  REPORT_TOOLS.map((tool) => {
-    const fields = successFields(tool);
-    const required: TProperties = {
-      // Every mutation states what it published.
-      ...((MUTATION_TOOLS as readonly ReportTool[]).includes(tool)
-        ? { publication: PUBLICATION_SCHEMA }
-        : {}),
-      ...Object.fromEntries(
-        (SCRIPT_REQUIRED_FACTS[tool] ?? []).map((name) => [name, FACT_FIELDS[name].schema]),
-      ),
-    };
-    const stated = Object.keys(REPORT_SCHEMA.properties).filter(
-      (name) => name in fields && !MODEL_OMITTED_FIELDS.has(name as ModelOmittedField),
-    );
-    return [
-      tool,
-      Type.Object(
-        {
-          ...((NON_MUTATION_TOOLS as readonly ReportTool[]).includes(tool)
-            ? { text: Type.String() }
-            : {}),
-          ...Object.fromEntries(stated.map((name) => [name, required[name] ?? fields[name]])),
-        },
-        { additionalProperties: false },
-      ),
-    ];
-  }),
-) as Record<ReportTool, TObject>;
 /** Closed records after the originating call supplies the tool; failure facts remain code-specific. */
 export const WIRE_REPORT_SCHEMA = Type.Union([...FAILURE_SCHEMAS, ...SUCCESS_SCHEMAS]);
 
 type SuccessFactNames = {
-  [Tool in ReportTool]: keyof Static<(typeof SUCCESS_DEFINITIONS)[Tool]>;
-}[ReportTool] &
-  string;
+  [Tool in ReportTool]: keyof SuccessFacts<Tool>;
+}[ReportTool];
 type ErrorFactNames = {
   [Code in ErrorCode]: keyof Static<(typeof ERROR_DEFINITIONS)[Code]["facts"]>;
-}[ErrorCode] &
-  string;
-type MutationWireFactNames = keyof Fields<typeof MUTATION_SUCCESS_WIRE_FIELDS> & string;
-type UnusedFactNames = Exclude<FactName, SuccessFactNames | ErrorFactNames | MutationWireFactNames>;
+}[ErrorCode];
+type UnusedFactNames = Exclude<
+  FactName,
+  SuccessFactNames | ErrorFactNames | keyof typeof MUTATION_PRESENTATION
+>;
 // Compilation fails here, naming the fact, when no tool, code, or mutation field carries it.
 ({}) satisfies Record<UnusedFactNames, never>;
 
@@ -727,21 +700,42 @@ type FailureToolFields =
   | ({ tool: MutationToolName } & Fields<typeof MUTATION_WIRE_FIELDS>)
   | { tool: (typeof NON_MUTATION_TOOLS)[number] };
 
-/** Facts owned by one successful tool, derived from its wire schema. */
-export type SuccessFacts<T extends ReportTool> = Static<(typeof SUCCESS_DEFINITIONS)[T]>;
+/** Success facts before projecting them into the model, script, and TUI results. */
+export type SuccessFacts<T extends ReportTool> = Omit<
+  Static<(typeof SCRIPT_OUTPUT_SCHEMAS)[T]>,
+  "text" | "next"
+>;
+
+/** The tool's own part of a mutation outcome. Publication comes directly from the commit. */
+export type MutationFacts<T extends MutationToolName> = {
+  [K in T]: ReportVariant<
+    { tool: K } & Omit<
+      SuccessFacts<K>,
+      keyof typeof FILE_PUBLICATION | keyof typeof MUTATION_OUTPUT
+    >
+  >;
+}[T];
 
 // Absent fields stay readable as undefined without admitting another variant's facts.
 type ReportVariant<T> = T extends unknown
   ? T & { [K in Exclude<keyof ReportFields, keyof T>]?: never }
   : never;
 
-/** A success report a tool may produce: its own facts, and mutation facts only for mutation tools. */
+type SuccessEnvelope<T extends ReportTool> = { tool: T } & Pick<Envelope, "path"> &
+  (T extends MutationToolName ? Fields<typeof MUTATION_PRESENTATION> : unknown);
+
+/** Producer facts are complete. The visibility flags only control what the report repeats. */
+export type SuccessOutcome = {
+  [T in ReportTool]: ReportVariant<SuccessEnvelope<T> & SuccessFacts<T>> & {
+    callShowsNextOffset?: T extends "read" ? true : never;
+    payloadShowsCounts?: T extends "grep" ? true : never;
+  };
+}[ReportTool];
+
+/** A success report may leave out facts the payload or originating call already shows. */
 export type SuccessReport = {
   [T in ReportTool]: ReportVariant<
-    Envelope & { tool: T } & (T extends MutationToolName
-        ? Fields<typeof MUTATION_SUCCESS_WIRE_FIELDS>
-        : unknown) &
-      SuccessFacts<T>
+    SuccessEnvelope<T> & Partial<SuccessFacts<T>> & Pick<Envelope, "next">
   >;
 }[ReportTool];
 
