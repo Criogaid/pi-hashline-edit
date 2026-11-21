@@ -219,11 +219,18 @@ function contentBlock(
   };
 }
 
-async function formatMatches(options: FormatMatchesOptions): Promise<{
-  readonly blocks: readonly (OutputBlock | ContentBlock)[];
-  /** Files left out after their second read, in result order. */
-  readonly warnings: readonly SearchWarning[];
-}> {
+async function formatMatches(options: FormatMatchesOptions): Promise<
+  | {
+      readonly mode: "content";
+      readonly blocks: readonly ContentBlock[];
+      readonly warnings: readonly SearchWarning[];
+    }
+  | {
+      readonly mode: Exclude<GrepOutputMode, "content">;
+      readonly blocks: readonly OutputBlock[];
+      readonly warnings: readonly [];
+    }
+> {
   const { cwd, files, outputMode, context, signal } = options;
   // Paths and counts state the searched snapshot as is; content rows come from a second read.
   if (outputMode !== "content") {
@@ -232,7 +239,7 @@ async function formatMatches(options: FormatMatchesOptions): Promise<{
       const matches = rows.length;
       return { lines: [outputMode === "files" ? path : `${path}: ${matches}`], matches };
     });
-    return { blocks, warnings: [] };
+    return { mode: outputMode, blocks, warnings: [] };
   }
   const blocks: ContentBlock[] = [];
   const warnings: SearchWarning[] = [];
@@ -243,7 +250,7 @@ async function formatMatches(options: FormatMatchesOptions): Promise<{
     if ("warning" in result) warnings.push(result.warning);
     else blocks.push(result.value);
   }
-  return { blocks, warnings };
+  return { mode: outputMode, blocks, warnings };
 }
 
 /** Fit whole rows, including any blank separator that belongs to a file header. */
@@ -295,17 +302,7 @@ export async function grepOutput(
   payloadShowsCounts?: true;
   next?: OutcomeVariant;
 }> {
-  const {
-    cwd,
-    search,
-    warnings,
-    missing,
-    outputMode,
-    context,
-    effectiveLimit,
-    literalPipe,
-    budget,
-  } = options;
+  const { cwd, search, warnings, missing, context, effectiveLimit, literalPipe, budget } = options;
   const searchFacts: SearchFacts = {
     scanLimit: search.scanLimitReached ? formatByteSize(MAX_UNNARROWED_SCAN_BYTES) : undefined,
     missing: missing.length ? [...missing] : undefined,
@@ -323,7 +320,11 @@ export async function grepOutput(
       },
     };
   }
-  const { blocks, warnings: rereadWarnings } = await formatMatches({
+  const {
+    mode,
+    blocks,
+    warnings: rereadWarnings,
+  } = await formatMatches({
     ...options,
     files: search.files,
   });
@@ -337,7 +338,7 @@ export async function grepOutput(
       searchFacts,
     );
 
-  const separator = outputMode === "content" ? "\n\n" : "\n";
+  const separator = mode === "content" ? "\n\n" : "\n";
   const { kept, shown, truncated } = fitPayload(
     blocks.map(({ lines }) => lines),
     separator,
@@ -346,22 +347,22 @@ export async function grepOutput(
   const invalidUtf8: string[] = [];
   let previewLimit = Infinity;
   let shownHits = 0;
-  for (const [index, count] of shown.entries()) {
-    const block = blocks[index];
-    // A file shown only by its header has no preview rows.
-    if (count <= 1 || !("hits" in block)) continue;
-    if (block.invalidPath !== undefined) invalidUtf8.push(block.invalidPath);
-    const minimum = block.previewMinimums.findLast(({ index }) => index < count);
-    previewLimit = Math.min(previewLimit, minimum?.units ?? Infinity);
-    shownHits += block.hits.findLastIndex(({ index }) => index < count) + 1;
-  }
-
   let next: OutcomeVariant | undefined;
-  if (truncated && outputMode === "content" && context > 0) {
-    const hitsOnly = blocks.filter((block) => "hits" in block).map(hitRows);
-    const withoutContext = fitPayload(hitsOnly, separator, budget.grepBytes).shown;
-    const hitCount = withoutContext.reduce((sum, count) => sum + Math.max(0, count - 1), 0);
-    if (hitCount > shownHits) next = "contextRows";
+  if (mode === "content") {
+    for (const [index, count] of shown.entries()) {
+      // A file shown only by its header has no preview rows.
+      if (count <= 1) continue;
+      const block = blocks[index];
+      if (block.invalidPath !== undefined) invalidUtf8.push(block.invalidPath);
+      const minimum = block.previewMinimums.findLast(({ index }) => index < count);
+      previewLimit = Math.min(previewLimit, minimum?.units ?? Infinity);
+      shownHits += block.hits.findLastIndex(({ index }) => index < count) + 1;
+    }
+    if (truncated && context > 0) {
+      const withoutContext = fitPayload(blocks.map(hitRows), separator, budget.grepBytes).shown;
+      const hitCount = withoutContext.reduce((sum, count) => sum + Math.max(0, count - 1), 0);
+      if (hitCount > shownHits) next = "contextRows";
+    }
   }
   return {
     payload: kept.join(""),
@@ -376,7 +377,7 @@ export async function grepOutput(
       diagnostics: diagnostics.length ? searchDiagnostics(diagnostics, cwd, budget) : undefined,
     },
     // One complete content or count block already states its path and match count.
-    payloadShowsCounts: (!truncated && blocks.length === 1 && outputMode !== "files") || undefined,
+    payloadShowsCounts: (!truncated && blocks.length === 1 && mode !== "files") || undefined,
     next,
   };
 }
