@@ -45,8 +45,12 @@ interface Info {
   readonly filter: Prefilter;
 }
 
-const EMPTY: Info = { exact: [[]], filter: ALL };
-const UNKNOWN: Info = { exact: [[GAP]], filter: ALL };
+const EMPTY = { exact: [[]], filter: ALL } satisfies Info;
+const UNKNOWN = { exact: [[GAP]], filter: ALL } satisfies Info;
+
+/** A node whose exact texts are known. */
+const hasExact = (info: Info): info is Info & { readonly exact: readonly Sequence[] } =>
+  info.exact !== undefined;
 
 interface Context {
   readonly ignoreCase: boolean;
@@ -179,8 +183,8 @@ function concatenate(infos: readonly Info[]): Info {
 }
 
 function alternate(infos: readonly Info[]): Info {
-  if (infos.every((info) => info.exact)) {
-    const exact = distinct(infos.flatMap((info) => info.exact!));
+  if (infos.every(hasExact)) {
+    const exact = distinct(infos.flatMap((info) => info.exact));
     if (exact.length <= MAX_SEQUENCES)
       return { exact, filter: orFilters(infos.map((info) => info.filter)) };
   }
@@ -206,7 +210,7 @@ function quantified(node: AST.Quantifier, ctx: Context): Info {
       if (exact.length <= MAX_SEQUENCES) return { exact, filter: ALL };
     }
     // The repetitions beyond the minimum are text of unknown length.
-    const exact = head && cross(head, UNKNOWN.exact!);
+    const exact = head && cross(head, UNKNOWN.exact);
     if (exact) return { exact, filter: node.min ? inner.filter : ALL };
   }
   return node.min === 0 ? UNKNOWN : { filter: filterOf(inner) };
