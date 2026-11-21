@@ -27,6 +27,7 @@ function copiedEofBody(
   eofStart: number,
   otherStart: number,
   length: number,
+  otherFirst: number,
 ): number | undefined {
   const eofRow = eof.length - 1;
   const bodyEnd = eof.start(eof.length);
@@ -36,6 +37,7 @@ function copiedEofBody(
   const start = otherStart + skip;
   const row = boundaryAtOrAfter(other, start);
   if (
+    row >= otherFirst &&
     row < other.length - 1 &&
     other.start(row) === start &&
     other.end(row) === otherStart + length
@@ -86,20 +88,17 @@ export function generateRangeDiff(
   let oldRow = 0;
   let newRow = 0;
   let equalRows = 0;
-  let changed = false;
 
   function row(kind: " " | "-" | "+", index: LineIndex, line: number): void {
     output.push(`${kind}${String(line + 1).padStart(width)} ${index.content(line)}`);
   }
 
-  function flushEqual(followedByChange: boolean): void {
-    if (changed || followedByChange) {
-      const head = changed ? Math.min(equalRows, CONTEXT_LINES) : 0;
-      const tail = followedByChange ? Math.max(head, equalRows - CONTEXT_LINES) : equalRows;
-      for (let i = 0; i < head; i++) row(" ", source, oldRow + i);
-      if (tail > head) output.push(`${" ".repeat(width + 2)}...`);
-      for (let i = tail; i < equalRows; i++) row(" ", source, oldRow + i);
-    }
+  function flushEqual(tailContext: number): void {
+    const head = output.length ? Math.min(equalRows, CONTEXT_LINES) : 0;
+    const tail = Math.max(head, equalRows - tailContext);
+    for (let i = 0; i < head; i++) row(" ", source, oldRow + i);
+    if (tail > head) output.push(`${" ".repeat(width + 2)}...`);
+    for (let i = tail; i < equalRows; i++) row(" ", source, oldRow + i);
     oldRow += equalRows;
     newRow += equalRows;
     equalRows = 0;
@@ -107,13 +106,23 @@ export function generateRangeDiff(
 
   function emitChange(kind: "-" | "+", count: number): void {
     if (!count) return;
-    flushEqual(true);
-    changed = true;
+    flushEqual(CONTEXT_LINES);
     if (kind === "-") {
       for (let i = 0; i < count; i++) row("-", source, oldRow++);
     } else {
       for (let i = 0; i < count; i++) row("+", target, newRow++);
     }
+  }
+
+  function provenEofPair(
+    { sourceStart, targetStart, length }: CopiedSpan,
+    oldStart: number,
+    newStart: number,
+  ) {
+    const newMatch = copiedEofBody(source, target, sourceStart, targetStart, length, newStart);
+    if (newMatch !== undefined) return { old: source.length - 1, new: newMatch };
+    const oldMatch = copiedEofBody(target, source, targetStart, sourceStart, length, oldStart);
+    if (oldMatch !== undefined) return { old: oldMatch, new: target.length - 1 };
   }
 
   function diffGap(oldEnd: number, newEnd: number, eofSpan?: CopiedSpan): void {
@@ -129,49 +138,34 @@ export function generateRangeDiff(
 
     const oldRows = rowTokens(source, oldStart, oldEnd);
     const newRows = rowTokens(target, newStart, newEnd);
-    let oldIdentity = -1;
-    let newIdentity = -1;
-    if (eofSpan) {
-      const { sourceStart, targetStart, length } = eofSpan;
-      const newMatch = copiedEofBody(source, target, sourceStart, targetStart, length);
-      if (newMatch !== undefined && newMatch >= newStart) {
-        oldIdentity = oldCount - 1;
-        newIdentity = newMatch - newStart;
-      } else {
-        const oldMatch = copiedEofBody(target, source, targetStart, sourceStart, length);
-        if (oldMatch !== undefined && oldMatch >= oldStart) {
-          oldIdentity = oldMatch - oldStart;
-          newIdentity = newCount - 1;
-        }
-      }
-    }
+    const proven = eofSpan && provenEofPair(eofSpan, oldStart, newStart);
     // A proven row must not compare equal to an unrelated occurrence of the same text.
     const identity = Symbol();
-    if (oldIdentity >= 0) oldRows[oldIdentity] = newRows[newIdentity] = identity;
+    if (proven) oldRows[proven.old - oldStart] = newRows[proven.new - newStart] = identity;
     const parts = diffArrays(oldRows, newRows, { maxEditLength: MAX_ALIGNMENT_EDITS });
+    // Keep proven identity even if the search is exhausted or its shortest path skips the pair.
     if (
-      parts &&
-      (oldIdentity < 0 ||
-        parts.some((part) => !part.added && !part.removed && part.value.includes(identity)))
+      !parts ||
+      (proven &&
+        !parts.some((part) => !part.added && !part.removed && part.value.includes(identity)))
     ) {
-      for (const part of parts) {
-        if (part.removed) emitChange("-", part.count);
-        else if (part.added) emitChange("+", part.count);
-        else equalRows += part.count;
+      if (proven) {
+        emitBlock(proven.old - oldStart, proven.new - newStart);
+        equalRows++;
       }
+      emitBlock(oldCount, newCount);
       return;
     }
-
-    // Keep proven identity even if the search is exhausted or its shortest path skips the pair.
-    if (oldIdentity >= 0) {
-      emitBlock(0, oldIdentity, 0, newIdentity);
-      equalRows++;
-      emitBlock(oldIdentity + 1, oldCount, newIdentity + 1, newCount);
-    } else {
-      emitBlock(0, oldCount, 0, newCount);
+    for (const part of parts) {
+      if (part.removed) emitChange("-", part.count);
+      else if (part.added) emitChange("+", part.count);
+      else equalRows += part.count;
     }
 
-    function emitBlock(fromOld: number, toOld: number, fromNew: number, toNew: number) {
+    function emitBlock(toOld: number, toNew: number) {
+      // Pending equal rows are aligned but have not advanced the output cursors.
+      const fromOld = oldRow + equalRows - oldStart;
+      const fromNew = newRow + equalRows - newStart;
       const commonLimit = Math.min(toOld - fromOld, toNew - fromNew);
       let prefix = 0;
       while (prefix < commonLimit && oldRows[fromOld + prefix] === newRows[fromNew + prefix])
@@ -209,6 +203,6 @@ export function generateRangeDiff(
     equalRows += count;
   }
   diffGap(source.length, target.length, copied.at(-1));
-  flushEqual(false);
+  if (output.length) flushEqual(0);
   return output.join("\n");
 }
