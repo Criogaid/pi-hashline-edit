@@ -144,7 +144,14 @@ type CheckedEditOp = {
     readonly [Field in OpFields<Name, "required"> & keyof EditOpInput]-?: NonNullable<
       EditOpInput[Field]
     >;
-  } & { readonly [Field in OpFields<Name, "optional"> & keyof EditOpInput]?: EditOpInput[Field] };
+  } & {
+    readonly [Field in OpFields<Name, "optional"> & keyof EditOpInput]?: EditOpInput[Field];
+  } & {
+    readonly [Field in Exclude<
+      EditItemField,
+      OpFields<Name, "required"> | OpFields<Name, "optional">
+    >]?: never;
+  };
 }[EditOpName];
 
 /** How to correct edit argument issues; each reason states only what is wrong. */
