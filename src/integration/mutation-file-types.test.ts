@@ -9,22 +9,31 @@ import { testEnvironment } from "../testing/process.testing.ts";
 
 const execFile = promisify(execFileCallback);
 
-test("FIFO mutation targets → reject without waiting for a writer, including through a symlink", {
-  skip: process.platform === "win32" ? "POSIX FIFO behavior" : false,
-}, async (t) => {
-  const directory = await mkdtemp(join(tmpdir(), "hashline-fifo-"));
-  t.after(() => rm(directory, { recursive: true, force: true }));
-  const fifo = join(directory, "pipe");
-  await execFile("mkfifo", [fifo]);
-  await symlink("pipe", join(directory, "alias"));
-  // Isolate a blocking open so a regression cannot leave the parent runner stuck.
-  await execFile(
-    process.execPath,
-    [fileURLToPath(new URL("./mutation-file-types.testing.ts", import.meta.url)), directory],
-    {
-      env: testEnvironment(directory),
-      timeout: 10_000,
-      killSignal: "SIGKILL",
-    },
-  );
-});
+for (const [kind, name] of [
+  [
+    "mutation",
+    "FIFO mutation targets → reject without waiting for a writer, including through a symlink",
+  ],
+  ["read", "FIFO read target → rejects without waiting for a writer"],
+] as const) {
+  test(name, { skip: process.platform === "win32" ? "POSIX FIFO behavior" : false }, async (t) => {
+    const directory = await mkdtemp(join(tmpdir(), "hashline-fifo-"));
+    t.after(() => rm(directory, { recursive: true, force: true }));
+    await execFile("mkfifo", [join(directory, "pipe")]);
+    if (kind === "mutation") await symlink("pipe", join(directory, "alias"));
+    // Isolate a blocking open so a regression cannot leave the parent runner stuck.
+    await execFile(
+      process.execPath,
+      [
+        fileURLToPath(new URL("./mutation-file-types.testing.ts", import.meta.url)),
+        directory,
+        kind,
+      ],
+      {
+        env: testEnvironment(directory),
+        timeout: 10_000,
+        killSignal: "SIGKILL",
+      },
+    );
+  });
+}

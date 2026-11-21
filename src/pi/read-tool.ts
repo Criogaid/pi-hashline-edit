@@ -281,7 +281,8 @@ export function makeReadOverride({
             : delegated;
         };
 
-        if ((await stat(absPath)).isDirectory()) {
+        // Opening a FIFO or device can block before any cancellation check runs.
+        if (!(await stat(absPath)).isFile()) {
           throw new HashlineError("NOT_REGULAR_FILE", PATH_ERROR_MESSAGES.NOT_REGULAR_FILE);
         }
         if (await detectSupportedImageMimeTypeFromFile(absPath)) return readNative();
