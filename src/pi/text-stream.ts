@@ -92,33 +92,33 @@ export async function scanTextFile(
   });
 }
 
-interface ScannedLine<Text extends string | undefined> {
+interface ScannedLine {
   readonly number: number;
   readonly byteLength: number;
   readonly carriageReturns: number;
-  readonly text: Text;
+  readonly text: string;
 }
 
-interface ScanOptions {
-  readonly signal: AbortSignal;
-  /** Retain at most this many bytes of a line; a longer line has no text. */
-  readonly maxLineBytes?: number;
-  readonly decoding?: Utf8Decoding;
+/** A bound on the bytes retained per line, and what receives a selected line beyond it. */
+interface LineBound {
+  readonly maxBytes: number;
+  /** Receives the number of a selected line longer than maxBytes, in place of onLine. */
+  readonly onExceeded: (number: number) => void;
 }
 
-/** A line's text: every line has it unless the scan bounds line bytes. */
-type LineText<Options extends ScanOptions> = Options extends { readonly maxLineBytes: number }
-  ? string | undefined
-  : string;
-
-/** Visit selected logical lines. */
-export async function scanTextLines<Options extends ScanOptions>(
+/** Visit selected logical lines; with a bound, a longer line goes to its onExceeded. */
+export async function scanTextLines(
   path: string,
   select: (number: number) => boolean,
-  onLine: (line: ScannedLine<LineText<Options>>) => void,
-  options: Options,
+  onLine: (line: ScannedLine) => void,
+  options: {
+    readonly signal: AbortSignal;
+    readonly decoding?: Utf8Decoding;
+    readonly bound?: LineBound;
+  },
 ) {
-  const { signal, decoding, maxLineBytes: maxBytes = Infinity } = options;
+  const { signal, decoding, bound } = options;
+  const maxBytes = bound ? bound.maxBytes : Infinity;
   let number = 1;
   let byteLength = 0;
   let carriageReturns = 0;
@@ -129,15 +129,16 @@ export async function scanTextLines<Options extends ScanOptions>(
     if (selected) {
       const stripCr = terminated && lastChar === "\r";
       const logicalBytes = byteLength - (stripCr ? 1 : 0);
-      let text = logicalBytes <= maxBytes ? parts.join("") : undefined;
-      if (stripCr && text !== undefined) text = text.slice(0, -1);
-      onLine({
-        number,
-        byteLength: logicalBytes,
-        carriageReturns: carriageReturns - (stripCr ? 1 : 0),
-        // Without maxLineBytes the bound is Infinity, so every line keeps its text.
-        text: text as LineText<Options>,
-      });
+      if (bound && logicalBytes > bound.maxBytes) bound.onExceeded(number);
+      else {
+        const text = parts.join("");
+        onLine({
+          number,
+          byteLength: logicalBytes,
+          carriageReturns: carriageReturns - (stripCr ? 1 : 0),
+          text: stripCr ? text.slice(0, -1) : text,
+        });
+      }
       carriageReturns = 0;
       byteLength = 0;
       parts = [];

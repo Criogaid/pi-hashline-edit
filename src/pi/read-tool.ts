@@ -330,15 +330,18 @@ export function makeReadOverride({
             const rowBytes =
               byteLength + carriageReturns * crExpansion + Buffer.byteLength(formatRow(number, ""));
             const nextBytes = outputBytes + rowBytes + (rows.length > 0 ? 1 : 0);
-            // A line without text is longer than the whole budget.
-            if (text === undefined || nextBytes > maxBytes) {
+            if (nextBytes > maxBytes) {
               budgetExceeded = true;
               return;
             }
             rows.push(formatRow(number, text));
             outputBytes = nextBytes;
           },
-          { signal, maxLineBytes: maxBytes },
+          {
+            signal,
+            // A line longer than the whole budget ends the window.
+            bound: { maxBytes, onExceeded: () => (budgetExceeded = true) },
+          },
         );
         if (stats.hasNul) return readNative();
         // Rows without a header show no rows and one empty row as the same text, so a window that

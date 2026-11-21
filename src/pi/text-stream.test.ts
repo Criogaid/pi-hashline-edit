@@ -42,8 +42,8 @@ test("streamed lines preserve BOM, standalone CR, and boundaries split across ch
         () => true,
         (line) => {
           assert.equal(line.number, lines.length + 1);
-          assert.equal(line.byteLength, Buffer.byteLength(line.text!));
-          lines.push(line.text!);
+          assert.equal(line.byteLength, Buffer.byteLength(line.text));
+          lines.push(line.text);
         },
         { signal },
       );
@@ -86,20 +86,21 @@ test("streamed scans → return the revision of every original byte and byte-bas
     }
   }));
 
-test("streamed selection discards oversized content and still counts and reads subsequent lines", async () =>
+test("selected line exceeds the byte bound → reports its number and still delivers subsequent fitting lines", async () =>
   withFile(async (path) => {
-    await writeFile(path, "z".repeat(2 * 1024 * 1024) + "\n界\r\nkeep\nignored\n");
+    await writeFile(path, "z".repeat(2 * 1024 * 1024) + "\n界x\r\nkeep\nignored\n");
     const seen: unknown[] = [];
+    const exceeded: number[] = [];
     const stats = await scanTextLines(
       path,
       (number) => number <= 3,
       (line) => seen.push(line),
-      { signal, maxLineBytes: 4 },
+      { signal, bound: { maxBytes: 4, onExceeded: (number) => exceeded.push(number) } },
     );
     assert.equal(stats.totalLines, 4);
+    assert.deepEqual(exceeded, [1]);
     assert.deepEqual(seen, [
-      { number: 1, byteLength: 2 * 1024 * 1024, carriageReturns: 0, text: undefined },
-      { number: 2, byteLength: 3, carriageReturns: 0, text: "界" },
+      { number: 2, byteLength: 4, carriageReturns: 0, text: "界x" },
       { number: 3, byteLength: 4, carriageReturns: 0, text: "keep" },
     ]);
   }));
@@ -150,7 +151,7 @@ test("lossy decoding reports invalid UTF-8 across chunk boundaries and preserves
     const stats = await scanTextLines(
       path,
       () => true,
-      (line) => lines.push(line.text ?? ""),
+      (line) => lines.push(line.text),
       {
         signal,
         decoding: "lossy",
