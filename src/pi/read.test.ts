@@ -704,6 +704,37 @@ test("raw read rendering with an offset → numbers every source line from the h
     }
   }));
 
+test('read with anchors coerced from "false" → expanded card preserves the file lines', async () =>
+  withDir(async (dir) => {
+    const tool = makeReadOverride(dir, DEFAULT_CONFIG);
+    const render = tool.renderResult;
+    assert.ok(render);
+    const args = { path: "raw.txt", anchors: "false" };
+    await writeFile(join(dir, args.path), "first\nsecond\n");
+    const result = await callTool(tool, args);
+    const rendered = render(result, { expanded: true, isPartial: false }, stubTheme, {
+      args,
+      state: {},
+      cwd: dir,
+      toolCallId: "test",
+      lastComponent: undefined,
+      invalidate() {},
+      executionStarted: true,
+      durationMs: undefined,
+      outputPad: 1,
+      keyText: () => "",
+      keyHint: (_key, description) => description,
+      argsComplete: true,
+      isPartial: false,
+      expanded: true,
+      showImages: false,
+      isError: false,
+    })
+      .render(120)
+      .map((line) => line.trimEnd());
+    assert.deepEqual(rendered.slice(1), ["   1: first", "   2: second"]);
+  }));
+
 test("read window whose line numbers differ in width → TUI rows share one line-number column", async () =>
   withDir(async (dir) => {
     const tool = makeReadOverride(dir, DEFAULT_CONFIG);
