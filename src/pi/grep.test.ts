@@ -74,8 +74,8 @@ function fakeBackend(options: FakeOptions = {}) {
     };
   };
   const backend = {
-    runRgPaths: (args, _signal, onPath) => run("paths", args, onPath),
-    runRgLines: (args, _signal, _maxLines, onFile) =>
+    runRgPaths: (args, _cwd, _signal, onPath) => run("paths", args, onPath),
+    runRgLines: (args, _cwd, _signal, _maxLines, onFile) =>
       run("lines", args, (file) => onFile(file, options.lines)),
     rgRejectsPatterns: async (args) => {
       calls.push({ kind: "probe", args });

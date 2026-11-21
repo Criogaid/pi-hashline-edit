@@ -175,34 +175,36 @@ test("real rg candidates → include every JS row and preserve confirmed output 
     await t.test(`${pattern} ignoreCase=${ignoreCase} → identical confirmed results`, async () => {
       const candidates = new Map<string, readonly number[] | undefined>();
       const filtered = makeMockGrep(directory, DEFAULT_CONFIG, {
-        runRgPaths(args, signal, onPath) {
-          return runRgPaths(args, signal, (path) => {
+        runRgPaths(args, cwd, signal, onPath) {
+          return runRgPaths(args, cwd, signal, (path) => {
             candidates.set(path, undefined);
             return onPath(path);
           });
         },
-        runRgLines(args, signal, maxLines, onFile) {
-          return runRgLines(args, signal, maxLines, (path, lines) => {
+        runRgLines(args, cwd, signal, maxLines, onFile) {
+          return runRgLines(args, cwd, signal, maxLines, (path, lines) => {
             candidates.set(path, lines);
             return onFile(path, lines);
           });
         },
       });
       const full = makeMockGrep(directory, DEFAULT_CONFIG, {
-        runRgPaths(args, signal, onPath) {
+        runRgPaths(args, cwd, signal, onPath) {
           const scopeStart = args.indexOf("--null");
           assert.ok(scopeStart >= 0);
           return runRgPaths(
             [...COMMON_RG_ARGS, "--files", ...args.slice(scopeStart)],
+            cwd,
             signal,
             onPath,
           );
         },
-        runRgLines(args, signal, _maxLines, onFile) {
+        runRgLines(args, cwd, signal, _maxLines, onFile) {
           const scopeStart = args.indexOf("--hidden");
           assert.ok(scopeStart >= 0);
           return runRgPaths(
             [...COMMON_RG_ARGS, "--files", "--null", ...args.slice(scopeStart)],
+            cwd,
             signal,
             (path) => onFile(path, undefined),
           );

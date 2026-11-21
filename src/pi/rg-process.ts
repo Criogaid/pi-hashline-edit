@@ -79,11 +79,17 @@ export function isRgArgumentLimit(error: unknown): boolean {
   return code === "ENAMETOOLONG" || code === "E2BIG";
 }
 
-function startRg(args: readonly string[], signal?: AbortSignal): RunningProcess {
+/** cwd is the directory rg resolves `--glob` patterns against; undefined inherits the host's. */
+function startRg(
+  args: readonly string[],
+  cwd: string | undefined,
+  signal?: AbortSignal,
+): RunningProcess {
   throwIfCancelled(signal);
   let child: ChildProcessByStdio<null, Readable, Readable>;
   try {
     child = spawn(rgPath, [...args], {
+      cwd,
       stdio: ["ignore", "pipe", "pipe"],
       shell: false,
     });
@@ -147,10 +153,11 @@ async function* nulDelimitedRecords(stream: Readable): AsyncGenerator<Buffer> {
 /** Run rg while read consumes its stdout; read returns false to stop rg early. */
 async function runRg(
   args: readonly string[],
+  cwd: string | undefined,
   signal: AbortSignal | undefined,
   read: (stdout: Readable) => Promise<boolean>,
 ): Promise<RgRunResult> {
-  const rg = startRg(args, signal);
+  const rg = startRg(args, cwd, signal);
   try {
     const stopped = !(await read(rg.child.stdout));
     if (stopped) rg.kill();
@@ -167,10 +174,11 @@ async function runRg(
 /** Read NUL-delimited UTF-8 paths from an owned rg process. */
 export function runRgPaths(
   args: string[],
+  cwd: string | undefined,
   signal: AbortSignal | undefined,
   onPath: (path: string) => boolean | Promise<boolean>,
 ): Promise<RgRunResult> {
-  return runRg(args, signal, async (stdout) => {
+  return runRg(args, cwd, signal, async (stdout) => {
     for await (const record of nulDelimitedRecords(stdout)) {
       throwIfCancelled(signal);
       if (!(await onPath(decodePath(record)))) return false;
@@ -189,6 +197,7 @@ export async function rgRejectsPatterns(
 ): Promise<boolean> {
   const result = await runRg(
     [...COMMON_RG_ARGS, ...patternArgs, "--", "-"],
+    undefined,
     signal,
     async (stdout) => {
       for await (const _ of stdout);
@@ -224,11 +233,12 @@ export const LINE_LISTING_ARGS = [
  */
 export function runRgLines(
   args: string[],
+  cwd: string | undefined,
   signal: AbortSignal | undefined,
   maxLines: number,
   onFile: (path: string, lines: readonly number[] | undefined) => boolean | Promise<boolean>,
 ): Promise<RgRunResult> {
-  return runRg(args, signal, async (stdout) => {
+  return runRg(args, cwd, signal, async (stdout) => {
     let path: string | undefined;
     let lines: number[] | undefined = [];
     let pending: Buffer = Buffer.alloc(0);

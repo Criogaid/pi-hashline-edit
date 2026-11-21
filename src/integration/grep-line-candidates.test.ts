@@ -159,18 +159,18 @@ test("Cartesian adversarial bytes × syntax × case mode × assertion positions 
             async runRgPaths() {
               assert.fail(`unexpected file fallback: ${JSON.stringify(query)}`);
             },
-            runRgLines: (args, signal, maxLines, onFile) => {
+            runRgLines: (args, cwd, signal, maxLines, onFile) => {
               assert.equal(maxLines, candidateLineLimit);
               const emitted = args.flatMap((arg, index) => (arg === "-e" ? [args[index + 1]] : []));
               assert.deepEqual(emitted, translated);
-              return runRgLines(args, signal, maxLines, (path, lines) => {
+              return runRgLines(args, cwd, signal, maxLines, (path, lines) => {
                 candidates.set(path, lines);
                 listedRows += lines?.length ?? 0;
                 return onFile(path, lines);
               });
             },
           },
-          scope: { globs: [], searchPaths: [directory] },
+          scope: { cwd: directory, globs: [], searchPaths: [directory] },
           query,
           limit,
           timeoutMs: processTimeoutMs,

@@ -199,9 +199,9 @@ export function makeGrepOverride({ cwd, config, budgets }: ToolEnvironment) {
         };
         const globs = params.glob ?? [];
         const { paths, missing } = await resolveSearchPaths(cwd, params.path);
-        const admitted = await filterExplicitFilesByGlob(globs, paths, signal);
+        const admitted = await filterExplicitFilesByGlob(cwd, globs, paths, signal);
         const { warnings: searchWarnings, ...search } = await searchFiles({
-          scope: { globs, searchPaths: admitted.searchPaths },
+          scope: { cwd, globs, searchPaths: admitted.searchPaths },
           query,
           limit: effectiveLimit,
           timeoutMs: config.grep.regexTimeoutMs,

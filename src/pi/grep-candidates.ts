@@ -10,7 +10,7 @@ import { stat } from "node:fs/promises";
 import { resolve } from "node:path";
 import type { GrepQuery } from "../core/search.ts";
 import { extractPrefilter, type Literal } from "../core/search-analysis.ts";
-import { ListedFiles, scopeArgs, type SearchScope } from "./grep-scope.ts";
+import { ListedFiles, rgWorkingDirectory, scopeArgs, type SearchScope } from "./grep-scope.ts";
 import {
   COMMON_RG_ARGS,
   isRgArgumentLimit,
@@ -104,6 +104,7 @@ export async function listCandidates(options: {
     return onCandidate({ filePath, lines });
   };
   const scoped = [...scopeArgs(scope), "--", ...scope.searchPaths];
+  const cwd = rgWorkingDirectory(scope);
 
   /** Narrowing listings, most selective first; each is derived only when the one before gives way. */
   function* patternStages(): Generator<PatternStage> {
@@ -121,6 +122,7 @@ export async function listCandidates(options: {
               ...patternArgs,
               ...scoped,
             ],
+            cwd,
             signal,
             MAX_CANDIDATE_LINES,
             offer,
@@ -144,6 +146,7 @@ export async function listCandidates(options: {
             "--null",
             ...scoped,
           ],
+          cwd,
           signal,
           offer,
         ),
@@ -165,6 +168,7 @@ export async function listCandidates(options: {
   scanAll = true;
   const listing = await runRgPaths(
     [...COMMON_RG_ARGS, "--files", "--null", ...scoped],
+    cwd,
     signal,
     offer,
   );

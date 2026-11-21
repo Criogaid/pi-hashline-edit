@@ -74,13 +74,14 @@ test("upstream regex witnesses × LF/CRLF/malformed bytes → sound candidates, 
         const result = await searchWithMockRg({
           backend: {
             runRgPaths: async () => assert.fail("unexpected file fallback"),
-            runRgLines: (args, signal, maxLines, onFile) =>
-              runRgLines(args, signal, maxLines, (path, lines) => {
+            runRgLines: (args, cwd, signal, maxLines, onFile) =>
+              runRgLines(args, cwd, signal, maxLines, (path, lines) => {
                 candidates.set(resolve(path), lines);
                 return onFile(path, lines);
               }),
           },
           scope: {
+            cwd: directory,
             globs: [],
             searchPaths: inputs.map((input) => input.filePath),
           },
@@ -135,6 +136,7 @@ test("real rg AND/OR file prefilter → broad candidates retain exact JS results
   const candidates: string[] = [];
   const listing = await runRgPaths(
     [...(await fileCandidateArgs(query)), "--null", "--", directory],
+    directory,
     AbortSignal.timeout(timeoutMs),
     (path) => {
       candidates.push(resolve(path));
@@ -146,7 +148,7 @@ test("real rg AND/OR file prefilter → broad candidates retain exact JS results
   assert.deepEqual(candidates.sort(), [paths[0], paths[1], paths[2], paths[3], paths[4]].sort());
   const result = await searchWithMockRg({
     backend: { runRgPaths, runRgLines },
-    scope: { globs: [], searchPaths: [directory] },
+    scope: { cwd: directory, globs: [], searchPaths: [directory] },
     query,
     limit: 100,
     timeoutMs,
@@ -185,7 +187,7 @@ test("oversized line translation → file prefilter fallback preserves JS result
       },
       runRgLines: async () => assert.fail("translation budget must select file prefilter"),
     },
-    scope: { globs: [], searchPaths: [path] },
+    scope: { cwd: directory, globs: [], searchPaths: [path] },
     query,
     limit: 10,
     timeoutMs,

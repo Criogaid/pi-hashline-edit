@@ -62,7 +62,7 @@ export async function fileCandidateArgs(query: GrepQuery): Promise<string[]> {
     () =>
       listCandidates({
         query,
-        scope: { globs: [], searchPaths: [process.cwd()] },
+        scope: { cwd: process.cwd(), globs: [], searchPaths: [process.cwd()] },
         signal: new AbortController().signal,
         stopped: () => false,
         onCandidate: async () => true,

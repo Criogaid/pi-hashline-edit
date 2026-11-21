@@ -66,7 +66,7 @@ test("prefilter hits an unreadable path without matches → preserves the diagno
 
   const offered: string[] = [];
   const { listing } = await listCandidates({
-    scope: { searchPaths: [directory], globs: [] },
+    scope: { cwd: directory, searchPaths: [directory], globs: [] },
     query: { patterns: ["needle"], literal: true, ignoreCase: false, multiline: true },
     signal: new AbortController().signal,
     stopped: () => false,

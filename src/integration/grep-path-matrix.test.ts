@@ -30,14 +30,14 @@ test("Cartesian literal mode × case override × line mode × bytes → the real
   const limit = inputs.reduce((sum, input) => sum + input.bytes.length, 0);
   const candidates = new Map<string, readonly number[] | undefined>();
   const tool = makeMockGrep(directory, DEFAULT_CONFIG, {
-    runRgPaths(args, signal, onPath) {
-      return runRgPaths(args, signal, (path) => {
+    runRgPaths(args, cwd, signal, onPath) {
+      return runRgPaths(args, cwd, signal, (path) => {
         candidates.set(basename(path), undefined);
         return onPath(path);
       });
     },
-    runRgLines(args, signal, maxLines, onFile) {
-      return runRgLines(args, signal, maxLines, (path, lines) => {
+    runRgLines(args, cwd, signal, maxLines, onFile) {
+      return runRgLines(args, cwd, signal, maxLines, (path, lines) => {
         candidates.set(basename(path), lines);
         return onFile(path, lines);
       });

@@ -84,14 +84,26 @@ async function runChild(
   mock.module(rgProcessUrl, {
     namedExports: {
       ...rgProcess,
-      runRgLines: (args: string[], signal: AbortSignal, maxLines: number, onFile: Function) =>
-        rgProcess.runRgLines(engine(args), signal, maxLines, (path: string, lines?: number[]) => {
-          candidateFiles++;
-          candidateLines += lines?.length ?? 0;
-          return onFile(path, lines);
-        }),
-      runRgPaths: (args: string[], signal: AbortSignal, onPath: Function) =>
-        rgProcess.runRgPaths(args, signal, (path: string) => {
+      runRgLines: (
+        args: string[],
+        cwd: string,
+        signal: AbortSignal,
+        maxLines: number,
+        onFile: Function,
+      ) =>
+        rgProcess.runRgLines(
+          engine(args),
+          cwd,
+          signal,
+          maxLines,
+          (path: string, lines?: number[]) => {
+            candidateFiles++;
+            candidateLines += lines?.length ?? 0;
+            return onFile(path, lines);
+          },
+        ),
+      runRgPaths: (args: string[], cwd: string, signal: AbortSignal, onPath: Function) =>
+        rgProcess.runRgPaths(args, cwd, signal, (path: string) => {
           candidateFiles++;
           return onPath(path);
         }),
@@ -129,7 +141,7 @@ async function runChild(
   };
   const search = () =>
     searchFiles({
-      scope: { globs: [], searchPaths: [resolve(corpus)] },
+      scope: { cwd: process.cwd(), globs: [], searchPaths: [resolve(corpus)] },
       query: grepQuery,
       limit,
       timeoutMs,

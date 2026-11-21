@@ -12,6 +12,8 @@ import { errnoCode, HashlineError, PATH_ERROR_MESSAGES } from "../core/errors.ts
 import type { SearchWarning } from "./error-text.ts";
 
 export interface SearchScope {
+  /** The workspace; relative globs resolve against it. */
+  readonly cwd: string;
   readonly globs: readonly string[];
   readonly searchPaths: readonly string[];
 }
@@ -26,6 +28,14 @@ const globArgs = (globs: readonly string[]) => globs.flatMap((glob) => ["--glob"
 export function scopeArgs(scope: SearchScope): string[] {
   return ["--hidden", ...globArgs(scope.globs), "--glob", "!.git"];
 }
+
+/**
+ * The working directory of a scope's rg runs: the workspace when the caller gave globs, which rg
+ * resolves against it. Without them rg inherits the host's, so a search of existing paths does
+ * not depend on the workspace directory still existing.
+ */
+export const rgWorkingDirectory = (scope: SearchScope): string | undefined =>
+  scope.globs.length ? scope.cwd : undefined;
 
 interface SearchPathInfo {
   readonly path: string;
@@ -101,6 +111,7 @@ export class ListedFiles {
  * listing's diagnostic when it may explain an exclusion.
  */
 export async function filterExplicitFilesByGlob(
+  cwd: string,
   globs: readonly string[],
   paths: readonly SearchPathInfo[],
   signal: AbortSignal | undefined,
@@ -124,7 +135,7 @@ export async function filterExplicitFilesByGlob(
     "--",
     ...parents,
   ];
-  const listed = await runRgPaths(args, signal, async (path) => {
+  const listed = await runRgPaths(args, cwd, signal, async (path) => {
     allowed.add(path);
     return true;
   });

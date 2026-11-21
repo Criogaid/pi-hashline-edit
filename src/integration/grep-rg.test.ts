@@ -339,6 +339,7 @@ test("shared rg runner stops and cleans up after limits, callback failures, and 
       let aliveAtCallback = false;
       const run = runRgPaths(
         args,
+        directory,
         AbortSignal.any([controller.signal, AbortSignal.timeout(processTimeoutMs)]),
         (path) => {
           consumed.push(path);
@@ -360,7 +361,7 @@ test("shared rg runner stops and cleans up after limits, callback failures, and 
     }
     missingExecutable = true;
     await assert.rejects(
-      runRgPaths([], undefined, () => true),
+      runRgPaths([], directory, undefined, () => true),
       /Failed to run ripgrep/,
     );
   } finally {
@@ -692,6 +693,28 @@ test("explicit file paths obey ordered glob filters without inheriting ignore ru
     assert.equal(grepCounts(none).matches, 0);
   } finally {
     await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("grep glob with a directory component → resolves from the tool workspace", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "hl-grep-workspace-glob-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  await mkdir(join(directory, "src"));
+  await writeFile(join(directory, "src", "a.ts"), "hit\n");
+  const tool = makeGrepOverride(directory, DEFAULT_CONFIG);
+  for (const searchPath of [".", "src/a.ts"]) {
+    await t.test(searchPath, async () => {
+      const result = await callTool(tool, {
+        pattern: ["hit"],
+        literal: true,
+        glob: ["src/*.ts"],
+        path: [searchPath],
+        outputMode: "files",
+      });
+      assert.equal(result.isError, undefined, JSON.stringify(reportOf(result, "grep")));
+      assert.deepEqual(grepCounts(result), { matches: 1, files: 1 });
+      assert.deepEqual(result.content[0], { type: "text", text: "src/a.ts" });
+    });
   }
 });
 
@@ -1668,6 +1691,7 @@ test("oversized candidate path record → bounded runner rejects before invoking
         "process.stdout.write(Buffer.alloc(Number(process.argv[1]), 97))",
         String(MAX_RG_RECORD_BYTES + 1),
       ],
+      process.cwd(),
       AbortSignal.timeout(10_000),
       () => {
         called = true;

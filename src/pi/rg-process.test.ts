@@ -56,6 +56,7 @@ async function parseListing(
         JSON.stringify(chunks.map((chunk) => Buffer.from(chunk).toString("base64"))),
         ...(stop ? ["wait"] : []),
       ],
+      process.cwd(),
       AbortSignal.timeout(parserTimeoutMs),
       maxLines,
       (path, lines) => {

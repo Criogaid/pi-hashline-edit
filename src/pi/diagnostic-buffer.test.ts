@@ -99,6 +99,7 @@ test("stderr overflow → UTF-8 opening and final cause survive", async (t) => {
         "import { createReadStream } from 'node:fs'; createReadStream(process.argv[1]).pipe(process.stderr)",
         path,
       ],
+      directory,
       AbortSignal.timeout(10000),
       () => true,
     );

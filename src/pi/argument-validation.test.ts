@@ -481,8 +481,8 @@ test("null optional fields → grep applies defaults without filename filters", 
     return { code: 0, stderr: "", stopped: false };
   };
   const tool = makeMockGrep(cwd, config, {
-    runRgPaths: (args, _signal, onPath) => discover(args, onPath),
-    runRgLines: (args, _signal, _maxLines, onFile) =>
+    runRgPaths: (args, _cwd, _signal, onPath) => discover(args, onPath),
+    runRgLines: (args, _cwd, _signal, _maxLines, onFile) =>
       discover(args, (file) => onFile(file, undefined)),
   });
   const result = await callTool(tool, {

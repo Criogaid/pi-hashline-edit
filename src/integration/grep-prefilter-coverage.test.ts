@@ -148,6 +148,7 @@ test("Cartesian prefilter coverage × composition × case mode × bytes → real
         const actual = new Set<string>();
         const result = await runRgPaths(
           [...(await fileCandidateArgs(group.query)), "--null", "--", directory],
+          directory,
           AbortSignal.timeout(processTimeoutMs),
           (path) => {
             actual.add(basename(path));
