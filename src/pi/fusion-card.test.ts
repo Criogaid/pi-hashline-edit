@@ -8,7 +8,7 @@ import { registerFusionCards } from "./fusion-card.ts";
 import { createActionFusionScheduler, observeFusionToolCall } from "./action-fusion.ts";
 import type { ActionFusionProgress } from "./report-schema.ts";
 import type { CommandResult } from "./report-schema.ts";
-import { commandText } from "./mutation-result.ts";
+import { contentText } from "@earendil-works/pi-ai";
 import { reportOf } from "./report.ts";
 import { makeWriteOverride } from "./tool-factories.testing.ts";
 import { commandCompletion, commandOutput, createFusionContext } from "./action-fusion.testing.ts";
@@ -276,7 +276,7 @@ test("Fusion command outcomes → progress, cards, and reports preserve command 
       assert.ok(block?.type === "text");
       const report = reportOf({ content: [block] }, "write");
       assert.ok(report);
-      const output = expected ? commandText(expected.content) : "";
+      const output = expected ? contentText(expected.content) : "";
       assert.deepEqual(report.then_run, { status: command });
       assert.equal(commandOutput(result), output || undefined);
       const rendered = h.card(h.entries[0], true).render(160).join("\n");

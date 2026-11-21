@@ -26,6 +26,7 @@ import { addAbortListener } from "node:events";
 import { realpath } from "node:fs/promises";
 import { basename, dirname, resolve } from "node:path";
 import type { AgentToolUpdateCallback } from "@earendil-works/pi-agent-core";
+import { contentText } from "@earendil-works/pi-ai";
 import type {
   BashToolCallEvent,
   ExtensionToolContext,
@@ -35,7 +36,6 @@ import { Type, type Static, type TObject, type TProperties } from "typebox";
 import { observeFreshness, type FreshnessObservation } from "./file-commit.ts";
 import {
   CommandNotRun,
-  commandText,
   type CommandFacts,
   type MutationResultDetails,
   type MutationScheduler,
@@ -242,7 +242,7 @@ function createProgressTracker<TDetails extends object>({
     // Pi's Bash supplies exit_code for ordinary exits and serializes a thrown timeout as text.
     // A blocking hook can also mention a timeout but never starts the countdown.
     const timeoutDiagnostic = `Command timed out after ${countdown?.timeoutSeconds} seconds`;
-    const output = commandText(result.content);
+    const output = contentText(result.content);
     const timedOut =
       countdown !== undefined &&
       !hasExitCode &&

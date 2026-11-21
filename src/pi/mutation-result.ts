@@ -6,6 +6,7 @@
 
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import type { AgentToolUpdateCallback } from "@earendil-works/pi-agent-core";
+import { contentText } from "@earendil-works/pi-ai";
 import type { ExtensionToolContext } from "@earendil-works/pi-coding-agent";
 import type { ThenRunInput } from "./action-fusion.ts";
 import { FileMutationError, type CommitResult, type FreshnessObservation } from "./file-commit.ts";
@@ -57,14 +58,6 @@ export interface MutationOutcome<TDetails, TTool extends MutationToolName = Muta
   readonly commit: CommitResult;
   readonly details: TDetails;
   readonly facts: MutationFacts<TTool>;
-}
-
-/** The text blocks of a command result, joined as then_run reports its output. */
-export function commandText(content: CommandResult["content"]): string {
-  return content
-    .filter((block) => block.type === "text")
-    .map((block) => block.text)
-    .join("\n");
 }
 
 /** The first failure of a progress observer; any thrown value, `undefined` included. */
@@ -176,7 +169,7 @@ export function finalizeMutation<TDetails extends object>(
   const observation: FreshnessObservation = settled.kind === "alone" ? commit : settled.observation;
   const { command, progressFailure } = settled.kind === "fused" ? settled : {};
   const output =
-    command?.result && boundedText(commandText(command.result.content), budget.fieldBytes);
+    command?.result && boundedText(contentText(command.result.content), budget.fieldBytes);
   return reportResult(
     {
       ...facts,

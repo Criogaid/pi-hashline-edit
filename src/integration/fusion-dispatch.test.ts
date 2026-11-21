@@ -13,7 +13,7 @@ import {
   type ThenRunInput,
 } from "../pi/action-fusion.ts";
 import { makeWriteOverride } from "../pi/tool-factories.testing.ts";
-import { commandText } from "../pi/mutation-result.ts";
+import { contentText } from "@earendil-works/pi-ai";
 import { reportOf } from "../pi/report.ts";
 import type { CommandStatus } from "../pi/report-schema.ts";
 
@@ -191,7 +191,7 @@ test("cancelling a real session Bash command → reports cancellation and keeps 
     if (
       event.command === "running" &&
       event.result &&
-      commandText(event.result.content).includes("READY")
+      contentText(event.result.content).includes("READY")
     )
       started.resolve();
   });
@@ -311,7 +311,7 @@ test("session Bash override and tool_result hook → then_run uses their final r
   assert.doesNotMatch(result.text, /OVERRIDE_RESULT/);
   assert.deepEqual(
     f.progress.find(
-      (event) => event.result && commandText(event.result.content) === "OVERRIDE_PROGRESS",
+      (event) => event.result && contentText(event.result.content) === "OVERRIDE_PROGRESS",
     )?.result,
     partial,
   );
