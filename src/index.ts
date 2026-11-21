@@ -51,8 +51,11 @@ export default async function (pi: ExtensionAPI) {
         promptGuidelines: [...(tool.promptGuidelines ?? []), NEXT_GUIDELINE],
         renderCall:
           renderCall &&
-          ((args, theme, context) =>
-            renderCall(view(args), theme, { ...context, args: view(context.args) })),
+          ((args, theme, context) => {
+            // Pi passes the same arguments as `args` and `context.args`.
+            const viewed = view(args);
+            return renderCall(viewed, theme, { ...context, args: viewed });
+          }),
         renderResult:
           renderResult &&
           ((result, options, theme, context) =>
