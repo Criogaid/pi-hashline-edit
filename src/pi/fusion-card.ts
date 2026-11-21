@@ -152,18 +152,13 @@ export function registerFusionCards(pi: ExtensionAPI) {
     if (!card) {
       const current = () => states.get(initial.toolCallId) ?? initial;
       const statusText = new Text("", 0, 0);
-      let outputPadding = settings.getOutputPad();
-      let box = new Box(outputPadding, 1);
+      const box = new Box(0, 1);
       let call: Component | undefined;
       let result: Component | undefined;
       const renderers: ToolRenderers = {
         renderShell: "self",
         renderCall(_args, theme, context) {
-          const padding = SettingsManager.inMemory(pi.getSettings()).getOutputPad();
-          if (padding !== outputPadding) {
-            outputPadding = padding;
-            box = new Box(outputPadding, 1);
-          }
+          box.setPaddingX(context.outputPad);
           const value = current();
           const args = { command: value.commandText, timeout: value.timing?.timeoutSeconds };
           const pending = commandPending(value);
@@ -247,6 +242,7 @@ export function registerFusionCards(pi: ExtensionAPI) {
       card.setArgsComplete();
       cards.set(initial.toolCallId, card);
     }
+    card.setOutputPad(settings.getOutputPad());
     card.setShowImages(settings.getShowImages());
     card.setImageWidthCells(settings.getImageWidthCells());
     card.setGlobalExpanded(expanded);
