@@ -7,7 +7,7 @@
 import { validateToolArguments, type ToolCall } from "@earendil-works/pi-ai";
 import { compile } from "@earendil-works/pi-schema";
 import { formats } from "@earendil-works/pi-schema/formats";
-import type { Static, TObject } from "typebox";
+import type { Static, TObject, TSchema } from "typebox";
 import { errorMessage } from "../core/errors.ts";
 import { buildRegex } from "../core/regex.ts";
 import { diagnoseArguments } from "./argument-diagnostics.ts";
@@ -57,6 +57,25 @@ export function argumentItems(value: unknown): readonly unknown[] {
   return Array.isArray(value) ? value : value !== null && typeof value === "object" ? [value] : [];
 }
 
+/** pi-ai's validateToolArguments compile options. */
+const COMPILE_OPTIONS = { formats, coerce: true, unresolvedRefs: "reject" } as const;
+
+/**
+ * Pi hands renderers a call's raw arguments, also while they stream, and coerces them only for
+ * execution. Renderers receive the same coercion on a copy, so a card shows the call that ran;
+ * arguments that cannot be coerced stay raw.
+ */
+export function createRenderArguments(parameters: TSchema): (args: unknown) => unknown {
+  const validator = compile(parameters, COMPILE_OPTIONS);
+  return (args) => {
+    try {
+      return validator.coerce(structuredClone(args));
+    } catch {
+      return args;
+    }
+  };
+}
+
 function preparationError(cause: unknown, limited: boolean, budgets: OutputBudgetProvider): Error {
   return new Error(
     formatArgumentError([{ field: "$", reason: errorMessage(cause) }], limited, budgets()),
@@ -70,8 +89,7 @@ export function createArgumentPreparer<T extends TObject>(
   check: CheckArguments | undefined,
   budgets: OutputBudgetProvider,
 ): (args: unknown) => Static<T> {
-  // Match pi-ai's validateToolArguments compile options.
-  const validator = compile(parameters, { formats, coerce: true, unresolvedRefs: "reject" });
+  const validator = compile(parameters, COMPILE_OPTIONS);
 
   return (args) => {
     let checked: unknown;

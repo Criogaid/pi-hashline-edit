@@ -214,8 +214,8 @@ export function makeReadOverride({
       // text that equals a report with no facts (`{}`) is the payload, not the block to strip.
       const payload = result.content[0];
       const text = payload?.type === "text" ? payload.text : "";
-      // Only a read with `anchors: false` carries its header in details. The call's raw arguments
-      // can spell that flag in a form Pi converts before execution, so they do not decide it.
+      // Only a read with `anchors: false` carries its header in details, which records the call
+      // that ran; arguments Pi cannot coerce do not describe it.
       const header = result.details?.header;
       return new Text(
         [

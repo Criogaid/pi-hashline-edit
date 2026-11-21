@@ -1,6 +1,6 @@
 import { rejectsArgument } from "./argument-error.testing.ts";
 import { createEditTool } from "@earendil-works/pi-coding-agent";
-import { validateToolArguments, type Tool } from "@earendil-works/pi-ai";
+import { validateToolArguments } from "@earendil-works/pi-ai";
 import { makeStrictJsonSchema } from "@earendil-works/pi-ai/api/constrained-sampling";
 import { makeEditOverride } from "./tool-factories.testing.ts";
 import { makeReadOverride } from "./tool-factories.testing.ts";
@@ -9,6 +9,7 @@ import { DEFAULT_CONFIG } from "./tool-factories.testing.ts";
 import { mkdir, mkdtemp, rm, writeFile, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { stripVTControlCharacters } from "node:util";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import registerHashline from "../index.ts";
@@ -31,6 +32,31 @@ import { expectToolFailure } from "./report-failure.testing.ts";
 import { STRICT_SAMPLING } from "./schema.ts";
 import { NEXT_GUIDELINE } from "./report-schema.ts";
 import { ACTION_FUSION_GUIDELINES } from "./action-fusion.ts";
+import { generateMutationDetails } from "./mutation-result.ts";
+
+async function registerTools(dir: string, actionFusion: boolean): Promise<ToolDefinition[]> {
+  await writeFile(
+    join(dir, ".pi", "settings.json"),
+    JSON.stringify({ hashlineEdit: { enabled: true, actionFusion } }),
+  );
+  const tools: ToolDefinition[] = [];
+  const api: Pick<ExtensionAPI, "exec" | "on" | "registerEntryRenderer" | "registerTool"> = {
+    async exec() {
+      return { stdout: dir, stderr: "", code: 0, killed: false, truncated: false };
+    },
+    on() {
+      return () => {};
+    },
+    registerEntryRenderer() {},
+    registerTool(tool) {
+      // Pi's card receives heterogeneous tool definitions and calls them with raw arguments.
+      tools.push(tool as ToolDefinition);
+    },
+  };
+  // The fixture implements the API methods used during registration.
+  await registerHashline(api as ExtensionAPI);
+  return tools;
+}
 
 test("registered tools with or without Fusion → expose prompt rules and convertible strict schemas", async (t) => {
   const guidelines = {
@@ -46,25 +72,7 @@ test("registered tools with or without Fusion → expose prompt rules and conver
   await withDir(async (dir) => {
     await mkdir(join(dir, ".pi"));
     for (const actionFusion of [false, true]) {
-      await writeFile(
-        join(dir, ".pi", "settings.json"),
-        JSON.stringify({ hashlineEdit: { enabled: true, actionFusion } }),
-      );
-      const tools: (Tool & Pick<ToolDefinition, "promptGuidelines" | "outputSchema">)[] = [];
-      const api: Pick<ExtensionAPI, "exec" | "on" | "registerEntryRenderer" | "registerTool"> = {
-        async exec() {
-          return { stdout: dir, stderr: "", code: 0, killed: false, truncated: false };
-        },
-        on() {
-          return () => {};
-        },
-        registerEntryRenderer() {},
-        registerTool(tool) {
-          tools.push(tool);
-        },
-      };
-      // The fixture implements the API methods used during registration.
-      await registerHashline(api as ExtensionAPI);
+      const tools = await registerTools(dir, actionFusion);
       assert.equal(tools.length, 5);
       for (const tool of tools) {
         const { name } = tool;
@@ -136,6 +144,66 @@ test("registered tools with or without Fusion → expose prompt rules and conver
           }
         });
       }
+    }
+  });
+});
+
+test("raw arguments Pi coerces → registered cards display the values used for execution", async (t) => {
+  await withDir(async (dir) => {
+    await mkdir(join(dir, ".pi"));
+    const tools = await registerTools(dir, false);
+    initTheme("dark");
+    const tui = new TuiMainScreen(new ProcessTerminal());
+    tui.requestRender = () => {};
+    const cases = [
+      {
+        name: "grep",
+        args: { pattern: 42, literal: true, path: [1] },
+        header: "grep /42/ in 1",
+      },
+      {
+        name: "edit",
+        args: { path: "a", steps: { action: "append", lines: ["x"] } },
+        header: "edit a — 1 op: append ×1",
+        afterDiff: "edit a — 1 op: append ×1 +1 -1",
+      },
+      {
+        name: "replace",
+        args: { path: "a", replacements: { find: "old", replace: "new", literal: true } },
+        header: "replace a — 1 rule",
+        afterDiff: "replace a — 1 rule +1 -1",
+      },
+      {
+        name: "write",
+        args: { path: 123, content: 42, mode: "create" },
+        header: "write 123",
+        body: "42",
+      },
+    ];
+    for (const { name, args, header, body, afterDiff } of cases) {
+      await t.test(name, () => {
+        const tool = tools.find((tool) => tool.name === name);
+        assert.ok(tool);
+        const card = new ToolExecutionComponent(name, name, args, {}, tool, tui, dir);
+        card.setArgsComplete();
+        card.markExecutionStarted();
+        const lines = () =>
+          card
+            .render(100)
+            .map((line) => stripVTControlCharacters(line).trim())
+            .filter(Boolean);
+        const initial = lines();
+        if (afterDiff) {
+          card.updateResult({
+            content: [],
+            details: generateMutationDetails("old\n", "new\n", []),
+            isError: false,
+          });
+          assert.deepEqual([initial[0], lines()[0]], [header, afterDiff]);
+        } else {
+          assert.deepEqual(initial.slice(0, body ? 2 : 1), body ? [header, body] : [header]);
+        }
+      });
     }
   });
 });

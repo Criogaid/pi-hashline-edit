@@ -11,7 +11,8 @@
  */
 
 import type { ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-agent";
-import type { TSchema } from "typebox";
+import type { Static, TSchema } from "typebox";
+import { createRenderArguments } from "./pi/argument-validation.ts";
 import { loadConfig } from "./pi/config.ts";
 import { registerModelBudgets } from "./pi/model-budgets.ts";
 import { makeEditOverride } from "./pi/edit-tool.ts";
@@ -41,11 +42,24 @@ export default async function (pi: ExtensionAPI) {
     // Every tool returns a report; Pi prints this shared guideline once.
     const register = <TParams extends TSchema, TDetails, TState>(
       tool: ToolDefinition<TParams, TDetails, TState>,
-    ) =>
-      pi.registerTool({
+    ) => {
+      const { renderCall, renderResult } = tool;
+      const coerce = createRenderArguments(tool.parameters);
+      const view = (args: unknown) => coerce(args) as Static<TParams>;
+      const registered: ToolDefinition<TParams, TDetails, TState> = {
         ...tool,
         promptGuidelines: [...(tool.promptGuidelines ?? []), NEXT_GUIDELINE],
-      });
+        renderCall:
+          renderCall &&
+          ((args, theme, context) =>
+            renderCall(view(args), theme, { ...context, args: view(context.args) })),
+        renderResult:
+          renderResult &&
+          ((result, options, theme, context) =>
+            renderResult(result, options, theme, { ...context, args: view(context.args) })),
+      };
+      pi.registerTool(registered);
+    };
     const registerMutation = <TParams extends TSchema, TDetails>(
       tool: ToolDefinition<TParams, TDetails>,
     ) => register(fusion ? withMutationStatus(tool) : tool);
