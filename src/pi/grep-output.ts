@@ -156,21 +156,20 @@ interface ContentBlock {
   readonly validUtf8: boolean;
   /** Rows that establish a narrower displayed preview. */
   readonly previewMinimums: readonly PreviewMinimum[];
-  readonly hitIndices: readonly number[];
-  /** The hit rows as the block shows them once context rows are removed. */
-  readonly hitRows: readonly string[];
-  /** Rows that open a group after a gap in line numbers; only context rows leave gaps. */
+  /** In a search with context rows, each hit's row and the row it shows once context is removed. */
+  readonly hits: readonly { readonly index: number; readonly soloRow: string }[];
+  /** In a search with context rows, the rows that open a group after a gap in line numbers. */
   readonly gapIndices: readonly number[];
 }
 
 /** Formatted results in result order: content blocks, or one row per file in files and count modes. */
 type FormattedBlocks =
   | {
-      readonly kind: "content";
+      readonly mode: "content";
       readonly blocks: readonly ContentBlock[];
       readonly contextRows: boolean;
     }
-  | { readonly kind: "rows"; readonly rows: readonly string[] };
+  | { readonly mode: Exclude<GrepOutputMode, "content">; readonly rows: readonly string[] };
 
 /**
  * One file's content block: its header, then a row for each line the second read shows. The
@@ -186,8 +185,7 @@ function contentBlock(
   const lines = [header];
   const firstRowBytes = budget.grepBytes - Buffer.byteLength(header) - 1;
   const previewMinimums: PreviewMinimum[] = [];
-  const hitIndices: number[] = [];
-  const hitRows: string[] = [];
+  const hits: { index: number; soloRow: string }[] = [];
   const gapIndices: number[] = [];
   let previousLine = 0;
   return {
@@ -211,12 +209,11 @@ function contentBlock(
       const regular = previewLine(text, column, budget.grepPreviewUnits);
       const preview = lines.length === 1 ? fitRowOne(regular) : regular;
       const shown = row(preview.text);
-      if (column !== undefined) {
+      if (context > 0 && column !== undefined) {
         // Without context rows, the first hit is row one and shows row one's fitted preview.
-        hitRows.push(
-          hitIndices.length > 0 || lines.length === 1 ? shown : row(fitRowOne(regular).text),
-        );
-        hitIndices.push(lines.length);
+        const soloRow =
+          hits.length > 0 || lines.length === 1 ? shown : row(fitRowOne(regular).text);
+        hits.push({ index: lines.length, soloRow });
       }
       if (
         preview.kept !== undefined &&
@@ -231,8 +228,7 @@ function contentBlock(
       displayPath,
       validUtf8: snapshot.validUtf8,
       previewMinimums,
-      hitIndices,
-      hitRows,
+      hits,
       gapIndices,
     }),
   };
@@ -253,7 +249,7 @@ async function formatMatches(options: FormatMatchesOptions): Promise<{
       const path = serializePath(cwd, filePath);
       return outputMode === "files" ? path : `${path}: ${rows.length}`;
     });
-    return { blocks: { kind: "rows", rows }, matches, files: files.length, warnings: [] };
+    return { blocks: { mode: outputMode, rows }, matches, files: files.length, warnings: [] };
   }
   const blocks: ContentBlock[] = [];
   const warnings: SearchWarning[] = [];
@@ -272,7 +268,7 @@ async function formatMatches(options: FormatMatchesOptions): Promise<{
     }
   }
   return {
-    blocks: { kind: "content", blocks, contextRows: context > 0 },
+    blocks: { mode: "content", blocks, contextRows: context > 0 },
     matches: shownMatches,
     files: fileCount,
     warnings,
@@ -283,7 +279,6 @@ interface AssembleGrepOutputOptions {
   readonly formatted: Omit<Awaited<ReturnType<typeof formatMatches>>, "warnings">;
   readonly cwd: string;
   readonly warnings: readonly SearchWarning[];
-  readonly outputMode: GrepOutputMode;
   readonly matchLimitReached: boolean;
   readonly effectiveLimit: number;
   readonly searchFacts: SearchFacts;
@@ -324,10 +319,10 @@ function contextHidesHit(
   maxBytes: number,
 ): boolean {
   let shownHits = 0;
-  const hitsOnly = blocks.map(({ lines, hitIndices, hitRows }, i) => {
+  const hitsOnly = blocks.map(({ lines, hits }, i) => {
     // fitPayload stops at the first block that does not fit; later blocks show no rows.
-    shownHits += hitIndices.filter((index) => index < (shown[i] ?? 0)).length;
-    return [lines[0], ...hitRows];
+    shownHits += hits.filter(({ index }) => index < (shown[i] ?? 0)).length;
+    return [lines[0], ...hits.map(({ soloRow }) => soloRow)];
   });
   const withoutContext = fitPayload(hitsOnly, true, maxBytes).shown;
   return withoutContext.reduce((sum, count) => sum + Math.max(0, count - 1), 0) > shownHits;
@@ -343,19 +338,11 @@ function assembleGrepOutput(options: AssembleGrepOutputOptions): {
   implied?: ShownCounts;
   next?: OutcomeVariant;
 } {
-  const {
-    formatted,
-    cwd,
-    warnings,
-    outputMode,
-    matchLimitReached,
-    effectiveLimit,
-    searchFacts,
-    budget,
-  } = options;
+  const { formatted, cwd, warnings, matchLimitReached, effectiveLimit, searchFacts, budget } =
+    options;
   const { blocks, matches, files } = formatted;
 
-  const blockCount = blocks.kind === "content" ? blocks.blocks.length : blocks.rows.length;
+  const blockCount = blocks.mode === "content" ? blocks.blocks.length : blocks.rows.length;
   if (!blockCount && warnings.length) {
     throw searchIncompleteError(
       "No matches could be displayed.",
@@ -366,7 +353,7 @@ function assembleGrepOutput(options: AssembleGrepOutputOptions): {
     );
   }
   const { kept, shown, truncated } =
-    blocks.kind === "content"
+    blocks.mode === "content"
       ? fitPayload(blocks.blocks.map(payloadLines), true, budget.grepBytes)
       : fitPayload(
           blocks.rows.map((row) => [row]),
@@ -375,7 +362,7 @@ function assembleGrepOutput(options: AssembleGrepOutputOptions): {
         );
   const invalidUtf8: string[] = [];
   let previewLimit: number | undefined;
-  if (blocks.kind === "content")
+  if (blocks.mode === "content")
     for (const [i, count] of shown.entries()) {
       const block = blocks.blocks[i];
       // A file shown only by its header has no preview rows.
@@ -386,7 +373,7 @@ function assembleGrepOutput(options: AssembleGrepOutputOptions): {
       }
     }
   // One complete content or count block already states its path and match count.
-  const countsShown = outputMode !== "files" && blockCount === 1 && !truncated;
+  const countsShown = blocks.mode !== "files" && blockCount === 1 && !truncated;
   return {
     payload: kept.join("\n"),
     facts: {
@@ -401,7 +388,7 @@ function assembleGrepOutput(options: AssembleGrepOutputOptions): {
     implied: countsShown ? { matches, files } : undefined,
     next:
       truncated &&
-      blocks.kind === "content" &&
+      blocks.mode === "content" &&
       blocks.contextRows &&
       contextHidesHit(blocks.blocks, shown, budget.grepBytes)
         ? "contextRows"
@@ -458,7 +445,6 @@ export async function grepOutput(
     formatted,
     cwd,
     warnings: [...warnings, ...rereadWarnings],
-    outputMode,
     matchLimitReached: search.matchLimitReached,
     effectiveLimit,
     searchFacts,
