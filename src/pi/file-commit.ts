@@ -43,28 +43,31 @@ type CommitIntent =
   | { readonly mode: "overwrite" }
   | { readonly mode: "update"; readonly baseRevision: string };
 
-type ReplaceIntent = Exclude<CommitIntent, { readonly mode: "create" }>;
+type ReplaceMode = Exclude<CommitIntent["mode"], "create">;
 
 /** What publication does, decided once the target has been inspected. */
 type PublishPlan =
   | { readonly kind: "create" }
   | {
       readonly kind: "replace";
-      readonly intent: ReplaceIntent;
+      readonly mode: ReplaceMode;
       readonly target: TargetInfo;
-      /** The revision the target holds before the commit. */
+      /** The revision the target holds before the commit; an update's base revision. */
       readonly beforeRevision: string;
     };
 
 /**
  * The published bytes' revision, and whether the target still held them right after the
- * commit; an unstable observation after publication means another writer changed it.
+ * commit; an unstable observation after publication means another writer changed it. Content
+ * equal to the target's is not published, and the target is unchanged.
  */
-export interface CommitResult {
-  readonly publication: Exclude<PublicationStatus, "UNKNOWN">;
-  readonly publishedRevision: string;
-  readonly freshness: Exclude<Freshness, "unknown">;
-}
+export type CommitResult = { readonly publishedRevision: string } & (
+  | { readonly publication: "NOT_PUBLISHED"; readonly freshness: "unchanged" }
+  | {
+      readonly publication: "PUBLISHED";
+      readonly freshness: Extract<Freshness, "unchanged" | "changed">;
+    }
+);
 
 /**
  * A mutation failure with what it published. Every other failure of a mutation
@@ -220,13 +223,13 @@ async function inspectTarget(path: string): Promise<TargetInfo | undefined> {
   return { publishPath, modeBits: target.mode };
 }
 
-async function requireExistingTarget(path: string, intent: ReplaceIntent) {
+async function requireExistingTarget(path: string, mode: ReplaceMode) {
   const target = await inspectTarget(path);
   if (!target)
     throw new HashlineError("PATH_NOT_FOUND", PATH_ERROR_MESSAGES.PATH_NOT_FOUND, {
       facts: { missing: [path] },
       // Read-modify-write tools have no mode to change.
-      ...(intent.mode === "overwrite" ? { next: "useCreate" as const } : {}),
+      ...(mode === "overwrite" ? { next: "useCreate" as const } : {}),
     });
   return target;
 }
@@ -243,12 +246,13 @@ async function planPublication(
     throwIfCancelled(signal);
     return { kind: "create" };
   }
-  const target = await requireExistingTarget(path, intent);
+  const { mode } = intent;
+  const target = await requireExistingTarget(path, mode);
   throwIfCancelled(signal);
-  if (intent.mode === "update")
-    return { kind: "replace", intent, target, beforeRevision: intent.baseRevision };
+  if (mode === "update")
+    return { kind: "replace", mode, target, beforeRevision: intent.baseRevision };
   try {
-    return { kind: "replace", intent, target, beforeRevision: await fileRevision(path, signal) };
+    return { kind: "replace", mode, target, beforeRevision: await fileRevision(path, signal) };
   } catch (error) {
     throwIfCancelled(signal);
     throw stepError("Unable to read target revision.", error);
@@ -261,9 +265,8 @@ async function recheckReplace(
   plan: Extract<PublishPlan, { readonly kind: "replace" }>,
   signal: AbortSignal,
 ): Promise<void> {
-  if (plan.intent.mode === "update")
-    await requireBaseRevision(path, plan.intent.baseRevision, signal);
-  const current = await requireExistingTarget(path, plan.intent);
+  if (plan.mode === "update") await requireBaseRevision(path, plan.beforeRevision, signal);
+  const current = await requireExistingTarget(path, plan.mode);
   throwIfCancelled(signal);
   if (current.publishPath !== plan.target.publishPath)
     throw new HashlineError("FILE_CHANGED", "Target path resolves to a different file.");
@@ -394,7 +397,7 @@ export async function commitFile(
     }
     published = true;
     await syncDirectory(publishDirectory);
-    const committed = (freshness: CommitResult["freshness"]): CommitResult => ({
+    const committed = (freshness: "unchanged" | "changed"): CommitResult => ({
       publication: "PUBLISHED",
       publishedRevision,
       freshness,
