@@ -285,7 +285,7 @@ export async function searchFiles(options: {
   };
 
   // A fatal result ends this slot; only a failed worker on a skipped file needs replacing.
-  const consume = async (run: Run): Promise<"restart" | void> => {
+  const consume = async (run: Run): Promise<"restart" | "done"> => {
     for (let item = await next(); item !== undefined; item = await next()) {
       const { candidate, position } = item;
       let found: FileSearch;
@@ -299,7 +299,7 @@ export async function searchFiles(options: {
             ? { path: candidate.filePath, reason: error.message }
             : fileReadWarning(candidate.filePath, error);
         commit(position, warning ? { kind: "warning", warning } : { kind: "error", error });
-        if (!warning) return;
+        if (!warning) return "done";
         continue;
       }
       if (found.kind === "restart") {
@@ -308,6 +308,7 @@ export async function searchFiles(options: {
       }
       commit(position, found);
     }
+    return "done";
   };
 
   const workers: Promise<void>[] = [];

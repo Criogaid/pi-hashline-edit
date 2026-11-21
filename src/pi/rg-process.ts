@@ -225,6 +225,9 @@ export const LINE_LISTING_ARGS = [
 /** A file's candidate lines: ascending line numbers, or every line. */
 export type CandidateLines = readonly number[] | "all";
 
+/** The line-listing parser between files, awaiting the next path. */
+const AWAITING_PATH = { kind: "path" } as const;
+
 /**
  * Read a {@link LINE_LISTING_ARGS} listing. Each file's group is a NUL-terminated
  * path, then one `N:` record per matching line ending in a line feed (its content is at most
@@ -239,16 +242,11 @@ export function runRgLines(
   onFile: (path: string, lines: CandidateLines) => boolean | Promise<boolean>,
 ): Promise<RgRunResult> {
   return runRg(args, cwd, signal, async (stdout) => {
-    let path: string | undefined;
-    let lines: number[] | "all" = [];
+    /** Awaiting a file's path, or reading the line records of the file it names. */
+    let state:
+      | { readonly kind: "path" }
+      | { kind: "lines"; path: string; lines: number[] | "all" } = AWAITING_PATH;
     let pending: Buffer = Buffer.alloc(0);
-    const flush = () => {
-      const found = lines;
-      const file = path!;
-      path = undefined;
-      lines = [];
-      return onFile(file, found);
-    };
     // Records are parsed synchronously; only a completed file waits for its consumer.
     for await (const value of stdout) {
       throwIfCancelled(signal);
@@ -256,20 +254,22 @@ export function runRgLines(
       const buf = pending.length ? Buffer.concat([pending, chunk]) : chunk;
       let at = 0;
       for (;;) {
-        const end = buf.indexOf(path === undefined ? 0 : 10, at);
+        const end = buf.indexOf(state.kind === "path" ? 0 : 10, at);
         if (end === -1) break;
         const record = buf.subarray(at, end);
         at = end + 1;
-        if (path === undefined) path = decodePath(record);
+        if (state.kind === "path") state = { kind: "lines", path: decodePath(record), lines: [] };
         else if (!record.length) {
-          if (!(await flush())) return false;
-        } else if (lines !== "all") {
+          const { path, lines } = state;
+          state = AWAITING_PATH;
+          if (!(await onFile(path, lines))) return false;
+        } else if (state.lines !== "all") {
           const colon = record.indexOf(58);
           const line = colon > 0 ? Number(record.subarray(0, colon).toString("latin1")) : NaN;
           if (!Number.isSafeInteger(line) || line < 1)
             throw new HashlineError("RIPGREP_FAILED", "ripgrep printed an unexpected line record.");
-          if (lines.length < maxLines) lines.push(line);
-          else lines = "all";
+          if (state.lines.length < maxLines) state.lines.push(line);
+          else state.lines = "all";
         }
       }
       pending = buf.subarray(at);
@@ -278,6 +278,6 @@ export function runRgLines(
     }
     if (pending.length)
       throw new HashlineError("RIPGREP_FAILED", "ripgrep printed an incomplete line record.");
-    return path === undefined || flush();
+    return state.kind === "path" || onFile(state.path, state.lines);
   });
 }
