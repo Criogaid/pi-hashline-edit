@@ -221,7 +221,7 @@ function classInfo(node: CharacterNode, ctx: Context): Info {
     for (let point = low; point <= high; point++)
       units.push(charUnit(point, { ignoreCase: false }));
   // A class that matches nothing has no exact text.
-  return alternate(units.length ? [{ exact: [[unionUnits(units)]], filter: ALL }] : []);
+  return { exact: units.length ? [[unionUnits(units)]] : [], filter: ALL };
 }
 
 function analyzeElement(node: AST.Element, ctx: Context): Info {
