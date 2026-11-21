@@ -41,27 +41,22 @@ function mergeRows(left: Rows, right: Rows, limit: number): Rows {
 
 function multilineRows(source: string, regex: RegExp, limit: number): Rows {
   const rows: Rows = [];
-  let lineNumber = 1;
-  let lineStart = 0;
-  let nextBreak = source.indexOf("\n");
+  let nextStart = 0;
+  let lineNumber = 0;
   for (const match of source.matchAll(regex)) {
-    // A trailing separator terminates the last physical line; it does not create another.
-    if (match.index === source.length && (source.length === 0 || source.endsWith("\n"))) break;
+    // An EOF-only match after LF needs no walk over the preceding physical lines.
+    if (match.index === source.length && source.endsWith("\n")) break;
     const last = match.index + Math.max(0, match[0].length - 1);
-    while (nextBreak !== -1 && nextBreak < match.index) {
-      lineStart = nextBreak + 1;
+    // Visit a physical line only once. Later matches on it cannot move its first column.
+    while (nextStart < source.length && nextStart <= last) {
+      const start = nextStart;
+      const lf = source.indexOf("\n", start);
+      const end = lf === -1 ? source.length : lf;
+      nextStart = end + 1;
       lineNumber++;
-      nextBreak = source.indexOf("\n", lineStart);
-    }
-    for (;;) {
-      if (rows.at(-1)?.lineNumber !== lineNumber) {
-        rows.push({ lineNumber, column: Math.max(0, match.index - lineStart) });
-        if (rows.length === limit) return rows;
-      }
-      if (nextBreak === -1 || nextBreak >= last) break;
-      lineStart = nextBreak + 1;
-      lineNumber++;
-      nextBreak = source.indexOf("\n", lineStart);
+      if (end < match.index) continue;
+      rows.push({ lineNumber, column: Math.max(0, match.index - start) });
+      if (rows.length === limit) return rows;
     }
   }
   return rows;
