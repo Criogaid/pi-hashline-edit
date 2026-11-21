@@ -52,6 +52,8 @@ interface Sample {
   readonly candidateFiles: number;
   readonly candidateLines: number;
   readonly scanLimitReached: boolean;
+  /** Files or listing diagnostics the search skipped. */
+  readonly warnings: number;
   readonly signature: string;
 }
 
@@ -172,6 +174,7 @@ async function runChild(
     candidateFiles,
     candidateLines,
     scanLimitReached: result.scanLimitReached,
+    warnings: result.warnings.length,
     signature: createHash("sha256").update(JSON.stringify(rows)).digest("hex").slice(0, 16),
   };
 }
@@ -186,6 +189,7 @@ async function runParent() {
   const args = process.argv.slice(2);
   const repsIndex = args.indexOf("--reps");
   const reps = repsIndex === -1 ? 3 : Number(args[repsIndex + 1]);
+  if (!Number.isSafeInteger(reps) || reps < 1) throw new Error("--reps takes a positive integer.");
   const corpora =
     repsIndex === -1
       ? args
@@ -238,12 +242,17 @@ async function runParent() {
             variant,
             totals.get(variant)! + median(samples.get(variant)!.map((sample) => sample.wallMs)),
           );
-        const tiersSample = samples.get("tiers")![0];
+        const tiers = samples.get("tiers")!;
+        const tiersSample = tiers[0];
         const agreement = (variant: Variant) => {
           const own = samples.get(variant)!;
-          // A sample that stopped at the unnarrowed scan limit did not search the whole scope.
-          if ([...own, tiersSample].some((sample) => sample.scanLimitReached)) return "scan limit";
-          if (own.some((sample) => sample.signature !== own[0].signature)) return "unstable";
+          const compared = [...own, ...tiers];
+          // A sample that stopped at the unnarrowed scan limit or warned did not search the whole scope.
+          if (compared.some((sample) => sample.scanLimitReached)) return "scan limit";
+          if (compared.some((sample) => sample.warnings > 0)) return "incomplete";
+          const stable = (group: Sample[]) =>
+            group.every((sample) => sample.signature === group[0].signature);
+          if (!stable(own) || !stable(tiers)) return "unstable";
           return own[0].signature === tiersSample.signature
             ? "same"
             : `differs (${own[0].matches} matches)`;
