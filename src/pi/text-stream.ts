@@ -34,7 +34,7 @@ export async function scanTextFile(
     let lineFeeds = 0;
     let lastByte = -1;
     let hasNul = false;
-    let decodingError: unknown;
+    let decodingError: Utf8DecodingError | undefined;
     /** Strict text of a chunk, or of the final flush without bytes; undefined once malformed. */
     const decodeStrict = (bytes?: Buffer): string | undefined => {
       if (decodingError) return undefined;
