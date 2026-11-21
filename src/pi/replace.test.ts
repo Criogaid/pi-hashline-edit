@@ -10,7 +10,8 @@ import { initTheme, type Theme } from "@earendil-works/pi-coding-agent";
 import { makeReplaceTool } from "./tool-factories.testing.ts";
 import { validateToolArguments } from "@earendil-works/pi-ai";
 import { callTool } from "./tool-call.testing.ts";
-import { createActionFusionExecutor } from "./action-fusion.ts";
+import { createActionFusionScheduler } from "./action-fusion.ts";
+import { runAlone } from "./mutation-runner.ts";
 import { DEFAULT_CONFIG } from "./tool-factories.testing.ts";
 import { reportOf } from "./report.ts";
 import { outputBudgetsFor } from "./budgets.ts";
@@ -41,10 +42,10 @@ test("replace rejects invalid rule shapes → precise fields and no publication 
       commands++;
       return commandCompletion({ content: [] });
     };
-    const fusion = createActionFusionExecutor(() => {});
+    const fusion = createActionFusionScheduler(() => {});
     const rule = { literal: true, find: "old", replace: "new" };
-    for (const executor of [undefined, fusion]) {
-      const tool = makeReplaceTool(dir, DEFAULT_CONFIG, executor);
+    for (const schedule of [runAlone, fusion]) {
+      const tool = makeReplaceTool(dir, DEFAULT_CONFIG, schedule);
       for (const [args, field, reason] of [
         [{ find: "old", replace: "new" }, "replacements", /required/],
         [{ replacements: [] }, "replacements", /./],
@@ -67,7 +68,7 @@ test("replace rejects invalid rule shapes → precise fields and no publication 
             {
               path,
               ...args,
-              ...(executor ? { then_run: { command: "check" } } : {}),
+              ...(schedule !== runAlone ? { then_run: { command: "check" } } : {}),
             },
             { ctx: { cwd: dir, executeTool } },
           ),
@@ -91,7 +92,7 @@ test("replace rules omit literal or retain regex → reject before publication a
     const tool = makeReplaceTool(
       dir,
       DEFAULT_CONFIG,
-      createActionFusionExecutor(() => {}),
+      createActionFusionScheduler(() => {}),
     );
     for (const [rule, field, reason] of [
       [{ find: "old", replace: "new" }, "literal", /required/],
@@ -478,7 +479,7 @@ test("invalid batches reject every change and never run a fused command", async 
     const tool = makeReplaceTool(
       dir,
       DEFAULT_CONFIG,
-      createActionFusionExecutor(() => {}),
+      createActionFusionScheduler(() => {}),
     );
     const first = { literal: true, find: "bar", replace: "changed" };
     const cases = [
@@ -636,7 +637,7 @@ test("successful batches run one command against the complete result", async () 
     const tool = makeReplaceTool(
       dir,
       DEFAULT_CONFIG,
-      createActionFusionExecutor(() => {}),
+      createActionFusionScheduler(() => {}),
     );
     const result = await tool.execute(
       "0",

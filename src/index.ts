@@ -20,7 +20,8 @@ import { makeReadOverride } from "./pi/read-tool.ts";
 import { makeGrepOverride } from "./pi/grep-tool.ts";
 import { makeReplaceTool } from "./pi/replace-tool.ts";
 import { makeWriteOverride } from "./pi/write-tool.ts";
-import { createActionFusionExecutor } from "./pi/action-fusion.ts";
+import { createActionFusionScheduler } from "./pi/action-fusion.ts";
+import { runAlone } from "./pi/mutation-runner.ts";
 import { registerFusionCards, withMutationStatus } from "./pi/fusion-card.ts";
 import { NEXT_GUIDELINE } from "./pi/report-schema.ts";
 import { resolveWorkspace } from "./pi/workspace.ts";
@@ -38,7 +39,7 @@ export default async function (pi: ExtensionAPI) {
     const budgets = registerModelBudgets(pi);
     // Saved then_run cards render even when Action Fusion is off.
     const reportProgress = registerFusionCards(pi);
-    const fusion = config.actionFusion ? createActionFusionExecutor(reportProgress) : undefined;
+    const schedule = config.actionFusion ? createActionFusionScheduler(reportProgress) : runAlone;
     // Every tool returns a report; Pi prints this shared guideline once.
     const register = <TParams extends TSchema, TDetails, TState>(
       tool: ToolDefinition<TParams, TDetails, TState>,
@@ -65,9 +66,9 @@ export default async function (pi: ExtensionAPI) {
     };
     const registerMutation = <TParams extends TSchema, TDetails>(
       tool: ToolDefinition<TParams, TDetails>,
-    ) => register(fusion ? withMutationStatus(tool) : tool);
+    ) => register(config.actionFusion ? withMutationStatus(tool) : tool);
     const env = { cwd, config, budgets };
-    const mutationEnv = { ...env, fusion };
+    const mutationEnv = { ...env, schedule };
     registerMutation(makeWriteOverride(mutationEnv));
     registerMutation(makeEditOverride(mutationEnv));
     registerMutation(makeReplaceTool(mutationEnv));

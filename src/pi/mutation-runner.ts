@@ -26,26 +26,17 @@
 import { withFileMutationQueue, type ExtensionToolContext } from "@earendil-works/pi-coding-agent";
 import type { AgentToolResult, AgentToolUpdateCallback } from "@earendil-works/pi-agent-core";
 import type { Static, TObject, TProperties } from "typebox";
-import {
-  ACTION_FUSION_GUIDELINES,
-  withThenRunSchema,
-  type createActionFusionExecutor,
-  type FusedMutation,
-  type ThenRunInput,
-} from "./action-fusion.ts";
+import { ACTION_FUSION_GUIDELINES, withThenRunSchema, type ThenRunInput } from "./action-fusion.ts";
 import { createArgumentPreparer, type CheckArguments } from "./argument-validation.ts";
 import { SCRIPT_OUTPUT_SCHEMAS, type MutationToolName } from "./report-schema.ts";
-import {
-  commitFile,
-  commitFreshness,
-  FileMutationError,
-  readEditableSnapshot,
-} from "./file-commit.ts";
+import { commitFile, FileMutationError, readEditableSnapshot } from "./file-commit.ts";
 import {
   describeMutationFailure,
   finalizeMutation,
   generateMutationDetails,
+  settleAlone,
   type MutationOutcome,
+  type MutationScheduler,
   type MutationFinalDetails,
   type MutationResultDetails,
   type MutationFacts,
@@ -58,11 +49,13 @@ import type { ToolEnvironment } from "./config.ts";
 import { STRICT_SAMPLING } from "./schema.ts";
 import type { CopiedSpan } from "../core/copy-span.ts";
 
-type ActionFusionExecutor = ReturnType<typeof createActionFusionExecutor>;
+/** With Action Fusion off, each call runs alone under Pi's file mutation queue. */
+export const runAlone: MutationScheduler = async ({ mutate }) => settleAlone(await mutate());
 
-/** A mutation tool's registration environment; fusion is undefined when Action Fusion is off. */
+/** A mutation tool's registration environment. */
 export interface MutationToolEnvironment extends ToolEnvironment {
-  readonly fusion: ActionFusionExecutor | undefined;
+  /** `runAlone`, or Action Fusion's scheduler when the actionFusion setting is on. */
+  readonly schedule: MutationScheduler;
 }
 
 /** Result details shared by the read-modify-write tools. */
@@ -107,8 +100,8 @@ export function mutationToolBase<
   TDetails extends object,
   TTool extends MutationToolName,
 >(spec: MutationToolSpec<P, TDetails, TTool>) {
-  const { tool, cwd, schema, fusion, budgets } = spec;
-  const actionFusion = fusion !== undefined;
+  const { tool, cwd, schema, schedule, budgets } = spec;
+  const { actionFusion } = spec.config;
   const parameters = withThenRunSchema(schema, tool, actionFusion);
   return {
     name: tool,
@@ -145,22 +138,18 @@ export function mutationToolBase<
           const target: MutationTarget = { absolutePath, signal, budget };
           const mutate = (): Promise<MutationOutcome<TDetails, TTool>> =>
             withFileMutationQueue(absolutePath, () => spec.run(mutationParams, target));
-          const settled: FusedMutation<TDetails, TTool> = fusion
-            ? await fusion({
-                toolCallId,
-                absolutePath,
-                thenRun: then_run,
-                mutate,
-                signal,
-                ctx,
-                onUpdate,
-              })
-            : await mutate().then((outcome) => ({
-                outcome,
-                observation: commitFreshness(outcome.commit),
-              }));
-          const { outcome, observation, command, terminate } = settled;
-          const result = finalizeMutation(tool, displayPath, outcome, observation, command, budget);
+          const settled = await schedule({
+            toolCallId,
+            absolutePath,
+            thenRun: then_run,
+            mutate,
+            signal,
+            ctx,
+            onUpdate,
+          });
+          const result = finalizeMutation(tool, displayPath, settled, budget);
+          // Pass on the session Bash result's request to stop after this tool batch.
+          const terminate = settled.kind === "fused" ? settled.command.terminate : undefined;
           return terminate === undefined ? result : { ...result, terminate };
         },
         describeMutationFailure,

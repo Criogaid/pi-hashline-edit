@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir, homedir } from "node:os";
 import { computeLineHash } from "../core/hash.ts";
-import { createActionFusionExecutor } from "./action-fusion.ts";
+import { createActionFusionScheduler } from "./action-fusion.ts";
 import { commandCompletion } from "./action-fusion.testing.ts";
 import { makeEditOverride } from "./tool-factories.testing.ts";
 import { makeGrepOverride } from "./tool-factories.testing.ts";
@@ -133,7 +133,7 @@ test("file tools share Pi-style URL and @ path resolution", async () => {
     assert.match(matches.content[0].text, /edited/);
     assert.equal(await readFile(file, "utf8"), "edited\n");
     let commands = 0;
-    const fusion = createActionFusionExecutor(() => {});
+    const fusion = createActionFusionScheduler(() => {});
     const fusionContext = {
       cwd: dir,
       executeTool: async () => {

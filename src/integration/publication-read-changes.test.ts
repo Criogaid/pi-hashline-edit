@@ -8,7 +8,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test, type TestContext } from "node:test";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
-import { createActionFusionExecutor } from "../pi/action-fusion.ts";
+import { createActionFusionScheduler } from "../pi/action-fusion.ts";
+import { runAlone } from "../pi/mutation-runner.ts";
 import { DEFAULT_CONFIG } from "../pi/tool-factories.testing.ts";
 import { makeEditOverride } from "../pi/tool-factories.testing.ts";
 import { reportOf } from "../pi/report.ts";
@@ -90,14 +91,14 @@ function text(result: AgentToolResult<unknown>): string {
 const mutationCases = [
   {
     name: "edit",
-    make: (cwd: string, fusion?: ReturnType<typeof createActionFusionExecutor>) =>
-      makeEditOverride(cwd, DEFAULT_CONFIG, fusion),
+    make: (cwd: string, schedule?: ReturnType<typeof createActionFusionScheduler>) =>
+      makeEditOverride(cwd, DEFAULT_CONFIG, schedule),
     args: { steps: [{ action: "append", lines: ["after"] }] },
   },
   {
     name: "replace",
-    make: (cwd: string, fusion?: ReturnType<typeof createActionFusionExecutor>) =>
-      makeReplaceTool(cwd, DEFAULT_CONFIG, fusion),
+    make: (cwd: string, schedule?: ReturnType<typeof createActionFusionScheduler>) =>
+      makeReplaceTool(cwd, DEFAULT_CONFIG, schedule),
     args: { replacements: [{ literal: true, find: BEFORE, replace: PUBLISHED }] },
   },
   {
@@ -138,7 +139,7 @@ for (const fused of [false, true]) {
             );
             const executeTool: SessionCommand = async () =>
               assert.fail("command must not run without then_run");
-            const fusion = fused ? createActionFusionExecutor(() => {}) : undefined;
+            const schedule = fused ? createActionFusionScheduler(() => {}) : runAlone;
             const result = await withDisturbedRead(
               t,
               path,
@@ -147,7 +148,7 @@ for (const fused of [false, true]) {
               (bytes) => bytes.equals(Buffer.from(PUBLISHED)),
               () =>
                 callTool(
-                  mutation.make(directory, fusion),
+                  mutation.make(directory, schedule),
                   { path, ...mutation.args },
                   { ctx: { cwd: directory, executeTool } },
                 ),
@@ -182,7 +183,7 @@ for (const observation of [1, 2]) {
           commands++;
           return commandCompletion({ content: [{ type: "text", text: "checked" }] });
         };
-        const fusion = createActionFusionExecutor((progress) => {
+        const schedule = createActionFusionScheduler((progress) => {
           if (progress.mutationCompleted) mutationCompleted = true;
         });
         const ctx = await createToolContext(directory, t);
@@ -194,7 +195,7 @@ for (const observation of [1, 2]) {
           () => mutationCompleted && ++observations === observation,
           () =>
             callTool(
-              makeWriteOverride(directory, fusion),
+              makeWriteOverride(directory, schedule),
               {
                 path,
                 content: PUBLISHED,
@@ -232,7 +233,7 @@ test("disturbance during post-command freshness read → retains publication and
           commands++;
           return commandCompletion({ content: [{ type: "text", text: "checked" }] });
         };
-        const fusion = createActionFusionExecutor(() => {});
+        const schedule = createActionFusionScheduler(() => {});
         const ctx = await createToolContext(directory, t);
         const result = await withDisturbedRead(
           t,
@@ -242,7 +243,7 @@ test("disturbance during post-command freshness read → retains publication and
           () => commands > 0,
           () =>
             callTool(
-              makeWriteOverride(directory, fusion),
+              makeWriteOverride(directory, schedule),
               {
                 path,
                 content: PUBLISHED,
@@ -276,7 +277,7 @@ test("other I/O failure during post-publication read → retains the published p
         commands++;
         return commandCompletion({ content: [{ type: "text", text: "checked" }] });
       };
-      const fusion = fused ? createActionFusionExecutor(() => {}) : undefined;
+      const schedule = fused ? createActionFusionScheduler(() => {}) : runAlone;
       const ctx = await createToolContext(directory, t);
       await withDisturbedRead(
         t,
@@ -287,7 +288,7 @@ test("other I/O failure during post-publication read → retains the published p
         () =>
           expectToolFailure(
             callTool(
-              makeWriteOverride(directory, fusion),
+              makeWriteOverride(directory, schedule),
               {
                 path,
                 content: PUBLISHED,
@@ -424,7 +425,7 @@ test("concurrent change during editable snapshot read → skips Fusion with NOT_
     commands++;
     return commandCompletion({ content: [{ type: "text", text: "checked" }] });
   };
-  const fusion = createActionFusionExecutor(() => {});
+  const schedule = createActionFusionScheduler(() => {});
   const ctx = await createToolContext(directory, t);
   await withDisturbedRead(
     t,
@@ -435,7 +436,7 @@ test("concurrent change during editable snapshot read → skips Fusion with NOT_
     async () => {
       await expectToolFailure(
         callTool(
-          makeEditOverride(directory, DEFAULT_CONFIG, fusion),
+          makeEditOverride(directory, DEFAULT_CONFIG, schedule),
           {
             path,
             steps: [{ action: "append", lines: ["after"] }],

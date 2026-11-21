@@ -4,7 +4,7 @@ import { syncBuiltinESMExports } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { createActionFusionExecutor } from "./action-fusion.ts";
+import { createActionFusionScheduler } from "./action-fusion.ts";
 import { makeMockGrep } from "./grep-rg.testing.ts";
 import { commandCompletion } from "./action-fusion.testing.ts";
 import { callTool, createToolContext } from "./tool-call.testing.ts";
@@ -117,22 +117,22 @@ const anchorHash = "A".repeat(DEFAULT_CONFIG.hashLen);
 const cases = [
   {
     name: "read",
-    make: (cwd: string, _fusion: ReturnType<typeof createActionFusionExecutor>) =>
+    make: (cwd: string, _schedule: ReturnType<typeof createActionFusionScheduler>) =>
       makeReadOverride(cwd, DEFAULT_CONFIG),
     args: { offset: -1, limit: 0 },
     fields: ["offset", "limit"],
   },
   {
     name: "grep",
-    make: (cwd: string, _fusion: ReturnType<typeof createActionFusionExecutor>) =>
+    make: (cwd: string, _schedule: ReturnType<typeof createActionFusionScheduler>) =>
       makeGrepOverride(cwd, DEFAULT_CONFIG),
     args: { pattern: [], literal: true, limit: 0, context: -1 },
     fields: ["pattern", "limit", "context"],
   },
   {
     name: "edit",
-    make: (cwd: string, fusion: ReturnType<typeof createActionFusionExecutor>) =>
-      makeEditOverride(cwd, DEFAULT_CONFIG, fusion),
+    make: (cwd: string, schedule: ReturnType<typeof createActionFusionScheduler>) =>
+      makeEditOverride(cwd, DEFAULT_CONFIG, schedule),
     args: {
       steps: [
         { action: "replace", anchor: `1#${anchorHash}`, lines: [] },
@@ -163,8 +163,8 @@ const cases = [
   },
   {
     name: "replace",
-    make: (cwd: string, fusion: ReturnType<typeof createActionFusionExecutor>) =>
-      makeReplaceTool(cwd, DEFAULT_CONFIG, fusion),
+    make: (cwd: string, schedule: ReturnType<typeof createActionFusionScheduler>) =>
+      makeReplaceTool(cwd, DEFAULT_CONFIG, schedule),
     args: {
       replacements: [
         { find: "(", replace: "bad\0", literal: false },
@@ -183,8 +183,8 @@ const cases = [
   },
   {
     name: "write",
-    make: (cwd: string, fusion: ReturnType<typeof createActionFusionExecutor>) =>
-      makeWriteOverride(cwd, fusion),
+    make: (cwd: string, schedule: ReturnType<typeof createActionFusionScheduler>) =>
+      makeWriteOverride(cwd, schedule),
     args: { content: "bad\0", mode: "invalid", then_run: invalidCommand },
     fields: ["content", "mode", "then_run.command", "then_run.timeout"],
   },
@@ -198,7 +198,7 @@ for (const scenario of cases) {
     const original = "original\n";
     await writeFile(path, original);
     let commandRuns = 0;
-    const fusion = createActionFusionExecutor(() => {});
+    const schedule = createActionFusionScheduler(() => {});
     const ctx = {
       ...(await createToolContext(cwd, t)),
       executeTool: async () => {
@@ -206,7 +206,7 @@ for (const scenario of cases) {
         return commandCompletion({ content: [{ type: "text", text: "ran" }], details: undefined });
       },
     };
-    const tool = scenario.make(cwd, fusion);
+    const tool = scenario.make(cwd, schedule);
     const args: unknown = JSON.parse(JSON.stringify({ path, ...scenario.args, unexpected: true }));
     const snapshot = structuredClone(args);
     const open = t.mock.method(fs, "open");
@@ -240,21 +240,21 @@ for (const scenario of cases) {
 
 test("blank then_run command with Fusion → reports exactly one command issue", async (t) => {
   const cwd = process.cwd();
-  const fusion = createActionFusionExecutor(() => {});
+  const schedule = createActionFusionScheduler(() => {});
   const mutations = [
     {
       name: "edit",
-      tool: makeEditOverride(cwd, DEFAULT_CONFIG, fusion),
+      tool: makeEditOverride(cwd, DEFAULT_CONFIG, schedule),
       args: { steps: [{ action: "append", lines: ["text"] }] },
     },
     {
       name: "replace",
-      tool: makeReplaceTool(cwd, DEFAULT_CONFIG, fusion),
+      tool: makeReplaceTool(cwd, DEFAULT_CONFIG, schedule),
       args: { replacements: [{ find: "old", replace: "new", literal: true }] },
     },
     {
       name: "write",
-      tool: makeWriteOverride(cwd, fusion),
+      tool: makeWriteOverride(cwd, schedule),
       args: { content: "text", mode: "create" },
     },
   ] as const;
@@ -490,7 +490,7 @@ test("optional edit fields and then_run are null with Fusion → publishes bytes
   t.after(() => rm(cwd, { recursive: true, force: true }));
   const path = join(cwd, "target.txt");
   let commandRuns = 0;
-  const fusion = createActionFusionExecutor(() => {});
+  const schedule = createActionFusionScheduler(() => {});
   const ctx = {
     ...(await createToolContext(cwd, t)),
     executeTool: async () => {
@@ -498,7 +498,7 @@ test("optional edit fields and then_run are null with Fusion → publishes bytes
       return commandCompletion({ content: [{ type: "text", text: "ran" }], details: undefined });
     },
   };
-  const tool = makeEditOverride(cwd, DEFAULT_CONFIG, fusion);
+  const tool = makeEditOverride(cwd, DEFAULT_CONFIG, schedule);
   for (const scenario of actionCases) {
     await t.test(`${scenario.action} → accepts null optional fields`, async () => {
       await writeFile(path, "alpha\nbeta\ngamma\n");

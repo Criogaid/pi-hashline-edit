@@ -6,7 +6,8 @@ import { join } from "node:path";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { makeWriteOverride } from "./tool-factories.testing.ts";
-import { createActionFusionExecutor } from "./action-fusion.ts";
+import { createActionFusionScheduler } from "./action-fusion.ts";
+import { runAlone } from "./mutation-runner.ts";
 import { callTool } from "./tool-call.testing.ts";
 import { reportOf } from "./report.ts";
 import { initTheme } from "@earendil-works/pi-coding-agent";
@@ -28,8 +29,8 @@ test("write receives an unknown field → rejects without changing the file", as
   withTemp(async (dir) => {
     const file = join(dir, "file.txt");
     await writeFile(file, "original\n");
-    for (const fusion of [undefined, createActionFusionExecutor(() => {})]) {
-      const tool = makeWriteOverride(dir, fusion);
+    for (const schedule of [runAlone, createActionFusionScheduler(() => {})]) {
+      const tool = makeWriteOverride(dir, schedule);
       const args = { path: "file.txt", content: "new\n", mode: "overwrite", unexpected: true };
       await assert.rejects(
         callTool(tool, args, { ctx: context(dir) }),
@@ -66,14 +67,18 @@ test("write omits mode → rejects before changing files or running commands", a
       commandRuns++;
       return commandCompletion({ content: [{ type: "text", text: "checked" }] });
     };
-    const fusion = createActionFusionExecutor(() => {});
-    for (const executor of [undefined, fusion]) {
-      const tool = makeWriteOverride(dir, executor);
+    const fusion = createActionFusionScheduler(() => {});
+    for (const schedule of [runAlone, fusion]) {
+      const tool = makeWriteOverride(dir, schedule);
       for (const path of [existing, missing]) {
         await assert.rejects(
           callTool(
             tool,
-            { path, content: "changed\n", ...(executor ? { then_run: { command: "check" } } : {}) },
+            {
+              path,
+              content: "changed\n",
+              ...(schedule !== runAlone ? { then_run: { command: "check" } } : {}),
+            },
             { ctx: { ...context(dir), executeTool } },
           ),
           rejectsArgument("mode", /required/),
@@ -154,7 +159,7 @@ test("write returns its summary and command output after an unchanged then_run",
   withTemp(async (dir) => {
     const executeTool: SessionCommand = async () =>
       commandCompletion({ content: [{ type: "text", text: "checked" }] });
-    const fusion = createActionFusionExecutor(() => {});
+    const fusion = createActionFusionScheduler(() => {});
     const write = makeWriteOverride(dir, fusion) as any;
     const result = await write.execute(
       "unchanged",
@@ -179,7 +184,7 @@ test("write reports changed freshness when then_run changes the target", async (
       await writeFile(target, "command changed\n");
       return commandCompletion({ content: [{ type: "text", text: "checked" }] });
     };
-    const fusion = createActionFusionExecutor(() => {});
+    const fusion = createActionFusionScheduler(() => {});
     const write = makeWriteOverride(dir, fusion) as any;
     const result = await callTool(
       write,
@@ -214,7 +219,7 @@ test("write reports missing freshness when then_run removes the target", async (
       await rm(target);
       return commandCompletion({ content: [{ type: "text", text: "removed" }] });
     };
-    const fusion = createActionFusionExecutor(() => {});
+    const fusion = createActionFusionScheduler(() => {});
     const result = await makeWriteOverride(dir, fusion).execute(
       "missing",
       {
@@ -238,7 +243,7 @@ test("write preserves command failure and changed freshness", async () =>
       await writeFile(target, "changed before failure\n");
       return commandCompletion({ content: [{ type: "text", text: "command failed" }] }, true);
     };
-    const fusion = createActionFusionExecutor(() => {});
+    const fusion = createActionFusionScheduler(() => {});
     const result = await makeWriteOverride(dir, fusion).execute(
       "failed",
       { path: "failed.txt", content: "mutation\n", mode: "create", then_run: { command: "fail" } },

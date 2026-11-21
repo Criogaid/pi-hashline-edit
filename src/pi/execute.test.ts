@@ -16,7 +16,7 @@ import { makeReadOverride } from "./tool-factories.testing.ts";
 import { makeWriteOverride } from "./tool-factories.testing.ts";
 import { makeReplaceTool } from "./tool-factories.testing.ts";
 import { makeGrepOverride } from "./tool-factories.testing.ts";
-import { createActionFusionExecutor } from "./action-fusion.ts";
+import { createActionFusionScheduler } from "./action-fusion.ts";
 import { computeLineHash } from "../core/hash.ts";
 import { splitLines } from "../core/lines.ts";
 import { callTool } from "./tool-call.testing.ts";
@@ -521,7 +521,7 @@ test("mixed empty-lines batches name every rejected edit without publishing or r
       commandRuns++;
       return commandCompletion({ content: [{ type: "text", text: "ran" }] });
     };
-    const fusion = createActionFusionExecutor(() => {});
+    const fusion = createActionFusionScheduler(() => {});
     const edit = makeEditOverride(dir, DEFAULT_CONFIG, fusion);
     await assert.rejects(
       callTool(
@@ -641,7 +641,7 @@ test("failed commands preserve mutation results and stay out of all main card re
         true,
       );
     };
-    const fusion = createActionFusionExecutor((event) => commands.push(event.command));
+    const fusion = createActionFusionScheduler((event) => commands.push(event.command));
     const cases = [
       {
         path: "edit.txt",
@@ -971,7 +971,7 @@ test("failed steps return candidate code for a verified fused retry", async () =
       commands++;
       return commandCompletion({ content: [{ type: "text", text: "checked" }] });
     };
-    const fusion = createActionFusionExecutor(() => {});
+    const fusion = createActionFusionScheduler(() => {});
     const edit = makeEditOverride(dir, DEFAULT_CONFIG, fusion);
     const stale = h(original.join("\n"), 5);
     const stable = h(before, 12);

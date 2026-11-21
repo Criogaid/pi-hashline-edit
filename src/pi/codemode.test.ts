@@ -5,7 +5,7 @@ import { test } from "node:test";
 import { Type } from "typebox";
 import { createCodemodeToolDefinition } from "../../node_modules/@earendil-works/pi-coding-agent/dist/extensions/codemode/tool.js";
 import { openTestSession, responseStream, SESSION_TIMEOUT_MS } from "../testing/session.testing.ts";
-import { createActionFusionExecutor } from "./action-fusion.ts";
+import { createActionFusionScheduler } from "./action-fusion.ts";
 import { DEFAULT_CONFIG, makeReadOverride, makeWriteOverride } from "./tool-factories.testing.ts";
 
 for (const entry of ["direct", "codemode"] as const) {
@@ -20,7 +20,7 @@ for (const entry of ["direct", "codemode"] as const) {
         pi.registerTool(
           makeWriteOverride(
             cwd,
-            createActionFusionExecutor(() => {}),
+            createActionFusionScheduler(() => {}),
           ),
         );
         pi.registerTool(createCodemodeToolDefinition());

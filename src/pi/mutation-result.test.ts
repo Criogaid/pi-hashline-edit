@@ -8,7 +8,7 @@ import { displayCarriageReturns } from "./anchor-format.ts";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createActionFusionExecutor } from "./action-fusion.ts";
+import { createActionFusionScheduler } from "./action-fusion.ts";
 import { makeWriteOverride, DEFAULT_OUTPUT_BUDGETS } from "./tool-factories.testing.ts";
 import { makeReplaceTool } from "./tool-factories.testing.ts";
 import type { SuccessReport } from "./report-schema.ts";
@@ -41,7 +41,7 @@ test("then_run command with and without output → the model reads the output as
       commandCompletion({ content: output ? [{ type: "text", text: output }] : [] }, true);
     const tool = makeWriteOverride(
       dir,
-      createActionFusionExecutor(() => {}),
+      createActionFusionScheduler(() => {}),
     );
     const result = await callTool(
       tool,
@@ -74,7 +74,7 @@ test("command content includes images → the result's output joins only text bl
           { type: "text", text: "second" },
         ],
       });
-    const fusion = createActionFusionExecutor(() => {});
+    const fusion = createActionFusionScheduler(() => {});
     const result = await callTool(
       makeWriteOverride(dir, fusion),
       { path, content: "saved\n", mode: "create", then_run: { command: "check" } },
@@ -95,7 +95,7 @@ test("oversized command diagnostic → bounds model output and retains the origi
   const executeTool: SessionCommand = async () =>
     commandCompletion({ content: [{ type: "text", text: output }] }, true);
   let displayedOutput: unknown;
-  const fusion = createActionFusionExecutor((progress) => {
+  const fusion = createActionFusionScheduler((progress) => {
     if (progress.command === "failed") displayedOutput = progress.result?.content[0];
   });
   const result = await callTool(

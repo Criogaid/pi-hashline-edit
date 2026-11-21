@@ -10,7 +10,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { outputBudgetsFor } from "./budgets.ts";
-import { createActionFusionExecutor } from "./action-fusion.ts";
+import { createActionFusionScheduler } from "./action-fusion.ts";
+import { runAlone } from "./mutation-runner.ts";
 import { makeReplaceTool } from "./tool-factories.testing.ts";
 import { makeWriteOverride } from "./tool-factories.testing.ts";
 import { makeEditOverride } from "./tool-factories.testing.ts";
@@ -72,7 +73,7 @@ test("edit and replace commands change or remove the file → withhold anchors a
               );
             return commandCompletion({ content: [{ type: "text", text: "done" }] });
           };
-          const fusion = createActionFusionExecutor(() => {});
+          const fusion = createActionFusionScheduler(() => {});
           const tool =
             toolName === "edit"
               ? makeEditOverride(dir, DEFAULT_CONFIG, fusion)
@@ -132,7 +133,7 @@ test("progress callback failures → preserve publication and allow the command"
         commands++;
         return commandCompletion({ content: [{ type: "text", text: "done" }] });
       };
-      const fusion = createActionFusionExecutor(callback === "reporter" ? fail : () => {});
+      const fusion = createActionFusionScheduler(callback === "reporter" ? fail : () => {});
       const path = join(dir, callback);
       const result = await callTool(
         makeWriteOverride(dir, fusion),
@@ -192,7 +193,7 @@ test("unpaired surrogate arguments are rejected before Fusion", async (t) => {
       commands++;
       return commandCompletion({ content: [{ type: "text", text: "done" }] });
     };
-    const fusion = createActionFusionExecutor((event) => events.push(event.command));
+    const fusion = createActionFusionScheduler((event) => events.push(event.command));
     const path = join(dir, "file.txt");
     await writeFile(path, "original\n");
     const cases = [
@@ -278,7 +279,7 @@ test("NUL arguments are rejected before Fusion for all mutation tools", async (t
       commands++;
       return commandCompletion({ content: [{ type: "text", text: "unexpected" }] });
     };
-    const fusion = createActionFusionExecutor((event) => events.push(event.command));
+    const fusion = createActionFusionScheduler((event) => events.push(event.command));
     const cases = [
       {
         tool: makeEditOverride(dir, DEFAULT_CONFIG, fusion),
@@ -333,7 +334,7 @@ test("Fusion skips the command when a replacement produces unencodable text", as
       commands++;
       return commandCompletion({ content: [{ type: "text", text: "unexpected" }] });
     };
-    const fusion = createActionFusionExecutor((event) => events.push(event.command));
+    const fusion = createActionFusionScheduler((event) => events.push(event.command));
     const result = await callTool(
       makeReplaceTool(dir, DEFAULT_CONFIG, fusion),
       {
@@ -373,7 +374,7 @@ test("result generation fails after a real mutation → preserves publication an
         commands++;
         return commandCompletion({ content: [] });
       };
-      const fusion = createActionFusionExecutor(() => {});
+      const fusion = createActionFusionScheduler(() => {});
       try {
         t.mock.method(fs, "open", async (...args: Parameters<typeof nativeOpen>) => {
           if (String(args[0]) === path) targetReads++;
@@ -422,10 +423,11 @@ test("result generation fails after a real mutation → preserves publication an
   }
 });
 
-type Fusion = Parameters<typeof makeWriteOverride>[1];
+type Scheduler = Parameters<typeof makeWriteOverride>[1];
 const noOpCases = [
   {
-    makeTool: (cwd: string, fusion?: Fusion) => makeEditOverride(cwd, DEFAULT_CONFIG, fusion),
+    makeTool: (cwd: string, schedule?: Scheduler) =>
+      makeEditOverride(cwd, DEFAULT_CONFIG, schedule),
     params: {
       steps: [
         {
@@ -437,7 +439,7 @@ const noOpCases = [
     },
   },
   {
-    makeTool: (cwd: string, fusion?: Fusion) => makeReplaceTool(cwd, DEFAULT_CONFIG, fusion),
+    makeTool: (cwd: string, schedule?: Scheduler) => makeReplaceTool(cwd, DEFAULT_CONFIG, schedule),
     params: { replacements: [{ literal: true, find: "same", replace: "same" }] },
   },
   { makeTool: makeWriteOverride, params: { content: "same\n", mode: "overwrite" } },
@@ -456,8 +458,8 @@ test("all mutation tools succeed without rewriting on no-op, with and without Fu
           commands++;
           return commandCompletion({ content: [{ type: "text", text: "checked" }] });
         };
-        const fusion = createActionFusionExecutor(() => {});
-        const tool = makeTool(dir, mode === "standalone" ? undefined : fusion);
+        const fusion = createActionFusionScheduler(() => {});
+        const tool = makeTool(dir, mode === "standalone" ? runAlone : fusion);
         const result = await callTool(
           tool,
           { path, ...params, ...(mode === "command" ? { then_run: { command: "check" } } : {}) },
@@ -503,12 +505,12 @@ test("delete and append change only line endings → publishes with an empty dif
         assert.equal(await readFile(path, "utf8"), "same\nsame\r\n");
         return commandCompletion({ content: [] });
       };
-      const fusion = createActionFusionExecutor((progress) => {
+      const fusion = createActionFusionScheduler((progress) => {
         if (mode === "stale" && progress.mutationCompleted && progress.command === "waiting")
           writeFileSync(path, "external\n");
       });
       const result = await callTool(
-        makeEditOverride(dir, DEFAULT_CONFIG, mode === "standalone" ? undefined : fusion),
+        makeEditOverride(dir, DEFAULT_CONFIG, mode === "standalone" ? runAlone : fusion),
         {
           path,
           steps: [
@@ -559,7 +561,7 @@ test("no-op Fusion still detects external changes and reports command failures",
           await writeFile(path, "external\n");
           return commandCompletion({ content: [{ type: "text", text: "done" }] });
         };
-        const fusion = createActionFusionExecutor((progress) => {
+        const fusion = createActionFusionScheduler((progress) => {
           if (scenario === "before" && progress.mutationCompleted && progress.command === "waiting")
             writeFileSync(path, "external\n");
         });

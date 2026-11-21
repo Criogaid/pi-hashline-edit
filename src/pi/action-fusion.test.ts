@@ -14,7 +14,7 @@ import { makeEditOverride, makeReplaceTool, makeWriteOverride } from "./tool-fac
 import { commandCompletion, commandOutput, createFusionContext } from "./action-fusion.testing.ts";
 import type { ExtensionToolContext } from "@earendil-works/pi-coding-agent";
 import type { ActionFusionProgress } from "./report-schema.ts";
-import { ACTION_FUSION_GUIDELINES, createActionFusionExecutor } from "./action-fusion.ts";
+import { ACTION_FUSION_GUIDELINES, createActionFusionScheduler } from "./action-fusion.ts";
 import { loadConfig } from "./config.ts";
 import { ACTION_FUSION_PROGRESS_SCHEMA } from "./report-schema.ts";
 import { Value } from "typebox/value";
@@ -28,16 +28,16 @@ async function tempDir(): Promise<string> {
   return mkdtemp(join(tmpdir(), "hashline-action-fusion-"));
 }
 
-type Fusion = Parameters<typeof makeWriteOverride>[1];
+type Scheduler = Parameters<typeof makeWriteOverride>[1];
 type CommandCompletion = Awaited<ReturnType<ExtensionToolContext["executeTool"]>>;
 const mutationFactories = [
-  (cwd: string, fusion?: Fusion) => makeEditOverride(cwd, loadConfig(cwd), fusion),
-  (cwd: string, fusion?: Fusion) => makeReplaceTool(cwd, loadConfig(cwd), fusion),
+  (cwd: string, schedule?: Scheduler) => makeEditOverride(cwd, loadConfig(cwd), schedule),
+  (cwd: string, schedule?: Scheduler) => makeReplaceTool(cwd, loadConfig(cwd), schedule),
   makeWriteOverride,
 ];
 
-test("Fusion executor toggled → mutation descriptions stay identical without then_run instructions", () => {
-  const fusion = createActionFusionExecutor(() => {});
+test("Action Fusion toggled → mutation descriptions stay identical without then_run instructions", () => {
+  const fusion = createActionFusionScheduler(() => {});
   for (const makeTool of mutationFactories) {
     const disabled = makeTool("/tmp");
     const enabled = makeTool("/tmp", fusion);
@@ -46,8 +46,8 @@ test("Fusion executor toggled → mutation descriptions stay identical without t
   }
 });
 
-test("mutation tools expose Fusion schemas and guidance when supplied an executor", () => {
-  const fusion = createActionFusionExecutor(() => {});
+test("mutation tools expose Fusion schemas and guidance when Action Fusion is enabled", () => {
+  const fusion = createActionFusionScheduler(() => {});
   for (const makeTool of mutationFactories) {
     const disabled = makeTool("/tmp");
     const enabled = makeTool("/tmp", fusion);
@@ -98,7 +98,7 @@ test("then_run schemas reject invalid commands, unknown keys, and excessive time
     for (const makeTool of mutationFactories) {
       const tool = makeTool(
         dir,
-        createActionFusionExecutor(() => {}),
+        createActionFusionScheduler(() => {}),
       );
       const path = `${tool.name}.txt`;
       await writeFile(join(dir, path), "old\n");
@@ -147,7 +147,7 @@ test("fused write → session Bash receives the original signal", async (t) => {
   });
   const tool = makeWriteOverride(
     cwd,
-    createActionFusionExecutor(() => {}),
+    createActionFusionScheduler(() => {}),
   );
   for (const [name, signal] of [
     ["undefined signal", undefined],
@@ -180,11 +180,11 @@ test("fused write → session Bash receives the original signal", async (t) => {
   }
 });
 
-test("edit and replace share one embedded executor and preserve mutation results", async (t) => {
+test("edit and replace share one scheduler and preserve mutation results", async (t) => {
   const dir = await tempDir();
   try {
     const calls: string[] = [];
-    const fusion = createActionFusionExecutor(() => {});
+    const fusion = createActionFusionScheduler(() => {});
     const context = await createFusionContext(dir, t, async (name, input) => {
       assert.equal(name, "bash");
       assert.ok(input && typeof input === "object" && "command" in input);
@@ -233,7 +233,7 @@ test("then_run returns a termination flag → parent results preserve its value 
   const dir = await tempDir();
   try {
     for (const terminate of [true, false, undefined]) {
-      const fusion = createActionFusionExecutor(() => {});
+      const fusion = createActionFusionScheduler(() => {});
       const context = await createFusionContext(dir, t, async () =>
         commandCompletion({
           content: [{ type: "text", text: "checked" }],
@@ -278,7 +278,7 @@ test("target changes after publication → skips then_run and reports freshness 
         commands++;
         return commandCompletion({ content: [] });
       });
-      const fusion = createActionFusionExecutor((progress) => {
+      const fusion = createActionFusionScheduler((progress) => {
         if (!progress.mutationCompleted || disturbed) return;
         disturbed = true;
         if (state === "changed") writeFileSync(target, "external\n");
@@ -320,7 +320,7 @@ test("all mutation tools forward command progress before completion in RPC mode"
   try {
     const events: ActionFusionProgress[] = [];
     const updates: ProgressUpdate[] = [];
-    const fusion = createActionFusionExecutor((event) => events.push(event));
+    const fusion = createActionFusionScheduler((event) => events.push(event));
     const rpcContext = await createFusionContext(
       dir,
       t,
@@ -421,7 +421,7 @@ test("progress reports skipped mutations and failed commands without rolling bac
   try {
     const events: ActionFusionProgress[] = [];
     let commands = 0;
-    const fusion = createActionFusionExecutor((event) => events.push(event));
+    const fusion = createActionFusionScheduler((event) => events.push(event));
     const context = await createFusionContext(dir, t, async () => {
       commands++;
       return commandCompletion(
@@ -509,7 +509,7 @@ test("progress observer throws undefined first → retains the first failure in 
         const path = join(dir, mutationFails ? "existing.txt" : "new.txt");
         if (mutationFails) await writeFile(path, "original\n");
         let notifications = 0;
-        const fusion = createActionFusionExecutor(() => {
+        const fusion = createActionFusionScheduler(() => {
           if (notifications++ === 0) throw undefined;
           throw new Error("later progress failure");
         });
@@ -534,7 +534,7 @@ test("case-differing paths on Windows → the Fusion queue serializes mutation s
 }, async (t) => {
   const dir = await tempDir();
   try {
-    const fusion = createActionFusionExecutor(() => {});
+    const fusion = createActionFusionScheduler(() => {});
     const order: string[] = [];
     const firstStarted = Promise.withResolvers<void>();
     let releaseFirst!: () => void;
@@ -588,7 +588,7 @@ test("cancelled write waiting for a fused command → returns before the command
   const controller = new AbortController();
   const tool = makeWriteOverride(
     dir,
-    createActionFusionExecutor(() => {}),
+    createActionFusionScheduler(() => {}),
   );
   const path = "queue.txt";
   let nestedRejected = false;
@@ -673,7 +673,7 @@ test("timed command stays silent → heartbeat preserves output and stops after 
       const events: ActionFusionProgress[] = [];
       const updates: unknown[] = [];
       try {
-        const fusion = createActionFusionExecutor((event) => events.push(event));
+        const fusion = createActionFusionScheduler((event) => events.push(event));
         const context = await createFusionContext(dir, t, async (name, input, options) => {
           assert.equal(name, "bash");
           assert.deepEqual(input, { command: "check", timeout: 10 });
@@ -746,7 +746,7 @@ test("command omits timeout → no countdown events occur while it waits", async
   const finished = Promise.withResolvers<CommandCompletion>();
   const events: ActionFusionProgress[] = [];
   try {
-    const fusion = createActionFusionExecutor((event) => events.push(event));
+    const fusion = createActionFusionScheduler((event) => events.push(event));
     const context = await createFusionContext(dir, t, async (name, input) => {
       assert.equal(name, "bash");
       assert.deepEqual(input, { command: "check" });
@@ -789,7 +789,7 @@ test("command returns a terminal status → reports its status and diagnostic on
         status === "timeout"
           ? "command diagnostic\nCommand timed out after 10 seconds"
           : "command diagnostic";
-      const fusion = createActionFusionExecutor(() => {});
+      const fusion = createActionFusionScheduler(() => {});
       const context = await createFusionContext(dir, t, async () => {
         commands++;
         if (status === "cancelled") controller.abort();

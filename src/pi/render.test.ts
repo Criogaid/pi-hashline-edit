@@ -24,7 +24,7 @@ import { MUTATION_CARD_SHOWN, diffCardRenderers, reportLines } from "./render.ts
 import { withMutationStatus } from "./fusion-card.ts";
 import { makeWriteOverride } from "./tool-factories.testing.ts";
 import { generateMutationDetails } from "./mutation-result.ts";
-import { createActionFusionExecutor } from "./action-fusion.ts";
+import { createActionFusionScheduler } from "./action-fusion.ts";
 import { DEFAULT_CONFIG } from "./tool-factories.testing.ts";
 import { toDisplayLines } from "./grep-render.ts";
 import { CONTEXT_GAP, parseFileHeader } from "./grep-output.ts";
@@ -59,7 +59,7 @@ test("Fusion mutation card → follows Pi's output padding when it changes", asy
   const tool = withMutationStatus(
     makeWriteOverride(
       cwd,
-      createActionFusionExecutor(() => {}),
+      createActionFusionScheduler(() => {}),
     ),
   );
   const args = { path: "target.txt", content: "saved", mode: "create" as const };
@@ -876,7 +876,7 @@ test("command changes or removes the target → completed mutation stays success
       else await unlink(target);
       return commandCompletion({ content: [{ type: "text", text: "checked" }] });
     };
-    const fusion = createActionFusionExecutor(() => {});
+    const fusion = createActionFusionScheduler(() => {});
     const tool = withMutationStatus(makeWriteOverride(cwd, fusion));
     const args = {
       path,

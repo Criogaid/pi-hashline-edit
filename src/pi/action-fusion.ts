@@ -5,7 +5,7 @@
  * - Pi's `withFileMutationQueue` (entered by the mutation runner) serializes
  *   the read-modify-write itself and is shared with every tool that uses it.
  *   It is released as soon as the file is published.
- * - The executor's own queue wraps mutation, freshness check, and command, so
+ * - The scheduler's own queue wraps mutation, freshness check, and command, so
  *   a later fused call on the same file waits until this command finishes and
  *   cannot change the revision the command started from. Its key resolves the nearest
  *   existing ancestor and folds case on Windows, so it is never looser than
@@ -28,13 +28,14 @@ import { basename, dirname, resolve } from "node:path";
 import type { AgentToolUpdateCallback } from "@earendil-works/pi-agent-core";
 import type { ExtensionToolContext } from "@earendil-works/pi-coding-agent";
 import { Type, type Static, type TObject, type TProperties } from "typebox";
-import { commitFreshness, observeFreshness, type FreshnessObservation } from "./file-commit.ts";
+import { observeFreshness, type FreshnessObservation } from "./file-commit.ts";
 import {
   CommandNotRun,
   commandText,
+  settleAlone,
   type CommandFacts,
-  type MutationOutcome,
   type MutationResultDetails,
+  type MutationScheduler,
   type ObserverFailure,
 } from "./mutation-result.ts";
 import { errnoCode, errorMessage, HashlineError } from "../core/errors.ts";
@@ -101,31 +102,13 @@ export function withThenRunSchema<P extends TProperties>(
 
 export type ThenRunInput = NonNullable<Static<ReturnType<typeof createThenRunSchema>>>;
 
-/** What a fused call leaves for the mutation runner to report; Fusion builds no result itself. */
-export interface FusedMutation<TDetails, TTool extends MutationToolName> {
-  readonly outcome: MutationOutcome<TDetails, TTool>;
-  readonly observation: FreshnessObservation;
-  /** Absent when the call has no then_run. */
-  readonly command?: CommandFacts;
-  /** Preserve the session tool's request to stop after this tool batch. */
-  readonly terminate?: boolean;
-}
-
 /** Keep command state independent of its diagnostic text and of file publication. */
-interface CommandOutcome {
-  readonly status: Exclude<CommandStatus, "skipped">;
-  /** Absent when Pi ended the call before the command ran. */
-  readonly result?: CommandResult;
-  /** Preserve the session tool's request to stop after this tool batch. */
-  readonly terminate?: boolean;
-}
-
 async function runCommand(
   input: ThenRunInput,
   signal: AbortSignal,
   ctx: ExtensionToolContext,
   onUpdate: AgentToolUpdateCallback<unknown>,
-): Promise<CommandOutcome> {
+): Promise<CommandFacts> {
   // Use the session's callable Bash, including overrides, validation, permission
   // hooks and tool_result hooks. Tool failures resolve with isError, not rejection.
   // Without a signal option, Pi gives the nested call this tool call's own signal.
@@ -269,7 +252,8 @@ function createProgressTracker<TDetails extends object>({
   };
 }
 
-export function createActionFusionExecutor(onProgress: ProgressReporter) {
+/** The scheduler of mutation calls when Action Fusion is on, shared by every mutation tool. */
+export function createActionFusionScheduler(onProgress: ProgressReporter): MutationScheduler {
   const queueTails = new Map<string, Promise<void>>();
   const commandScope = new AsyncLocalStorage<{ active: boolean }>();
 
@@ -311,7 +295,7 @@ export function createActionFusionExecutor(onProgress: ProgressReporter) {
     }
   }
 
-  return async function execute<TDetails extends object, TTool extends MutationToolName>({
+  const schedule: MutationScheduler = async ({
     toolCallId,
     absolutePath,
     thenRun,
@@ -319,29 +303,12 @@ export function createActionFusionExecutor(onProgress: ProgressReporter) {
     signal,
     ctx,
     onUpdate,
-  }: {
-    toolCallId: string;
-    absolutePath: string;
-    thenRun: ThenRunInput | undefined;
-    mutate: () => Promise<MutationOutcome<TDetails, TTool>>;
-    signal: AbortSignal;
-    ctx: ExtensionToolContext;
-    onUpdate: AgentToolUpdateCallback<MutationResultDetails<TDetails>>;
-  }): Promise<FusedMutation<TDetails, TTool>> {
+  }) => {
     // Without a command, the mutation still waits for a fused call on the same file.
-    if (thenRun === undefined) {
-      return withQueue(absolutePath, signal, async () => {
-        const outcome = await mutate();
-        return { outcome, observation: commitFreshness(outcome.commit) };
-      });
-    }
+    if (thenRun === undefined)
+      return withQueue(absolutePath, signal, async () => settleAlone(await mutate()));
 
-    const progress = createProgressTracker<TDetails>({
-      toolCallId,
-      thenRun,
-      onProgress,
-      onUpdate,
-    });
+    const progress = createProgressTracker({ toolCallId, thenRun, onProgress, onUpdate });
     /** A mutation that did not complete keeps its own failure; Fusion adds only the command status. */
     const notRun = (error: unknown, command: "skipped" | "cancelled") => {
       progress.report(command, "unknown");
@@ -349,22 +316,21 @@ export function createActionFusionExecutor(onProgress: ProgressReporter) {
     };
     progress.report("waiting", "unknown");
     return withQueue(absolutePath, signal, async () => {
-      let outcome: MutationOutcome<TDetails, TTool>;
-      try {
-        outcome = await mutate();
-        progress.mutationCompleted(outcome.details);
-      } catch (error) {
+      const outcome = await mutate().catch((error: unknown) => {
         throw notRun(error, "skipped");
-      }
+      });
+      progress.mutationCompleted(outcome.details);
 
       const { publishedRevision } = outcome.commit;
       progress.report("waiting", "unknown");
       const settle = (observation: FreshnessObservation, command: CommandFacts) => {
         progress.report(command.status, observation.freshness);
         return {
+          kind: "fused" as const,
           outcome,
           observation,
-          command: { ...command, progressFailure: progress.failure() },
+          command,
+          progressFailure: progress.failure(),
         };
       };
 
@@ -375,7 +341,7 @@ export function createActionFusionExecutor(onProgress: ProgressReporter) {
 
       progress.report("running", "unchanged");
       const scope = { active: true };
-      let command: CommandOutcome;
+      let command: CommandFacts;
       try {
         command = await commandScope.run(scope, () =>
           runCommand(thenRun, signal, ctx, progress.followCommand),
@@ -390,17 +356,12 @@ export function createActionFusionExecutor(onProgress: ProgressReporter) {
         progress.stopHeartbeat();
       }
       progress.commandSettled(command.result);
-      const settled = settle(await observeFreshness(absolutePath, publishedRevision), {
-        status: command.status,
-        result: command.result,
-      });
-      return command.terminate === undefined
-        ? settled
-        : { ...settled, terminate: command.terminate };
+      return settle(await observeFreshness(absolutePath, publishedRevision), command);
     }).catch((error: unknown) => {
       if (error instanceof CommandNotRun) throw error;
       const cancelled = error instanceof HashlineError && error.errorCode === "OPERATION_ABORTED";
       throw notRun(error, cancelled ? "cancelled" : "skipped");
     });
   };
+  return schedule;
 }

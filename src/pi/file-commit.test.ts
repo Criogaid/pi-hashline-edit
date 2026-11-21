@@ -27,7 +27,7 @@ import {
 } from "./file-commit.ts";
 import { byteRevision } from "./file-revision.ts";
 import { HashlineError, PATH_ERROR_MESSAGES } from "../core/errors.ts";
-import { createActionFusionExecutor } from "./action-fusion.ts";
+import { createActionFusionScheduler } from "./action-fusion.ts";
 import { commandCompletion } from "./action-fusion.testing.ts";
 import { makeWriteOverride } from "./tool-factories.testing.ts";
 import { callTool } from "./tool-call.testing.ts";
@@ -298,7 +298,7 @@ test("Windows shared access failure preserves the target, skips then_run, and re
     };
     const tool = makeWriteOverride(
       dir,
-      createActionFusionExecutor(() => {}),
+      createActionFusionScheduler(() => {}),
     );
     try {
       const failed = await callTool(

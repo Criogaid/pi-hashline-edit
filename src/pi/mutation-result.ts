@@ -5,7 +5,15 @@
  */
 
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
-import { FileMutationError, type CommitResult, type FreshnessObservation } from "./file-commit.ts";
+import type { AgentToolUpdateCallback } from "@earendil-works/pi-agent-core";
+import type { ExtensionToolContext } from "@earendil-works/pi-coding-agent";
+import type { ThenRunInput } from "./action-fusion.ts";
+import {
+  commitFreshness,
+  FileMutationError,
+  type CommitResult,
+  type FreshnessObservation,
+} from "./file-commit.ts";
 import { generateRangeDiff } from "./mutation-diff.ts";
 import { displayCarriageReturns } from "./anchor-format.ts";
 import { errorMessage } from "../core/errors.ts";
@@ -76,14 +84,63 @@ export interface ObserverFailure {
   readonly error: unknown;
 }
 
-/** What Action Fusion states about the command; it never restates file state. */
-export interface CommandFacts {
-  readonly status: CommandStatus;
-  /** Absent when the command never produced a result. */
-  readonly result?: CommandResult;
-  /** A progress observer failed; command and file outcomes are unaffected. */
-  readonly progressFailure?: ObserverFailure;
+/**
+ * What Action Fusion states about the command; it never restates file state. A command that never
+ * produced a result was skipped or cancelled; one with a result may still not have run, when a
+ * permission hook blocked it with a reason.
+ */
+export type CommandFacts = (
+  | { readonly status: Extract<CommandStatus, "skipped" | "cancelled">; readonly result?: never }
+  | { readonly status: Exclude<CommandStatus, "skipped">; readonly result: CommandResult }
+) & {
+  /** The session Bash result's request to stop after this tool batch, as Pi gave it. */
+  readonly terminate?: boolean;
+};
+
+/** A mutation that completed, with what is known about its target afterwards. */
+interface SettledFacts<TDetails, TTool extends MutationToolName> {
+  readonly outcome: MutationOutcome<TDetails, TTool>;
+  readonly observation: FreshnessObservation;
 }
+
+/** A call without then_run settles alone; a fused call adds its command. */
+export type SettledMutation<TDetails, TTool extends MutationToolName> = SettledFacts<
+  TDetails,
+  TTool
+> &
+  (
+    | { readonly kind: "alone" }
+    | {
+        readonly kind: "fused";
+        readonly command: CommandFacts;
+        /** A progress observer failed; command and file outcomes are unaffected. */
+        readonly progressFailure: ObserverFailure | undefined;
+      }
+  );
+
+/** A mutation settled without a command: the commit result alone states its freshness. */
+export function settleAlone<TDetails, TTool extends MutationToolName>(
+  outcome: MutationOutcome<TDetails, TTool>,
+): SettledMutation<TDetails, TTool> {
+  return { kind: "alone", outcome, observation: commitFreshness(outcome.commit) };
+}
+
+/** One validated mutation call, as the scheduler receives it. */
+export interface MutationCall<TDetails, TTool extends MutationToolName> {
+  readonly toolCallId: string;
+  readonly absolutePath: string;
+  /** The model's optional follow-up command; only Action Fusion's schema admits it. */
+  readonly thenRun: ThenRunInput | undefined;
+  readonly mutate: () => Promise<MutationOutcome<TDetails, TTool>>;
+  readonly signal: AbortSignal;
+  readonly ctx: ExtensionToolContext;
+  readonly onUpdate: AgentToolUpdateCallback<MutationResultDetails<TDetails>>;
+}
+
+/** Runs mutation calls; chosen once at registration from the actionFusion setting. */
+export type MutationScheduler = <TDetails extends object, TTool extends MutationToolName>(
+  call: MutationCall<TDetails, TTool>,
+) => Promise<SettledMutation<TDetails, TTool>>;
 
 function observerFailure(failure: ObserverFailure | undefined, budget: OutputBudgets) {
   return failure && describeThrown(failure.error, budget.fieldBytes);
@@ -131,42 +188,42 @@ export function describeMutationFailure(
 
 /**
  * Build the mutation result from commit, freshness, and command facts; the TUI uses its diff
- * details. The command's output is the result's payload, which the report follows with the
- * command's status; scripts read both in `then_run`.
+ * details. A fused call's command output is the result's payload, which the report follows with
+ * the command's status; scripts read both in `then_run`.
  */
 export function finalizeMutation<TDetails extends object, TTool extends MutationToolName>(
   tool: TTool,
   path: string,
-  { commit, details, facts }: MutationOutcome<TDetails, NoInfer<TTool>>,
-  observation: FreshnessObservation,
-  command: CommandFacts | undefined,
+  settled: SettledMutation<TDetails, NoInfer<TTool>>,
   budget: OutputBudgets,
 ): AgentToolResult<TDetails & ReportDetails<SuccessReport>> {
-  const fresh = observation.freshness === "unchanged";
-  const output = command?.result ? commandText(command.result.content) : "";
-  const shown = output ? boundedText(output, budget.fieldBytes) : undefined;
+  const { commit, details, facts } = settled.outcome;
+  const { observation } = settled;
   // Tool-indexed facts preserve the correlation that object spread loses.
   const report = {
     tool,
     path,
     publication: commit.publication,
     ...facts,
-    freshness: fresh ? undefined : observation.freshness,
+    freshness: observation.freshness === "unchanged" ? undefined : observation.freshness,
     freshnessError:
       observation.freshness === "unknown"
         ? describeThrown(observation.error, budget.fieldBytes)
         : undefined,
-    then_run: command ? { status: command.status } : undefined,
-    progressError: observerFailure(command?.progressFailure, budget),
   } as SuccessReport & { tool: MutationToolName };
+  if (settled.kind === "alone")
+    return reportResult<TDetails, MutationToolName>(report, [], budget, details);
+
+  const { command } = settled;
+  const then_run = { status: command.status };
+  const output = command.result === undefined ? "" : commandText(command.result.content);
+  const shown = boundedText(output, budget.fieldBytes);
   return reportResult<TDetails, MutationToolName>(
-    report,
-    shown === undefined ? [] : [{ type: "text", text: shown }],
+    { ...report, then_run, progressError: observerFailure(settled.progressFailure, budget) },
+    shown ? [{ type: "text", text: shown }] : [],
     budget,
     details,
     undefined,
-    command && shown !== undefined
-      ? { then_run: { status: command.status, output: shown } }
-      : undefined,
+    shown ? { then_run: { ...then_run, output: shown } } : undefined,
   );
 }

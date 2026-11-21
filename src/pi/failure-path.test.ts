@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { createActionFusionExecutor } from "./action-fusion.ts";
+import { createActionFusionScheduler } from "./action-fusion.ts";
 import type { ActionFusionProgress } from "./report-schema.ts";
 import { outputBudgetsFor } from "./budgets.ts";
 import { reportOf } from "./report.ts";
@@ -107,7 +107,7 @@ test("publication boundary and observer failures → preserve recovery and emit 
             commands++;
             return commandCompletion({ content: [] });
           };
-          const fusion = createActionFusionExecutor((update) => {
+          const fusion = createActionFusionScheduler((update) => {
             progress.push(update);
             if (progressError !== undefined) throw progressError;
           });
@@ -183,7 +183,7 @@ test("cancellation after publication → does not rerun mutation and still inspe
         controller.abort();
         return commandCompletion({ content: [{ type: "text", text: "timed out" }] }, true);
       };
-      const fusion = createActionFusionExecutor(() => {});
+      const fusion = createActionFusionScheduler(() => {});
       const result = await callTool(
         makeWriteOverride(dir, fusion),
         { path: target, mode: "create", content: "mutation\n", then_run: { command: "check" } },
@@ -212,7 +212,7 @@ test("first command fails → releases the queue for the next mutation", async (
         );
       return commandCompletion({ content: [{ type: "text", text: "ok" }] });
     };
-    const fusion = createActionFusionExecutor(() => {});
+    const fusion = createActionFusionScheduler(() => {});
     for (const content of ["first\n", "second\n"]) {
       const result = await callTool(
         makeWriteOverride(dir, fusion),
@@ -239,7 +239,7 @@ test("command succeeds on an unchanged target → retains the result and complet
     const progress: ActionFusionProgress[] = [];
     const executeTool: SessionCommand = async () =>
       commandCompletion({ content: [{ type: "text", text: "command finished" }] });
-    const fusion = createActionFusionExecutor((event) => progress.push(event));
+    const fusion = createActionFusionScheduler((event) => progress.push(event));
     const completed = await callTool(
       makeWriteOverride(dir, fusion),
       { path: target, content: "saved\n", mode: "create", then_run: { command: "check" } },
@@ -268,7 +268,7 @@ test("cancellation before mutation → reports a cancelled command without publi
       commands++;
       return commandCompletion({ content: [] });
     };
-    const fusion = createActionFusionExecutor((event) => progress.push(event));
+    const fusion = createActionFusionScheduler((event) => progress.push(event));
     const result = await callTool(
       makeWriteOverride(dir, fusion),
       { path: target, mode: "overwrite", content: "after\n", then_run: { command: "check" } },

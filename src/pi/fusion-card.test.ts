@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { initTheme } from "@earendil-works/pi-coding-agent";
 import { registerFusionCards } from "./fusion-card.ts";
-import { createActionFusionExecutor } from "./action-fusion.ts";
+import { createActionFusionScheduler } from "./action-fusion.ts";
 import type { ActionFusionProgress } from "./report-schema.ts";
 import type { CommandResult } from "./report-schema.ts";
 import { commandText } from "./mutation-result.ts";
@@ -229,7 +229,7 @@ test("Fusion command outcomes → progress, cards, and reports preserve command 
             return commandCompletion(success);
         }
       });
-      const fusion = createActionFusionExecutor((progress) => {
+      const fusion = createActionFusionScheduler((progress) => {
         events.push(progress);
         h.report(progress);
       });

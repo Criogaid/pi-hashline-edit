@@ -7,6 +7,7 @@ import { formats } from "@earendil-works/pi-schema/formats";
 import { outputBudgetsFor } from "../src/pi/budgets.ts";
 import { loadConfig } from "../src/pi/config.ts";
 import { makeEditOverride } from "../src/pi/edit-tool.ts";
+import { runAlone } from "../src/pi/mutation-runner.ts";
 import { makeReadOverride } from "../src/pi/read-tool.ts";
 import { makeWriteOverride } from "../src/pi/write-tool.ts";
 
@@ -18,9 +19,9 @@ const editOperations = 20;
 const cwd = process.cwd();
 const env = {
   cwd,
-  config: loadConfig(cwd),
+  config: { ...loadConfig(cwd), actionFusion: false },
   budgets: () => outputBudgetsFor(undefined),
-  fusion: undefined,
+  schedule: runAlone,
 };
 const edit = makeEditOverride(env);
 const write = makeWriteOverride(env);

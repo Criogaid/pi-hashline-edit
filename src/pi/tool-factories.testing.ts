@@ -8,7 +8,8 @@ import { makeGrepOverride as grep } from "./grep-tool.ts";
 import { makeEditOverride as edit } from "./edit-tool.ts";
 import { makeReplaceTool as replace } from "./replace-tool.ts";
 import { makeWriteOverride as write } from "./write-tool.ts";
-import type { MutationToolEnvironment } from "./mutation-runner.ts";
+import { runAlone, type MutationToolEnvironment } from "./mutation-runner.ts";
+import type { MutationScheduler } from "./mutation-result.ts";
 
 // The runner isolates global settings; create an empty project root for schema defaults.
 const configRoot = mkdtempSync(join(tmpdir(), "hashline-default-config-"));
@@ -40,20 +41,32 @@ export const makeGrepOverride = (
   config: HashlineEditConfig,
   budgets = defaultOutputBudgets,
 ) => grep(toolEnvironment(cwd, config, budgets));
+function mutationEnvironment(
+  cwd: string,
+  config: HashlineEditConfig,
+  budgets: OutputBudgetProvider,
+  schedule: MutationScheduler,
+): MutationToolEnvironment {
+  return {
+    ...toolEnvironment(cwd, { ...config, actionFusion: schedule !== runAlone }, budgets),
+    schedule,
+  };
+}
+
 export const makeEditOverride = (
   cwd: string,
   config: HashlineEditConfig,
-  fusion: MutationToolEnvironment["fusion"] = undefined,
+  schedule = runAlone,
   budgets = defaultOutputBudgets,
-) => edit({ ...toolEnvironment(cwd, config, budgets), fusion });
+) => edit(mutationEnvironment(cwd, config, budgets, schedule));
 export const makeReplaceTool = (
   cwd: string,
   config: HashlineEditConfig,
-  fusion: MutationToolEnvironment["fusion"] = undefined,
+  schedule = runAlone,
   budgets = defaultOutputBudgets,
-) => replace({ ...toolEnvironment(cwd, config, budgets), fusion });
+) => replace(mutationEnvironment(cwd, config, budgets, schedule));
 export const makeWriteOverride = (
   cwd: string,
-  fusion: MutationToolEnvironment["fusion"] = undefined,
+  schedule = runAlone,
   budgets = defaultOutputBudgets,
-) => write({ ...toolEnvironment(cwd, DEFAULT_CONFIG, budgets), fusion });
+) => write(mutationEnvironment(cwd, DEFAULT_CONFIG, budgets, schedule));
