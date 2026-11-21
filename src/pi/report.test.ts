@@ -356,9 +356,7 @@ test("facts the payload or the call already shows → scripts receive them while
     { tool: "grep", path: ["a.ts"], matchLimit: 2 },
     payload,
     DEFAULT_OUTPUT_BUDGETS,
-    undefined,
-    undefined,
-    { matches: 2, files: 1 },
+    { implied: { matches: 2, files: 1 } },
   );
   assert.deepEqual(counted.content, plain.content);
   assert.deepEqual(counted.details, plain.details);
@@ -375,9 +373,7 @@ test("facts the payload or the call already shows → scripts receive them while
     { tool: "read", path: "a.txt" },
     [text("one")],
     DEFAULT_OUTPUT_BUDGETS,
-    undefined,
-    undefined,
-    { nextOffset: 2 },
+    { implied: { nextOffset: 2 } },
   );
   assert.deepEqual(read.content, [text("one")]);
   assert.deepEqual(read.structuredContent, { text: "one", nextOffset: 2 });

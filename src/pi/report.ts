@@ -188,9 +188,15 @@ export function reportResult<
   report: SuccessReport & { tool: TTool },
   payload: Content,
   budget: OutputBudgets,
-  details?: TDetails,
-  variant?: OutcomeVariant,
-  implied?: ImpliedFacts<TTool>,
+  {
+    details,
+    variant,
+    implied,
+  }: {
+    readonly details?: TDetails;
+    readonly variant?: OutcomeVariant;
+    readonly implied?: ImpliedFacts<TTool>;
+  } = {},
 ): AgentToolResult<TDetails & ReportDetails<SuccessReport>> {
   const complete = Object.fromEntries(
     reportEntries({ ...boundFacts(report, budget), next: outcomeNext(report, variant) }),

@@ -212,7 +212,7 @@ export function finalizeMutation<TDetails extends object, TTool extends Mutation
         : undefined,
   } as SuccessReport & { tool: MutationToolName };
   if (settled.kind === "alone")
-    return reportResult<TDetails, MutationToolName>(report, [], budget, details);
+    return reportResult<TDetails, MutationToolName>(report, [], budget, { details });
 
   const { command } = settled;
   const then_run = { status: command.status };
@@ -222,8 +222,6 @@ export function finalizeMutation<TDetails extends object, TTool extends Mutation
     { ...report, then_run, progressError: observerFailure(settled.progressFailure, budget) },
     shown ? [{ type: "text", text: shown }] : [],
     budget,
-    details,
-    undefined,
-    shown ? { then_run: { ...then_run, output: shown } } : undefined,
+    { details, implied: shown ? { then_run: { ...then_run, output: shown } } : {} },
   );
 }

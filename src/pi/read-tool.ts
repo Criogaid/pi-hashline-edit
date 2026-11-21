@@ -272,8 +272,7 @@ export function makeReadOverride({
             ctx,
           );
           const delegated = reportResult(report, result.content, budget, {
-            ...result.details,
-            nativeRead: true as const,
+            details: { ...result.details, nativeRead: true as const },
           });
           // Pi gives scripts an image as its image block; delegated text is the report's `text`.
           const image = result.structuredContent;
@@ -347,9 +346,10 @@ export function makeReadOverride({
           },
           [{ type: "text" as const, text }],
           budget,
-          anchored === false ? { header } : undefined,
-          undefined,
-          callerLimitOnly ? { nextOffset } : undefined,
+          {
+            details: anchored === false ? { header } : undefined,
+            implied: callerLimitOnly ? { nextOffset } : undefined,
+          },
         );
       });
     },

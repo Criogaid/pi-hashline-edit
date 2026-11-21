@@ -226,9 +226,7 @@ export function makeGrepOverride({ cwd, config, budgets }: ToolEnvironment) {
           { tool: "grep" as const, path: params.path, ...facts },
           payload === undefined ? [] : [{ type: "text" as const, text: payload }],
           budget,
-          undefined,
-          next,
-          implied,
+          { variant: next, implied },
         );
       });
     },
