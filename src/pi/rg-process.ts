@@ -103,7 +103,7 @@ function startRg(args: readonly string[], cwd: string, signal: AbortSignal): Run
     if (closed) return;
     child.kill("SIGTERM");
     timer ??= setTimeout(() => {
-      if (!closed) child.kill("SIGKILL");
+      child.kill("SIGKILL");
     }, 1000);
     timer.unref();
   };
