@@ -74,25 +74,20 @@ export function workerFailure(caught: unknown): WorkerFailure {
     error: {
       code: "REGEX_WORKER_FAILED",
       message: "Regex evaluation failed.",
-      cause: causeOf(caught, Infinity),
+      cause: describeThrown(caught, Infinity),
     },
   };
 }
 
-/** Preserve underlying failures; visit each native error once to avoid cycles and repeats. */
-export function causeOf(
-  error: unknown,
-  maxBytes: number,
-  seen = new Set<unknown>(),
-): Cause | undefined {
-  if (error === undefined || seen.has(error)) return undefined;
+/** Describe a thrown value and the causes beneath it, visiting each value once. */
+function describe(error: unknown, maxBytes: number, seen: Set<unknown>): Cause {
   seen.add(error);
   // A cause may be foreign (an embedder's session listener can throw any value, such as a revoked
   // proxy); inspecting it must not throw in its place.
   try {
     if (error instanceof RestoredCause) return boundedCause(error.data, maxBytes);
     const errno = errnoCode(error);
-    const nested = error instanceof Error ? causeOf(error.cause, maxBytes, seen) : undefined;
+    const nested = error instanceof Error ? underlying(error.cause, maxBytes, seen) : undefined;
     return {
       ...(error instanceof HashlineError ? { error: error.errorCode } : {}),
       ...(errno === undefined ? {} : { code: errno }),
@@ -102,4 +97,19 @@ export function causeOf(
   } catch {
     return { message: NO_STRING_FORM };
   }
+}
+
+/** An underlying cause: none when it is absent or already described. */
+function underlying(cause: unknown, maxBytes: number, seen: Set<unknown>): Cause | undefined {
+  return cause === undefined || seen.has(cause) ? undefined : describe(cause, maxBytes, seen);
+}
+
+/** A value known to have been thrown; every value, `undefined` included, has a description. */
+export function describeThrown(error: unknown, maxBytes: number): Cause {
+  return describe(error, maxBytes, new Set());
+}
+
+/** An error's optional underlying cause, with the causes beneath it. */
+export function causeOf(cause: unknown, maxBytes: number): Cause | undefined {
+  return underlying(cause, maxBytes, new Set());
 }

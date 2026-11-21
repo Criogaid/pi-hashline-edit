@@ -498,6 +498,37 @@ test("progress reports skipped mutations and failed commands without rolling bac
   }
 });
 
+test("progress observer throws undefined first → retains the first failure in the final report", async (t) => {
+  const dir = await tempDir();
+  try {
+    const context = await createFusionContext(dir, t, async () =>
+      commandCompletion({ content: [] }),
+    );
+    for (const mutationFails of [false, true]) {
+      await t.test(mutationFails ? "failed mutation" : "completed mutation", async () => {
+        const path = join(dir, mutationFails ? "existing.txt" : "new.txt");
+        if (mutationFails) await writeFile(path, "original\n");
+        let notifications = 0;
+        const fusion = createActionFusionExecutor(() => {
+          if (notifications++ === 0) throw undefined;
+          throw new Error("later progress failure");
+        });
+        const result = await callTool(
+          makeWriteOverride(dir, fusion),
+          { path, mode: "create", content: "saved\n", then_run: { command: "check" } },
+          { ctx: context },
+        );
+        const report = result.details.report;
+        assert.equal(report.then_run?.status, mutationFails ? "skipped" : "succeeded");
+        assert.ok(notifications >= 2);
+        assert.deepEqual(report.progressError, { message: "undefined" });
+      });
+    }
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("case-differing paths on Windows → the Fusion queue serializes mutation start and completion", {
   skip: process.platform !== "win32",
 }, async (t) => {

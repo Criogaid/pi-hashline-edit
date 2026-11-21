@@ -35,6 +35,7 @@ import {
   type CommandFacts,
   type MutationOutcome,
   type MutationResultDetails,
+  type ObserverFailure,
 } from "./mutation-result.ts";
 import { errnoCode, errorMessage, HashlineError } from "../core/errors.ts";
 import { cancellationError, throwIfCancelled } from "./error-text.ts";
@@ -199,7 +200,7 @@ function createProgressTracker<TDetails extends object>({
   onUpdate: AgentToolUpdateCallback<MutationResultDetails<TDetails>>;
 }) {
   let mutationDetails: TDetails | undefined;
-  let failure: unknown;
+  let failure: ObserverFailure | undefined;
   let commandResult: CommandResult | undefined;
   let commandTiming: { readonly timeoutSeconds: number; readonly deadlineMs: number } | undefined;
   let heartbeat: ReturnType<typeof setInterval> | undefined;
@@ -231,7 +232,7 @@ function createProgressTracker<TDetails extends object>({
       try {
         notify();
       } catch (error) {
-        failure ??= error;
+        failure ??= { error };
       }
     }
   };
@@ -363,7 +364,7 @@ export function createActionFusionExecutor(onProgress: ProgressReporter) {
         return {
           outcome,
           observation,
-          command: { ...command, progressError: progress.failure() },
+          command: { ...command, progressFailure: progress.failure() },
         };
       };
 

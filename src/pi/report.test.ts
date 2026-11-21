@@ -11,7 +11,7 @@ import { FileMutationError } from "./file-commit.ts";
 import { describeMutationFailure } from "./mutation-result.ts";
 import { formatArgumentError } from "./argument-error.ts";
 import { renderToolError, splitReport } from "./render.ts";
-import { causeOf } from "./report-cause.ts";
+import { causeOf, describeThrown } from "./report-cause.ts";
 import { reportOf, reportResult, describeFailure, renderReport, runTool } from "./report.ts";
 import { formatByteSize } from "./budgets.ts";
 import { DEFAULT_OUTPUT_BUDGETS } from "./tool-factories.testing.ts";
@@ -184,6 +184,11 @@ test("aggregate and cyclic causes → preserve only the linear cause chain", () 
   ] as const) {
     assert.deepEqual(causeOf(input, DEFAULT_OUTPUT_BUDGETS.fieldBytes), expected);
   }
+});
+
+test("undefined thrown value → has a description while an undefined cause is absent", () => {
+  assert.deepEqual(describeThrown(undefined, Infinity), { message: "undefined" });
+  assert.equal(causeOf(undefined, Infinity), undefined);
 });
 
 test("uninspectable cause or errno → preserves the diagnostic it can read", async (t) => {

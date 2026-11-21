@@ -26,7 +26,7 @@ import {
   type FailureContext,
   type ReportDetails,
 } from "./report.ts";
-import { boundedText, causeOf } from "./report-cause.ts";
+import { boundedText, describeThrown } from "./report-cause.ts";
 import type { OutputBudgets } from "./budgets.ts";
 
 /** Final success carries tool details; final failure carries only its report; neither carries progress. */
@@ -71,13 +71,22 @@ export function commandText(content: CommandResult["content"]): string {
     .join("\n");
 }
 
+/** The first failure of a progress observer; any thrown value, `undefined` included. */
+export interface ObserverFailure {
+  readonly error: unknown;
+}
+
 /** What Action Fusion states about the command; it never restates file state. */
 export interface CommandFacts {
   readonly status: CommandStatus;
   /** Absent when the command never produced a result. */
   readonly result?: CommandResult;
   /** A progress observer failed; command and file outcomes are unaffected. */
-  readonly progressError?: unknown;
+  readonly progressFailure?: ObserverFailure;
+}
+
+function observerFailure(failure: ObserverFailure | undefined, budget: OutputBudgets) {
+  return failure && describeThrown(failure.error, budget.fieldBytes);
 }
 
 /**
@@ -87,17 +96,17 @@ export interface CommandFacts {
 export class CommandNotRun extends Error {
   readonly status: Extract<CommandStatus, "skipped" | "cancelled">;
   /** A progress observer failed; the mutation's failure is unaffected. */
-  readonly progressError: unknown;
+  readonly progressFailure: ObserverFailure | undefined;
 
   constructor(
     error: unknown,
     status: Extract<CommandStatus, "skipped" | "cancelled">,
-    progressError?: unknown,
+    progressFailure: ObserverFailure | undefined,
   ) {
     super(errorMessage(error), { cause: error });
     this.name = "CommandNotRun";
     this.status = status;
-    this.progressError = progressError;
+    this.progressFailure = progressFailure;
   }
 }
 
@@ -116,7 +125,7 @@ export function describeMutationFailure(
   return describeFailure(tool, error, context, {
     publication: error instanceof FileMutationError ? error.publication : "NOT_PUBLISHED",
     then_run: command ? { status: command.status } : undefined,
-    progressError: causeOf(command?.progressError, context.budget.fieldBytes),
+    progressError: observerFailure(command?.progressFailure, context.budget),
   });
 }
 
@@ -143,9 +152,12 @@ export function finalizeMutation<TDetails extends object, TTool extends Mutation
     publication: commit.publication,
     ...facts,
     freshness: fresh ? undefined : observation.freshness,
-    freshnessError: causeOf(observation.error, budget.fieldBytes),
+    freshnessError:
+      observation.freshness === "unknown"
+        ? describeThrown(observation.error, budget.fieldBytes)
+        : undefined,
     then_run: command ? { status: command.status } : undefined,
-    progressError: causeOf(command?.progressError, budget.fieldBytes),
+    progressError: observerFailure(command?.progressFailure, budget),
   } as SuccessReport & { tool: MutationToolName };
   return reportResult<TDetails, MutationToolName>(
     report,
