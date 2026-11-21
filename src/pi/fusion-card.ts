@@ -8,6 +8,8 @@
 import type {
   ExtensionAPI,
   ExtensionContext,
+  ThemeBg,
+  ThemeColor,
   ToolDefinition,
   ToolRenderers,
 } from "@earendil-works/pi-coding-agent";
@@ -58,6 +60,19 @@ const commandPending = ({ command }: CommandCardData) =>
   command === "waiting" || command === "running";
 const commandFailed = ({ command }: CommandCardData) =>
   command === "failed" || command === "timeout";
+
+const INTERRUPTED = "interrupted (final status unknown)";
+type DisplayState = CommandCardData["command"] | typeof INTERRUPTED;
+const CARD_COLORS = {
+  waiting: ["warning", "toolPendingBg"],
+  running: ["warning", "toolPendingBg"],
+  [INTERRUPTED]: ["warning", "customMessageBg"],
+  cancelled: ["warning", "customMessageBg"],
+  failed: ["error", "toolErrorBg"],
+  timeout: ["error", "toolErrorBg"],
+  succeeded: ["success", "toolSuccessBg"],
+  skipped: ["dim", "customMessageBg"],
+} satisfies Record<DisplayState, [ThemeColor, ThemeBg]>;
 
 const TARGET_STATE = {
   changed: "the target changed after the mutation",
@@ -174,30 +189,13 @@ export function registerFusionCards(pi: ExtensionAPI) {
           box.setPaddingX(context.outputPad);
           const value = current();
           const args = { command: value.commandText, timeout: value.timing?.timeoutSeconds };
-          const pending = commandPending(value);
-          const interrupted = pending && !active.has(value.toolCallId);
-          const status = interrupted ? "interrupted (final status unknown)" : value.command;
+          const status =
+            commandPending(value) && !active.has(value.toolCallId) ? INTERRUPTED : value.command;
           const countdown =
-            value.command === "running" && !interrupted && value.timing
+            status === "running" && value.timing
               ? ` · ${value.timing.remainingSeconds}s remaining`
               : "";
-          const failed = commandFailed(value);
-          const color =
-            pending || value.command === "cancelled"
-              ? "warning"
-              : failed
-                ? "error"
-                : value.command === "succeeded"
-                  ? "success"
-                  : "dim";
-          const background =
-            pending && !interrupted
-              ? "toolPendingBg"
-              : failed
-                ? "toolErrorBg"
-                : value.command === "succeeded"
-                  ? "toolSuccessBg"
-                  : "customMessageBg";
+          const [color, background] = CARD_COLORS[status];
           box.setBgFn((line) => theme.bg(background, line));
           statusText.setText(
             `${theme.fg("toolTitle", theme.bold("then_run"))} · ${theme.fg(color, status + countdown)}`,
