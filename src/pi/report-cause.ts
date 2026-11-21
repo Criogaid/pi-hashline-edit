@@ -9,6 +9,7 @@ import {
   errorMessage,
   HashlineError,
   type HashlineErrorOptions,
+  NO_STRING_FORM,
 } from "../core/errors.ts";
 import { DiagnosticBuffer } from "./diagnostic-buffer.ts";
 import type { Cause, ErrorCode } from "./report-schema.ts";
@@ -86,13 +87,19 @@ export function causeOf(
 ): Cause | undefined {
   if (error === undefined || seen.has(error)) return undefined;
   seen.add(error);
-  if (error instanceof RestoredCause) return boundedCause(error.data, maxBytes);
-  const errno = errnoCode(error);
-  const nested = error instanceof Error ? causeOf(error.cause, maxBytes, seen) : undefined;
-  return {
-    ...(error instanceof HashlineError ? { error: error.errorCode } : {}),
-    ...(errno === undefined ? {} : { code: errno }),
-    message: boundedText(errorMessage(error), maxBytes),
-    ...(nested ? { cause: nested } : {}),
-  };
+  // A cause may be foreign (an embedder's session listener can throw any value, such as a revoked
+  // proxy); inspecting it must not throw in its place.
+  try {
+    if (error instanceof RestoredCause) return boundedCause(error.data, maxBytes);
+    const errno = errnoCode(error);
+    const nested = error instanceof Error ? causeOf(error.cause, maxBytes, seen) : undefined;
+    return {
+      ...(error instanceof HashlineError ? { error: error.errorCode } : {}),
+      ...(errno === undefined ? {} : { code: errno }),
+      message: boundedText(errorMessage(error), maxBytes),
+      ...(nested ? { cause: nested } : {}),
+    };
+  } catch {
+    return { message: NO_STRING_FORM };
+  }
 }

@@ -180,6 +180,14 @@ test("aggregate and cyclic causes → preserve only the linear cause chain", () 
   }
 });
 
+test("revoked proxy as a cause → reports an uninspectable value", () => {
+  const { proxy, revoke } = Proxy.revocable({}, {});
+  revoke();
+  assert.deepEqual(causeOf(proxy, DEFAULT_OUTPUT_BUDGETS.fieldBytes), {
+    message: "The thrown value has no string form.",
+  });
+});
+
 test("oversized cause message → retains opening and terminal text within the message budget", () => {
   const cause = causeOf(
     new Error(`opening${"\u0000".repeat(DEFAULT_OUTPUT_BUDGETS.fieldBytes * 2)}terminal`),
