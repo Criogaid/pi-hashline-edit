@@ -86,6 +86,7 @@ test("model row allowance grows → anchor failures return complete observations
       {
         signal: new AbortController().signal,
         budget,
+        command: {},
       },
     );
     assert.equal(report.error, "ANCHOR_MISMATCH");
@@ -167,7 +168,11 @@ test("worker error reaches the tool → text is bounded once using the selected 
     error = failure;
   }
   const reports = [small, large].map((budget) =>
-    describeMutationFailure("replace", error, { budget, signal: new AbortController().signal }),
+    describeMutationFailure("replace", error, {
+      budget,
+      signal: new AbortController().signal,
+      command: {},
+    }),
   );
   assert.ok(Buffer.byteLength(reports[0].message!) <= small.fieldBytes);
   assert.ok(Buffer.byteLength(reports[0].cause!.message) <= small.fieldBytes);

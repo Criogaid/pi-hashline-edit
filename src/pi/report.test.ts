@@ -328,6 +328,7 @@ test("mutation publication → recovery reflects whether the change was saved", 
       signal,
       budget: DEFAULT_OUTPUT_BUDGETS,
       failedPublication: publication,
+      command: {},
     });
     assert.equal(report.publication, publication);
     assert.equal(report.next, expected);
@@ -661,6 +662,7 @@ test("native mutation failure before commit → retains publication", () => {
     const report = describeMutationFailure(tool, new Error("native failure"), {
       signal,
       budget: DEFAULT_OUTPUT_BUDGETS,
+      command: {},
     });
     assert.equal(report.publication, "NOT_PUBLISHED", tool);
   }

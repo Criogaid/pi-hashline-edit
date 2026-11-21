@@ -124,10 +124,10 @@ export function describeMutationFailure(
   context: FailureContext & {
     readonly commit?: CommitResult;
     readonly failedPublication?: PublicationStatus;
-    readonly command?: MutationCommandFacts;
+    readonly command: MutationCommandFacts;
   },
 ): FailureReport {
-  const { commit, failedPublication = "NOT_PUBLISHED", command = {} } = context;
+  const { commit, failedPublication = "NOT_PUBLISHED", command } = context;
   const error = commit
     ? new HashlineError("POST_PROCESS_FAILED", "Result generation failed.", { cause: caught })
     : caught;

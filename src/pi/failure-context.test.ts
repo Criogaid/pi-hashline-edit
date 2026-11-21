@@ -216,6 +216,7 @@ function rejectedEdit(
     signal: new AbortController().signal,
     path: "file.txt",
     budget,
+    command: {},
   });
 }
 const oldAnchor = { line: 1, hash: computeLineHash(1, "old", DEFAULT_CONFIG.hashLen) };
@@ -328,6 +329,7 @@ test("overlapping edits → ordered conflict and shared recovery", () => {
           signal: new AbortController().signal,
           path: "file.txt",
           budget: DEFAULT_OUTPUT_BUDGETS,
+          command: {},
         });
         assert.equal(report.error, "OVERLAPPING_EDITS");
         assert.deepEqual(report.conflict, ["steps[0]", "steps[2]"]);
