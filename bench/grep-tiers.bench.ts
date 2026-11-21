@@ -195,7 +195,7 @@ async function runParent() {
     const middle = sorted.length >> 1;
     return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
   };
-  const totals = new Map<Variant, number>(VARIANTS.map((variant) => [variant, 0]));
+  const totals: Record<Variant, number> = { tiers: 0, v8: 0, pcre2: 0 };
 
   console.log(`Node ${process.version}, ${reps} processes per cell, variant order rotated.\n`);
   for (const corpus of corpora) {
@@ -206,7 +206,7 @@ async function runParent() {
     console.log("| --- | ---: | --- | --- | --- | --- | ---: | --- | --- |");
     for (const [queryIndex, query] of QUERIES.entries()) {
       for (const limit of LIMITS) {
-        const samples = new Map<Variant, Sample[]>(VARIANTS.map((variant) => [variant, []]));
+        const samples: Record<Variant, Sample[]> = { tiers: [], v8: [], pcre2: [] };
         for (let rep = 0; rep < reps; rep++) {
           for (let offset = 0; offset < VARIANTS.length; offset++) {
             const variant = VARIANTS[(rep + offset) % VARIANTS.length];
@@ -224,22 +224,17 @@ async function runParent() {
               ],
               { encoding: "utf8", maxBuffer: 1 << 20 },
             );
-            samples.get(variant)!.push(JSON.parse(output.trim().split("\n").at(-1)!));
+            samples[variant].push(JSON.parse(output.trim().split("\n").at(-1)!));
           }
         }
         const cell = (pick: (sample: Sample) => number, digits = 0) =>
-          VARIANTS.map((variant) => median(samples.get(variant)!.map(pick)).toFixed(digits)).join(
-            " / ",
-          );
+          VARIANTS.map((variant) => median(samples[variant].map(pick)).toFixed(digits)).join(" / ");
         for (const variant of VARIANTS)
-          totals.set(
-            variant,
-            totals.get(variant)! + median(samples.get(variant)!.map((sample) => sample.wallMs)),
-          );
-        const tiers = samples.get("tiers")!;
+          totals[variant] += median(samples[variant].map((sample) => sample.wallMs));
+        const tiers = samples.tiers;
         const tiersSample = tiers[0];
         const agreement = (variant: Variant) => {
-          const own = samples.get(variant)!;
+          const own = samples[variant];
           const compared = [...own, ...tiers];
           // A sample that stopped at the unnarrowed scan limit or warned did not search the whole scope.
           if (compared.some((sample) => sample.scanLimitReached)) return "scan limit";
@@ -259,6 +254,6 @@ async function runParent() {
     console.log("");
   }
   console.log(
-    `Sum of median wall ms: ${VARIANTS.map((variant) => `${variant} ${totals.get(variant)!.toFixed(0)}`).join(", ")}`,
+    `Sum of median wall ms: ${VARIANTS.map((variant) => `${variant} ${totals[variant].toFixed(0)}`).join(", ")}`,
   );
 }
