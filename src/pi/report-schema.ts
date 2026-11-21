@@ -499,11 +499,11 @@ type OutcomeRule =
   | readonly [fact: "publication", next: string, except?: PublicationStatus];
 
 /**
- * Recovery after a successful result, by the first fact present in this order.
- * A fact absent from this list, or holding the value its rule excepts, needs no recovery beyond itself.
+ * Recovery after a successful result. The first listed fact present decides; its excepted value
+ * yields no next. A fact absent from this list needs no recovery beyond itself.
  */
 export const OUTCOME_NEXT: readonly OutcomeRule[] = [
-  // A file that no longer exists has no anchors to refresh.
+  // A file that no longer exists has no anchors to refresh, and its earlier content is gone.
   ["freshness", REREAD, "missing"],
   [
     "publication",

@@ -464,6 +464,21 @@ test("grep limits coincide → recovery prioritizes output, then match, then sca
   }
 });
 
+test("no-op write target missing after then_run → report omits the no-op recovery", () => {
+  const result = reportResult(
+    {
+      tool: "write",
+      publication: "NOT_PUBLISHED",
+      freshness: "missing",
+      then_run: { status: "succeeded" },
+    },
+    [],
+  );
+  const report = reportOf({ content: result.content }, "write");
+  assert.ok(report);
+  assert.equal(report.next, undefined);
+});
+
 test("output limit with read next offset → recovery prioritizes the next offset", () => {
   const next = OUTCOME_NEXT.find(([key]) => key === "nextOffset")?.[1];
   assert.ok(next);

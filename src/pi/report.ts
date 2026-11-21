@@ -134,13 +134,14 @@ export function reportOf(
 }
 
 /**
- * The recovery a successful result's facts call for: the first in OUTCOME_NEXT order, in the
- * producer's selected alternative when that rule names it.
+ * The recovery a successful result's facts call for: the rule of the first fact present in
+ * OUTCOME_NEXT order, in the producer's selected alternative when that rule names it. The value
+ * the rule excepts calls for none, and no later rule applies.
  */
 function outcomeNext(report: Report, variant: OutcomeVariant | undefined): string | undefined {
-  const next = OUTCOME_NEXT.find(
-    ([fact, , except]) => report[fact] !== undefined && report[fact] !== except,
-  )?.[1];
+  const rule = OUTCOME_NEXT.find(([fact]) => report[fact] !== undefined);
+  if (!rule || report[rule[0]] === rule[2]) return undefined;
+  const next = rule[1];
   return typeof next === "object" ? ((variant && next[variant]) ?? next.default) : next;
 }
 
