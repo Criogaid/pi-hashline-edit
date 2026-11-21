@@ -48,9 +48,7 @@ interface Sample {
   readonly cpuMs: number;
   readonly maxRssMiB: number;
   readonly matches: number;
-  readonly files: number;
   readonly candidateFiles: number;
-  readonly candidateLines: number;
   readonly scanLimitReached: boolean;
   /** Files or listing diagnostics the search skipped. */
   readonly warnings: number;
@@ -84,7 +82,6 @@ async function runChild(
       ? args.map((arg) => (arg === "--engine=default" ? "--engine=pcre2" : arg))
       : args;
   let candidateFiles = 0;
-  let candidateLines = 0;
   mock.module(rgProcessUrl, {
     namedExports: {
       ...rgProcess,
@@ -102,7 +99,6 @@ async function runChild(
           maxLines,
           (path: string, lines?: number[]) => {
             candidateFiles++;
-            candidateLines += lines?.length ?? 0;
             return onFile(path, lines);
           },
         ),
@@ -153,7 +149,6 @@ async function runChild(
 
   await search();
   candidateFiles = 0;
-  candidateLines = 0;
   const cpuStart = process.cpuUsage();
   const start = performance.now();
   const result = await search();
@@ -170,9 +165,7 @@ async function runChild(
     cpuMs: (cpu.user + cpu.system) / 1000,
     maxRssMiB: process.resourceUsage().maxRSS / 1024,
     matches: rows.reduce((sum: number, [, lines]: [string, string[]]) => sum + lines.length, 0),
-    files: rows.length,
     candidateFiles,
-    candidateLines,
     scanLimitReached: result.scanLimitReached,
     warnings: result.warnings.length,
     signature: createHash("sha256").update(JSON.stringify(rows)).digest("hex").slice(0, 16),
