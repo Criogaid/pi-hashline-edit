@@ -444,11 +444,6 @@ export type FreshnessObservation =
       readonly error: unknown;
     };
 
-/** Freshness known from the commit result alone, before any later observation. */
-export function commitFreshness(commit: CommitResult): FreshnessObservation {
-  return { freshness: commit.freshness };
-}
-
 /**
  * Read the target again and compare it with the published revision. With
  * `settle`, two reads across a turn of the event loop catch a write in progress.

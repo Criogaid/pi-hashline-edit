@@ -8,12 +8,7 @@ import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import type { AgentToolUpdateCallback } from "@earendil-works/pi-agent-core";
 import type { ExtensionToolContext } from "@earendil-works/pi-coding-agent";
 import type { ThenRunInput } from "./action-fusion.ts";
-import {
-  commitFreshness,
-  FileMutationError,
-  type CommitResult,
-  type FreshnessObservation,
-} from "./file-commit.ts";
+import { FileMutationError, type CommitResult, type FreshnessObservation } from "./file-commit.ts";
 import { generateRangeDiff } from "./mutation-diff.ts";
 import { displayCarriageReturns } from "./anchor-format.ts";
 import { errorMessage } from "../core/errors.ts";
@@ -97,33 +92,20 @@ export type CommandFacts = (
   readonly terminate?: boolean;
 };
 
-/** A mutation that completed, with what is known about its target afterwards. */
-interface SettledFacts<TDetails, TTool extends MutationToolName> {
-  readonly outcome: MutationOutcome<TDetails, TTool>;
-  readonly observation: FreshnessObservation;
-}
-
-/** A call without then_run settles alone; a fused call adds its command. */
-export type SettledMutation<TDetails, TTool extends MutationToolName> = SettledFacts<
-  TDetails,
-  TTool
-> &
-  (
-    | { readonly kind: "alone" }
-    | {
-        readonly kind: "fused";
-        readonly command: CommandFacts;
-        /** A progress observer failed; command and file outcomes are unaffected. */
-        readonly progressFailure: ObserverFailure | undefined;
-      }
-  );
-
-/** A mutation settled without a command: the commit result alone states its freshness. */
-export function settleAlone<TDetails, TTool extends MutationToolName>(
-  outcome: MutationOutcome<TDetails, TTool>,
-): SettledMutation<TDetails, TTool> {
-  return { kind: "alone", outcome, observation: commitFreshness(outcome.commit) };
-}
+/**
+ * A completed mutation. A call without then_run settles alone, and its commit result states its
+ * freshness; a fused call adds the freshness observed before its command, and the command.
+ */
+export type SettledMutation<TDetails, TTool extends MutationToolName> =
+  | { readonly kind: "alone"; readonly outcome: MutationOutcome<TDetails, TTool> }
+  | {
+      readonly kind: "fused";
+      readonly outcome: MutationOutcome<TDetails, TTool>;
+      readonly observation: FreshnessObservation;
+      readonly command: CommandFacts;
+      /** A progress observer failed; command and file outcomes are unaffected. */
+      readonly progressFailure: ObserverFailure | undefined;
+    };
 
 /** One validated mutation call, as the scheduler receives it. */
 export interface MutationCall<TDetails, TTool extends MutationToolName> {
@@ -198,7 +180,7 @@ export function finalizeMutation<TDetails extends object, TTool extends Mutation
   budget: OutputBudgets,
 ): AgentToolResult<TDetails & ReportDetails<SuccessReport>> {
   const { commit, details, facts } = settled.outcome;
-  const { observation } = settled;
+  const observation: FreshnessObservation = settled.kind === "alone" ? commit : settled.observation;
   // Tool-indexed facts preserve the correlation that object spread loses.
   const report = {
     tool,

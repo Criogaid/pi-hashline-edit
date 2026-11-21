@@ -32,7 +32,6 @@ import { observeFreshness, type FreshnessObservation } from "./file-commit.ts";
 import {
   CommandNotRun,
   commandText,
-  settleAlone,
   type CommandFacts,
   type MutationResultDetails,
   type MutationScheduler,
@@ -310,7 +309,10 @@ export function createActionFusionScheduler(onProgress: ProgressReporter): Mutat
   }) => {
     // Without a command, the mutation still waits for a fused call on the same file.
     if (thenRun === undefined)
-      return withQueue(absolutePath, signal, async () => settleAlone(await mutate()));
+      return withQueue(absolutePath, signal, async () => ({
+        kind: "alone" as const,
+        outcome: await mutate(),
+      }));
 
     const progress = createProgressTracker({ toolCallId, thenRun, onProgress, onUpdate });
     /** A mutation that did not complete keeps its own failure; Fusion adds only the command status. */

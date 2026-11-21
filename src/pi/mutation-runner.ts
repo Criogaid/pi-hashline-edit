@@ -34,7 +34,6 @@ import {
   describeMutationFailure,
   finalizeMutation,
   generateMutationDetails,
-  settleAlone,
   type MutationOutcome,
   type MutationScheduler,
   type MutationFinalDetails,
@@ -50,7 +49,10 @@ import { STRICT_SAMPLING } from "./schema.ts";
 import type { CopiedSpan } from "../core/copy-span.ts";
 
 /** With Action Fusion off, each call runs alone under Pi's file mutation queue. */
-export const runAlone: MutationScheduler = async ({ mutate }) => settleAlone(await mutate());
+export const runAlone: MutationScheduler = async ({ mutate }) => ({
+  kind: "alone",
+  outcome: await mutate(),
+});
 
 /** A mutation tool's registration environment. */
 export interface MutationToolEnvironment extends ToolEnvironment {
