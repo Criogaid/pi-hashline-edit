@@ -29,14 +29,6 @@ export function scopeArgs(scope: SearchScope): string[] {
   return ["--hidden", ...globArgs(scope.globs), "--glob", "!.git"];
 }
 
-/**
- * The working directory of a scope's rg runs: the workspace when the caller gave globs, which rg
- * resolves against it. Without them rg inherits the host's, so a search of existing paths does
- * not depend on the workspace directory still existing.
- */
-export const rgWorkingDirectory = (scope: SearchScope): string | undefined =>
-  scope.globs.length ? scope.cwd : undefined;
-
 interface SearchPathInfo {
   readonly path: string;
   readonly isFile: boolean;

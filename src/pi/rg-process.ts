@@ -79,12 +79,8 @@ export function isRgArgumentLimit(error: unknown): boolean {
   return code === "ENAMETOOLONG" || code === "E2BIG";
 }
 
-/** cwd is the directory rg resolves `--glob` patterns against; undefined inherits the host's. */
-function startRg(
-  args: readonly string[],
-  cwd: string | undefined,
-  signal?: AbortSignal,
-): RunningProcess {
+/** rg resolves `--glob` patterns against its working directory: the tool's workspace, where Pi's bash also runs. */
+function startRg(args: readonly string[], cwd: string, signal?: AbortSignal): RunningProcess {
   throwIfCancelled(signal);
   let child: ChildProcessByStdio<null, Readable, Readable>;
   try {
@@ -153,7 +149,7 @@ async function* nulDelimitedRecords(stream: Readable): AsyncGenerator<Buffer> {
 /** Run rg while read consumes its stdout; read returns false to stop rg early. */
 async function runRg(
   args: readonly string[],
-  cwd: string | undefined,
+  cwd: string,
   signal: AbortSignal | undefined,
   read: (stdout: Readable) => Promise<boolean>,
 ): Promise<RgRunResult> {
@@ -174,7 +170,7 @@ async function runRg(
 /** Read NUL-delimited UTF-8 paths from an owned rg process. */
 export function runRgPaths(
   args: string[],
-  cwd: string | undefined,
+  cwd: string,
   signal: AbortSignal | undefined,
   onPath: (path: string) => boolean | Promise<boolean>,
 ): Promise<RgRunResult> {
@@ -193,11 +189,12 @@ export function runRgPaths(
  */
 export async function rgRejectsPatterns(
   patternArgs: readonly string[],
+  cwd: string,
   signal: AbortSignal | undefined,
 ): Promise<boolean> {
   const result = await runRg(
     [...COMMON_RG_ARGS, ...patternArgs, "--", "-"],
-    undefined,
+    cwd,
     signal,
     async (stdout) => {
       for await (const _ of stdout);
@@ -233,7 +230,7 @@ export const LINE_LISTING_ARGS = [
  */
 export function runRgLines(
   args: string[],
-  cwd: string | undefined,
+  cwd: string,
   signal: AbortSignal | undefined,
   maxLines: number,
   onFile: (path: string, lines: readonly number[] | undefined) => boolean | Promise<boolean>,

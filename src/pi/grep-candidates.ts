@@ -10,7 +10,7 @@ import { stat } from "node:fs/promises";
 import { resolve } from "node:path";
 import type { GrepQuery } from "../core/search.ts";
 import { extractPrefilter, type Literal } from "../core/search-analysis.ts";
-import { ListedFiles, rgWorkingDirectory, scopeArgs, type SearchScope } from "./grep-scope.ts";
+import { ListedFiles, scopeArgs, type SearchScope } from "./grep-scope.ts";
 import {
   COMMON_RG_ARGS,
   isRgArgumentLimit,
@@ -104,7 +104,7 @@ export async function listCandidates(options: {
     return onCandidate({ filePath, lines });
   };
   const scoped = [...scopeArgs(scope), "--", ...scope.searchPaths];
-  const cwd = rgWorkingDirectory(scope);
+  const { cwd } = scope;
 
   /** Narrowing listings, most selective first; each is derived only when the one before gives way. */
   function* patternStages(): Generator<PatternStage> {
@@ -162,7 +162,7 @@ export async function listCandidates(options: {
       !listing ||
       (listing.code === 2 &&
         !listedAny &&
-        (await rgRejectsPatterns([...BYTE_PATTERN_ARGS, ...patternArgs], signal)));
+        (await rgRejectsPatterns([...BYTE_PATTERN_ARGS, ...patternArgs], cwd, signal)));
     if (!givesWay) return { listing, scanLimitReached };
   }
   scanAll = true;

@@ -109,8 +109,8 @@ async function runChild(
           candidateFiles++;
           return onPath(path);
         }),
-      rgRejectsPatterns: (args: string[], signal: AbortSignal) =>
-        rgProcess.rgRejectsPatterns(engine(args), signal),
+      rgRejectsPatterns: (args: string[], cwd: string, signal: AbortSignal) =>
+        rgProcess.rgRejectsPatterns(engine(args), cwd, signal),
     },
   });
   if (variant !== "tiers") {

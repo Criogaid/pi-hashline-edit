@@ -53,7 +53,7 @@ export async function fileCandidateArgs(query: GrepQuery): Promise<string[]> {
   await overrides.run(
     {
       runRgLines: async () => ({ code: 2, stderr: "", stopped: false }),
-      rgRejectsPatterns: async () => true,
+      rgRejectsPatterns: async (_patternArgs, _cwd, _signal) => true,
       runRgPaths: async (args) => {
         captured = args.slice(0, args.indexOf("--null"));
         return { code: 1, stderr: "", stopped: false };
