@@ -32,8 +32,6 @@ const writeSchema = Type.Object(
 type WriteParams = Static<typeof writeSchema>;
 /** write shows the built-in card; its report states every fact. */
 type WriteMutationDetails = object;
-/** The write card's call line shows the content. */
-const WRITE_CARD_SHOWN = new Set([...MUTATION_CARD_SHOWN, "publication"]);
 type WriteRenderContext = Parameters<
   NonNullable<ReturnType<typeof createWriteToolDefinition>["renderCall"]>
 >[2];
@@ -81,7 +79,7 @@ export function makeWriteOverride(env: MutationToolEnvironment) {
       if (context.isError)
         return renderToolError(result, "write", theme, options.expanded, context);
       const { report } = splitReport(result, "write");
-      const facts = report ? reportLines(report, theme, WRITE_CARD_SHOWN) : [];
+      const facts = report ? reportLines(report, theme, MUTATION_CARD_SHOWN) : [];
       if (facts.length) return new Text(facts.join("\n"), 0, 0);
       return builtin.renderResult!({ ...result, details: undefined }, options, theme, context);
     },
