@@ -123,7 +123,7 @@ export function makeGrepOverride({ cwd, config, budgets }: ToolEnvironment) {
     name: "grep" as const,
     label: "grep",
     description:
-      "Search file contents. Content mode returns LINE#HASH edit anchors for valid UTF-8 and plain line numbers without anchors otherwise; files/count modes return paths or matching-line counts. NUL-containing files are skipped. Directory searches respect ignore rules except where a positive glob matches, and skip .git and linked directories, even beneath a directory named in path; to search an ignored file or one of those directories, name it itself in path. Use this tool instead of running rg or grep in a shell to search files.",
+      "Search file contents. Content mode returns LINE#HASH edit anchors for valid UTF-8 and plain line numbers without anchors otherwise; files/count modes return paths or matching-line counts. NUL-containing files are skipped. Directory searches respect ignore rules except for files and directories a positive glob matches, and skip .git and linked directories, even beneath a directory named in path; to search an ignored file or one of those directories, name it itself in path. Use this tool instead of running rg or grep in a shell to search files.",
     promptSnippet: "Search file contents",
     promptGuidelines: [
       "When you need several independent searches, send them as separate grep calls in one response; they run in parallel.",
