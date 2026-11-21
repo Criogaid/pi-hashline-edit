@@ -20,6 +20,7 @@
  */
 
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
+import { contentText } from "@earendil-works/pi-ai";
 import { Value } from "typebox/value";
 import {
   errorMessage,
@@ -208,11 +209,7 @@ export function reportResult<TDetails extends object | undefined>(
     // The schema-derived outcome carries only JSON facts. The codec projects them in wire order.
     structuredContent: {
       ...("text" in SCRIPT_OUTPUT_SCHEMAS[bounded.tool].properties
-        ? {
-            text: payload
-              .flatMap((block) => (block.type === "text" ? [block.text] : []))
-              .join("\n"),
-          }
+        ? { text: contentText(payload) }
         : {}),
       ...statedFields({ ...bounded, next }),
     } as NonNullable<AgentToolResult<unknown>["structuredContent"]>,
