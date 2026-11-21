@@ -13,6 +13,7 @@ import { callTool } from "./tool-call.testing.ts";
 import { createActionFusionExecutor } from "./action-fusion.ts";
 import { DEFAULT_CONFIG } from "./tool-factories.testing.ts";
 import { reportOf } from "./report.ts";
+import { outputBudgetsFor } from "./budgets.ts";
 
 async function withDir<T>(fn: (dir: string) => Promise<T>): Promise<T> {
   const dir = await mkdtemp(join(tmpdir(), "hl-replace-"));
@@ -357,6 +358,46 @@ test("replace finds no matches → returns failure and leaves file untouched", a
     assert.deepEqual(reportOf(failed, "replace")?.unmatched, ["replacements[0]"]);
     assert.equal(reportOf(failed, "replace")?.publication, "NOT_PUBLISHED");
     assert.equal(await readFile(f, "utf-8"), "a\nb\n", "file untouched on 0-match failure");
+  });
+});
+
+test("replace unmatched rules exceed the diagnostic block → reports the fitting prefix and omission count", async () => {
+  await withDir(async (dir) => {
+    const path = "f.txt";
+    const file = join(dir, path);
+    const before = "original\n";
+    await writeFile(file, before);
+    const budget = outputBudgetsFor(8_192);
+    const tool = makeReplaceTool(dir, DEFAULT_CONFIG, undefined, () => budget);
+    const ruleNames = Array.from({ length: 128 }, (_, index) => `replacements[${index}]`);
+
+    for (const literal of [true, false]) {
+      const failed = await callTool(tool, {
+        path,
+        replacements: ruleNames.map((_, index) => ({
+          literal,
+          find: `missing-${index}`,
+          replace: "new",
+        })),
+      });
+      assert.equal(failed.isError, true);
+      const report = reportOf({ content: failed.content }, "replace");
+      assert.equal(report?.error, "NO_MATCH");
+      assert.equal(report.publication, "NOT_PUBLISHED");
+      assert.equal(await readFile(file, "utf8"), before);
+      const { unmatched } = report;
+      const bytes = Buffer.byteLength(JSON.stringify(unmatched));
+      assert.ok(
+        bytes <= budget.blockBytes,
+        `Unmatched list is ${bytes} bytes; budget is ${budget.blockBytes}`,
+      );
+      assert.deepEqual(unmatched, ruleNames.slice(0, unmatched.length));
+      assert.ok(
+        Buffer.byteLength(JSON.stringify(ruleNames.slice(0, unmatched.length + 1))) >
+          budget.blockBytes,
+      );
+      assert.equal(report.omittedUnmatched, ruleNames.length - unmatched.length);
+    }
   });
 });
 

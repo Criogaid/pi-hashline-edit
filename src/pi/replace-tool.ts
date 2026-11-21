@@ -31,6 +31,8 @@ import { REPLACEMENTS_SCHEMA } from "../core/replace-schema.ts";
 import { runRegexReplacements } from "./replace-regex.ts";
 import { unwritableTextError } from "../core/text.ts";
 import type { HashlineEditConfig } from "./config.ts";
+import { HashlineError } from "../core/errors.ts";
+import { leadingEntriesWithin } from "./budgets.ts";
 import {
   diffCardRenderers,
   formatDiffCounts,
@@ -116,10 +118,26 @@ function runReplace(
   config: HashlineEditConfig,
 ) {
   return runTextMutation<"replace">(target, async (currentText) => {
-    // The regex worker reports its own cancellation; a literal batch runs synchronously.
-    const { text, count, copied } = rules.some((rule) => !rule.literal)
-      ? await runRegexReplacements(currentText, rules, config.replace.regexTimeoutMs, target.signal)
-      : applyReplacements(currentText, rules);
-    return { text, copied, facts: { matches: count } };
+    try {
+      // The regex worker reports its own cancellation; a literal batch runs synchronously.
+      const { text, count, copied } = rules.some((rule) => !rule.literal)
+        ? await runRegexReplacements(
+            currentText,
+            rules,
+            config.replace.regexTimeoutMs,
+            target.signal,
+          )
+        : applyReplacements(currentText, rules);
+      return { text, copied, facts: { matches: count } };
+    } catch (error) {
+      if (!(error instanceof HashlineError) || error.errorCode !== "NO_MATCH") throw error;
+      // Both engines list every unmatched rule; the list is bounded here, for either path.
+      const { unmatched } = (error as HashlineError<"NO_MATCH">).facts!;
+      const kept = leadingEntriesWithin(unmatched, target.budget.blockBytes);
+      const omitted = unmatched.length - kept.length;
+      throw new HashlineError("NO_MATCH", error.message, {
+        facts: { unmatched: kept, ...(omitted ? { omittedUnmatched: omitted } : {}) },
+      });
+    }
   });
 }

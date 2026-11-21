@@ -16,7 +16,7 @@ import { splitLines } from "../core/lines.ts";
 import type { Anchor, AnchorFailure } from "../core/types.ts";
 import { mergeRanges } from "../core/ranges.ts";
 import { HashlineError } from "../core/errors.ts";
-import { formatByteSize, type OutputBudgets } from "./budgets.ts";
+import { formatByteSize, leadingEntriesWithin, type OutputBudgets } from "./budgets.ts";
 import type { AnchorFailureFact, ErrorFacts } from "./report-schema.ts";
 
 type MismatchFacts = ErrorFacts<"ANCHOR_MISMATCH">;
@@ -169,15 +169,10 @@ export function describeEditFailure(
   budget: OutputBudgets,
 ): HashlineError<"ANCHOR_MISMATCH"> {
   const currentLines = splitLines(currentText);
-  // Leading entries whose compact JSON fits the block; whole entries are omitted, never cut.
-  const kept: AnchorFailureFact[] = [];
-  let bytes = 1; // Brackets less the comma charged to the first entry.
-  for (const failure of failures) {
-    const entry = failureEntry(failure, anchors, currentLines, budget);
-    bytes += Buffer.byteLength(JSON.stringify(entry)) + 1;
-    if (bytes > budget.blockBytes) break;
-    kept.push(entry);
-  }
+  const kept = leadingEntriesWithin(
+    failures.map((failure) => failureEntry(failure, anchors, currentLines, budget)),
+    budget.blockBytes,
+  );
   const omitted = failures.length - kept.length;
   return new HashlineError("ANCHOR_MISMATCH", "Anchors did not match the current file.", {
     facts: {

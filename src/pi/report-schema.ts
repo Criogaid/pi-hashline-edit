@@ -232,6 +232,10 @@ const FACT_FIELDS = {
     Type.Array(Type.String(), { description: "Rules that match nothing." }),
     "Correct the target rules using read or grep before retrying.",
   ),
+  omittedUnmatched: modelFact(
+    count("Unmatched rules omitted from the byte budget."),
+    "Know that the unmatched list is incomplete.",
+  ),
   line: modelFact(
     Type.Integer({ minimum: 1, description: "Line where the conflicting match starts." }),
     "Locate the first conflicting match when correcting the request.",
@@ -401,7 +405,7 @@ export const ERROR_DEFINITIONS = {
     },
   },
   NO_MATCH: {
-    facts: facts(["unmatched"]),
+    facts: facts(["unmatched"], ["omittedUnmatched"]),
     next: {
       default:
         "Verify the target text with read or grep; check case sensitivity or regex flags if applicable.",

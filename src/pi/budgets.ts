@@ -23,6 +23,18 @@ const MIN_FIELD_BYTES = 128;
 export const MAX_CONTENT_KIB = 4096;
 const MAX_CONTENT_BYTES = MAX_CONTENT_KIB * 1024;
 
+/** The leading entries whose compact JSON array fits `maxBytes`; whole entries are omitted, never cut. */
+export function leadingEntriesWithin<T>(entries: readonly T[], maxBytes: number): T[] {
+  const kept: T[] = [];
+  let bytes = 1; // Brackets less the comma charged to the first entry.
+  for (const entry of entries) {
+    bytes += Buffer.byteLength(JSON.stringify(entry)) + 1;
+    if (bytes > maxBytes) break;
+    kept.push(entry);
+  }
+  return kept;
+}
+
 // Declared apart so Object.freeze keeps these as numbers rather than literal types.
 const fallbackBudgets = {
   readBytes: 64 * 1024,
