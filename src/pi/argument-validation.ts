@@ -90,9 +90,16 @@ function parsePathArguments(args: unknown, report: ReportArgumentIssue) {
   return locals;
 }
 
+type CheckSingletonShape = (
+  items: TSchema,
+  value: object,
+  path: string,
+) => ArgumentIssue | undefined;
+
 function arrayShapeIssue(
   array: readonly unknown[],
   path: string,
+  checkSingleton: CheckSingletonShape,
   items?: TSchema,
 ): ArgumentIssue | undefined {
   const keys = Object.keys(array);
@@ -111,25 +118,42 @@ function arrayShapeIssue(
 
   if (!IsArray(items) && !IsObject(items)) return undefined;
   for (const [index, item] of array.entries()) {
-    const issue = firstArrayIssue(items, item, `${path}[${index}]`);
+    const issue = firstArrayIssue(items, item, `${path}[${index}]`, checkSingleton);
     if (issue) return issue;
   }
   return undefined;
 }
 
 /** Follow declared fields only, so a hook's cyclic object graph cannot drive recursion. */
-function firstArrayIssue(schema: TSchema, value: unknown, path = ""): ArgumentIssue | undefined {
+function firstArrayIssue(
+  schema: TSchema,
+  value: unknown,
+  path: string,
+  checkSingleton: CheckSingletonShape,
+): ArgumentIssue | undefined {
   if (!(value instanceof Object)) return undefined;
   if (IsArray(schema))
-    return Array.isArray(value) ? arrayShapeIssue(value, path, schema.items) : undefined;
-  if (Array.isArray(value)) return arrayShapeIssue(value, path);
+    return Array.isArray(value)
+      ? arrayShapeIssue(value, path, checkSingleton, schema.items)
+      : checkSingleton(schema.items, value, path);
+  if (Array.isArray(value)) return arrayShapeIssue(value, path, checkSingleton);
   if (!IsObject(schema)) return undefined;
   for (const [key, child] of Object.entries(schema.properties)) {
-    const issue = firstArrayIssue(child, Reflect.get(value, key), propertyPath(path, key));
+    const issue = firstArrayIssue(
+      child,
+      Reflect.get(value, key),
+      propertyPath(path, key),
+      checkSingleton,
+    );
     if (issue) return issue;
   }
   return undefined;
 }
+
+// Pi wraps a singleton using the item schema, but the check still sees the caller's path.
+const checkWrappedItem: CheckSingletonShape = (items, value, path) =>
+  firstArrayIssue(items, value, path, checkWrappedItem);
+const deferSingletonToSchema: CheckSingletonShape = () => undefined;
 
 export function createArgumentBoundary<T extends TObject, Parsed>(
   parameters: T,
@@ -150,9 +174,9 @@ export function createArgumentBoundary<T extends TObject, Parsed>(
     }
   }
 
-  function snapshot<Value>(args: Value): Value {
+  function snapshot<Value>(args: Value, checkSingleton: CheckSingletonShape): Value {
     const copy = withArgumentError(() => structuredClone(args));
-    const issue = firstArrayIssue(parameters, copy);
+    const issue = firstArrayIssue(parameters, copy, "", checkSingleton);
     if (issue) throw new Error(formatArgumentError([issue], false, budgets()));
     return copy;
   }
@@ -178,7 +202,7 @@ export function createArgumentBoundary<T extends TObject, Parsed>(
 
   return {
     prepareArguments(args: unknown): Static<T> {
-      const raw = snapshot(args);
+      const raw = snapshot(args, checkWrappedItem);
       verdict(withArgumentError(() => validator.coerce(raw)));
       // Coercion is copy-on-write. Pi applies it to this snapshot before passing args to hooks.
       return raw as Static<T>;
@@ -186,7 +210,7 @@ export function createArgumentBoundary<T extends TObject, Parsed>(
     // A tool_call hook can retain and mutate the validated arguments before or during execution.
     // The tool consumes its own checked snapshot of the canonical arguments the last hook left.
     afterHooks<Input extends Static<T>>(args: Input) {
-      const checked = snapshot(args);
+      const checked = snapshot(args, deferSingletonToSchema);
       const { build, locals } = verdict(checked);
       const paths: ResolvedArgumentPath[] = locals.map(({ spelling, local }) => ({
         absolutePath: resolve(cwd, local),

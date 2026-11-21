@@ -155,3 +155,96 @@ test("nested read with a changing getter → Pi hooks and execution use the chec
   assert.deepEqual(observed, [{ path, offset: 1, limit: 1, anchors: false }]);
   assert.deepEqual(outcome.content[0], { type: "text", text: "first" });
 });
+
+test("nested edit supplies malformed arrays before Pi coercion → rejects at the caller's path", async (t) => {
+  const sparseLines = ["a", , "b"];
+  const cases = [
+    {
+      id: "singleton-hole",
+      steps: { action: "append", lines: sparseLines },
+      field: "steps.lines[1]",
+    },
+    {
+      id: "singleton-named-key",
+      steps: { action: "append", lines: Object.assign(["a", 1], { note: true }) },
+      field: "steps.lines.note",
+    },
+    {
+      id: "array-hole",
+      steps: [{ action: "append", lines: sparseLines }],
+      field: "steps[0].lines[1]",
+    },
+    { id: "valid-singleton", steps: { action: "append", lines: ["after"] } },
+  ];
+  const observed = new Set<unknown>();
+  const { cwd, session, model } = await openTestSession(t, {
+    tools: ["edit", "edit_nested"],
+    async configure(pi) {
+      await register(pi);
+      pi.on("tool_call", (event) => {
+        if (event.toolName === "edit") observed.add(event.input.path);
+      });
+      pi.registerTool({
+        name: "edit_nested",
+        label: "Nested edit",
+        description: "Edit a fixture through a nested call",
+        parameters: Type.Object({ fixture: Type.String() }),
+        async execute(_id, { fixture }, _signal, _onUpdate, ctx) {
+          const entry = cases.find(({ id }) => id === fixture);
+          assert.ok(entry);
+          const nested = await ctx.executeTool("edit", {
+            path: `${fixture}.txt`,
+            steps: entry.steps,
+          });
+          return { ...nested.result, isError: nested.isError };
+        },
+      });
+    },
+  });
+  const original = Buffer.from("before\n");
+  for (const { id } of cases) await writeFile(join(cwd, `${id}.txt`), original);
+  let sent = false;
+  session.agent.streamFunction = () => {
+    if (sent)
+      return responseStream(model, {
+        content: [{ type: "text", text: "Done." }],
+        stopReason: "stop",
+      });
+    sent = true;
+    return responseStream(model, {
+      content: cases.map(({ id }) => ({
+        type: "toolCall",
+        id,
+        name: "edit_nested",
+        arguments: { fixture: id },
+      })),
+      stopReason: "toolUse",
+    });
+  };
+  await session.prompt("Try each fixture through the nested edit tool.");
+  const results = session.agent.state.messages.filter((message) => message.role === "toolResult");
+  for (const { id, field } of cases) {
+    await t.test(`${id} → ${field ?? "published"}`, async () => {
+      const outcome = results.find((message) => message.toolCallId === id);
+      assert.ok(outcome);
+      const report = reportOf(outcome, "edit");
+      const path = `${id}.txt`;
+      const bytes = await readFile(join(cwd, path));
+      if (field === undefined) {
+        assert.equal(outcome.isError, false, JSON.stringify(outcome.content));
+        assert.equal(report?.publication, "PUBLISHED");
+        assert.ok(observed.has(path));
+        assert.deepEqual(bytes, Buffer.from("before\nafter\n"));
+        return;
+      }
+      assert.equal(outcome.isError, true, JSON.stringify(outcome.content));
+      assert.equal(report?.error, "INVALID_ARGUMENTS");
+      assert.deepEqual(
+        report.issues.map((issue) => issue.field),
+        [field],
+      );
+      assert.equal(observed.has(path), false);
+      assert.deepEqual(bytes, original);
+    });
+  }
+});
