@@ -145,6 +145,7 @@ async function runChild(
       query: grepQuery,
       limit,
       timeoutMs,
+      signal: new AbortController().signal,
     });
 
   await search();
