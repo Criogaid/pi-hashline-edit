@@ -993,7 +993,7 @@ test("scope filters and output modes → confirmed files and counts are preserve
     assert.ok(
       fake.calls.some(({ args }) => args.includes("*.ts") && args.includes("!**/*.test.ts")),
     );
-    assert.deepEqual(fake.calls.at(-1)?.args.slice(-2), [a, b]);
+    assert.deepEqual(fake.calls.at(-1)?.args.slice(-2), ["a.ts", "b.ts"]);
 
     const count = await call(makeMockGrep(dir, DEFAULT_CONFIG, fake.backend), {
       literal: true,
@@ -1684,7 +1684,7 @@ test("non-multiline or multiline query → use line candidates or the file prefi
         "--glob",
         "!.git",
         "--",
-        dir,
+        ".",
       ]);
     }
   }));

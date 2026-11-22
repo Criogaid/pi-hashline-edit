@@ -699,23 +699,52 @@ test("explicit file paths obey ordered glob filters without inheriting ignore ru
 test("grep glob with a directory component → resolves from the tool workspace", async (t) => {
   const directory = await mkdtemp(join(tmpdir(), "hl-grep-workspace-glob-"));
   t.after(() => rm(directory, { recursive: true, force: true }));
-  await mkdir(join(directory, "src"));
-  await writeFile(join(directory, "src", "a.ts"), "hit\n");
-  const tool = makeGrepOverride(directory, DEFAULT_CONFIG);
-  for (const searchPath of [".", "src/a.ts"]) {
-    await t.test(searchPath, async () => {
-      const result = await callTool(tool, {
-        pattern: ["hit"],
-        literal: true,
-        glob: ["src/*.ts"],
-        path: [searchPath],
-        outputMode: "files",
+  const physical = join(directory, "physical");
+  const alias = join(directory, "alias");
+  const cwd = join(alias, "workspace");
+  await mkdir(join(physical, "workspace", "src"), { recursive: true });
+  await symlink(physical, alias, process.platform === "win32" ? "junction" : "dir");
+  await writeFile(join(cwd, "src", "a.ts"), "hit\n");
+  const tool = makeGrepOverride(cwd, DEFAULT_CONFIG);
+  for (const [mode, query] of [
+    ["line", { pattern: ["hit"], literal: true }],
+    ["file prefilter", { pattern: ["hit"], literal: true, multiline: true }],
+    ["all files", { pattern: ["^...$"], literal: false, multiline: true }],
+  ] as const) {
+    for (const searchPath of [".", "src/a.ts"]) {
+      await t.test(`${mode}: ${searchPath}`, async () => {
+        const result = await callTool(tool, {
+          ...query,
+          glob: ["src/*.ts"],
+          path: [searchPath],
+          outputMode: "files",
+        });
+        assert.equal(result.isError, undefined, JSON.stringify(reportOf(result, "grep")));
+        assert.deepEqual(grepCounts(result), { matches: 1, files: 1 });
+        assert.deepEqual(result.content[0], { type: "text", text: "src/a.ts" });
       });
-      assert.equal(result.isError, undefined, JSON.stringify(reportOf(result, "grep")));
-      assert.deepEqual(grepCounts(result), { matches: 1, files: 1 });
-      assert.deepEqual(result.content[0], { type: "text", text: "src/a.ts" });
-    });
+    }
   }
+  await t.test("an outside root and a file named - retain their paths", async () => {
+    const outside = join(alias, "workspace-other");
+    const outsideFile = join(outside, "b.ts");
+    await mkdir(outside);
+    await writeFile(outsideFile, "hit\n");
+    await writeFile(join(cwd, "-"), "hit\n");
+    const result = await callTool(tool, {
+      pattern: ["hit"],
+      literal: true,
+      glob: ["*"],
+      path: [outside, "-"],
+      outputMode: "files",
+    });
+    assert.equal(result.isError, undefined, JSON.stringify(reportOf(result, "grep")));
+    assert.deepEqual(grepCounts(result), { matches: 2, files: 2 });
+    assert.deepEqual(result.content[0], {
+      type: "text",
+      text: `${outsideFile.replaceAll("\\", "/")}\n-`,
+    });
+  });
 });
 
 test("directory traversal skips symlinks but explicit linked directories and files remain searchable", async (t) => {

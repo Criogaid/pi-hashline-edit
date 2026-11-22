@@ -78,6 +78,7 @@ export async function listCandidates(options: {
 }> {
   const { scope, query, signal, stopped, onCandidate } = options;
   if (scope.searchPaths.length === 0) return { warnings: [], scanLimitReached: false };
+  const { cwd } = scope;
   let scanAll = false;
   let listedAny = false;
   let scanned = 0;
@@ -86,7 +87,7 @@ export async function listCandidates(options: {
   const offer = async (path: string, lines: CandidateLines) => {
     listedAny = true;
     if (stopped()) return false;
-    const filePath = resolve(path);
+    const filePath = resolve(cwd, path);
     if (await seen.has(filePath)) return true;
     seen.add(filePath);
     if (scanAll) {
@@ -102,8 +103,7 @@ export async function listCandidates(options: {
     }
     return onCandidate({ filePath, lines });
   };
-  const scoped = [...scopeArgs(scope), "--", ...scope.searchPaths];
-  const { cwd } = scope;
+  const scoped = scopeArgs(scope);
 
   /** Narrowing listings, most selective first; each is derived only when the one before gives way. */
   function* patternStages(): Generator<PatternStage> {

@@ -5,7 +5,7 @@
  * @module pi-hashline-edit/pi
  */
 import { stat } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
+import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { isGlobSpelling, type ResolvedArgumentPath } from "./path.ts";
 import { COMMON_RG_ARGS, runRgPaths, searchDiagnostic } from "./rg-process.ts";
 import { errnoCode, HashlineError, PATH_ERROR_MESSAGES } from "../core/errors.ts";
@@ -20,13 +20,28 @@ export interface SearchScope {
 
 const globArgs = (globs: readonly string[]) => globs.flatMap((glob) => ["--glob", glob]);
 
+/** Relative roots let rg match workspace globs even when its cwd resolves through a link. */
+function globRoots(cwd: string, paths: readonly string[]): string[] {
+  return paths.map((path) => {
+    const rel = relative(cwd, path);
+    if (isAbsolute(rel) || rel === ".." || rel.startsWith(`..${sep}`)) return path;
+    // On Windows, relative() can fold case. Keep any spelling that does not round-trip.
+    if (resolve(cwd, rel) !== path) return path;
+    // rg treats a bare hyphen as stdin even after --.
+    if (rel === "-") return `.${sep}-`;
+    return rel || ".";
+  });
+}
+
 /**
- * The rg flags of a search. Traversal respects ignore rules and also skips `.git` directories,
- * which `--hidden` would otherwise search; a named path is still searched. The exclusion follows
+ * The rg flags and roots of a search. Traversal respects ignore rules and skips `.git` directories,
+ * which `--hidden` would otherwise search. A named path is still searched. The exclusion follows
  * the caller's globs, because a later rg glob takes precedence.
  */
 export function scopeArgs(scope: SearchScope): string[] {
-  return ["--hidden", ...globArgs(scope.globs), "--glob", "!.git"];
+  const { cwd, globs, searchPaths } = scope;
+  const roots = globs.length ? globRoots(cwd, searchPaths) : searchPaths;
+  return ["--hidden", ...globArgs(globs), "--glob", "!.git", "--", ...roots];
 }
 
 interface SearchPathInfo {
@@ -122,10 +137,10 @@ export async function filterExplicitFilesByGlob(
     "--null",
     "--max-depth=1",
     "--",
-    ...parents,
+    ...globRoots(cwd, parents),
   ];
   const listed = await runRgPaths(args, cwd, signal, async (path) => {
-    allowed.add(path);
+    allowed.add(resolve(cwd, path));
     return true;
   });
   const admitted = new Set<string>();
