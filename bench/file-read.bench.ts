@@ -1,4 +1,7 @@
-/** Run from the candidate with node bench/file-read.bench.ts <baseline-worktree>. */
+/**
+ * Guarded file reads against a baseline: overwrite freshness, read and grep scans, and editable snapshots.
+ * Run from the candidate with node bench/file-read.bench.ts <baseline-worktree>.
+ */
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";

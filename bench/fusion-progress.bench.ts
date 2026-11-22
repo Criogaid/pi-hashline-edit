@@ -1,4 +1,7 @@
-/** Run `node bench/fusion-progress.bench.ts` on each reporter revision with the same Node binary. */
+/**
+ * Time and heap per Action Fusion progress update: the report and Pi's Bash card render.
+ * Run `node bench/fusion-progress.bench.ts` on each reporter revision with the same Node binary.
+ */
 import assert from "node:assert/strict";
 import { performance, PerformanceObserver, type PerformanceEntry } from "node:perf_hooks";
 import { setImmediate } from "node:timers/promises";

@@ -1,3 +1,8 @@
+/**
+ * Paired end-to-end edit and replace latency, diff generation included.
+ *
+ *   node --expose-gc bench/mutation-diff.bench.ts <installed-baseline-worktree> [pairs]
+ */
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
