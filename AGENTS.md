@@ -12,12 +12,11 @@
 - When changing tool parameters, user-visible behavior, or configuration, check the matching contract in `README.md` (tool parameters, output budgets, recovery semantics, publication states).
 - When changing Pi API use, lifecycle, or TUI integration, read the documentation and type declarations of the installed Pi version.
 - The runtime `typebox` comes from Pi's extension loader (a peer dependency). The `@earendil-works/*` devDependencies and `typebox` are pinned exactly: the Pi packages to one shared version, `typebox` to the version `@earendil-works/pi-coding-agent` depends on. The runtime dependency `@earendil-works/pi-schema` is pinned to that same Pi version, and the compile options in `src/pi/argument-validation.ts` match those of `validateToolArguments` in the installed `@earendil-works/pi-ai`. Upgrade them together.
-- For releases, check `.github/workflows/publish.yml` and `package.json`.
 
 ## Behavior contracts
 
-- Keep structured JSON edits, pure-function appliers, and batch validation. File mutations reuse `withFileMutationQueue` and the existing commit layer; `src/pi/file-commit.ts` is the only publication path.
-- Text edits preserve the BOM, line endings, and untouched bytes. Invalid UTF-8, NUL bytes, and body text that cannot be written losslessly as UTF-8 are rejected before any write. `read` hands supported images to the native tool through Pi's image-detection API, delegates files containing NUL to native `read`, and rejects all other invalid UTF-8.
+- File mutations reuse `withFileMutationQueue` and the existing commit layer; `src/pi/file-commit.ts` is the only publication path.
+- Text edits preserve the BOM, line endings, and untouched bytes. Invalid UTF-8, NUL bytes, and body text that cannot be written losslessly as UTF-8 are rejected before any write.
 - Use the shared CRLF-to-LF view for valid UTF-8 in `read/grep/edit/replace`; standalone CR and literal source escapes remain content. Map mutation offsets back to the original bytes; `write` uses the supplied full content and line endings exactly.
 - A line hash is a collidable, position-dependent checksum. The caller re-submits recovery candidates for verification; the range-verification boundary is in the README.
 - `edit/replace` commits bind to the revision of the bytes actually read. Action Fusion takes the `publishedRevision` returned by the commit layer as its freshness baseline; revisions never appear in tool results.
@@ -37,7 +36,7 @@
 - The same kind of failure (cancellation, validation failure) uses one consistent error form.
 - Tool results, failures, and model-facing text (descriptions, guidelines, `next`) follow the protocol in `src/pi/AGENTS.md` (Reports and rendering). Outside `src/pi/`, a throw site classifies its failure as a `HashlineError` with a code and the facts that code's schema requires, and a layer returns structured facts, never sentences.
 - Model-facing output is exact and deterministic: the same call on the same file state returns the same bytes, whatever the worker completion order, timing, or collection iteration order. Resolve a mapping exactly or reject the call; never hand the model guesses, offsets to apply, or options to rank, and give each `next` one action. Exact schema facts and a failed anchor's recovery candidates, which the extension verifies again on re-submission, are not guesses.
-- Model-visible text (result `content`, tool and field descriptions, snippets, guidelines) is protocol: a change to it is a behavior change, and its tests change in the same commit. Renderer strings are presentation: they may put a report value into words, and never state a fact the report lacks or take a fact from the model text.
+- Model-visible text (result `content`, tool and field descriptions, snippets, guidelines) is protocol: a change to it is a behavior change. Renderer strings are presentation: they may put a report value into words, and never state a fact the report lacks or take a fact from the model text.
 - Every tool, parameter, and mode adds schema and description bytes to every call. Add one only for a need that the request or recorded sessions show; remove one that recorded sessions show unneeded.
 - Delegate judgments that depend on an external engine's semantics to that engine; do not reimplement or approximate them locally.
 - This package is a Pi extension. For anything Pi also does (a renderer, a render-context function, a limit, a wording), use what the installed Pi exports or passes in; where Pi exposes nothing, match the built-in behavior. Differ only for what Hashline adds or the maintainer chose, and record each deliberate difference in `src/pi/AGENTS.md`.
@@ -83,5 +82,5 @@ Report platform skips in results. Test processes read source from disk; verifyin
 - A commit is one milestone that a single subject describes. A feature or refactor and a bug fix are separate commits, and a speed or memory change is its own commit. When the subject needs `并` or `and` to join two actions, split the commit, unless the second action is only the update the first one forces (a rename and its references). Stage only what belongs to the milestone: other changes in the working tree stay out, and a file that mixes them is split by hunk.
 - AI-assisted commits end with `Co-Authored-By: <model name> <email>`; the committing coding agent supplies its own. Claude Code signs with its own model name and `noreply@anthropic.com`. Pi signs with `noreply@pi.dev` and reads the model name from the `PI_MODEL` environment variable before committing; when the variable is unset, it says so instead of guessing a name.
 - Commits never include files under `docs/`.
-- Push, version, tag, and release actions follow the user's authorization and the actual workflow.
+- Never push, bump the version, tag, or release without the user's authorization.
 - `.github/workflows/publish.yml` runs when a `v*` tag is pushed: it runs the type check and the full tests, checks that the tag matches the package version, then publishes with npm provenance.
