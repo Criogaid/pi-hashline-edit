@@ -6,6 +6,7 @@
 
 - Read `src/core/AGENTS.md` before changing `src/core/` and `src/pi/AGENTS.md` before changing `src/pi/` or `src/index.ts`. Module responsibilities and each layer's implementation constraints are written only there.
 - Read `src/testing/AGENTS.md` before writing or changing tests.
+- When searching business code, exclude tests: `*.test.ts`, `*.testing.ts`, `src/integration/`, and `src/testing/` (which also holds files without those suffixes).
 - `src/core/`: the Pi-independent engine (line handling, checksums, decoding, errors, edit, replace, JavaScript search); it has no public API.
 - `src/pi/`: tool registration, configuration, argument validation, reporting and rendering, the grep and ripgrep process layers, regex workers, file commit, and Action Fusion.
 - `src/integration/`: tests against real backends. `src/testing/`: the test runner, shared test environments, and installation fixtures. `bench/`: benchmarks.
