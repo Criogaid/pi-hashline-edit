@@ -5,6 +5,7 @@
 ## Where to look
 
 - Read `src/core/AGENTS.md` before changing `src/core/` and `src/pi/AGENTS.md` before changing `src/pi/` or `src/index.ts`. Module responsibilities and each layer's implementation constraints are written only there.
+- Read `src/testing/AGENTS.md` before writing or changing tests.
 - `src/core/`: the Pi-independent engine (line handling, checksums, decoding, errors, edit, replace, JavaScript search); it has no public API.
 - `src/pi/`: tool registration, configuration, argument validation, reporting and rendering, the grep and ripgrep process layers, regex workers, file commit, and Action Fusion.
 - `src/integration/`: tests against real backends. `src/testing/`: the test runner, shared test environments, and installation fixtures. `bench/`: benchmarks.
@@ -42,24 +43,8 @@
 - This package is a Pi extension. For anything Pi also does (a renderer, a render-context function, a limit, a wording), use what the installed Pi exports or passes in; where Pi exposes nothing, match the built-in behavior. Differ only for what Hashline adds or the maintainer chose, and record each deliberate difference in `src/pi/AGENTS.md`.
 - Fix a defect where the fact is owned. When the same kind of defect reaches a second site (`git log -- <file>` shows earlier fixes of the area), stop patching sites: name the owning schema, module, or layer, change it there, and cover every tool, not only the one that showed the symptom. A suppression, a trimmed duplicate, or a repeated check at the symptom is not a fix.
 - A change made for speed or memory carries before-and-after numbers in its commit body, from a repeatable script run on a realistic corpus at the limits callers actually pass; keep the script in `bench/` when it will be run again. Keep the new path only when the numbers pay for its complexity: a cache, prefilter, or translation tier without a stable gain is not added.
-- Comments, AGENTS.md files, and READMEs state what the current code does, in the present tense: no dates, commit ids, versions, contrast with earlier code (`now`, `no longer`, `instead of`), or sentence that code or a command cannot check. A commit that renames, removes, or changes a symbol, parameter, error code, or rule fixes every mention of its name and old behavior in comments, all three AGENTS.md files, and both READMEs; a comment goes with the code it describes.
+- Comments, AGENTS.md files, and READMEs state what the current code does, in the present tense: no dates, commit ids, versions, contrast with earlier code (`now`, `no longer`, `instead of`), or sentence that code or a command cannot check. A commit that renames, removes, or changes a symbol, parameter, error code, or rule fixes every mention of its name and old behavior in comments, every AGENTS.md file, and both READMEs; a comment goes with the code it describes.
 - AGENTS.md and CLAUDE.md files, business-code comments, and model-visible text are English. `README.md` is English and `README.zh-CN.md` is its Chinese mirror; a change to one updates the other.
-
-## Testing standards
-
-- Each test protects one contract that can be stated outwardly: the README, a behavior contract in an AGENTS.md, or a bug that happened. Tests written for coverage or against private implementation are not written.
-- Do not use Claude for new model-backed experiments.
-- Write each test at the lowest level that can expose the problem: pure `core/` functions first, then the tool layer, and cross-tool flows last. A boundary that `apply.test.ts` can test is not tested through the filesystem in `execute.test.ts`.
-- Tool-level tests drive tools through `callTool` in `tool-call.testing.ts` in the production call order, invalid input included.
-- Assert behavior and state first: file bytes, returned structure, error codes. Assert only the key part of prompt text. Budgets that vary with the model come from `outputBudgetsFor()` and are not hard-coded; fixed limits the README states (for example the multiline file-size limit and the rg record and stderr limits) are hard-coded in tests to the README's numbers.
-- Test one contract once. Use tables for input variants; behavior that `edit` and `replace` share is one shared case run against both tools.
-- Render tests assert concrete user-visible content. A case that only checks "does not throw" is not written.
-- A bug fix adds one regression test, first confirmed to fail on the old code. A behavior-contract change rewrites the tests that protect the old contract in the same commit instead of leaving CI to find them.
-- Probe the boundaries that broke earlier code before calling input handling done, and cover those the code path can reach: empty and maximum-size inputs (an array large enough to overflow a spread call), `null` versus a missing field, U+2028, U+2029, and a lone CR in text, Windows drive roots and command-line length limits, case-insensitive paths, and the file mode a new file gets under the umask.
-- One test fails for one reason; its name reads "condition → behavior".
-- Tests that depend on real ripgrep, huge files, or platform differences live in `src/integration/` and stay out of `npm test`, which runs on every commit.
-
-Test layout: `*.test.ts` files sit next to the source they cover; `execute.test.ts` covers edit and the shared mutation flow. In `src/testing/`, `session.testing.ts` owns Pi session setup, local model streams, isolation, and cleanup for tool contexts and Fusion sessions; `process.testing.ts` gives a clean child-process environment; `installation.testing.ts` creates source or npm-archive installs with only the locked production dependencies, which `extension-loader.testing.ts` loads through Pi's jiti. `grep-order.test.ts` pins deterministic grep output: the `src/pi/` one controls completion order, the `src/integration/` one repeats real rg.
 
 ## Commands
 
