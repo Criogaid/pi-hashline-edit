@@ -14,6 +14,11 @@
   "main": "src/index.ts",
   "files": [
     "src",
+    "!src/**/*.test.ts",
+    "!src/**/*.testing.ts",
+    "!src/integration",
+    "!src/testing",
+    "!src/core/pict-matrix.tsv",
     "README.md",
     "README.zh-CN.md",
     "LICENSE",
