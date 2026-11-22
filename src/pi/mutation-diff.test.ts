@@ -76,6 +76,24 @@ for (const [name, oldHead, newHead, shared, oldTail, newTail] of [
   });
 }
 
+test("equal logical rows with a shifted copy → suppress the net diff", () => {
+  const before = "\uFEFFsame\r\nsame\r\nsame\r\n";
+  const after = "\uFEFFsame\r\nsame\nsame\r\n";
+  const copied = [{ sourceStart: 7, targetStart: 1, length: "same\r\n".length }];
+  assert.equal(generateRangeDiff(before, after, copied), "");
+});
+
+test("copy ending at only one EOF → renders a changed last row", () => {
+  const before = "copy\r\nlast";
+  const after = `${before}!`;
+  const copied = [{ sourceStart: 0, targetStart: 0, length: before.length }];
+  assert.deepEqual(partitions(generateRangeDiff(before, after, copied)), {
+    before: [[2, "last"]],
+    after: [[2, "last!"]],
+    context: [[1, "copy"]],
+  });
+});
+
 test("range diff with sparse changes inside one large replacement → retains interior rows across a shift", () => {
   const old = Array.from({ length: 96 }, (_, i) => `const option${i + 1} = true;\n`);
   old[44] = 'const region = "us-east-1";\n';

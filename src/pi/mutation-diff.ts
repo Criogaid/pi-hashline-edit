@@ -1,6 +1,6 @@
 import { diffArrays } from "diff";
 import type { CopiedSpan } from "../core/copy-span.ts";
-import { indexSourceLines, normalizeLineEndings } from "../core/lines.ts";
+import { indexSourceLines } from "../core/lines.ts";
 
 const CONTEXT_LINES = 4;
 // Bound the search by changed lines so large ranges with a few edits can still align.
@@ -17,6 +17,40 @@ function boundaryAtOrAfter(lines: LineIndex, offset: number): number {
     else high = middle;
   }
   return low;
+}
+
+function sameLogicalText(
+  source: LineIndex,
+  target: LineIndex,
+  copied: readonly CopiedSpan[],
+): boolean {
+  if (source.length !== target.length) return false;
+  if (source.length === 0) return true;
+
+  const last = source.length - 1;
+  // All earlier rows are terminated. At EOF, the terminator is part of logical equality.
+  const sourceTerminated = source.end(last) < source.start(last + 1);
+  const targetTerminated = target.end(last) < target.start(last + 1);
+  if (sourceTerminated !== targetTerminated) return false;
+
+  let row = 0;
+  for (const { sourceStart, targetStart, length } of copied) {
+    while (row < last && source.start(row) < sourceStart) {
+      if (source.content(row) !== target.content(row)) return false;
+      row++;
+    }
+    if (row === last) break;
+
+    const offset = source.start(row) - sourceStart;
+    if (offset >= length || offset !== target.start(row) - targetStart) continue;
+    // Same-numbered starts in one span prove equality through its last copied LF.
+    // Compare the last row directly: copying to one EOF can leave a suffix at the other.
+    row = Math.min(last, boundaryAtOrAfter(source, sourceStart + length + 1) - 1);
+  }
+  for (; row < source.length; row++) {
+    if (source.content(row) !== target.content(row)) return false;
+  }
+  return true;
 }
 
 // Match a copied EOF body to its original row when adding or removing its neighbor
@@ -72,11 +106,7 @@ export function generateRangeDiff(
     return sharedBom ? { ...lines, start: (row) => (row === 0 ? 1 : lines.start(row)) } : lines;
   }
   // The card shows net logical changes even when edit operations rearrange identical rows.
-  if (
-    source.length === target.length &&
-    normalizeLineEndings(before) === normalizeLineEndings(after)
-  )
-    return "";
+  if (sameLogicalText(source, target, copied)) return "";
   // Pi's number column includes the empty slot after a final LF (or in an empty file).
   const width = String(
     Math.max(

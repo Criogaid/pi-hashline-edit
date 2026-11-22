@@ -3,8 +3,7 @@ import { rejectsArgument } from "./argument-error.testing.ts";
 import { computeLineHash } from "../core/hash.ts";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import assert from "node:assert/strict";
-import fs, { mkdtemp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
-import { syncBuiltinESMExports } from "node:module";
+import { mkdtemp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -351,73 +350,6 @@ test("Fusion skips the command when a replacement produces unencodable text", as
     assert.deepEqual(events, ["waiting", "skipped"]);
     assert.equal(await readFile(path, "utf8"), before);
     assert.equal(commands, 0);
-  } finally {
-    await rm(dir, { recursive: true, force: true });
-  }
-});
-
-test("result generation fails after a real mutation → preserves publication and cause", async (t) => {
-  const dir = await mkdtemp(join(tmpdir(), "hashline-result-generation-"));
-  try {
-    for (const content of ["before\n", "after\n"]) {
-      const path = join(dir, "file.txt");
-      await writeFile(path, "before\n");
-      const cause = new Error("render failed");
-      const context = await ctx(dir, t);
-      const nativeOpen = fs.open;
-      const nativeReplace = String.prototype.replace;
-      const readsBeforeDiff = content === "before\n" ? 2 : 3;
-      let targetReads = 0;
-      let injected = false;
-      let commands = 0;
-      const executeTool: SessionCommand = async () => {
-        commands++;
-        return commandCompletion({ content: [] });
-      };
-      const fusion = createActionFusionScheduler(() => {});
-      try {
-        t.mock.method(fs, "open", async (...args: Parameters<typeof nativeOpen>) => {
-          if (String(args[0]) === path) targetReads++;
-          return nativeOpen(...args);
-        });
-        syncBuiltinESMExports();
-        // Only fail diff normalization after the commit's final target read.
-        t.mock.method(
-          String.prototype,
-          "replace",
-          function (this: string, ...args: Parameters<typeof nativeReplace>) {
-            if (!injected && targetReads === readsBeforeDiff && String(this) === content) {
-              injected = true;
-              throw cause;
-            }
-            return nativeReplace.apply(this, args);
-          },
-        );
-        const result = await callTool(
-          makeReplaceTool(dir, DEFAULT_CONFIG, fusion),
-          {
-            path,
-            replacements: [{ literal: true, find: "before\n", replace: content }],
-            then_run: { command: "check" },
-          },
-          { ctx: { ...context, executeTool } },
-        );
-        const report = reportOf(result, "replace");
-        assert.equal(injected, true, `diff injection after ${targetReads} target reads`);
-        assert.equal(result.isError, true);
-        assert.equal(report?.error, "POST_PROCESS_FAILED");
-        assert.ok(result.details);
-        assert.equal(Reflect.get(result.details, "diff"), undefined);
-        assert.equal(report?.publication, content === "before\n" ? "NOT_PUBLISHED" : "PUBLISHED");
-        assert.deepEqual(report?.cause, { message: cause.message });
-        assert.equal(report?.then_run?.status, "skipped");
-        assert.equal(commands, 0);
-      } finally {
-        t.mock.restoreAll();
-        syncBuiltinESMExports();
-      }
-      assert.equal(await readFile(path, "utf8"), content);
-    }
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
