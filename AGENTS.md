@@ -18,21 +18,13 @@
 
 - Keep structured JSON edits, pure-function appliers, and batch validation. File mutations reuse `withFileMutationQueue` and the existing commit layer; `src/pi/file-commit.ts` is the only publication path.
 - Text edits preserve the BOM, line endings, and untouched bytes. Invalid UTF-8, NUL bytes, and body text that cannot be written losslessly as UTF-8 are rejected before any write. `read` hands supported images to the native tool through Pi's image-detection API, delegates files containing NUL to native `read`, and rejects all other invalid UTF-8.
-- Classify only Node's confirmed malformed UTF-8 error as `UNSUPPORTED_ENCODING`; preserve other decoder failures and their causes. Streaming validity checks catch only `Utf8DecodingError`.
-- In `edit`, an empty body line is a real logical line. When a trailing empty line needs a terminator to be preserved, add one, except for a BOM-only single line. A non-empty last line keeps its original final-newline state.
 - Use the shared CRLF-to-LF view for valid UTF-8 in `read/grep/edit/replace`; standalone CR and literal source escapes remain content. Map mutation offsets back to the original bytes; `write` uses the supplied full content and line endings exactly.
-- Skip NUL files in grep. Keep invalid UTF-8 output as plain preview rows; matching uses the lossy preview text. Content mode re-reads each matched file and keeps it only when that read has the revision it was matched on; files and count modes report the searched snapshot without re-reading.
-- Validate grep patterns with V8 at tool entry; resolve smart case once into `GrepQuery.ignoreCase`. Native `RegExp` in `src/core/search.ts` decides every grep match on the LF view; rg only lists candidates and never decides a match. Candidate derivation may widen but never narrow.
 - A line hash is a collidable, position-dependent checksum. The caller re-submits recovery candidates for verification; the range-verification boundary is in the README.
 - `edit/replace` commits bind to the revision of the bytes actually read. Action Fusion takes the `publishedRevision` returned by the commit layer as its freshness baseline; revisions never appear in tool results.
 - Return a successful mutation as one report without anchor rows; keep anchors in read/grep output and edit failure diagnostics. Keep diffs in mutation details for the TUI.
-- Give scripts every successful result as one object, declared as the tool's output schema: the payload of `read` and `grep` as `text`, the fields the report text states, and the facts that text omits because the payload or the call already shows them (grep's `matches` and `files`, read's `nextOffset` under a caller's `limit`, a `then_run` command's output). A failure carries no structured content, so a script's call rejects with the report text.
+- Give scripts every successful result as one object, declared as the tool's output schema (`SCRIPT_OUTPUT_SCHEMAS`, described in `src/pi/AGENTS.md`). A failure carries no structured content, so a script's call rejects with the report text.
 - Keep no compatibility for data saved by older versions (results, reports, and Fusion cards in replayed sessions): a format change is a breaking update, and old data is invalid input. The only exception is input that would crash Pi.
 - Publication is reported as `NOT_PUBLISHED`, `PUBLISHED`, or `UNKNOWN`, separately from the follow-up command's outcome. That command's output is the result's payload, as plain text ahead of the report, which states only the command's status.
-- Action Fusion runs the session's Bash through `ctx.executeTool("bash", ...)` and honors overrides and the `tool_call` and `tool_result` hooks. The final session result decides the command's status, and `terminate` is passed on to the parent result; a failed command does not roll back published files.
-- The configuration field is `hashlineEdit`. A project's `.pi/settings.json` field replaces the global field as a whole; each setting is validated on its own and falls back to its default when missing or invalid. Types, ranges, and defaults are defined only in the schema in `src/pi/config.ts`. The global path comes from `getAgentDir()`.
-- Tools receive the resolved configuration at registration and keep it for their lifetime; changing configuration requires a reload.
-- Derive output byte budgets only from the selected model's declared capacity, never remaining context; an explicit `read.maxKiB` overrides only the read cap.
 
 ## Coding conventions
 

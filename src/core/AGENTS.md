@@ -15,5 +15,7 @@ Internal pure engine: no Pi imports and no public API. It trusts input already f
 
 ## Constraints
 
+- `text.ts` classifies only Node's confirmed malformed UTF-8 error as `UNSUPPORTED_ENCODING` and preserves other decoder failures and their causes. Streaming validity checks (`src/pi/text-stream.ts`) catch only `Utf8DecodingError`.
+- In `edit`, an empty body line is a real logical line. A trailing empty line that needs a terminator to be preserved gets one, except a BOM-only single line. A non-empty last line keeps its original final-newline state.
 - Own interval algebra and bounded membership caching in `character-set.ts`; derive class membership and case closure from the running V8 rather than separate Unicode tables. Grep regexes have no `u` or `v` flag, so a class matches single UTF-16 units and a supplementary character is a surrogate pair.
 - Derive one necessary file condition in `search-analysis.ts`: an AND keeps its most selective side, because extra rg passes cost more than they save. Preserve every OR alternative, retain necessary prefixes or suffixes when expansion is too large, and cut literals where bytes can differ from the LF view. Unknown constructs widen candidates, never narrow them.
