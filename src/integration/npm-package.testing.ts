@@ -86,7 +86,6 @@ test("installed extension completes file, worker, and command operations", {
   assert.equal(session.agent.state.errorMessage, undefined);
   assert.equal(next, actions.length + 1);
   for (const id of ["write", "read", "grep", "edit", "replace"]) result(id);
-  // The command's output is the text before the write's report, which states its status.
   const written = result("write").content;
   assert.equal(reportOf({ content: written }, "write")?.then_run?.status, "succeeded");
   const output = written.length > 1 ? written[0] : undefined;

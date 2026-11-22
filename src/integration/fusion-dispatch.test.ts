@@ -1,10 +1,14 @@
 import assert from "node:assert/strict";
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test, type TestContext } from "node:test";
 import { Type } from "typebox";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
-import { createBashToolDefinition, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import {
+  createBashToolDefinition,
+  DEFAULT_MAX_BYTES,
+  type ExtensionAPI,
+} from "@earendil-works/pi-coding-agent";
 import { openTestSession, responseStream } from "../testing/session.testing.ts";
 import type { ActionFusionProgress } from "../pi/report-schema.ts";
 import {
@@ -12,7 +16,7 @@ import {
   observeFusionToolCall,
   type ThenRunInput,
 } from "../pi/action-fusion.ts";
-import { makeWriteOverride } from "../pi/tool-factories.testing.ts";
+import { DEFAULT_OUTPUT_BUDGETS, makeWriteOverride } from "../pi/tool-factories.testing.ts";
 import { contentText } from "@earendil-works/pi-ai";
 import { reportOf } from "../pi/report.ts";
 import type { CommandStatus } from "../pi/report-schema.ts";
@@ -50,7 +54,13 @@ async function openSession(
     calls,
     progress,
     abort: () => session.abort(),
-    async run(thenRun: ThenRunInput, expectedFile: string | null = "saved\n") {
+    async run(
+      thenRun: ThenRunInput,
+      {
+        expectedFile = "saved\n",
+        expectError = false,
+      }: { expectedFile?: string | null; expectError?: boolean } = {},
+    ) {
       let responses = 0;
       session.agent.streamFunction = () => {
         const first = responses++ === 0;
@@ -74,13 +84,27 @@ async function openSession(
           stopReason: first ? "toolUse" : "stop",
         });
       };
-      await session.prompt("Run the requested local command after the mutation.");
+      let bashResult: AgentToolResult<unknown> | undefined;
+      let writeResult: AgentToolResult<unknown> | undefined;
+      const unsubscribe = session.subscribe((event) => {
+        if (event.type !== "tool_execution_end") return;
+        if (event.toolName === "bash" && event.parentToolCallId === "fused") {
+          bashResult = event.result;
+        }
+        if (event.toolCallId === "fused") writeResult = event.result;
+      });
+      try {
+        await session.prompt("Run the requested local command after the mutation.");
+      } finally {
+        unsubscribe();
+      }
+      assert.ok(writeResult, "The mutation must complete through Pi");
       assert.equal(session.agent.state.errorMessage, undefined);
       const result = session.agent.state.messages.find(
         (message) => message.role === "toolResult" && message.toolCallId === "fused",
       );
       assert.ok(result?.role === "toolResult");
-      assert.equal(result.isError, false, "A command failure must not fail the completed mutation");
+      assert.equal(result.isError, expectError);
       const saved = readFile(join(cwd, "saved.txt"), "utf8");
       if (expectedFile === null) await assert.rejects(saved, { code: "ENOENT" });
       else assert.equal(await saved, expectedFile);
@@ -88,6 +112,8 @@ async function openSession(
         modelRequests: responses,
         report: reportOf(result, "write"),
         content: result.content,
+        bashResult,
+        structuredContent: writeResult.structuredContent,
         text: result.content
           .filter((block) => block.type === "text")
           .map((block) => block.text)
@@ -97,23 +123,46 @@ async function openSession(
   };
 }
 
+type FusedResult = Awaited<ReturnType<Awaited<ReturnType<typeof openSession>>["run"]>>;
+
+function assertNativeContent(result: FusedResult, status: CommandStatus) {
+  assert.ok(result.bashResult, "Pi must emit the nested Bash result");
+  assert.deepEqual(result.content.slice(0, -1), result.bashResult.content);
+  assert.deepEqual(reportOf({ content: result.content }, "write")?.then_run, { status });
+  return result.bashResult.structuredContent;
+}
+
 const commandCases: {
   name: string;
   source: string;
   timeout?: number;
   command: CommandStatus;
+  output?: string;
+  exitCode?: number;
   diagnostic: RegExp;
 }[] = [
   {
     name: "successful exit",
     source: "console.log('checked');",
     command: "succeeded",
+    output: "checked\n",
+    exitCode: 0,
     diagnostic: /checked/,
+  },
+  {
+    name: "silent success",
+    source: "",
+    command: "succeeded",
+    output: "",
+    exitCode: 0,
+    diagnostic: /\(no output\)/,
   },
   {
     name: "nonzero exit with timeout in its output",
     source: "console.error('timeout regression failed'); process.exit(1);",
     command: "failed",
+    output: "timeout regression failed\n",
+    exitCode: 1,
     diagnostic: /Command exited with code 1/,
   },
   {
@@ -121,6 +170,8 @@ const commandCases: {
     source: "console.error('Command timed out after 60 seconds'); process.exit(7);",
     timeout: 60,
     command: "failed",
+    output: "Command timed out after 60 seconds\n",
+    exitCode: 7,
     diagnostic: /Command exited with code 7/,
   },
   {
@@ -131,7 +182,7 @@ const commandCases: {
     diagnostic: /Command timed out after 0\.2 seconds/,
   },
 ];
-for (const { name, source, timeout, command, diagnostic } of commandCases) {
+for (const { name, source, timeout, command, diagnostic, output, exitCode } of commandCases) {
   test(`real session ${name} → preserves the command outcome and published file`, {
     timeout: 15_000,
   }, async (t) => {
@@ -146,6 +197,80 @@ for (const { name, source, timeout, command, diagnostic } of commandCases) {
     assert.equal(result.report?.freshness, undefined);
     assert.match(result.text, diagnostic);
     assert.equal(f.progress.at(-1)?.command, command);
+    const native = assertNativeContent(result, command);
+    if (exitCode === undefined) {
+      assert.equal(native, undefined);
+      assert.deepEqual(result.structuredContent, {
+        publication: "PUBLISHED",
+        then_run: { status: command },
+      });
+    } else {
+      assert.ok(native && typeof native === "object" && "wall_time_seconds" in native);
+      const { wall_time_seconds } = native;
+      assert.ok(typeof wall_time_seconds === "number" && wall_time_seconds >= 0);
+      assert.deepEqual(native, {
+        output,
+        exit_code: exitCode,
+        truncated: false,
+        wall_time_seconds,
+      });
+      assert.deepEqual(result.structuredContent, {
+        publication: "PUBLISHED",
+        then_run: { status: command, ...native },
+      });
+    }
+  });
+}
+
+const outputRow = `${"x".repeat(2047)}\n`;
+for (const { name, bytes, structuredTruncated } of [
+  { name: "model output only", bytes: DEFAULT_MAX_BYTES * 2, structuredTruncated: false },
+  { name: "model and script output", bytes: 2 * 1024 * 1024, structuredTruncated: true },
+]) {
+  test(`real Bash truncates ${name} → the mutation preserves both native results without a second limit`, {
+    timeout: 15_000,
+  }, async (t) => {
+    const f = await openSession(t);
+    const rowCount = Math.ceil(bytes / Buffer.byteLength(outputRow));
+    const output = `opening\n${outputRow.repeat(rowCount)}last line\n`;
+    await writeFile(
+      join(f.cwd, "command.mjs"),
+      `process.stdout.write("opening\\n" + ${JSON.stringify(outputRow)}.repeat(${rowCount}) + "last line\\n");`,
+    );
+
+    const result = await f.run({ command: "node command.mjs" });
+    const details = result.bashResult?.details;
+    assert.ok(details && typeof details === "object" && "fullOutputPath" in details);
+    const { fullOutputPath } = details;
+    assert.ok(typeof fullOutputPath === "string");
+    t.after(() => rm(fullOutputPath, { force: true }));
+    assert.ok(
+      (await readFile(fullOutputPath, "utf8")) === output,
+      "Bash must retain the entire output in its log",
+    );
+
+    const native = result.bashResult?.structuredContent;
+    assert.ok(native && typeof native === "object" && "truncated" in native && "output" in native);
+    assert.equal(native.truncated, structuredTruncated);
+    if (structuredTruncated) {
+      assert.ok("full_output_path" in native && native.full_output_path === fullOutputPath);
+    } else {
+      assert.ok(native.output === output, "Bash must expose the complete output to scripts");
+      assert.equal(Object.hasOwn(native, "full_output_path"), false);
+    }
+    const bashBlock = result.bashResult?.content[0];
+    assert.ok(bashBlock?.type === "text");
+    assert.ok(Buffer.byteLength(bashBlock.text) > DEFAULT_OUTPUT_BUDGETS.fieldBytes);
+    assert.ok(
+      bashBlock.text.includes(fullOutputPath),
+      "Native model content must point to the output file",
+    );
+    assertNativeContent(result, "succeeded");
+    assert.deepEqual(result.structuredContent, {
+      publication: "PUBLISHED",
+      then_run: { status: "succeeded", ...native },
+    });
+    assert.deepEqual(f.progress.at(-1)?.result?.content, result.bashResult?.content);
   });
 }
 
@@ -203,7 +328,7 @@ for (const [freshness, source, expectedFile, status] of [
   test(`real session command leaves target ${freshness} → reports publication, command status and final freshness`, async (t) => {
     const f = await openSession(t);
     await writeFile(join(f.cwd, "command.mjs"), `import fs from 'node:fs';\n${source}`);
-    const result = await f.run({ command: "node command.mjs" }, expectedFile);
+    const result = await f.run({ command: "node command.mjs" }, { expectedFile });
     assert.equal(result.report?.publication, "PUBLISHED");
     assert.equal(result.report.then_run?.status, status);
     assert.equal(result.report.freshness, freshness);
@@ -296,60 +421,122 @@ test("session Bash permission hook returns a timeout-shaped denial → reports f
   assert.ok(f.calls.some((call) => call.name === "bash" && call.parent === "fused"));
 });
 
-test("session Bash override and tool_result hook → then_run uses their final result", {
-  timeout: 15_000,
-}, async (t) => {
-  let executions = 0;
-  const partial: AgentToolResult<unknown> = {
-    content: [{ type: "text", text: "OVERRIDE_PROGRESS" }],
-    details: { fullOutputPath: "/tmp/partial-command.log" },
-  };
-  const final: AgentToolResult<unknown> = {
-    content: [
-      { type: "text", text: "HOOK_REJECTED_OVERRIDE" },
-      { type: "image", data: "iVBORw0KGgo=", mimeType: "image/png" },
-    ],
-    details: { fullOutputPath: "/tmp/final-command.log" },
-  };
-  const f = await openSession(t, (pi) => {
-    pi.registerTool({
-      name: "bash",
-      label: "bash",
-      description: "Session Bash override",
-      parameters: Type.Object({ command: Type.String() }),
-      async execute(_id, _args, _signal, onUpdate) {
-        executions++;
-        onUpdate?.(partial);
-        return { content: [{ type: "text", text: "OVERRIDE_RESULT" }], details: {} };
-      },
+const completeOverrideResult = {
+  output: "raw override output\n",
+  exit_code: 7,
+  truncated: false,
+  wall_time_seconds: 0.1,
+};
+for (const { name, structuredContent, scriptFields, lastBlock } of [
+  {
+    name: "display content only",
+    structuredContent: undefined,
+    scriptFields: {},
+    lastBlock: "HOOK_SECOND_BLOCK",
+  },
+  {
+    name: "complete Bash fields",
+    structuredContent: completeOverrideResult,
+    scriptFields: completeOverrideResult,
+    lastBlock: "HOOK_SECOND_BLOCK",
+  },
+  {
+    name: "partial exit code with a timeout diagnostic",
+    structuredContent: { exit_code: 7 },
+    scriptFields: {},
+    lastBlock: "Command timed out after 10 seconds",
+  },
+]) {
+  test(`session Bash override with ${name} → preserves hook content and exposes only complete Bash fields`, {
+    timeout: 15_000,
+  }, async (t) => {
+    let executions = 0;
+    const partial: AgentToolResult<unknown> = {
+      content: [{ type: "text", text: "OVERRIDE_PROGRESS" }],
+      details: { fullOutputPath: "/tmp/partial-command.log" },
+    };
+    const final: AgentToolResult<unknown> = {
+      content: [
+        { type: "text", text: "HOOK_REJECTED_OVERRIDE" },
+        { type: "image", data: "iVBORw0KGgo=", mimeType: "image/png" },
+        { type: "text", text: lastBlock },
+      ],
+      details: { fullOutputPath: "/tmp/final-command.log" },
+    };
+    const f = await openSession(t, (pi, fusionCwd) => {
+      pi.registerTool({
+        name: "bash",
+        label: "bash",
+        description: "Session Bash override",
+        parameters: createBashToolDefinition(fusionCwd).parameters,
+        outputSchema: Type.Partial(
+          Type.Object({
+            output: Type.String(),
+            exit_code: Type.Number(),
+            truncated: Type.Boolean(),
+            wall_time_seconds: Type.Number(),
+          }),
+        ),
+        async execute(_id, _args, _signal, onUpdate) {
+          executions++;
+          onUpdate?.(partial);
+          return { content: [{ type: "text", text: "OVERRIDE_RESULT" }], details: {} };
+        },
+      });
+      pi.on("tool_result", (event) =>
+        event.toolName === "bash"
+          ? {
+              ...final,
+              structuredContent,
+              isError: true,
+            }
+          : undefined,
+      );
     });
-    pi.on("tool_result", (event) =>
-      event.toolName === "bash"
-        ? {
-            ...final,
-            isError: true,
-          }
-        : undefined,
+    await writeFile(
+      join(f.cwd, "command.mjs"),
+      "import { writeFileSync } from 'node:fs'; writeFileSync('command-ran', 'yes');\n",
     );
+    const result = await f.run({ command: "node command.mjs", timeout: 10 });
+    assert.equal(executions, 1);
+    assert.equal(result.report?.then_run?.status, "failed");
+    assert.deepEqual(assertNativeContent(result, "failed"), structuredContent);
+    assert.deepEqual(result.content.slice(0, -1), final.content);
+    assert.deepEqual(result.structuredContent, {
+      publication: "PUBLISHED",
+      then_run: { status: "failed", ...scriptFields },
+    });
+    assert.deepEqual(
+      f.progress.find(
+        (event) => event.result && contentText(event.result.content) === "OVERRIDE_PROGRESS",
+      )?.result,
+      partial,
+    );
+    assert.deepEqual(f.progress.at(-1)?.result, final);
+    await assert.rejects(readFile(join(f.cwd, "command-ran")), { code: "ENOENT" });
+    assert.ok(f.calls.some((call) => call.name === "bash" && call.parent === "fused"));
   });
-  await writeFile(
-    join(f.cwd, "command.mjs"),
-    "import { writeFileSync } from 'node:fs'; writeFileSync('command-ran', 'yes');\n",
-  );
-  const result = await f.run({ command: "node command.mjs" });
-  assert.equal(executions, 1);
-  assert.equal(result.report?.then_run?.status, "failed");
-  assert.match(result.text, /HOOK_REJECTED_OVERRIDE/);
-  assert.doesNotMatch(result.text, /OVERRIDE_RESULT/);
-  assert.deepEqual(
-    f.progress.find(
-      (event) => event.result && contentText(event.result.content) === "OVERRIDE_PROGRESS",
-    )?.result,
-    partial,
-  );
-  assert.deepEqual(f.progress.at(-1)?.result, final);
-  await assert.rejects(readFile(join(f.cwd, "command-ran")), { code: "ENOENT" });
-  assert.ok(f.calls.some((call) => call.name === "bash" && call.parent === "fused"));
+}
+
+test("session listener mutates final command progress → the model keeps the original Bash blocks", async (t) => {
+  const f = await openSession(t);
+  let observedFinalBlock = false;
+  const unsubscribe = f.session.subscribe((event) => {
+    if (event.type !== "tool_execution_update" || event.toolCallId !== "fused") return;
+    const update: AgentToolResult<{ actionFusion?: ActionFusionProgress }> = event.partialResult;
+    const progress = update.details?.actionFusion;
+    if (progress?.command !== "succeeded" || progress.freshness !== "unchanged") return;
+    const block = progress.result?.content[0];
+    if (block?.type !== "text") return;
+    observedFinalBlock = true;
+    Reflect.set(block, "text", "changed by the progress listener");
+  });
+  t.after(unsubscribe);
+
+  const result = await f.run({ command: "echo checked" });
+  assert.ok(observedFinalBlock, "The listener must see the final command display block");
+  assert.match(result.text, /checked/);
+  assertNativeContent(result, "succeeded");
 });
 
 for (const { name, isError, status, damage } of [
@@ -427,6 +614,44 @@ for (const { name, isError, status, damage } of [
     assert.equal(result.modelRequests, 1, "Preserve the nested result's request to stop the batch");
   });
 }
+
+test("session Bash result with unreadable structured output → preserves native content and reports the observer error in details", async (t) => {
+  const f = await openSession(t);
+  const diagnostic = "Unreadable Bash structured output";
+  let observedExitCode: unknown;
+  const unsubscribe = f.session.subscribe((event) => {
+    if (
+      event.type !== "tool_execution_end" ||
+      event.toolName !== "bash" ||
+      event.parentToolCallId !== "fused"
+    )
+      return;
+    const bash: AgentToolResult<unknown> = event.result;
+    const structured = bash.structuredContent;
+    if (!structured || typeof structured !== "object" || !("exit_code" in structured)) return;
+    observedExitCode = structured.exit_code;
+    bash.terminate = true;
+    Object.defineProperty(structured, "output", {
+      get() {
+        throw new Error(diagnostic);
+      },
+    });
+  });
+  t.after(unsubscribe);
+
+  const result = await f.run({ command: "exit 7" });
+  assert.equal(observedExitCode, 7);
+  assert.equal(result.modelRequests, 1, "Preserve the nested command's request to stop the batch");
+  assertNativeContent(result, "failed");
+  assert.match(result.text, /Command exited with code 7/);
+  assert.ok(!result.text.includes(diagnostic), "The observer diagnostic belongs in details only");
+  assert.equal(reportOf({ content: result.content }, "write")?.publication, "PUBLISHED");
+  assert.deepEqual(result.report?.progressError, { message: diagnostic });
+  assert.deepEqual(result.structuredContent, {
+    publication: "PUBLISHED",
+    then_run: { status: "failed" },
+  });
+});
 
 test("session Bash override writes the target through a nested call → fails without waiting on its own queue", {
   timeout: 3_000,

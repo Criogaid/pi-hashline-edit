@@ -35,6 +35,7 @@ import type {
 import { Type, type Static, type TObject, type TProperties } from "typebox";
 import { observeFreshness, type FreshnessObservation } from "./file-commit.ts";
 import { projectBashDetails } from "./fusion-card.ts";
+import { snapshotBashOutput } from "./native-bash.ts";
 import type {
   CommandFacts,
   MutationCommandFacts,
@@ -146,15 +147,6 @@ function bashTimeoutSeconds(timeout: unknown): number | undefined {
     return timeout;
 }
 
-function hasNumericExitCode(structured: unknown): boolean {
-  return (
-    structured !== null &&
-    typeof structured === "object" &&
-    "exit_code" in structured &&
-    typeof structured.exit_code === "number"
-  );
-}
-
 /** Session listeners can replace array methods and block properties. Read indexed values once. */
 function snapshotOutput(
   source: CommandResult["content"],
@@ -184,7 +176,7 @@ function snapshotOutput(
       recordObserverFailure(error);
     }
   }
-  return { content, output: contentText(content) };
+  return content;
 }
 
 /**
@@ -287,9 +279,11 @@ function createBashCallCoordinator<TDetails extends object>({
     } catch (error) {
       const status = signal.aborted ? "cancelled" : "failed";
       recordStatus(status);
-      const output = errorMessage(error);
-      commandResult = { content: [{ type: "text", text: output }] };
-      return { status, output };
+      return snapshotCommand(
+        { content: [{ type: "text", text: errorMessage(error) }] },
+        status,
+        undefined,
+      );
     } finally {
       hookInput = bashCall.input;
       delete bashCall.input;
@@ -302,17 +296,18 @@ function createBashCallCoordinator<TDetails extends object>({
   function snapshotCommand(
     result: CommandResult,
     status: Exclude<CommandStatus, "skipped">,
-    snapshot = snapshotOutput(result.content, recordObserverFailure),
+    structured: ReturnType<typeof snapshotBashOutput>["structured"],
+    content = snapshotOutput(result.content, recordObserverFailure),
   ): CommandFacts {
-    const { content, output } = snapshot;
-    commandResult = { content };
+    // Progress subscribers may mutate the card's blocks before the mutation is finalized.
+    commandResult = { content: content.map((block) => ({ ...block })) };
     try {
       const details = projectBashDetails(result.details);
-      if (details !== undefined) commandResult = { content, details };
+      if (details !== undefined) commandResult.details = details;
     } catch (error) {
       recordObserverFailure(error);
     }
-    return { status, output };
+    return { script: { status, ...structured }, content };
   }
 
   function readCompletion(
@@ -325,28 +320,30 @@ function createBashCallCoordinator<TDetails extends object>({
     if (!isError) recordStatus("succeeded");
     const terminate = result.terminate;
     if (typeof terminate === "boolean") recordCommand({ terminate });
-    if (!isError) return snapshotCommand(result, "succeeded");
+    const { exited, structured } = snapshotBashOutput(result, recordObserverFailure);
+    if (!isError) return snapshotCommand(result, "succeeded", structured);
 
     const finishError = (
       status: "failed" | "timeout" | "cancelled",
       snapshot?: ReturnType<typeof snapshotOutput>,
     ): CommandFacts => {
       recordStatus(status);
-      return snapshotCommand(result, status, snapshot);
+      return snapshotCommand(result, status, structured, snapshot);
     };
 
-    if (hasNumericExitCode(result.structuredContent)) return finishError("failed");
+    if (exited) return finishError("failed");
     if (durationMs === undefined) {
       if (!signal.aborted) return finishError("failed");
       recordStatus("cancelled");
       commandResult = undefined;
-      return { status: "cancelled" };
+      return { script: { status: "cancelled" }, content: [] };
     }
     const timeout = launchTimeoutSeconds ?? bashTimeoutSeconds(hookInput?.timeout);
     if (timeout === undefined) return finishError(signal.aborted ? "cancelled" : "failed");
     const snapshot = snapshotOutput(result.content, recordObserverFailure);
+    const text = contentText(snapshot);
     const diagnostic = `Command timed out after ${timeout} seconds`;
-    if (snapshot.output === diagnostic || snapshot.output.endsWith(`\n${diagnostic}`))
+    if (text === diagnostic || text.endsWith(`\n${diagnostic}`))
       return finishError("timeout", snapshot);
     return finishError(signal.aborted ? "cancelled" : "failed", snapshot);
   }
@@ -447,7 +444,7 @@ export function createActionFusionScheduler(onProgress: ProgressReporter): Mutat
       const { publishedRevision } = outcome.commit;
       progress.report("waiting", "unknown");
       const settle = (observation: FreshnessObservation, command: CommandFacts) => {
-        progress.report(command.status, observation.freshness);
+        progress.report(command.script.status, observation.freshness);
         return {
           kind: "fused" as const,
           outcome,
@@ -465,7 +462,7 @@ export function createActionFusionScheduler(onProgress: ProgressReporter): Mutat
           : undefined;
       if (beforeStatus !== undefined) {
         recordCommand({ status: beforeStatus });
-        return settle(before, { status: beforeStatus });
+        return settle(before, { script: { status: beforeStatus }, content: [] });
       }
 
       progress.report("running", "unchanged");

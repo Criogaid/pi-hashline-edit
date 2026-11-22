@@ -13,11 +13,7 @@ import type {
   ToolDefinition,
   ToolRenderers,
 } from "@earendil-works/pi-coding-agent";
-import {
-  createBashToolDefinition,
-  SettingsManager,
-  ToolExecutionComponent,
-} from "@earendil-works/pi-coding-agent";
+import { SettingsManager, ToolExecutionComponent } from "@earendil-works/pi-coding-agent";
 import {
   Box,
   Container,
@@ -29,6 +25,7 @@ import {
 import type { TSchema } from "typebox";
 import { Value } from "typebox/value";
 import { ACTION_FUSION_PROGRESS_SCHEMA, type ActionFusionProgress } from "./report-schema.ts";
+import { nativeBash } from "./native-bash.ts";
 import type { MutationRenderState } from "./render.ts";
 import type { ToolGuidelines } from "./schema.ts";
 
@@ -158,7 +155,6 @@ class CommandEntryComponent extends ToolExecutionComponent {
 /** Render one durable transcript card per fused command without adding model context. */
 export function registerFusionCards(pi: ExtensionAPI) {
   let currentCwd = process.cwd();
-  const bash = createBashToolDefinition(process.cwd());
   const states = new Map<string, CommandCardData>();
   const active = new Set<string>();
   const cards = new Map<string, CommandEntryComponent>();
@@ -233,7 +229,7 @@ export function registerFusionCards(pi: ExtensionAPI) {
           statusText.setText(
             `${theme.fg("toolTitle", theme.bold("then_run"))} · ${theme.fg(color, status + countdown)}`,
           );
-          call = bash.renderCall!(args, theme, { ...context, args, lastComponent: call });
+          call = nativeBash.renderCall!(args, theme, { ...context, args, lastComponent: call });
           box.clear();
           box.addChild(statusText);
           box.addChild(call);
@@ -244,7 +240,7 @@ export function registerFusionCards(pi: ExtensionAPI) {
         renderResult(value, options, theme, context) {
           // Every command that ran or failed to start has a result; waiting and skipped ones do not.
           if (current().result) {
-            result = bash.renderResult!(value, options, theme, {
+            result = nativeBash.renderResult!(value, options, theme, {
               ...context,
               args: { command: current().commandText, timeout: current().timing?.timeoutSeconds },
               lastComponent: result,

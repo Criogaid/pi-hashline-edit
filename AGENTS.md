@@ -25,7 +25,7 @@
 - Return a successful mutation as one report without anchor rows; keep anchors in read/grep output and edit failure diagnostics. Keep diffs in mutation details for the TUI.
 - Give scripts every successful result as one object, declared as the tool's output schema (`SCRIPT_OUTPUT_SCHEMAS`, described in `src/pi/AGENTS.md`). A failure carries no structured content, so a script's call rejects with the report text.
 - Keep no compatibility for data saved by older versions (results, reports, and Fusion cards in replayed sessions): a format change is a breaking update, and old data is invalid input. The only exception is input that would crash Pi.
-- Publication is reported as `NOT_PUBLISHED`, `PUBLISHED`, or `UNKNOWN`, separately from the follow-up command's outcome. That command's output is the result's payload, as plain text ahead of the report, which states only the command's status.
+- Publication is reported as `NOT_PUBLISHED`, `PUBLISHED`, or `UNKNOWN`, separately from the follow-up command's outcome. Bash owns the model content blocks, script output fields, and their limits. The mutation appends its report after the blocks and includes the available Bash fields alongside `then_run.status` for scripts.
 
 ## Coding conventions
 

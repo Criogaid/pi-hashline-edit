@@ -17,6 +17,7 @@
 
 import { Type, type Static, type TObject, type TProperties, type TSchema } from "typebox";
 import { literalUnion } from "./schema.ts";
+import { BASH_OUTPUT_SCHEMA } from "./native-bash.ts";
 
 const count = (description: string) => Type.Integer({ minimum: 1, description });
 const opt = Type.Optional;
@@ -53,10 +54,10 @@ const FRESHNESS_SCHEMA = Type.Union([
 ]);
 export type Freshness = Static<typeof FRESHNESS_SCHEMA>;
 
+const EXIT_STATUS_SCHEMA = Type.Union([Type.Literal("succeeded"), Type.Literal("failed")]);
 /** A then_run command's final status; `skipped` never started, `cancelled` may have. */
 const COMMAND_STATUS_SCHEMA = Type.Union([
-  Type.Literal("succeeded"),
-  Type.Literal("failed"),
+  ...EXIT_STATUS_SCHEMA.anyOf,
   Type.Literal("timeout"),
   Type.Literal("cancelled"),
   Type.Literal("skipped"),
@@ -332,13 +333,9 @@ const FACT_FIELDS = {
     "Use the freshness recovery instruction when the post-commit observation failed.",
   ),
 
-  // Action Fusion. A result's payload shows the command's output to the model, so only scripts
-  // read `output` here.
+  // The model and TUI report only the follow-up status. Bash owns the command payloads.
   then_run: modelFact(
-    Type.Object(
-      { status: COMMAND_STATUS_SCHEMA, output: opt(Type.String()) },
-      { additionalProperties: false },
-    ),
+    Type.Object({ status: COMMAND_STATUS_SCHEMA }, { additionalProperties: false }),
     "Act on the failure the output shows, and run the command separately when it did not run.",
   ),
   progressError: tuiFact(CAUSE_SCHEMA),
@@ -586,7 +583,21 @@ type ReportFields = Static<typeof REPORT_SCHEMA>;
 
 const TEXT_OUTPUT = { text: Type.String() };
 const FILE_PUBLICATION = { publication: PUBLICATION_SCHEMA };
-const MUTATION_OUTPUT = facts([], ["freshness", "freshnessError", "then_run"]).properties;
+const MUTATION_OUTPUT = {
+  ...facts([], ["freshness", "freshnessError"]).properties,
+  then_run: opt(
+    Type.Union([
+      FACT_FIELDS.then_run.schema,
+      Type.Object(
+        {
+          status: EXIT_STATUS_SCHEMA,
+          ...BASH_OUTPUT_SCHEMA.properties,
+        },
+        { additionalProperties: false },
+      ),
+    ]),
+  ),
+};
 
 function scriptOutput<P extends TProperties>(properties: P) {
   const fields = { ...properties, next: REPORT_SCHEMA.properties.next };
@@ -672,7 +683,7 @@ const SUCCESS_SCHEMAS = REPORT_TOOLS.map((tool) =>
   Type.Object(
     {
       ...COMMON_WIRE_FIELDS,
-      ...Type.Partial(Type.Omit(SCRIPT_OUTPUT_SCHEMAS[tool], ["text"])).properties,
+      ...Type.Pick(REPORT_SCHEMA, Object.keys(SCRIPT_OUTPUT_SCHEMAS[tool].properties)).properties,
       ...(isMutationTool(tool) ? MUTATION_PRESENTATION : {}),
       tool: Type.Literal(tool),
     },
@@ -737,7 +748,8 @@ export type SuccessOutcome = {
 /** A success report may leave out facts the payload or originating call already shows. */
 export type SuccessReport = {
   [T in ReportTool]: ReportVariant<
-    SuccessEnvelope<T> & Partial<SuccessFacts<T>> & Pick<Envelope, "next">
+    SuccessEnvelope<T> &
+      Pick<ReportFields, Extract<keyof SuccessFacts<T>, keyof ReportFields> | "next">
   >;
 }[ReportTool];
 

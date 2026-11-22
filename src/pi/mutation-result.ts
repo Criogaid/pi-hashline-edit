@@ -15,12 +15,14 @@ import { HashlineError } from "../core/errors.ts";
 import type { CopiedSpan } from "../core/copy-span.ts";
 import type {
   ActionFusionProgress,
+  CommandResult,
   CommandStatus,
   FailureReport,
   MutationToolName,
   PublicationStatus,
   ReportTool,
   MutationFacts,
+  SuccessFacts,
   SuccessReport,
 } from "./report-schema.ts";
 import {
@@ -29,7 +31,7 @@ import {
   type FailureContext,
   type ReportDetails,
 } from "./report.ts";
-import { boundedText, describeThrown } from "./report-cause.ts";
+import { describeThrown } from "./report-cause.ts";
 import type { OutputBudgets } from "./budgets.ts";
 
 /** Final success carries tool details; final failure carries only its report; neither carries progress. */
@@ -64,14 +66,11 @@ interface ObserverFailure {
   readonly error: unknown;
 }
 
-/**
- * What Action Fusion states about the command; it never restates file state. A command that never
- * produced a result was skipped or cancelled; one with a result may still not have run, when a
- * permission hook blocked it with a reason.
- */
-export type CommandFacts =
-  | { readonly status: Extract<CommandStatus, "skipped" | "cancelled">; readonly output?: never }
-  | { readonly status: Exclude<CommandStatus, "skipped">; readonly output: string };
+/** Bash's model-facing blocks and the script outcome for this follow-up. */
+export interface CommandFacts {
+  readonly content: CommandResult["content"];
+  readonly script: NonNullable<SuccessFacts<MutationToolName>["then_run"]>;
+}
 
 /**
  * A completed mutation. A call without then_run settles alone, and its commit result states its
@@ -140,8 +139,8 @@ export function describeMutationFailure(
 
 /**
  * Build the mutation result from commit, freshness, and command facts; the TUI uses its diff
- * details. A fused call's command output is the result's payload, which the report follows with
- * the command's status; scripts read both in `then_run`.
+ * details. The model receives Bash content before the status report. Scripts receive the
+ * follow-up status and Bash's structured fields in `then_run`.
  */
 export function finalizeMutation<TDetails extends object>(
   path: string,
@@ -152,7 +151,6 @@ export function finalizeMutation<TDetails extends object>(
   const { commit, details, facts } = settled.outcome;
   const observation: FreshnessObservation = settled.kind === "alone" ? commit : settled.observation;
   const command = settled.kind === "fused" ? settled.command : undefined;
-  const output = command?.output && boundedText(command.output, budget.fieldBytes);
   return reportResult(
     {
       ...facts,
@@ -163,10 +161,10 @@ export function finalizeMutation<TDetails extends object>(
         observation.freshness === "unknown"
           ? describeThrown(observation.error, budget.fieldBytes)
           : undefined,
-      then_run: command && { status: command.status, ...(output ? { output } : {}) },
+      then_run: command?.script,
       progressError: observerFailure(progressFailure, budget),
     },
-    [],
+    command?.content ?? [],
     budget,
     { details },
   );

@@ -27,7 +27,7 @@ export function commandCompletion(
   };
 }
 
-/** A mutation result's command output as the model reads it: the text before the report. */
+/** The first text block of a single-output command, when it precedes the mutation report. */
 export function commandOutput(
   result: Pick<AgentToolResult<unknown>, "content">,
 ): string | undefined {

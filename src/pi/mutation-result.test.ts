@@ -1,15 +1,15 @@
-import { commandCompletion, commandOutput, type SessionCommand } from "./action-fusion.testing.ts";
+import { commandCompletion, type SessionCommand } from "./action-fusion.testing.ts";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { Value } from "typebox/value";
 import { generateDiffString } from "@earendil-works/pi-coding-agent";
 import { generateMutationDetails } from "./mutation-result.ts";
 import { displayCarriageReturns } from "./anchor-format.ts";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createActionFusionScheduler } from "./action-fusion.ts";
-import { makeWriteOverride, DEFAULT_OUTPUT_BUDGETS } from "./tool-factories.testing.ts";
+import { makeWriteOverride } from "./tool-factories.testing.ts";
 import { makeReplaceTool } from "./tool-factories.testing.ts";
 import type { MutationFacts, SuccessReport } from "./report-schema.ts";
 import { callTool, createToolContext } from "./tool-call.testing.ts";
@@ -30,10 +30,10 @@ function invalidMutationResults(
   const diff: string = result.details.diff;
 }
 
-test("then_run command with and without output → the model reads the output as text before a report of its status, and scripts read both in then_run", async (t) => {
+test("Bash override supplies only display content → scripts get the command status alone", async (t) => {
   const dir = await mkdtemp(join(tmpdir(), "hashline-command-output-"));
   t.after(() => rm(dir, { recursive: true, force: true }));
-  // Quotes, a backslash, and a line break are what a JSON string would escape.
+  // A diagnostic that resembles Bash metadata is still display text.
   const printed = 'src\\a.ts(1,7): error: expected "x"\nCommand exited with code 2';
   for (const [name, output] of [
     ["printed.txt", printed],
@@ -55,64 +55,9 @@ test("then_run command with and without output → the model reads the output as
     assert.deepEqual(blocks.slice(0, -1), output ? [output] : [], name);
     assert.deepEqual(JSON.parse(blocks.at(-1) ?? ""), stated, name);
     assert.deepEqual(reportOf(result, "write")?.then_run, stated.then_run, name);
-    assert.deepEqual(
-      result.structuredContent,
-      { ...stated, then_run: { ...stated.then_run, ...(output ? { output } : {}) } },
-      name,
-    );
+    assert.deepEqual(result.structuredContent, stated, name);
     assert.ok(Value.Check(tool.outputSchema, result.structuredContent), name);
   }
-});
-
-test("command content includes images → the result's output joins only text blocks", async (t) => {
-  const dir = await mkdtemp(join(tmpdir(), "hashline-command-content-"));
-  try {
-    const path = join(dir, "file.txt");
-    const executeTool: SessionCommand = async () =>
-      commandCompletion({
-        content: [
-          { type: "text", text: "first" },
-          { type: "image", data: "iVBORw0KGgo=", mimeType: "image/png" },
-          { type: "text", text: "second" },
-        ],
-      });
-    const fusion = createActionFusionScheduler(() => {});
-    const result = await callTool(
-      makeWriteOverride(dir, fusion),
-      { path, content: "saved\n", mode: "create", then_run: { command: "check" } },
-      { ctx: { ...(await createToolContext(dir, t)), executeTool } },
-    );
-    assert.equal(commandOutput(result), "first\nsecond");
-    assert.equal(await readFile(path, "utf8"), "saved\n");
-  } finally {
-    await rm(dir, { recursive: true, force: true });
-  }
-});
-
-test("oversized command diagnostic → bounds model output and retains the original command card", async (t) => {
-  const dir = await mkdtemp(join(tmpdir(), "hashline-command-budget-"));
-  t.after(() => rm(dir, { recursive: true, force: true }));
-  const budget = DEFAULT_OUTPUT_BUDGETS;
-  const output = `opening\n${"x".repeat(budget.fieldBytes * 2)}\nlast line`;
-  const executeTool: SessionCommand = async () =>
-    commandCompletion({ content: [{ type: "text", text: output }] }, true);
-  let displayedOutput: unknown;
-  const fusion = createActionFusionScheduler((progress) => {
-    if (progress.command === "failed") displayedOutput = progress.result?.content[0];
-  });
-  const result = await callTool(
-    makeWriteOverride(dir, fusion),
-    { path: "file.txt", content: "saved", mode: "create", then_run: { command: "check" } },
-    { ctx: { ...(await createToolContext(dir, t)), executeTool } },
-  );
-  const report = reportOf({ content: result.content }, "write");
-  assert.equal(report?.then_run?.status, "failed");
-  const shown = commandOutput(result);
-  assert.ok(shown && Buffer.byteLength(shown) <= budget.fieldBytes);
-  assert.ok(shown.startsWith("opening\n") && shown.endsWith("\nlast line"));
-  assert.deepEqual(result.content[0], { type: "text", text: shown });
-  assert.equal(report?.then_run?.output, undefined);
-  assert.deepEqual(displayedOutput, { type: "text", text: output });
 });
 
 for (const [name, before, after] of [

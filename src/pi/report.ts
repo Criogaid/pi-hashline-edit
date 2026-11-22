@@ -169,12 +169,12 @@ function boundFacts<R extends Partial<Report>>(report: R, budget: OutputBudgets)
 }
 
 /**
- * Project one complete outcome into the script fields, the report, and the payload. Command
- * output is payload text, and the report omits facts the call or payload already shows.
+ * Project one complete outcome into the script fields and report. The report follows the
+ * supplied payload and omits facts already shown by the call or payload.
  */
 export function reportResult<TDetails extends object | undefined>(
   outcome: SuccessOutcome,
-  toolPayload: Content,
+  payload: Content,
   budget: OutputBudgets,
   {
     details,
@@ -186,7 +186,6 @@ export function reportResult<TDetails extends object | undefined>(
 ): AgentToolResult<TDetails & ReportDetails<SuccessReport>> {
   const bounded = boundFacts(outcome, budget);
   const command = bounded.then_run;
-  const payload: Content = command?.output ? [{ type: "text", text: command.output }] : toolPayload;
   const complete = Object.fromEntries(reportEntries(bounded)) as SuccessReport;
   if (bounded.callShowsNextOffset) delete complete.nextOffset;
   if (bounded.payloadShowsCounts) {

@@ -5,7 +5,7 @@ import { test } from "node:test";
 import { Type } from "typebox";
 import { createCodemodeToolDefinition } from "../../node_modules/@earendil-works/pi-coding-agent/dist/extensions/codemode/tool.js";
 import { openTestSession, responseStream, SESSION_TIMEOUT_MS } from "../testing/session.testing.ts";
-import { createActionFusionScheduler } from "./action-fusion.ts";
+import { createActionFusionScheduler, observeFusionToolCall } from "./action-fusion.ts";
 import { DEFAULT_CONFIG, makeReadOverride, makeWriteOverride } from "./tool-factories.testing.ts";
 
 for (const entry of ["direct", "codemode"] as const) {
@@ -95,7 +95,11 @@ for (const entry of ["direct", "codemode"] as const) {
         .filter((block) => block.type === "text")
         .map((block) => block.text)
         .join("\n");
-      assert.match(output, /"then_run":\s*\{\s*"status":\s*"succeeded"[\s\S]*AFTER_WRITE/);
+      assert.match(output, /AFTER_WRITE/);
+      assert.deepEqual(JSON.parse(output.slice(output.indexOf("{"), output.lastIndexOf("}") + 1)), {
+        publication: "PUBLISHED",
+        then_run: { status: "succeeded" },
+      });
     }
   });
 }
@@ -104,7 +108,7 @@ test("codemode script reads and writes → receives each success as an object an
   timeout: SESSION_TIMEOUT_MS,
 }, async (t) => {
   const { cwd, session, model } = await openTestSession(t, {
-    tools: ["read", "write", "codemode"],
+    tools: ["read", "write", "bash", "codemode"],
     configure(pi, cwd) {
       pi.registerTool(
         makeReadOverride(cwd, {
@@ -112,7 +116,13 @@ test("codemode script reads and writes → receives each success as an object an
           read: { ...DEFAULT_CONFIG.read, defaultLimit: 2 },
         }),
       );
-      pi.registerTool(makeWriteOverride(cwd));
+      pi.on("tool_call", observeFusionToolCall);
+      pi.registerTool(
+        makeWriteOverride(
+          cwd,
+          createActionFusionScheduler(() => {}),
+        ),
+      );
       pi.registerTool(createCodemodeToolDefinition());
     },
   });
@@ -127,8 +137,10 @@ test("codemode script reads and writes → receives each success as an object an
     "} catch (error) {",
     "  pastEnd = String(error);",
     "}",
-    'const saved = await tools.write({ path: "new.txt", mode: "create", content: "x\\n" });',
-    "text(JSON.stringify({ cut, head, rest, pastEnd, saved }));",
+    'const command = "exit 7";',
+    "const bash = await tools.bash({ command });",
+    'const saved = await tools.write({ path: "new.txt", mode: "create", content: "x\\n", then_run: { command } });',
+    "text(JSON.stringify({ cut, head, rest, pastEnd, bash, saved }));",
   ].join("\n");
   let requests = 0;
   session.agent.streamFunction = () => {
@@ -152,13 +164,19 @@ test("codemode script reads and writes → receives each success as an object an
     .map((block) => block.text)
     .join("\n");
   assert.equal(result.isError, false, output);
-  const { cut, head, rest, pastEnd, saved } = JSON.parse(
+  const { cut, head, rest, pastEnd, bash, saved } = JSON.parse(
     output.slice(output.indexOf("{"), output.lastIndexOf("}") + 1),
   );
   assert.partialDeepStrictEqual(cut, { text: "one\ntwo", nextOffset: 3 });
   assert.deepEqual(head, { text: "one", nextOffset: 2 });
   assert.deepEqual(rest, { text: "three" });
   assert.match(pastEnd, /OFFSET_PAST_END[\s\S]*"totalLines": 3/);
-  assert.deepEqual(saved, { publication: "PUBLISHED" });
+  const { wall_time_seconds: bashTime, ...bashFields } = bash;
+  const { wall_time_seconds: fusedTime, ...fusedFields } = saved.then_run;
+  assert.equal(typeof bashTime, "number");
+  assert.equal(typeof fusedTime, "number");
+  assert.deepEqual(bashFields, { output: "", exit_code: 7, truncated: false });
+  assert.deepEqual(fusedFields, { status: "failed", ...bashFields });
+  assert.equal(saved.publication, "PUBLISHED");
   assert.equal(await readFile(join(cwd, "new.txt"), "utf8"), "x\n");
 });

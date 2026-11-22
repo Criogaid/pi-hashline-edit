@@ -8,10 +8,9 @@ import { registerFusionCards } from "./fusion-card.ts";
 import { createActionFusionScheduler, observeFusionToolCall } from "./action-fusion.ts";
 import type { ActionFusionProgress } from "./report-schema.ts";
 import type { CommandResult } from "./report-schema.ts";
-import { contentText } from "@earendil-works/pi-ai";
 import { reportOf } from "./report.ts";
 import { makeWriteOverride } from "./tool-factories.testing.ts";
-import { commandCompletion, commandOutput, createFusionContext } from "./action-fusion.testing.ts";
+import { commandCompletion, createFusionContext } from "./action-fusion.testing.ts";
 import { callTool } from "./tool-call.testing.ts";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { ProcessTerminal, TuiMainScreen } from "@earendil-works/pi-tui";
@@ -276,9 +275,14 @@ test("Fusion command outcomes → progress, cards, and reports preserve command 
       assert.ok(block?.type === "text");
       const report = reportOf({ content: [block] }, "write");
       assert.ok(report);
-      const output = expected ? contentText(expected.content) : "";
       assert.deepEqual(report.then_run, { status: command });
-      assert.equal(commandOutput(result), output || undefined);
+      assert.deepEqual(result.content.slice(0, -1), expected?.content ?? []);
+      if (scenario === "cancelled-after-exit") {
+        assert.deepEqual(result.structuredContent, {
+          publication: "PUBLISHED",
+          then_run: { status: "failed" },
+        });
+      }
       const rendered = h.card(h.entries[0], true).render(160).join("\n");
       assert.match(rendered, text);
       if (command === "cancelled" && expected) assert.doesNotMatch(rendered, /Not run/);
