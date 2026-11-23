@@ -98,7 +98,7 @@ export interface MutationCommandFacts {
 export interface MutationCall<TDetails, TTool extends MutationToolName> {
   readonly toolCallId: string;
   readonly absolutePath: string;
-  /** The model's optional follow-up command; only Action Fusion's schema admits it. */
+  /** The model's optional follow-up command or its argument rejection; only Action Fusion's schema admits it. */
   readonly thenRun: ThenRunRequest | undefined;
   readonly mutate: () => Promise<MutationOutcome<TDetails, TTool>>;
   readonly signal: AbortSignal;
