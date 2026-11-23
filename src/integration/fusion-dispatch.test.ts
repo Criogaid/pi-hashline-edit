@@ -427,22 +427,32 @@ const completeOverrideResult = {
   truncated: false,
   wall_time_seconds: 0.1,
 };
-for (const { name, structuredContent, scriptFields, lastBlock } of [
+for (const { name, structuredContent, expectedStatus, scriptFields, lastBlock } of [
   {
     name: "display content only",
     structuredContent: undefined,
+    expectedStatus: "failed" as const,
     scriptFields: {},
     lastBlock: "HOOK_SECOND_BLOCK",
   },
   {
     name: "complete Bash fields",
     structuredContent: completeOverrideResult,
+    expectedStatus: "failed" as const,
     scriptFields: completeOverrideResult,
     lastBlock: "HOOK_SECOND_BLOCK",
   },
   {
     name: "partial exit code with a timeout diagnostic",
     structuredContent: { exit_code: 7 },
+    expectedStatus: "failed" as const,
+    scriptFields: {},
+    lastBlock: "Command timed out after 10 seconds",
+  },
+  {
+    name: "non-finite exit code with a timeout diagnostic",
+    structuredContent: { exit_code: Number.NaN },
+    expectedStatus: "timeout" as const,
     scriptFields: {},
     lastBlock: "Command timed out after 10 seconds",
   },
@@ -499,12 +509,12 @@ for (const { name, structuredContent, scriptFields, lastBlock } of [
     );
     const result = await f.run({ command: "node command.mjs", timeout: 10 });
     assert.equal(executions, 1);
-    assert.equal(result.report?.then_run?.status, "failed");
-    assert.deepEqual(assertNativeContent(result, "failed"), structuredContent);
+    assert.equal(result.report?.then_run?.status, expectedStatus);
+    assert.deepEqual(assertNativeContent(result, expectedStatus), structuredContent);
     assert.deepEqual(result.content.slice(0, -1), final.content);
     assert.deepEqual(result.structuredContent, {
       publication: "PUBLISHED",
-      then_run: { status: "failed", ...scriptFields },
+      then_run: { status: expectedStatus, ...scriptFields },
     });
     assert.deepEqual(
       f.progress.find(

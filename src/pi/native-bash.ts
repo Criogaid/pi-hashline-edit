@@ -26,7 +26,7 @@ export function snapshotBashOutput(
     )
       return { exited };
     const exitCode = value.exit_code;
-    if (typeof exitCode !== "number") return { exited };
+    if (!Value.Check(BASH_OUTPUT_SCHEMA.properties.exit_code, exitCode)) return { exited };
     exited = true;
     const fields: Record<string, JsonValue> = {};
     for (const key of outputKeys) {
