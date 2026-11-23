@@ -3,6 +3,7 @@ import { readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test, type TestContext } from "node:test";
 import { Type } from "typebox";
+import { Value } from "typebox/value";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import {
   createBashToolDefinition,
@@ -10,7 +11,11 @@ import {
   type ExtensionAPI,
 } from "@earendil-works/pi-coding-agent";
 import { openTestSession, responseStream } from "../testing/session.testing.ts";
-import type { ActionFusionProgress } from "../pi/report-schema.ts";
+import {
+  SCRIPT_OUTPUT_SCHEMAS,
+  type ActionFusionProgress,
+  type CommandStatus,
+} from "../pi/report-schema.ts";
 import {
   createActionFusionScheduler,
   observeFusionToolCall,
@@ -19,7 +24,6 @@ import {
 import { DEFAULT_OUTPUT_BUDGETS, makeWriteOverride } from "../pi/tool-factories.testing.ts";
 import { contentText } from "@earendil-works/pi-ai";
 import { reportOf } from "../pi/report.ts";
-import type { CommandStatus } from "../pi/report-schema.ts";
 
 /** Exercise the default runner through a real parent tool call, with no provider traffic. */
 async function openSession(
@@ -54,13 +58,7 @@ async function openSession(
     calls,
     progress,
     abort: () => session.abort(),
-    async run(
-      thenRun: ThenRunInput,
-      {
-        expectedFile = "saved\n",
-        expectError = false,
-      }: { expectedFile?: string | null; expectError?: boolean } = {},
-    ) {
+    async run(thenRun: ThenRunInput, expectedFile: string | null = "saved\n") {
       let responses = 0;
       session.agent.streamFunction = () => {
         const first = responses++ === 0;
@@ -104,7 +102,7 @@ async function openSession(
         (message) => message.role === "toolResult" && message.toolCallId === "fused",
       );
       assert.ok(result?.role === "toolResult");
-      assert.equal(result.isError, expectError);
+      assert.equal(result.isError, false, "A command failure must not fail the completed mutation");
       const saved = readFile(join(cwd, "saved.txt"), "utf8");
       if (expectedFile === null) await assert.rejects(saved, { code: "ENOENT" });
       else assert.equal(await saved, expectedFile);
@@ -129,6 +127,7 @@ function assertNativeContent(result: FusedResult, status: CommandStatus) {
   assert.ok(result.bashResult, "Pi must emit the nested Bash result");
   assert.deepEqual(result.content.slice(0, -1), result.bashResult.content);
   assert.deepEqual(reportOf({ content: result.content }, "write")?.then_run, { status });
+  assert.ok(Value.Check(SCRIPT_OUTPUT_SCHEMAS.write, result.structuredContent));
   return result.bashResult.structuredContent;
 }
 
@@ -328,7 +327,7 @@ for (const [freshness, source, expectedFile, status] of [
   test(`real session command leaves target ${freshness} → reports publication, command status and final freshness`, async (t) => {
     const f = await openSession(t);
     await writeFile(join(f.cwd, "command.mjs"), `import fs from 'node:fs';\n${source}`);
-    const result = await f.run({ command: "node command.mjs" }, { expectedFile });
+    const result = await f.run({ command: "node command.mjs" }, expectedFile);
     assert.equal(result.report?.publication, "PUBLISHED");
     assert.equal(result.report.then_run?.status, status);
     assert.equal(result.report.freshness, freshness);
