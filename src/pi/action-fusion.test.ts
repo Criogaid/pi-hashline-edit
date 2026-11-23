@@ -20,6 +20,7 @@ import {
   observeFusionToolCall,
 } from "./action-fusion.ts";
 import { loadConfig } from "./config.ts";
+import { outputBudgetsFor } from "./budgets.ts";
 import { ACTION_FUSION_PROGRESS_SCHEMA } from "./report-schema.ts";
 import { Value } from "typebox/value";
 import { reportOf } from "./report.ts";
@@ -190,6 +191,38 @@ test("invalid then_run with Fusion → publishes mutation and reports the argume
       assert.equal(runs, 1);
     });
   }
+  await t.test("budget shrink before execute → keeps prepared diagnostic", async () => {
+    const path = "budget-shrink.txt";
+    await writeFile(join(dir, path), "old\n");
+    let budget = outputBudgetsFor(128_000);
+    const tool = makeWriteOverride(dir, scheduler, () => budget);
+    const unknownKey = `unknown_${"x".repeat(450)}`;
+    const result = await callTool(
+      tool,
+      {
+        path,
+        content: "new\n",
+        mode: "overwrite",
+        then_run: { command: "check", timeout: 0, [unknownKey]: 1 },
+      },
+      {
+        ctx: baseContext,
+        afterValidation: {
+          get path() {
+            budget = outputBudgetsFor(1);
+            return path;
+          },
+        },
+      },
+    );
+    assert.equal(await readFile(join(dir, path), "utf8"), "new\n");
+    assert.equal(reportOf(result, "write")?.publication, "PUBLISHED");
+    assert.equal(reportOf(result, "write")?.then_run?.status, "failed");
+    const diagnostic = JSON.stringify(result.content);
+    assert.match(diagnostic, /then_run\.timeout/);
+    assert.match(diagnostic, new RegExp(unknownKey));
+    assert.doesNotMatch(diagnostic, /__hashlineThenRunError/);
+  });
 });
 
 test("fused write → session Bash receives the original signal", async (t) => {

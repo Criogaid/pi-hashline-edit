@@ -184,7 +184,6 @@ export function createMutationArgumentBoundary<P extends TProperties, Parsed>(
                 const rejected =
                   typeof rejectedCommand === "string" &&
                   typeof diagnostic === "string" &&
-                  Buffer.byteLength(diagnostic) <= budgets().blockBytes &&
                   reportOf({ content: [{ type: "text", text: diagnostic }] }, tool)?.error ===
                     "INVALID_ARGUMENTS";
                 if (
