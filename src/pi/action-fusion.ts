@@ -32,7 +32,8 @@ import type {
   ExtensionToolContext,
   ToolCallEvent,
 } from "@earendil-works/pi-coding-agent";
-import { Type, type Static, type TObject, type TProperties } from "typebox";
+import type { ThenRunInput } from "./fusion-arguments.ts";
+import { MILLISECONDS_PER_SECOND, MAX_BASH_TIMEOUT_SECONDS } from "./fusion-arguments.ts";
 import { observeFreshness, type FreshnessObservation } from "./file-commit.ts";
 import { projectBashDetails } from "./fusion-card.ts";
 import { snapshotBashOutput } from "./native-bash.ts";
@@ -51,13 +52,7 @@ import type {
   CommandResult,
   CommandStatus,
   Freshness,
-  MutationToolName,
 } from "./report-schema.ts";
-
-const MILLISECONDS_PER_SECOND = 1_000;
-
-// Pi's built-in Bash rejects timeouts above the setTimeout millisecond limit.
-const MAX_BASH_TIMEOUT_SECONDS = 2_147_483_647 / MILLISECONDS_PER_SECOND;
 
 // The one place the model is told when to use then_run; the tools' descriptions stay their own.
 export const ACTION_FUSION_GUIDELINES = [
@@ -70,43 +65,6 @@ export const ACTION_FUSION_GUIDELINES = [
 ];
 
 type ProgressReporter = (progress: ActionFusionProgress) => void;
-
-function createThenRunSchema(tool: MutationToolName) {
-  return Type.Optional(
-    Type.Object(
-      {
-        command: Type.String({ pattern: "\\S", description: "Bash command to run." }),
-        timeout: Type.Optional(
-          Type.Number({
-            exclusiveMinimum: 0,
-            maximum: MAX_BASH_TIMEOUT_SECONDS,
-            description: "Timeout in seconds; none when omitted.",
-          }),
-        ),
-      },
-      {
-        description: `Command to run once after ${tool} succeeds; failure does not roll back the file.`,
-        additionalProperties: false,
-      },
-    ),
-  );
-}
-
-/** Add the optional then_run field to a mutation schema when Action Fusion is enabled. */
-export function withThenRunSchema<P extends TProperties>(
-  schema: TObject<P>,
-  tool: MutationToolName,
-  actionFusion: boolean,
-): TObject<P> | TObject<P & { then_run: ReturnType<typeof createThenRunSchema> }> {
-  return actionFusion
-    ? Type.Object(
-        { ...schema.properties, then_run: createThenRunSchema(tool) },
-        { additionalProperties: false },
-      )
-    : schema;
-}
-
-export type ThenRunInput = NonNullable<Static<ReturnType<typeof createThenRunSchema>>>;
 
 interface BashCallScope {
   readonly toolCallId: string;
@@ -186,20 +144,20 @@ function snapshotOutput(
  */
 function createBashCallCoordinator<TDetails extends object>({
   toolCallId,
-  thenRun,
+  commandText,
   onProgress,
   onUpdate,
   recordCommand,
 }: {
   toolCallId: string;
-  thenRun: ThenRunInput;
+  commandText: string;
   onProgress: ProgressReporter;
   onUpdate: AgentToolUpdateCallback<MutationResultDetails<TDetails>>;
   recordCommand: (facts: MutationCommandFacts) => void;
 }) {
   const bashCall: BashCallScope = { toolCallId };
   let mutationDetails: TDetails | undefined;
-  let displayedCommand = thenRun.command;
+  let displayedCommand = commandText;
   let commandResult: CommandResult | undefined;
   let finalStatus: CommandStatus | undefined;
   let launchTimeoutSeconds: number | undefined;
@@ -269,7 +227,16 @@ function createBashCallCoordinator<TDetails extends object>({
     report("running", "unknown");
   };
 
-  async function runCommand(signal: AbortSignal, ctx: ExtensionToolContext): Promise<CommandFacts> {
+  function failCommand(status: "failed" | "cancelled", message: string): CommandFacts {
+    recordStatus(status);
+    return snapshotCommand({ content: [{ type: "text", text: message }] }, status, undefined);
+  }
+
+  async function runCommand(
+    thenRun: ThenRunInput,
+    signal: AbortSignal,
+    ctx: ExtensionToolContext,
+  ): Promise<CommandFacts> {
     let completion;
     let hookInput;
     try {
@@ -278,12 +245,7 @@ function createBashCallCoordinator<TDetails extends object>({
       );
     } catch (error) {
       const status = signal.aborted ? "cancelled" : "failed";
-      recordStatus(status);
-      return snapshotCommand(
-        { content: [{ type: "text", text: errorMessage(error) }] },
-        status,
-        undefined,
-      );
+      return failCommand(status, errorMessage(error));
     } finally {
       hookInput = bashCall.input;
       delete bashCall.input;
@@ -351,6 +313,7 @@ function createBashCallCoordinator<TDetails extends object>({
   return {
     report,
     runCommand,
+    failCommand,
     reportCompletion() {
       if (finalStatus !== undefined) report(finalStatus, "unknown");
     },
@@ -422,7 +385,7 @@ export function createActionFusionScheduler(onProgress: ProgressReporter): Mutat
 
     const progress = createBashCallCoordinator({
       toolCallId,
-      thenRun,
+      commandText: "command" in thenRun ? thenRun.command : thenRun.commandText,
       onProgress,
       onUpdate,
       recordCommand,
@@ -453,6 +416,9 @@ export function createActionFusionScheduler(onProgress: ProgressReporter): Mutat
         };
       };
 
+      if ("error" in thenRun)
+        return settle(outcome.commit, progress.failCommand("failed", thenRun.error));
+
       // A completed mutation remains successful; the command is only started on a fresh target.
       const before = await observeFreshness(absolutePath, publishedRevision, "before-command");
       const beforeStatus = signal.aborted
@@ -469,7 +435,7 @@ export function createActionFusionScheduler(onProgress: ProgressReporter): Mutat
       const scope = { active: true };
       try {
         const command = await commandScope
-          .run(scope, () => progress.runCommand(signal, ctx))
+          .run(scope, () => progress.runCommand(thenRun, signal, ctx))
           .finally(() => {
             scope.active = false;
           });

@@ -7,7 +7,7 @@
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import type { AgentToolUpdateCallback } from "@earendil-works/pi-agent-core";
 import type { ExtensionToolContext } from "@earendil-works/pi-coding-agent";
-import type { ThenRunInput } from "./action-fusion.ts";
+import type { ThenRunRequest } from "./fusion-arguments.ts";
 import type { CommitResult, FreshnessObservation } from "./file-commit.ts";
 import { generateRangeDiff } from "./mutation-diff.ts";
 import { displayCarriageReturns } from "./anchor-format.ts";
@@ -99,7 +99,7 @@ export interface MutationCall<TDetails, TTool extends MutationToolName> {
   readonly toolCallId: string;
   readonly absolutePath: string;
   /** The model's optional follow-up command; only Action Fusion's schema admits it. */
-  readonly thenRun: ThenRunInput | undefined;
+  readonly thenRun: ThenRunRequest | undefined;
   readonly mutate: () => Promise<MutationOutcome<TDetails, TTool>>;
   readonly signal: AbortSignal;
   readonly ctx: ExtensionToolContext;

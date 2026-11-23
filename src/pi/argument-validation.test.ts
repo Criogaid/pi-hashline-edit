@@ -112,8 +112,8 @@ test("path spelling names no local path → rejects the exact path field", async
   }
 });
 
-const invalidCommand = { command: "", timeout: 0 };
 const anchorHash = "A".repeat(DEFAULT_CONFIG.hashLen);
+const invalidCommand = { command: "", timeout: 0 };
 const cases = [
   {
     name: "read",
@@ -153,8 +153,6 @@ const cases = [
       "steps[3].lines",
       "steps[4].end",
       "steps[5].end",
-      "then_run.command",
-      "then_run.timeout",
     ],
     reasons: [
       { field: "steps[4].end", reason: /line 1 is before anchor line 3/ },
@@ -177,8 +175,6 @@ const cases = [
       "replacements[0].find",
       "replacements[1].replace",
       "replacements[1].find",
-      "then_run.command",
-      "then_run.timeout",
     ],
   },
   {
@@ -186,7 +182,7 @@ const cases = [
     make: (cwd: string, schedule: ReturnType<typeof createActionFusionScheduler>) =>
       makeWriteOverride(cwd, schedule),
     args: { content: "bad\0", mode: "invalid", then_run: invalidCommand },
-    fields: ["content", "mode", "then_run.command", "then_run.timeout"],
+    fields: ["content", "mode"],
   },
 ] as const;
 
@@ -237,50 +233,6 @@ for (const scenario of cases) {
     assert.equal(commandRuns, 0);
   });
 }
-
-test("blank then_run command with Fusion → reports exactly one command issue", async (t) => {
-  const cwd = process.cwd();
-  const schedule = createActionFusionScheduler(() => {});
-  const mutations = [
-    {
-      name: "edit",
-      tool: makeEditOverride(cwd, DEFAULT_CONFIG, schedule),
-      args: { steps: [{ action: "append", lines: ["text"] }] },
-    },
-    {
-      name: "replace",
-      tool: makeReplaceTool(cwd, DEFAULT_CONFIG, schedule),
-      args: { replacements: [{ find: "old", replace: "new", literal: true }] },
-    },
-    {
-      name: "write",
-      tool: makeWriteOverride(cwd, schedule),
-      args: { content: "text", mode: "create" },
-    },
-  ] as const;
-  for (const scenario of mutations) {
-    for (const command of ["", "   "]) {
-      await t.test(
-        `${scenario.name}/${JSON.stringify(command)} → rejects one command issue`,
-        async () => {
-          await assert.rejects(
-            callTool(scenario.tool, {
-              path: "unused.txt",
-              ...scenario.args,
-              then_run: { command },
-            }),
-            (error: unknown) => {
-              const result = argumentError(error);
-              assert.equal(result.issues.length, 1, JSON.stringify(result));
-              assert.equal(result.issues[0].field, "then_run.command");
-              return true;
-            },
-          );
-        },
-      );
-    }
-  }
-});
 
 test("replace flags → accept V8 modes and reject invalid flags before patterns or file reads", async (t) => {
   const cwd = await mkdtemp(join(tmpdir(), "hashline-flags-"));
@@ -523,6 +475,30 @@ test("optional edit fields and then_run are null with Fusion → publishes bytes
     });
   }
   assert.equal(commandRuns, 0);
+});
+
+test("write then_run getter changes content before snapshot → publishes the observed content once", async (t) => {
+  const cwd = await mkdtemp(join(tmpdir(), "hashline-getter-"));
+  t.after(() => rm(cwd, { recursive: true, force: true }));
+  let reads = 0;
+  const args = {
+    path: "target.txt",
+    mode: "create",
+    get then_run() {
+      reads++;
+      args.content = "updated\n";
+      return null;
+    },
+    content: "original\n",
+  };
+  const tool = makeWriteOverride(
+    cwd,
+    createActionFusionScheduler(() => {}),
+  );
+  const result = await callTool(tool, args, { ctx: await createToolContext(cwd, t) });
+  assert.equal(reportOf(result, "write")?.publication, "PUBLISHED");
+  assert.equal(await readFile(join(cwd, args.path), "utf8"), "updated\n");
+  assert.equal(reads, 1);
 });
 
 test("null optional fields → grep applies defaults without filename filters", async (t) => {

@@ -136,6 +136,30 @@ function firstArrayIssue(schema: TSchema, value: unknown, path = ""): ArgumentIs
   return undefined;
 }
 
+function withArgumentError<Value>(
+  operation: () => Value,
+  budgets: OutputBudgetProvider,
+  field = "$",
+): Value {
+  try {
+    return operation();
+  } catch (error) {
+    throw new Error(
+      formatArgumentError([{ field, reason: errorMessage(error) }], false, budgets()),
+      { cause: error },
+    );
+  }
+}
+
+/** Snapshot enumerable call data under the diagnostic budget of the owning operation. */
+export function cloneArguments<Value>(
+  args: Value,
+  budgets: OutputBudgetProvider,
+  field = "$",
+): Value {
+  return withArgumentError(() => structuredClone(args), budgets, field);
+}
+
 export function createArgumentBoundary<T extends TObject, Parsed>(
   parameters: T,
   cwd: string,
@@ -144,26 +168,15 @@ export function createArgumentBoundary<T extends TObject, Parsed>(
 ) {
   const validator = compile(parameters, COMPILE_OPTIONS);
 
-  function withArgumentError<Value>(operation: () => Value): Value {
-    try {
-      return operation();
-    } catch (error) {
-      throw new Error(
-        formatArgumentError([{ field: "$", reason: errorMessage(error) }], false, budgets()),
-        { cause: error },
-      );
-    }
-  }
-
   function snapshot<Value>(args: Value): Value {
-    const copy = withArgumentError(() => structuredClone(args));
+    const copy = cloneArguments(args, budgets);
     const issue = firstArrayIssue(parameters, copy);
     if (issue) throw new Error(formatArgumentError([issue], false, budgets()));
     return copy;
   }
 
   function verdict(checked: unknown) {
-    const schemaFailed = !withArgumentError(() => validator.check(checked));
+    const schemaFailed = !withArgumentError(() => validator.check(checked), budgets);
     const issues: ArgumentIssue[] = [];
     const report: ReportArgumentIssue = (field, reason, fix) => {
       issues.push(fix === undefined ? { field, reason } : { field, reason, fix });
@@ -184,20 +197,21 @@ export function createArgumentBoundary<T extends TObject, Parsed>(
   return {
     prepareArguments(args: unknown): Static<T> {
       const raw = snapshot(args);
-      verdict(withArgumentError(() => validator.coerce(raw)));
+      verdict(withArgumentError(() => validator.coerce(raw), budgets));
       // Coercion is copy-on-write. Pi applies it to this snapshot before passing args to hooks.
       return raw as Static<T>;
     },
     // A tool_call hook can retain and mutate the validated arguments before or during execution.
     // The tool consumes its own checked snapshot of the canonical arguments the last hook left.
-    afterHooks<Input extends Static<T>>(args: Input) {
+    afterHooks(args: unknown) {
       const checked = snapshot(args);
       const { build, locals } = verdict(checked);
       const paths: ResolvedArgumentPath[] = locals.map(({ spelling, local }) => ({
         absolutePath: resolve(cwd, local),
         spelling,
       }));
-      return { args: checked, parsed: build(), paths };
+      // The schema and semantic checks above validate this owned execution snapshot.
+      return { args: checked as Static<T>, parsed: build(), paths };
     },
   };
 }

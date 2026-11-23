@@ -1,4 +1,3 @@
-import { argumentError, rejectsArguments } from "./argument-error.testing.ts";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import fs from "node:fs/promises";
 import { syncBuiltinESMExports } from "node:module";
@@ -96,39 +95,90 @@ test("Fusion platform guidance → only Windows gets the path note", async () =>
   }
 });
 
-test("then_run schemas reject invalid commands, unknown keys, and excessive timeouts", async (t) => {
+test("invalid then_run with Fusion → publishes mutation and reports the argument failure", async (t) => {
   const dir = await tempDir();
-  try {
-    for (const makeTool of mutationFactories) {
-      const tool = makeTool(
-        dir,
-        createActionFusionScheduler(() => {}),
-      );
-      const path = `${tool.name}.txt`;
-      await writeFile(join(dir, path), "old\n");
-      const mutation =
-        tool.name === "edit"
-          ? { steps: [{ action: "append", lines: ["new"] }] }
-          : tool.name === "replace"
-            ? { replacements: [{ literal: true, find: "old", replace: "new" }] }
-            : { content: "new\n", mode: "overwrite" };
-      for (const then_run of [
-        {},
-        { command: "   " },
-        { command: "echo ok", timeot: 1 },
-        { command: "echo ok", timeout: 2_147_483.648 },
-      ]) {
-        await assert.rejects(
-          callTool(tool, { path, ...mutation, then_run }, { ctx: await ctx(dir, t) }),
-          (error: unknown) =>
-            rejectsArguments()(error) &&
-            argumentError(error).issues.some((issue) => issue.field.startsWith("then_run.")),
-        );
-        assert.equal(await readFile(join(dir, path), "utf8"), "old\n");
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  for (const makeTool of mutationFactories) {
+    const events: ActionFusionProgress[] = [];
+    const tool = makeTool(
+      dir,
+      createActionFusionScheduler((event) => events.push(event)),
+    );
+    const path = `${tool.name}.txt`;
+    const mutation =
+      tool.name === "edit"
+        ? { steps: [{ action: "append", lines: ["new"] }] }
+        : tool.name === "replace"
+          ? { replacements: [{ literal: true, find: "old", replace: "new" }] }
+          : { content: "new\n", mode: "overwrite" };
+    const expected = tool.name === "edit" ? "old\nnew\n" : "new\n";
+    for (const [then_run, field, reason] of [
+      [{ command: "check", timeout: 0 }, "timeout", /> 0|positive/i],
+      [{ command: "" }, "command", /pattern|empty|blank/i],
+      [{}, "command", /required/i],
+      [{ command: "check", timeot: 1 }, "timeot", /not allowed|unknown/i],
+      [42, "then_run", /object/i],
+      [() => {}, "then_run", /clone|object/i],
+      [{ command: "check", timeout: 2_147_483.648 }, "timeout", /2147483|maximum|<=/i],
+    ] as const) {
+      for (const source of ["raw", "hook"] as const) {
+        await t.test(`${tool.name}/${source}/${field}`, async () => {
+          events.length = 0;
+          await writeFile(join(dir, path), "old\n");
+          let runs = 0;
+          const context = {
+            ...(await ctx(dir, t)),
+            executeTool: async () => {
+              runs++;
+              return commandCompletion({ content: [], details: undefined });
+            },
+          };
+          const args = {
+            path,
+            ...mutation,
+            then_run: source === "raw" ? then_run : { command: "check" },
+          };
+          const result = await callTool(tool, args, {
+            ctx: context,
+            ...(source === "hook" ? { afterValidation: { then_run } } : {}),
+          });
+          assert.equal(await readFile(join(dir, path), "utf8"), expected);
+          assert.equal(reportOf(result, tool.name)?.publication, "PUBLISHED");
+          assert.equal(reportOf(result, tool.name)?.then_run?.status, "failed");
+          assert.equal(
+            events.at(-1)?.commandText,
+            typeof then_run === "object" && "command" in then_run ? then_run.command : "",
+          );
+          assert.match(JSON.stringify(result.content), new RegExp(field));
+          assert.match(JSON.stringify(result.content), reason);
+          assert.equal(runs, 0);
+        });
       }
     }
-  } finally {
-    await rm(dir, { recursive: true, force: true });
+    await t.test(`${tool.name}/in-place hook repair`, async () => {
+      await writeFile(join(dir, path), "old\n");
+      let runs = 0;
+      const context = {
+        ...(await ctx(dir, t)),
+        executeTool: async (_name: string, input: Record<string, unknown>) => {
+          runs++;
+          assert.deepEqual(input, { command: "repaired" });
+          return commandCompletion({ content: [{ type: "text", text: "ok" }], details: undefined });
+        },
+      };
+      const args = { path, ...mutation, then_run: { command: "" } };
+      const prepared: unknown = tool.prepareArguments(args);
+      const rejected: unknown = Reflect.get(prepared as object, "then_run");
+      assert.ok(rejected && typeof rejected === "object");
+      const result = await callTool(tool, args, {
+        ctx: context,
+        afterValidation: { then_run: Object.assign(rejected, { command: "repaired" }) },
+      });
+      assert.equal(await readFile(join(dir, path), "utf8"), expected);
+      assert.equal(reportOf(result, tool.name)?.publication, "PUBLISHED");
+      assert.equal(reportOf(result, tool.name)?.then_run?.status, "succeeded");
+      assert.equal(runs, 1);
+    });
   }
 });
 

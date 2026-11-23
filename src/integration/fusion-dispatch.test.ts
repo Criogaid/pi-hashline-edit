@@ -16,11 +16,8 @@ import {
   type ActionFusionProgress,
   type CommandStatus,
 } from "../pi/report-schema.ts";
-import {
-  createActionFusionScheduler,
-  observeFusionToolCall,
-  type ThenRunInput,
-} from "../pi/action-fusion.ts";
+import { createActionFusionScheduler, observeFusionToolCall } from "../pi/action-fusion.ts";
+import type { ThenRunInput } from "../pi/fusion-arguments.ts";
 import { DEFAULT_OUTPUT_BUDGETS, makeWriteOverride } from "../pi/tool-factories.testing.ts";
 import { contentText } from "@earendil-works/pi-ai";
 import { reportOf } from "../pi/report.ts";
