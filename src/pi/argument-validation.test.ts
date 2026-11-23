@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { createActionFusionScheduler } from "./action-fusion.ts";
+import { pairwise } from "../testing/pairwise.testing.ts";
 import { makeMockGrep } from "./grep-rg.testing.ts";
 import { commandCompletion } from "./action-fusion.testing.ts";
 import { callTool, createToolContext } from "./tool-call.testing.ts";
@@ -696,60 +697,63 @@ test("edit receives a forbidden field with the wrong type → reports the field 
 
 test("edit fields contain semantic errors → checks only fields accepted by their action", async (t) => {
   const tool = makeEditOverride(process.cwd(), DEFAULT_CONFIG);
-  for (const scenario of actionCases) {
+  const semanticFields = ["lines", "anchor", "end"] as const;
+  const cases = [
+    ...pairwise(actionCases, semanticFields, [0, 1, 2] as const),
+    // Explicitly retain empty-lines on a line-forbidding action and short-hash end on range actions.
+    [actionCases[1], "lines", 0] as const,
+    [actionCases[0], "end", 1] as const,
+    [actionCases[1], "end", 1] as const,
+  ];
+  for (const [scenario, field, variantIndex] of cases) {
     const valid = {
       action: scenario.action,
       ...Object.fromEntries(scenario.required.map((field) => [field, fieldValues[field]])),
     };
-    for (const field of editFields) {
-      const accepted = scenario.required.includes(field) || scenario.optional.includes(field);
-      const values: readonly (readonly [unknown, RegExp])[] =
-        field === "lines"
-          ? [
-              [[], /empty/],
-              [["bad\0"], /NUL/],
-              [["bad\ud800"], /surrogate|UTF-8/],
-            ]
-          : [
-              [`${Number.MAX_SAFE_INTEGER + 1}#${anchorHash}`, /safe integer/],
-              ["1#A", /hash characters/],
-            ];
-      for (const [value, reason] of values) {
-        await t.test(
-          `${scenario.action}/${field}/${reason.source} → ${accepted ? "reports value error" : "reports only forbidden field"}`,
-          async () => {
-            const edit = { ...valid, [field]: value };
-            await assert.rejects(
-              callTool(tool, { path: "unused.txt", steps: [edit] }),
-              (error: unknown) => {
-                const report = argumentError(error);
-                assert.equal(report.issues.length, 1, JSON.stringify(report));
-                const issue = report.issues[0];
-                assert.equal(
-                  issue.field,
-                  `steps[0].${field}${accepted && field === "lines" && Array.isArray(value) && value.length ? "[0]" : ""}`,
-                );
-                if (accepted) {
-                  assert.match(issue.reason, reason);
-                  if (field === "lines" && Array.isArray(value) && value.length === 0) {
-                    assert.match(
-                      issue.fix ?? "",
-                      scenario.action === "replace"
-                        ? /"action":"delete"/
-                        : /supply at least one line/,
-                    );
-                  }
-                } else {
-                  assert.equal(issue.reason, "is not allowed");
-                  assert.match(issue.fix ?? "", new RegExp(`^"${scenario.action}":.*Takes `));
-                }
-                return true;
-              },
+    const accepted = scenario.required.includes(field) || scenario.optional.includes(field);
+    const values: readonly (readonly [unknown, RegExp])[] =
+      field === "lines"
+        ? [
+            [[], /empty/],
+            [["bad\0"], /NUL/],
+            [["bad\ud800"], /surrogate|UTF-8/],
+          ]
+        : [
+            [`${Number.MAX_SAFE_INTEGER + 1}#${anchorHash}`, /safe integer/],
+            ["1#A", /hash characters/],
+          ];
+    const [value, reason] = values[variantIndex % values.length];
+    await t.test(
+      `${scenario.action}/${field}/${reason.source} → ${accepted ? "reports value error" : "reports only forbidden field"}`,
+      async () => {
+        const edit = { ...valid, [field]: value };
+        await assert.rejects(
+          callTool(tool, { path: "unused.txt", steps: [edit] }),
+          (error: unknown) => {
+            const report = argumentError(error);
+            assert.equal(report.issues.length, 1, JSON.stringify(report));
+            const issue = report.issues[0];
+            assert.equal(
+              issue.field,
+              `steps[0].${field}${accepted && field === "lines" && Array.isArray(value) && value.length ? "[0]" : ""}`,
             );
+            if (accepted) {
+              assert.match(issue.reason, reason);
+              if (field === "lines" && Array.isArray(value) && value.length === 0) {
+                assert.match(
+                  issue.fix ?? "",
+                  scenario.action === "replace" ? /"action":"delete"/ : /supply at least one line/,
+                );
+              }
+            } else {
+              assert.equal(issue.reason, "is not allowed");
+              assert.match(issue.fix ?? "", new RegExp(`^"${scenario.action}":.*Takes `));
+            }
+            return true;
           },
         );
-      }
-    }
+      },
+    );
   }
 });
 

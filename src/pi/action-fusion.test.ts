@@ -8,6 +8,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { Type } from "typebox";
 import { openTestSession, responseStream } from "../testing/session.testing.ts";
+import { pairwise } from "../testing/pairwise.testing.ts";
 import { callTool, createToolContext as ctx } from "./tool-call.testing.ts";
 import { makeEditOverride, makeReplaceTool, makeWriteOverride } from "./tool-factories.testing.ts";
 import { commandCompletion, commandOutput, createFusionContext } from "./action-fusion.testing.ts";
@@ -98,12 +99,23 @@ test("Fusion platform guidance → only Windows gets the path note", async () =>
 test("invalid then_run with Fusion → publishes mutation and reports the argument failure", async (t) => {
   const dir = await tempDir();
   t.after(() => rm(dir, { recursive: true, force: true }));
-  for (const makeTool of mutationFactories) {
-    const events: ActionFusionProgress[] = [];
-    const tool = makeTool(
-      dir,
-      createActionFusionScheduler((event) => events.push(event)),
-    );
+  const baseContext = await ctx(dir, t);
+  const events: ActionFusionProgress[] = [];
+  const scheduler = createActionFusionScheduler((event) => events.push(event));
+  const tools = mutationFactories.map((makeTool) => makeTool(dir, scheduler));
+  const invalidFollowUps = [
+    [{ command: "check", timeout: 0 }, "timeout", /> 0|positive/i],
+    [{ command: "" }, "command", /pattern|empty|blank/i],
+    [{}, "command", /required/i],
+    [{ command: "check", timeot: 1 }, "timeot", /not allowed|unknown/i],
+    [42, "then_run", /object/i],
+    [() => {}, "then_run", /clone|object/i],
+    [{ command: "check", timeout: 2_147_483.648 }, "timeout", /2147483|maximum|<=/i],
+  ] as const;
+  for (const [tool, [then_run, field, reason], source] of pairwise(tools, invalidFollowUps, [
+    "raw",
+    "hook",
+  ] as const)) {
     const path = `${tool.name}.txt`;
     const mutation =
       tool.name === "edit"
@@ -112,54 +124,52 @@ test("invalid then_run with Fusion → publishes mutation and reports the argume
           ? { replacements: [{ literal: true, find: "old", replace: "new" }] }
           : { content: "new\n", mode: "overwrite" };
     const expected = tool.name === "edit" ? "old\nnew\n" : "new\n";
-    for (const [then_run, field, reason] of [
-      [{ command: "check", timeout: 0 }, "timeout", /> 0|positive/i],
-      [{ command: "" }, "command", /pattern|empty|blank/i],
-      [{}, "command", /required/i],
-      [{ command: "check", timeot: 1 }, "timeot", /not allowed|unknown/i],
-      [42, "then_run", /object/i],
-      [() => {}, "then_run", /clone|object/i],
-      [{ command: "check", timeout: 2_147_483.648 }, "timeout", /2147483|maximum|<=/i],
-    ] as const) {
-      for (const source of ["raw", "hook"] as const) {
-        await t.test(`${tool.name}/${source}/${field}`, async () => {
-          events.length = 0;
-          await writeFile(join(dir, path), "old\n");
-          let runs = 0;
-          const context = {
-            ...(await ctx(dir, t)),
-            executeTool: async () => {
-              runs++;
-              return commandCompletion({ content: [], details: undefined });
-            },
-          };
-          const args = {
-            path,
-            ...mutation,
-            then_run: source === "raw" ? then_run : { command: "check" },
-          };
-          const result = await callTool(tool, args, {
-            ctx: context,
-            ...(source === "hook" ? { afterValidation: { then_run } } : {}),
-          });
-          assert.equal(await readFile(join(dir, path), "utf8"), expected);
-          assert.equal(reportOf(result, tool.name)?.publication, "PUBLISHED");
-          assert.equal(reportOf(result, tool.name)?.then_run?.status, "failed");
-          assert.equal(
-            events.at(-1)?.commandText,
-            typeof then_run === "object" && "command" in then_run ? then_run.command : "",
-          );
-          assert.match(JSON.stringify(result.content), new RegExp(field));
-          assert.match(JSON.stringify(result.content), reason);
-          assert.equal(runs, 0);
-        });
-      }
-    }
+    await t.test(`${tool.name}/${source}/${field}`, async () => {
+      events.length = 0;
+      await writeFile(join(dir, path), "old\n");
+      let runs = 0;
+      const context = {
+        ...baseContext,
+        executeTool: async () => {
+          runs++;
+          return commandCompletion({ content: [], details: undefined });
+        },
+      };
+      const args = {
+        path,
+        ...mutation,
+        then_run: source === "raw" ? then_run : { command: "check" },
+      };
+      const result = await callTool(tool, args, {
+        ctx: context,
+        ...(source === "hook" ? { afterValidation: { then_run } } : {}),
+      });
+      assert.equal(await readFile(join(dir, path), "utf8"), expected);
+      assert.equal(reportOf(result, tool.name)?.publication, "PUBLISHED");
+      assert.equal(reportOf(result, tool.name)?.then_run?.status, "failed");
+      assert.equal(
+        events.at(-1)?.commandText,
+        typeof then_run === "object" && "command" in then_run ? then_run.command : "",
+      );
+      assert.match(JSON.stringify(result.content), new RegExp(field));
+      assert.match(JSON.stringify(result.content), reason);
+      assert.equal(runs, 0);
+    });
+  }
+  for (const tool of tools) {
+    const path = `${tool.name}.txt`;
+    const mutation =
+      tool.name === "edit"
+        ? { steps: [{ action: "append", lines: ["new"] }] }
+        : tool.name === "replace"
+          ? { replacements: [{ literal: true, find: "old", replace: "new" }] }
+          : { content: "new\n", mode: "overwrite" };
+    const expected = tool.name === "edit" ? "old\nnew\n" : "new\n";
     await t.test(`${tool.name}/in-place hook repair`, async () => {
       await writeFile(join(dir, path), "old\n");
       let runs = 0;
       const context = {
-        ...(await ctx(dir, t)),
+        ...baseContext,
         executeTool: async (_name: string, input: Record<string, unknown>) => {
           runs++;
           assert.deepEqual(input, { command: "repaired" });

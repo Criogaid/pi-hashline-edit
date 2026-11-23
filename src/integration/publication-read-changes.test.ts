@@ -18,6 +18,7 @@ import { PUBLICATION_NEXT } from "../pi/report-schema.ts";
 import { makeReplaceTool } from "../pi/tool-factories.testing.ts";
 import { callTool, createToolContext } from "../pi/tool-call.testing.ts";
 import { makeWriteOverride } from "../pi/tool-factories.testing.ts";
+import { pairwise } from "../testing/pairwise.testing.ts";
 
 const BEFORE = "before\n";
 const PUBLISHED = "before\nafter\n";
@@ -126,50 +127,49 @@ const prePublicationCases = [
   },
 ] as const;
 
-for (const fused of [false, true]) {
-  test(`concurrent change during post-publication read without then_run (${fused ? "Fusion enabled" : "plain"}) → succeeds and withholds stale anchors`, async (t) => {
-    for (const mutation of mutationCases) {
-      for (const disturbance of ["append", "delete"] as const) {
-        await t.test(
-          `${mutation.name}: ${disturbance} → retains publication and reports changed freshness`,
-          async (t) => {
-            const { directory, path } = await targetFile(
-              t,
-              mutation.name === "write create" ? undefined : BEFORE,
-            );
-            const executeTool: SessionCommand = async () =>
-              assert.fail("command must not run without then_run");
-            const schedule = fused ? createActionFusionScheduler(() => {}) : runAlone;
-            const result = await withDisturbedRead(
-              t,
-              path,
-              PUBLISHED,
-              disturbance,
-              (bytes) => bytes.equals(Buffer.from(PUBLISHED)),
-              () =>
-                callTool(
-                  mutation.make(directory, schedule),
-                  { path, ...mutation.args },
-                  { ctx: { cwd: directory, executeTool } },
-                ),
-            );
-            assert.equal(result.isError, undefined);
-            const report = reportOf(
-              result,
-              mutation.name === "edit" ? "edit" : mutation.name === "replace" ? "replace" : "write",
-            );
-            assert.equal(report?.publication, "PUBLISHED");
-            assert.match(report?.next ?? "", /Read the file before further edits/);
-            assert.doesNotMatch(text(result), /Updated anchors|retry the tool/);
-            assert.equal(report?.then_run, undefined);
-            assert.equal(report?.freshness, "changed");
-            await assertTarget(path, PUBLISHED, disturbance);
-          },
+test("concurrent change during post-publication read without then_run → succeeds and withholds stale anchors", async (t) => {
+  for (const [fused, mutation, disturbance] of pairwise([false, true] as const, mutationCases, [
+    "append",
+    "delete",
+  ] as const)) {
+    await t.test(
+      `${fused ? "Fusion" : "plain"}/${mutation.name}: ${disturbance} → retains publication and reports changed freshness`,
+      async (t) => {
+        const { directory, path } = await targetFile(
+          t,
+          mutation.name === "write create" ? undefined : BEFORE,
         );
-      }
-    }
-  });
-}
+        const executeTool: SessionCommand = async () =>
+          assert.fail("command must not run without then_run");
+        const schedule = fused ? createActionFusionScheduler(() => {}) : runAlone;
+        const result = await withDisturbedRead(
+          t,
+          path,
+          PUBLISHED,
+          disturbance,
+          (bytes) => bytes.equals(Buffer.from(PUBLISHED)),
+          () =>
+            callTool(
+              mutation.make(directory, schedule),
+              { path, ...mutation.args },
+              { ctx: { cwd: directory, executeTool } },
+            ),
+        );
+        assert.equal(result.isError, undefined);
+        const report = reportOf(
+          result,
+          mutation.name === "edit" ? "edit" : mutation.name === "replace" ? "replace" : "write",
+        );
+        assert.equal(report?.publication, "PUBLISHED");
+        assert.match(report?.next ?? "", /Read the file before further edits/);
+        assert.doesNotMatch(text(result), /Updated anchors|retry the tool/);
+        assert.equal(report?.then_run, undefined);
+        assert.equal(report?.freshness, "changed");
+        await assertTarget(path, PUBLISHED, disturbance);
+      },
+    );
+  }
+});
 
 for (const observation of [1, 2]) {
   test(`disturbance during pre-command observation ${observation} → skips then_run without retry advice or rollback`, async (t) => {

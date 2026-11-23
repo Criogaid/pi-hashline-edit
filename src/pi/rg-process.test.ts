@@ -1,6 +1,7 @@
 import { test, type TestContext } from "node:test";
 import assert from "node:assert/strict";
 import childProcess from "node:child_process";
+import { EventEmitter } from "node:events";
 import { syncBuiltinESMExports } from "node:module";
 import { Readable } from "node:stream";
 import { searchDiagnostic, runRgLines, type CandidateLines } from "./rg-process.ts";
@@ -39,13 +40,28 @@ async function parseListing(
 ) {
   const spawn = childProcess.spawn;
   const mock = t.mock.method(childProcess, "spawn", (...args: Parameters<typeof spawn>) => {
-    const child = spawn(process.execPath, args[1] ?? [], args[2]);
     if (splitChunks) {
-      assert.ok(child.stdout);
-      const stream = Readable.from(splitChunks);
-      t.mock.method(child.stdout, Symbol.asyncIterator, () => stream[Symbol.asyncIterator]());
+      const stdout = Readable.from(splitChunks);
+      const stderr = Readable.from([]);
+      let closed = false;
+      const close = () => {
+        if (closed) return;
+        closed = true;
+        setImmediate(() => fake.emit("close", 0));
+      };
+      const fake = Object.assign(new EventEmitter(), {
+        stdout,
+        stderr,
+        kill: () => {
+          close();
+          return true;
+        },
+      });
+      stdout.on("end", close);
+      stdout.on("close", close);
+      return fake as unknown as ReturnType<typeof spawn>;
     }
-    return child;
+    return spawn(process.execPath, args[1] ?? [], args[2]);
   });
   syncBuiltinESMExports();
   try {
@@ -125,6 +141,16 @@ test("line listing ends with incomplete path or row → RIPGREP_FAILED", async (
       (error: unknown) => error instanceof HashlineError && error.errorCode === "RIPGREP_FAILED",
     );
   }
+  await assert.rejects(
+    parseListing(t, [], 10, false, [
+      Buffer.from("file\0bad\n\n"),
+      Buffer.from("later\0" + "1:x\n\n"),
+    ]),
+    (error: unknown) =>
+      error instanceof HashlineError &&
+      error.errorCode === "RIPGREP_FAILED" &&
+      /unexpected line record/.test(error.message),
+  );
 });
 
 test("line listing ends after a complete row → flush the final file without a separator", async (t) => {

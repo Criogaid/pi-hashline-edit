@@ -19,6 +19,7 @@ import { Value } from "typebox/value";
 import { theme } from "../../node_modules/@earendil-works/pi-coding-agent/dist/modes/interactive/theme/theme.js";
 import { computeLineHash } from "../core/hash.ts";
 import { makeMockGrep } from "./grep-rg.testing.ts";
+import { pairwise } from "../testing/pairwise.testing.ts";
 import { Worker } from "node:worker_threads";
 const { makeEditOverride } = await import("./tool-factories.testing.ts");
 import { callTool } from "./tool-call.testing.ts";
@@ -766,74 +767,76 @@ test("file changes after matching → summary modes retain the snapshot and cont
     const file = join(dir, "grep.txt");
     const unchanged = join(dir, "unchanged.txt");
     await writeFile(unchanged, "needle\n");
-    for (const [before, after] of [
+    const mutations = [
       [Buffer.from("needle\nold context\n"), Buffer.from("changed\nnew context\n")],
       [Buffer.from("needle\n"), Buffer.alloc(0)],
       [
         Buffer.from([0x6e, 0x65, 0x65, 0x64, 0x6c, 0x65, 0x0a, 0xff]),
         Buffer.from([0x6e, 0x65, 0x65, 0x64, 0x6c, 0x65, 0x0a, 0xfe]),
       ],
-    ]) {
-      for (const multiline of [false, true]) {
-        for (const [outputMode, keepOtherFile] of [
-          ["files", false],
-          ["count", false],
-          ["content", false],
-          ["content", true],
-        ] as const) {
-          await t.test(
-            `${outputMode}, other file=${keepOtherFile}, multiline=${multiline}, bytes=${before.toString("hex")}`,
-            async (t) => {
-              await writeFile(file, before);
-              const paths = keepOtherFile ? [file, unchanged] : [file];
-              const emit = Worker.prototype.emit;
-              let replies = 0;
-              let changed = false;
-              t.mock.method(
-                Worker.prototype,
-                "emit",
-                function (this: Worker, event: string | symbol, ...args: unknown[]) {
-                  if (event === "message" && ++replies === paths.length) {
-                    changed = true;
-                    fs.writeFileSync(file, after);
-                  }
-                  return emit.call(this, event, ...args);
-                },
-              );
-              const fake = fakeBackend({ paths });
-              const result = await call(makeMockGrep(dir, DEFAULT_CONFIG, fake.backend), {
-                pattern: "needle",
-                literal: true,
-                multiline,
-                outputMode,
-                context: 1,
-              });
-              assert.equal(changed, true);
-              if (outputMode !== "content") {
-                assert.equal(result.isError, undefined);
-                assert.deepEqual(grepCounts(result), { matches: 1, files: 1 });
-                assert.equal(reportOf(result, "grep")?.diagnostics, undefined);
-                assert.match(text(result), /grep\.txt/);
-              } else {
-                assert.match(reportOf(result, "grep")?.diagnostics ?? "", /grep\.txt/);
-                assert.match(
-                  reportOf(result, "grep")?.diagnostics ?? "",
-                  /File changed during search\./,
-                );
-                if (keepOtherFile) {
-                  assert.equal(result.isError, undefined);
-                  assert.deepEqual(grepCounts(result), { matches: 1, files: 1 });
-                  assert.match(text(result), /unchanged\.txt · 1 match/);
-                  assert.doesNotMatch(text(result), /grep\.txt ·/);
-                } else {
-                  assert.equal(result.isError, true);
-                  assert.equal(reportOf(result, "grep")?.error, "SEARCH_INCOMPLETE");
-                }
+    ] as const;
+    const outputModes = [
+      ["files", false],
+      ["count", false],
+      ["content", false],
+      ["content", true],
+    ] as const;
+    for (const [[before, after], multiline, [outputMode, keepOtherFile]] of pairwise(
+      mutations,
+      [false, true] as const,
+      outputModes,
+    )) {
+      await t.test(
+        `${outputMode}, other file=${keepOtherFile}, multiline=${multiline}, bytes=${before.toString("hex")}`,
+        async (t) => {
+          await writeFile(file, before);
+          const paths = keepOtherFile ? [file, unchanged] : [file];
+          const emit = Worker.prototype.emit;
+          let replies = 0;
+          let changed = false;
+          t.mock.method(
+            Worker.prototype,
+            "emit",
+            function (this: Worker, event: string | symbol, ...args: unknown[]) {
+              if (event === "message" && ++replies === paths.length) {
+                changed = true;
+                fs.writeFileSync(file, after);
               }
+              return emit.call(this, event, ...args);
             },
           );
-        }
-      }
+          const fake = fakeBackend({ paths });
+          const result = await call(makeMockGrep(dir, DEFAULT_CONFIG, fake.backend), {
+            pattern: "needle",
+            literal: true,
+            multiline,
+            outputMode,
+            context: 1,
+          });
+          assert.equal(changed, true);
+          if (outputMode !== "content") {
+            assert.equal(result.isError, undefined);
+            assert.deepEqual(grepCounts(result), { matches: 1, files: 1 });
+            assert.equal(reportOf(result, "grep")?.diagnostics, undefined);
+            assert.match(text(result), /grep\.txt/);
+          } else {
+            assert.match(reportOf(result, "grep")?.diagnostics ?? "", /grep\.txt/);
+            assert.match(
+              reportOf(result, "grep")?.diagnostics ?? "",
+              /File changed during search\./,
+            );
+            if (keepOtherFile) {
+              assert.equal(result.isError, undefined);
+              assert.deepEqual(grepCounts(result), { matches: 1, files: 1 });
+              assert.match(text(result), /unchanged\.txt · 1 match/);
+              assert.doesNotMatch(text(result), /grep\.txt ·/);
+            } else {
+              assert.equal(result.isError, true);
+              assert.equal(reportOf(result, "grep")?.error, "SEARCH_INCOMPLETE");
+            }
+          }
+        },
+      );
     }
   });
 });

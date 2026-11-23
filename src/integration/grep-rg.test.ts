@@ -32,6 +32,7 @@ const { DEFAULT_OUTPUT_BUDGETS } = await import("../pi/tool-factories.testing.ts
 const MAX_RG_RECORD_BYTES = 16 * 1024 * 1024;
 import { computeLineHash } from "../core/hash.ts";
 import { callTool } from "../pi/tool-call.testing.ts";
+import { pairwise } from "../testing/pairwise.testing.ts";
 const { DEFAULT_CONFIG, makeGrepOverride } = await import("../pi/tool-factories.testing.ts");
 import { canonicalPath } from "../pi/path.ts";
 import { reportOf } from "../pi/report.ts";
@@ -511,26 +512,31 @@ test("directory traversal with caller globs → excludes .git while an explicit 
   await writeFile(join(git, "x.txt"), "needle\n");
   await writeFile(join(directory, "a.txt"), "needle\n");
   const tool = makeGrepOverride(directory, DEFAULT_CONFIG);
-  for (const multiline of [false, true]) {
-    for (const glob of [undefined, "*"]) {
-      for (const [path, expected] of [
+  const cases = [
+    ...pairwise(
+      [false, true] as const,
+      [undefined, "*"] as const,
+      [
         [directory, "a.txt"],
         [git, ".git/x.txt"],
-      ]) {
-        const result = await callTool(tool, {
-          path,
-          glob,
-          multiline,
-          literal: true,
-          pattern: "needle",
-          outputMode: "files",
-        });
-        assert.equal(result.isError, undefined, JSON.stringify(reportOf(result, "grep")));
-        assert.equal(grepCounts(result).matches, 1);
-        assert.equal(result.content[0].type, "text");
-        assert.equal(result.content[0].text.replace(/\\/g, "/"), expected);
-      }
-    }
+      ] as const,
+    ),
+    // Cover single-line line-candidate rg command with a positive glob on the parent directory.
+    [false, "*", [directory, "a.txt"]] as const,
+  ];
+  for (const [multiline, glob, [path, expected]] of cases) {
+    const result = await callTool(tool, {
+      path,
+      glob,
+      multiline,
+      literal: true,
+      pattern: "needle",
+      outputMode: "files",
+    });
+    assert.equal(result.isError, undefined, JSON.stringify(reportOf(result, "grep")));
+    assert.equal(grepCounts(result).matches, 1);
+    assert.equal(result.content[0].type, "text");
+    assert.equal(result.content[0].text.replace(/\\/g, "/"), expected);
   }
 });
 

@@ -3,6 +3,7 @@ import { test } from "node:test";
 import fc from "fast-check";
 import { applyEdits } from "./apply.ts";
 import { computeLineHash } from "./hash.ts";
+import { splitLines } from "./lines.ts";
 import { applyReplacements } from "./replace.ts";
 import type { Edit } from "./types.ts";
 
@@ -103,5 +104,58 @@ test("fast-check capture templates on LF input → agree with native JavaScript 
       assert.equal(count, 2);
     }),
     { numRuns: PROPERTY_RUNS, seed: 5717 },
+  );
+});
+
+test("fast-check out-of-order multi-step edits → permutation-invariant text and verified copied spans", () => {
+  const bodyLines = fc.array(fragment, { minLength: 1, maxLength: 3 });
+  fc.assert(
+    fc.property(
+      fc.boolean(),
+      fc.array(fc.tuple(fragment, lineEnding), { minLength: 5, maxLength: 7 }),
+      fc.boolean(),
+      bodyLines,
+      bodyLines,
+      bodyLines,
+      (hasBom, rawLines, trailingNewline, headBody, midBody, tailBody) => {
+        const joined = rawLines.map(([line, ending]) => `${line}${ending}`).join("");
+        const source =
+          (hasBom ? BOM : "") + (trailingNewline ? joined : joined.replace(/\r?\n$/, ""));
+        const lines = splitLines(source);
+        const at = (line: number) => ({
+          line,
+          hash: computeLineHash(line, lines[line - 1], 4),
+        });
+        const canonical: Edit[] = [
+          { op: "prepend", body: headBody },
+          { op: "replace", anchor: at(2), body: midBody },
+          { op: "delete", anchor: at(4) },
+          { op: "append", body: tailBody },
+        ];
+        const reversed = [...canonical].reverse();
+        const forward = applyEdits(source, canonical, 4, 0);
+        const backward = applyEdits(source, reversed, 4, 0);
+        assert.ok(forward.ok && backward.ok);
+        assert.equal(backward.text, forward.text);
+        assert.deepEqual(backward.copied, forward.copied);
+        if (hasBom) assert.ok(forward.text.startsWith(BOM));
+        let prevSourceEnd = 0;
+        let prevTargetEnd = 0;
+        for (const span of forward.copied) {
+          assert.ok(span.length > 0);
+          assert.ok(span.sourceStart >= prevSourceEnd);
+          assert.ok(span.targetStart >= prevTargetEnd);
+          prevSourceEnd = span.sourceStart + span.length;
+          prevTargetEnd = span.targetStart + span.length;
+          assert.ok(prevSourceEnd <= source.length);
+          assert.ok(prevTargetEnd <= forward.text.length);
+          assert.equal(
+            source.slice(span.sourceStart, prevSourceEnd),
+            forward.text.slice(span.targetStart, prevTargetEnd),
+          );
+        }
+      },
+    ),
+    { numRuns: PROPERTY_RUNS, seed: 7919 },
   );
 });

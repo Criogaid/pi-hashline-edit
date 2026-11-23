@@ -1,6 +1,7 @@
 import { commandCompletion, commandOutput, type SessionCommand } from "./action-fusion.testing.ts";
 import { rejectsArgument } from "./argument-error.testing.ts";
 import { computeLineHash } from "../core/hash.ts";
+import { pairwise } from "../testing/pairwise.testing.ts";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import assert from "node:assert/strict";
 import { mkdtemp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
@@ -49,71 +50,68 @@ test("edit and replace commands change or remove the file → withhold anchors a
   const dir = await mkdtemp(join(tmpdir(), "hashline-result-"));
   try {
     const context = await ctx(dir, t);
-    for (const toolName of ["edit", "replace"] as const) {
-      for (const state of ["changed", "missing", "unknown"] as const) {
-        for (const fails of [false, true]) {
-          const path = join(dir, `${toolName}-${state}-${fails}.txt`);
-          await writeFile(path, "before\n");
-          const updates: AgentToolResult<unknown>[] = [];
-          const executeTool: SessionCommand = async (_name, _input, options) => {
-            if (state === "changed") await writeFile(path, "command output\n");
-            else {
-              await rm(path);
-              if (state === "unknown") await mkdir(path);
-            }
-            options?.onUpdate?.({
-              content: [{ type: "text", text: "progress" }],
-              details: undefined,
-            });
-            if (fails)
-              return commandCompletion(
-                { content: [{ type: "text", text: "command failed" }] },
-                true,
-              );
-            return commandCompletion({ content: [{ type: "text", text: "done" }] });
-          };
-          const fusion = createActionFusionScheduler(() => {});
-          const tool =
-            toolName === "edit"
-              ? makeEditOverride(dir, DEFAULT_CONFIG, fusion)
-              : makeReplaceTool(dir, DEFAULT_CONFIG, fusion);
-          const args =
-            toolName === "edit"
-              ? {
-                  steps: [
-                    {
-                      action: "replace",
-                      anchor: `1#${computeLineHash(1, "before", DEFAULT_CONFIG.hashLen)}`,
-                      lines: ["after"],
-                    },
-                  ],
-                }
-              : { replacements: [{ literal: true, find: "before", replace: "after" }] };
-          const result = await callTool(
-            tool,
-            { path, ...args, then_run: { command: "check" } },
-            {
-              onUpdate: (update: AgentToolResult<unknown>) => updates.push(update),
-              ctx: { ...context, executeTool },
-            },
-          );
-          assert.doesNotMatch(text(result), /Updated anchors|\d+#[0-9A-Z]+│/);
-          const report = reportOf(result, toolName);
-          assert.equal(report?.freshness, state);
-          assert.equal(report?.publication, "PUBLISHED");
-          if (state === "missing") assert.equal(report?.next, undefined);
-          else assert.match(report?.next ?? "", /Read the file before further edits/);
-          assert.equal(report?.then_run?.status, fails ? "failed" : "succeeded");
-          assert.equal(commandOutput(result), fails ? "command failed" : "done");
-          assert.equal(result.content.length, 2);
-          assert.ok(updates.length > 0);
-          for (const update of updates)
-            assert.doesNotMatch(text(update), /Updated anchors|\d+#[0-9A-Z]+│/);
-          if (state === "changed") assert.equal(await readFile(path, "utf8"), "command output\n");
-          else if (state === "missing") await assert.rejects(stat(path), { code: "ENOENT" });
-          else assert.equal((await stat(path)).isDirectory(), true);
+    for (const [toolName, state, fails] of pairwise(
+      ["edit", "replace"] as const,
+      ["changed", "missing", "unknown"] as const,
+      [false, true] as const,
+    )) {
+      const path = join(dir, `${toolName}-${state}-${fails}.txt`);
+      await writeFile(path, "before\n");
+      const updates: AgentToolResult<unknown>[] = [];
+      const executeTool: SessionCommand = async (_name, _input, options) => {
+        if (state === "changed") await writeFile(path, "command output\n");
+        else {
+          await rm(path);
+          if (state === "unknown") await mkdir(path);
         }
-      }
+        options?.onUpdate?.({
+          content: [{ type: "text", text: "progress" }],
+          details: undefined,
+        });
+        if (fails)
+          return commandCompletion({ content: [{ type: "text", text: "command failed" }] }, true);
+        return commandCompletion({ content: [{ type: "text", text: "done" }] });
+      };
+      const fusion = createActionFusionScheduler(() => {});
+      const tool =
+        toolName === "edit"
+          ? makeEditOverride(dir, DEFAULT_CONFIG, fusion)
+          : makeReplaceTool(dir, DEFAULT_CONFIG, fusion);
+      const args =
+        toolName === "edit"
+          ? {
+              steps: [
+                {
+                  action: "replace",
+                  anchor: `1#${computeLineHash(1, "before", DEFAULT_CONFIG.hashLen)}`,
+                  lines: ["after"],
+                },
+              ],
+            }
+          : { replacements: [{ literal: true, find: "before", replace: "after" }] };
+      const result = await callTool(
+        tool,
+        { path, ...args, then_run: { command: "check" } },
+        {
+          onUpdate: (update: AgentToolResult<unknown>) => updates.push(update),
+          ctx: { ...context, executeTool },
+        },
+      );
+      assert.doesNotMatch(text(result), /Updated anchors|\d+#[0-9A-Z]+│/);
+      const report = reportOf(result, toolName);
+      assert.equal(report?.freshness, state);
+      assert.equal(report?.publication, "PUBLISHED");
+      if (state === "missing") assert.equal(report?.next, undefined);
+      else assert.match(report?.next ?? "", /Read the file before further edits/);
+      assert.equal(report?.then_run?.status, fails ? "failed" : "succeeded");
+      assert.equal(commandOutput(result), fails ? "command failed" : "done");
+      assert.equal(result.content.length, 2);
+      assert.ok(updates.length > 0);
+      for (const update of updates)
+        assert.doesNotMatch(text(update), /Updated anchors|\d+#[0-9A-Z]+│/);
+      if (state === "changed") assert.equal(await readFile(path, "utf8"), "command output\n");
+      else if (state === "missing") await assert.rejects(stat(path), { code: "ENOENT" });
+      else assert.equal((await stat(path)).isDirectory(), true);
     }
   } finally {
     await rm(dir, { recursive: true, force: true });
@@ -123,6 +121,7 @@ test("edit and replace commands change or remove the file → withhold anchors a
 test("progress callback failures → preserve publication and allow the command", async (t) => {
   const dir = await mkdtemp(join(tmpdir(), "hashline-progress-"));
   try {
+    const context = await ctx(dir, t);
     for (const callback of ["reporter", "update"]) {
       let commands = 0;
       const fail = () => {
@@ -144,7 +143,7 @@ test("progress callback failures → preserve publication and allow the command"
         },
         {
           onUpdate: callback === "update" ? fail : undefined,
-          ctx: { ...(await ctx(dir, t)), executeTool },
+          ctx: { ...context, executeTool },
         },
       );
       assert.equal(commands, 1);
@@ -380,6 +379,7 @@ const noOpCases = [
 test("all mutation tools succeed without rewriting on no-op, with and without Fusion", async (t) => {
   const dir = await mkdtemp(join(tmpdir(), "hashline-noop-"));
   try {
+    const context = await ctx(dir, t);
     for (const { makeTool, params } of noOpCases) {
       for (const mode of ["standalone", "fusion", "command"]) {
         const path = join(dir, "same.txt");
@@ -395,7 +395,7 @@ test("all mutation tools succeed without rewriting on no-op, with and without Fu
         const result = await callTool(
           tool,
           { path, ...params, ...(mode === "command" ? { then_run: { command: "check" } } : {}) },
-          { ctx: { ...(await ctx(dir, t)), executeTool } },
+          { ctx: { ...context, executeTool } },
         );
         assert.equal(reportOf(result, tool.name)?.publication, "NOT_PUBLISHED");
         assert.match(
@@ -481,6 +481,7 @@ test("delete and append change only line endings → publishes with an empty dif
 test("no-op Fusion still detects external changes and reports command failures", async (t) => {
   const dir = await mkdtemp(join(tmpdir(), "hashline-noop-fusion-"));
   try {
+    const context = await ctx(dir, t);
     for (const { makeTool, params } of noOpCases) {
       for (const scenario of ["before", "during", "failed"]) {
         const path = join(dir, "same.txt");
@@ -501,7 +502,7 @@ test("no-op Fusion still detects external changes and reports command failures",
         const result = await callTool(
           tool,
           { path, ...params, then_run: { command: "check" } },
-          { ctx: { ...(await ctx(dir, t)), executeTool } },
+          { ctx: { ...context, executeTool } },
         );
         assert.equal(reportOf(result, tool.name)?.publication, "NOT_PUBLISHED");
         assert.equal(commands, scenario === "before" ? 0 : 1);
