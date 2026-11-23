@@ -43,10 +43,31 @@ export type ThenRunRequest =
   | ThenRunInput
   | { readonly commandText: string; readonly error: string };
 
+type RejectedThenRun = Extract<ThenRunRequest, { readonly error: string }>;
+
 // Pi clones and validates prepared arguments before hooks. Keep a rejected request present so a
 // hook supplying defaults for an absent command cannot start Bash. Its empty command also fails
 // the execution schema on its own. The diagnostic is never a shell argument.
 const REJECTED = "__hashlineThenRunError";
+
+function encodeRejected(commandText: string, error: string) {
+  return { command: "", [REJECTED]: { commandText, error } };
+}
+
+function decodeRejected(value: object, tool: MutationToolName): RejectedThenRun | undefined {
+  if (!Object.hasOwn(value, REJECTED)) return undefined;
+  const marker: unknown = Reflect.get(value, REJECTED);
+  if (!marker || typeof marker !== "object") return undefined;
+  const commandText: unknown = Reflect.get(marker, "commandText");
+  const error: unknown = Reflect.get(marker, "error");
+  if (
+    typeof commandText !== "string" ||
+    typeof error !== "string" ||
+    reportOf({ content: [{ type: "text", text: error }] }, tool)?.error !== "INVALID_ARGUMENTS"
+  )
+    return undefined;
+  return { commandText, error };
+}
 
 function rawCommandText(value: unknown): string {
   if (!value || typeof value !== "object" || Array.isArray(value)) return "";
@@ -150,10 +171,7 @@ export function createMutationArgumentBoundary<P extends TProperties, Parsed>(
               commandText = rawCommandText(snapshot.then_run);
               return bash.prepareArguments(snapshot).then_run;
             } catch (error) {
-              return {
-                command: "",
-                [REJECTED]: { commandText, error: errorMessage(error) },
-              };
+              return encodeRejected(commandText, errorMessage(error));
             }
           },
           budgets,
@@ -173,28 +191,15 @@ export function createMutationArgumentBoundary<P extends TProperties, Parsed>(
               const snapshot = read();
               const value = snapshot.then_run;
               commandText = rawCommandText(value);
-              if (value && typeof value === "object" && Object.hasOwn(value, REJECTED)) {
-                const marker: unknown = Reflect.get(value, REJECTED);
-                const diagnostic: unknown =
-                  marker && typeof marker === "object" ? Reflect.get(marker, "error") : undefined;
-                const rejectedCommand: unknown =
-                  marker && typeof marker === "object"
-                    ? Reflect.get(marker, "commandText")
-                    : undefined;
-                const rejected =
-                  typeof rejectedCommand === "string" &&
-                  typeof diagnostic === "string" &&
-                  reportOf({ content: [{ type: "text", text: diagnostic }] }, tool)?.error ===
-                    "INVALID_ARGUMENTS";
-                if (
-                  rejected &&
-                  Object.keys(value).length === 2 &&
-                  Reflect.get(value, "command") === ""
-                ) {
-                  thenRun = { commandText: rejectedCommand, error: diagnostic };
-                  return undefined;
+              if (value && typeof value === "object") {
+                const rejected = decodeRejected(value, tool);
+                if (rejected) {
+                  if (Object.keys(value).length === 2 && Reflect.get(value, "command") === "") {
+                    thenRun = rejected;
+                    return undefined;
+                  }
+                  Reflect.deleteProperty(value, REJECTED);
                 }
-                if (rejected) Reflect.deleteProperty(value, REJECTED);
               }
               thenRun = bash.afterHooks(snapshot).args.then_run;
             } catch (error) {
