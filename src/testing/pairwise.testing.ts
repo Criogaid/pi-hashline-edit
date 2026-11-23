@@ -10,34 +10,27 @@ export function pairwise<A, B, C>(
   second: readonly B[],
   third: readonly C[],
 ): readonly (readonly [A, B, C])[] {
-  const axes: readonly [readonly unknown[], readonly unknown[], readonly unknown[]] = [
-    first,
-    second,
-    third,
-  ];
-  for (const [axis, values] of axes.entries()) {
-    assert(values.length > 0, `Axis ${axis} must not be empty`);
+  const lengths: readonly [number, number, number] = [first.length, second.length, third.length];
+  for (const [axis, length] of lengths.entries()) {
+    assert(length > 0, `Axis ${axis} must not be empty`);
   }
-  const order = [0, 1, 2].sort((a, b) => axes[b].length - axes[a].length);
-  const [a0, a1, a2] = order.map((index) => axes[index]);
-  const rows: [A, B, C][] = [];
-  for (let i = 0; i < a0.length; i++) {
-    for (let j = 0; j < a1.length; j++) {
-      const tuple = Array.from({ length: 3 });
-      tuple[order[0]] = a0[i];
-      tuple[order[1]] = a1[j];
-      tuple[order[2]] = a2[(i + j) % a2.length];
-      rows.push(tuple as [A, B, C]);
+  const order = [0, 1, 2].sort((a, b) => lengths[b] - lengths[a]);
+  const indices: [number, number, number][] = [];
+  for (let i = 0; i < lengths[order[0]]; i++) {
+    for (let j = 0; j < lengths[order[1]]; j++) {
+      const coords: [number, number, number] = [0, 0, 0];
+      coords[order[0]] = i;
+      coords[order[1]] = j;
+      coords[order[2]] = (i + j) % lengths[order[2]];
+      indices.push(coords);
     }
   }
-  for (let left = 0; left < axes.length; left++) {
-    for (let right = left + 1; right < axes.length; right++) {
-      const expected = axes[left].length * axes[right].length;
-      const actual = new Set(
-        rows.map((row) => `${axes[left].indexOf(row[left])}:${axes[right].indexOf(row[right])}`),
-      ).size;
+  for (let left = 0; left < lengths.length; left++) {
+    for (let right = left + 1; right < lengths.length; right++) {
+      const expected = lengths[left] * lengths[right];
+      const actual = new Set(indices.map((row) => `${row[left]}:${row[right]}`)).size;
       assert.equal(actual, expected, `Incomplete pairwise coverage for axes ${left} × ${right}`);
     }
   }
-  return rows;
+  return indices.map(([i, j, k]) => [first[i], second[j], third[k]]);
 }
