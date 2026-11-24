@@ -1,6 +1,6 @@
 {
   "name": "@criogaid/pi-hashline-edit",
-  "version": "0.15.0",
+  "version": "0.15.1",
   "type": "module",
   "description": "Hash-anchored file editing for Pi: line edits cite anchors that are checked against the current file before any write.",
   "homepage": "https://github.com/Criogaid/pi-hashline-edit#readme",
