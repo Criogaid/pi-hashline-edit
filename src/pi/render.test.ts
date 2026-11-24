@@ -1174,15 +1174,25 @@ test("failed card with arguments → collapsed hints expand and expanded appends
   assert.match(longExpanded, /line 24[\s\S]*arguments:[\s\S]*"path": "draft\.md"/);
   assert.doesNotMatch(longExpanded, /<app\.tools\.expand>/);
 
-  const cyclic: Record<string, unknown> = { count: 1n, escape: "\u001b[31m\u009bred\r" };
+  const cyclic: Record<string, unknown> = { count: 1n };
   cyclic.self = cyclic;
-  const fallback = renderToolError(shortResult, "edit", theme, true, {
-    ...expandHints,
-    args: cyclic,
+  const fallback = stripVTControlCharacters(
+    renderToolError(shortResult, "edit", theme, true, { ...expandHints, args: cyclic })
+      .render(160)
+      .join("\n"),
+  );
+  assert.match(fallback, /arguments:[\s\S]*Circular/);
+});
+
+test("expanded error card with a JSON control character → displays its escape", () => {
+  initTheme("dark");
+  const result = { content: [{ type: "text" as const, text: "Read failed" }] };
+  const displayed = renderToolError(result, "read", theme, true, {
+    ...hints,
+    args: { path: "draft\u009b.md" },
   })
-    .render(160)
+    .render(120)
     .join("\n");
-  assert.doesNotMatch(stripVTControlCharacters(fallback), /\u009b|\r/);
-  assert.match(stripVTControlCharacters(fallback), /arguments:/);
-  assert.match(stripVTControlCharacters(fallback), /Circular/);
+  assert.ok(stripVTControlCharacters(displayed).includes(String.raw`draft\u009b.md`));
+  assert.doesNotMatch(displayed, /\u009b/);
 });

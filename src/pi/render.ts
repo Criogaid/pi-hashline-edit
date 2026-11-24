@@ -313,16 +313,13 @@ export function renderToolError(
             : [],
         );
   const lines = rawLines.length ? rawLines : [theme.fg("error", "Error")];
-  const hasArgs = context.args !== undefined;
-  if (expanded) {
-    const extra = hasArgs ? requestArgumentLines(context.args, theme) : [];
-    return new Text([...lines, ...extra].join("\n"), 0, 0);
+  let suffix: readonly string[] = [];
+  if (context.args !== undefined) {
+    if (expanded) suffix = requestArgumentLines(context.args, theme);
+    else if (lines.length <= MAX_COLLAPSED_OUTPUT_LINES)
+      suffix = [hiddenArgumentsMarker(theme, context)];
   }
-  const suffix =
-    hasArgs && lines.length <= MAX_COLLAPSED_OUTPUT_LINES
-      ? [hiddenArgumentsMarker(theme, context)]
-      : [];
-  return renderOutputPreview(lines, false, theme, context, suffix);
+  return renderOutputPreview(lines, expanded, theme, context, suffix);
 }
 
 /** Facts a mutation card presents another way: the command card owns then_run. */
