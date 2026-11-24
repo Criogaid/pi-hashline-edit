@@ -18,6 +18,7 @@ import {
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import { getCapabilities, hyperlink, Text, type Component } from "@earendil-works/pi-tui";
 import { pathToFileURL } from "node:url";
+import { inspect } from "node:util";
 import { canonicalPath, shortenHomePath } from "./path.ts";
 import type { MutationToolName, Report, ReportTool } from "./report-schema.ts";
 import { renderReport, reportEntries, reportOf, detailsReport } from "./report.ts";
@@ -29,10 +30,17 @@ const MAX_COLLAPSED_OUTPUT_LINES = 15;
 
 /** The host's keybinding formatter, which every tool render context carries. */
 type ExpandHints = Pick<KeybindingHints, "keyHint">;
+/** Failure rendering also receives the call's raw arguments when available. */
+type ErrorRenderContext = ExpandHints & { readonly args?: unknown };
 
 /** The last row of a collapsed preview that hides rows, in the form Pi's built-in cards use. */
 function hiddenRowsMarker(hidden: number, theme: Theme, hints: ExpandHints): string {
   return `${theme.fg("muted", `... (${hidden} more lines,`)} ${hints.keyHint("app.tools.expand", "to expand")}${theme.fg("muted", ")")}`;
+}
+
+/** Collapsed marker when all error lines fit, hinting that expanding shows the request arguments. */
+function hiddenArgumentsMarker(theme: Theme, hints: ExpandHints): string {
+  return `${theme.fg("muted", "... (")}${hints.keyHint("app.tools.expand", "to show arguments")}${theme.fg("muted", ")")}`;
 }
 
 /** Bound the input to Pi's highlighter while preserving the full diff's visible rows. */
@@ -255,17 +263,48 @@ export function splitReport(
   return { content: ours ? content.slice(0, -1) : content, report };
 }
 
-/** Render a failure from its report; text that is not ours keeps its original lines. */
+/** Serialize raw request arguments for error inspection, falling back for non-JSON values. */
+function formatRequestArguments(args: unknown): string {
+  try {
+    const serialized = JSON.stringify(args, null, 2);
+    if (serialized !== undefined) return serialized;
+  } catch {
+    // Hooks can supply cyclic objects, BigInts, or throwing getters.
+  }
+  try {
+    return inspect(args, { depth: 6, colors: false, breakLength: 80 });
+  } catch {
+    return "[unserializable arguments]";
+  }
+}
+
+/** Format raw call arguments under a dim label, escaping control characters that could alter TUI output. */
+function requestArgumentLines(args: unknown, theme: Theme): string[] {
+  const safe = formatRequestArguments(args).replace(
+    /[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g,
+    (ch) => `\\u${ch.charCodeAt(0).toString(16).padStart(4, "0")}`,
+  );
+  return [
+    theme.fg("dim", "arguments:"),
+    ...safe.split("\n").map((line) => theme.fg("muted", `  ${line}`)),
+  ];
+}
+
+/**
+ * Render a failure from its report; text that is not ours keeps its original lines.
+ * Expanded cards append raw request arguments when available; collapsed cards show an
+ * expand hint whenever hidden error lines or request arguments remain.
+ */
 export function renderToolError(
   result: Pick<AgentToolResult<unknown>, "content"> &
     Partial<Pick<AgentToolResult<unknown>, "details">>,
   tool: ReportTool,
   theme: Theme,
   expanded: boolean,
-  hints: ExpandHints,
+  context: ErrorRenderContext,
 ): Text {
   const report = reportOf(result, tool);
-  const lines =
+  const rawLines =
     report?.error !== undefined
       ? reportLines(report, theme)
       : result.content.flatMap((block) =>
@@ -273,12 +312,17 @@ export function renderToolError(
             ? block.text.split("\n").map((line) => theme.fg("error", line))
             : [],
         );
-  return renderOutputPreview(
-    lines.length ? lines : [theme.fg("error", "Error")],
-    expanded,
-    theme,
-    hints,
-  );
+  const lines = rawLines.length ? rawLines : [theme.fg("error", "Error")];
+  const hasArgs = context.args !== undefined;
+  if (expanded) {
+    const extra = hasArgs ? requestArgumentLines(context.args, theme) : [];
+    return new Text([...lines, ...extra].join("\n"), 0, 0);
+  }
+  const suffix =
+    hasArgs && lines.length <= MAX_COLLAPSED_OUTPUT_LINES
+      ? [hiddenArgumentsMarker(theme, context)]
+      : [];
+  return renderOutputPreview(lines, false, theme, context, suffix);
 }
 
 /** Facts a mutation card presents another way: the command card owns then_run. */

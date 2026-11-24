@@ -208,6 +208,51 @@ test("raw arguments Pi coerces → registered cards display the values used for 
   });
 });
 
+test("registered error card → expanded view preserves uncoerced raw arguments", async () => {
+  await withDir(async (dir) => {
+    await mkdir(join(dir, ".pi"));
+    const tools = await registerTools(dir, true);
+    const edit = tools.find((tool) => tool.name === "edit");
+    assert.ok(edit);
+    initTheme("dark");
+    const tui = new TuiMainScreen(new ProcessTerminal());
+    tui.requestRender = () => {};
+    // Coercion would wrap the singleton `steps` into an array and drop `anchor: null`.
+    const rawArgs = {
+      path: "draft.md",
+      steps: { action: "append", anchor: null, end: "", lines: ["line"] },
+    };
+    let errorText = "";
+    await assert.rejects(callTool(edit, rawArgs), (error: unknown) => {
+      assert.ok(error instanceof Error);
+      errorText = error.message;
+      return true;
+    });
+    const card = new ToolExecutionComponent("edit", "raw-error", rawArgs, {}, edit, tui, dir);
+    card.setArgsComplete();
+    card.markExecutionStarted();
+    card.updateResult({
+      content: [{ type: "text", text: errorText }],
+      details: undefined,
+      isError: true,
+    });
+    const collapsed = stripVTControlCharacters(card.render(160).join("\n"));
+    assert.match(collapsed, /edit draft\.md — 1 op: append ×1/);
+    assert.match(collapsed, /steps\[0\]\.anchor: is not allowed/);
+    assert.match(collapsed, /steps\[0\]\.end: is not allowed/);
+    assert.match(collapsed, /to show arguments/);
+    assert.doesNotMatch(collapsed, /"anchor": null/);
+
+    card.setExpanded(true);
+    const expanded = stripVTControlCharacters(card.render(160).join("\n"));
+    assert.match(expanded, /arguments:/);
+    assert.match(expanded, /"steps": \{/);
+    assert.match(expanded, /"anchor": null/);
+    assert.match(expanded, /"end": ""/);
+    assert.doesNotMatch(expanded, /to show arguments/);
+  });
+});
+
 test("mutation cards use Fusion by default and explicit false removes command support", async () => {
   const dir = await mkdtemp(join(tmpdir(), "hashline-registration-"));
   try {

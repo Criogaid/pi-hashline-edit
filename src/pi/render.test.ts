@@ -431,7 +431,14 @@ test("unfused write errors retain the native full diagnostic", () => {
   const tool = withMutationStatus(makeWriteOverride(process.cwd()));
   const args = { path: "a.txt", content: "new", mode: "overwrite" as const };
   const diagnostic = "write failed\nimportant detail";
-  const context: any = { args, state: {}, isPartial: false, isError: true, invalidate() {} };
+  const context: any = {
+    args,
+    state: {},
+    isPartial: false,
+    isError: true,
+    invalidate() {},
+    ...hints,
+  };
   const card = tool.renderCall!(args, theme, context);
   tool.renderResult!(
     {
@@ -700,6 +707,12 @@ test("all tools render argument issues as field diagnostics while preserving mod
         if (expanded) {
           assert.match(displayed, /unexpected: is not allowed/);
           assert.doesNotMatch(displayed, /Prepared arguments/);
+          assert.match(displayed, /arguments:/);
+          assert.match(displayed, /"unexpected": true/);
+          if (tool.name === "write") assert.match(displayed, /"content": "unused"/);
+        } else {
+          assert.match(displayed, /\.\.\. \(.*to (?:expand|show arguments)\)/);
+          assert.doesNotMatch(displayed, /"unexpected": true/);
         }
       }
     }
@@ -1100,4 +1113,76 @@ test("TUI-only mutation facts render on the card while model serialization omits
   assert.match(output, /progressError/);
   assert.match(output, /display unavailable/);
   assert.doesNotMatch(renderReport(report), /progressError|display unavailable/);
+});
+
+test("failed card with arguments → collapsed hints expand and expanded appends raw arguments", () => {
+  initTheme("dark");
+  const expandHints = {
+    keyHint: (key: string, description: string) => `<${key}> ${description}`,
+  };
+  const shortResult = {
+    content: [
+      {
+        type: "text" as const,
+        text: formatArgumentError(
+          [{ field: "steps[0].anchor", reason: "is not allowed" }],
+          false,
+          DEFAULT_OUTPUT_BUDGETS,
+        ),
+      },
+    ],
+  };
+  const rawArgs = {
+    path: "draft.md",
+    steps: [{ action: "append", anchor: "", end: null, lines: ["hello"] }],
+  };
+  const shortCollapsed = stripVTControlCharacters(
+    renderToolError(shortResult, "edit", theme, false, { ...expandHints, args: rawArgs })
+      .render(120)
+      .join("\n"),
+  );
+  const shortExpanded = stripVTControlCharacters(
+    renderToolError(shortResult, "edit", theme, true, { ...expandHints, args: rawArgs })
+      .render(120)
+      .join("\n"),
+  );
+  assert.match(shortCollapsed, /\.\.\. \(<app\.tools\.expand> to show arguments\)/);
+  assert.doesNotMatch(shortCollapsed, /arguments:\n|"anchor":/);
+  assert.doesNotMatch(shortExpanded, /<app\.tools\.expand>/);
+  assert.match(shortExpanded, /arguments:/);
+  assert.match(shortExpanded, /"anchor": ""/);
+  assert.match(shortExpanded, /"end": null/);
+
+  const longResult = {
+    content: [
+      { type: "text" as const, text: Array.from({ length: 25 }, (_, i) => `line ${i}`).join("\n") },
+    ],
+  };
+  const longCollapsed = stripVTControlCharacters(
+    renderToolError(longResult, "edit", theme, false, { ...expandHints, args: rawArgs })
+      .render(120)
+      .join("\n"),
+  );
+  const longExpanded = stripVTControlCharacters(
+    renderToolError(longResult, "edit", theme, true, { ...expandHints, args: rawArgs })
+      .render(120)
+      .join("\n"),
+  );
+  assert.equal(longCollapsed.split("<app.tools.expand>").length - 1, 1);
+  assert.match(longCollapsed, /10 more lines/);
+  assert.doesNotMatch(longCollapsed, /to show arguments/);
+  assert.match(longExpanded, /line 24[\s\S]*arguments:[\s\S]*"path": "draft\.md"/);
+  assert.doesNotMatch(longExpanded, /<app\.tools\.expand>/);
+
+  const cyclic: Record<string, unknown> = { count: 1n, escape: "\u001b[31m\u009bred\r" };
+  cyclic.self = cyclic;
+  const fallback = renderToolError(shortResult, "edit", theme, true, {
+    ...expandHints,
+    args: cyclic,
+  })
+    .render(160)
+    .join("\n");
+  assert.doesNotMatch(stripVTControlCharacters(fallback), /\u009b|\r/);
+  assert.match(stripVTControlCharacters(fallback), /arguments:/);
+  assert.match(stripVTControlCharacters(fallback), /Circular/);
 });

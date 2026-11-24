@@ -66,7 +66,13 @@ export default async function (pi: ExtensionAPI) {
         renderResult:
           renderResult &&
           ((result, options, theme, context) =>
-            renderResult(result, options, theme, { ...context, args: view(context.args) })),
+            renderResult(
+              result,
+              options,
+              theme,
+              // Error cards inspect raw arguments so coercion does not hide the caller's mistake.
+              context.isError ? context : { ...context, args: view(context.args) },
+            )),
       };
       pi.registerTool(registered);
     };
